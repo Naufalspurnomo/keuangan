@@ -1,0 +1,37 @@
+# Environment & Secrets
+.env
+token.json
+credentials.json
+*.json.bak
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test files
+analyze_xlsx.py
+test_*.py
+
+# Local development
+ngrok.exe
+*.exe

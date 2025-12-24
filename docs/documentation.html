@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="id" class="scroll-smooth">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Financial Recording Bot - Enterprise Documentation</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff',
+                            100: '#e0f2fe',
+                            500: '#0ea5e9',
+                            600: '#0284c7',
+                            900: '#0c4a6e',
+                        },
+                        lux: {
+                            gold: '#d4af37',
+                            dark: '#0f172a',
+                            light: '#f8fafc'
+                        }
+                    },
+                    animation: {
+                        'float': 'float 6s ease-in-out infinite',
+                        'fade-in': 'fadeIn 0.5s ease-out forwards',
+                    },
+                    keyframes: {
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(-20px)' },
+                        },
+                        fadeIn: {
+                            '0%': { opacity: '0', transform: 'translateY(10px)' },
+                            '100%': { opacity: '1', transform: 'translateY(0)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        /* Glassmorphism Utilities */
+        .glass {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+        }
+
+        .glass-dark {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* Gradient Text */
+        .text-gradient {
+            background: linear-gradient(135deg, #0f172a 0%, #0ea5e9 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* Smooth interactions */
+        .hover-card {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .hover-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+        }
+    </style>
+    <style>
+        @media print {
+
+            /* Use portrait orientation */
+            @page {
+                size: A4 portrait;
+                margin: 20mm;
+            }
+
+            /* Hide navigation and interactive elements */
+            nav,
+            .glass,
+            .glass-dark,
+            .bg-white,
+            .bg-slate-100,
+            .bg-slate-200,
+            .bg-brand-100,
+            .bg-purple-100,
+            .bg-brand-600,
+            .bg-slate-900,
+            .bg-slate-800,
+            .bg-slate-50,
+            .bg-slate-900,
+            .bg-slate-800,
+            .bg-slate-900 {
+                display: none !important;
+            }
+
+            /* Ensure background is white */
+            body {
+                background: white !important;
+                color: black !important;
+            }
+
+            /* Show main content full width */
+            main {
+                width: 100% !important;
+                padding: 0 !important;
+            }
+        }
+    </style>
+</head>
+
+<body class="bg-slate-200 text-slate-800 antialiased overflow-x-hidden selection:bg-brand-500 selection:text-white">
+
+    <div class="fixed inset-0 z-0 pointer-events-none overflow-hidden">
+        <div class="absolute top-[-10%] right-[-5%] w-[40vw] h-[40vw] bg-brand-100/40 rounded-full blur-[120px]"></div>
+        <div class="absolute bottom-[0%] left-[-10%] w-[30vw] h-[30vw] bg-purple-100/40 rounded-full blur-[100px]">
+        </div>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="fixed top-0 left-0 right-0 z-50 glass transition-all duration-300 print:hidden" id="navbar">
+        <div class="max-w-4xl mx-auto px-6 h-20 flex items-center justify-between">
+            <a href="#" class="flex items-center gap-3 group">
+                <div
+                    class="bg-brand-600 p-2 rounded-xl text-white shadow-lg shadow-brand-200 group-hover:scale-105 transition-transform">
+                    <i data-lucide="activity" class="w-6 h-6"></i>
+                </div>
+                <div class="flex flex-col">
+                    <span class="font-bold text-xl tracking-tight text-slate-900 leading-none">Bot Keuangan<span
+                            class="text-brand-600">.AI</span></span>
+                    <span class="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-semibold">Enterprise
+                        Docs</span>
+                </div>
+            </a>
+
+            <!-- Desktop Menu -->
+            <div class="hidden md:flex items-center gap-6">
+                <a href="#features"
+                    class="text-sm font-medium text-slate-600 hover:text-brand-600 transition-colors">Fitur</a>
+                <a href="#architecture"
+                    class="text-sm font-medium text-slate-600 hover:text-brand-600 transition-colors">Arsitektur</a>
+                <a href="#security"
+                    class="text-sm font-medium text-slate-600 hover:text-brand-600 transition-colors">Keamanan</a>
+                <a href="#commands"
+                    class="text-sm font-medium text-slate-600 hover:text-brand-600 transition-colors">Perintah</a>
+                <a href="#usage"
+                    class="px-5 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-full hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/20 hover:shadow-slate-900/40 flex items-center gap-2">
+                    Live Demo <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                </a>
+                <button onclick="window.print()"
+                    class="px-4 py-2 bg-brand-600 text-white rounded font-medium hover:bg-brand-500 transition-colors shadow-sm">
+                    Download PDF
+                </button>
+            </div>
+
+            <!-- Mobile Menu Button -->
+            <button class="md:hidden text-slate-900 p-2" onclick="toggleMobileMenu()">
+                <i data-lucide="menu" class="w-6 h-6"></i>
+            </button>
+        </div>
+    </nav>
+
+
+
+    <!-- Mobile Menu Overlay -->
+    <div id="mobile-menu"
+        class="fixed inset-0 z-40 bg-white transform translate-x-full transition-transform duration-300 md:hidden flex flex-col pt-24 px-6 gap-6">
+        <a href="#features" class="text-xl font-medium text-slate-900" onclick="toggleMobileMenu()">Fitur</a>
+        <a href="#architecture" class="text-xl font-medium text-slate-900" onclick="toggleMobileMenu()">Arsitektur</a>
+        <a href="#security" class="text-xl font-medium text-slate-900" onclick="toggleMobileMenu()">Keamanan</a>
+        <a href="#commands" class="text-xl font-medium text-slate-900" onclick="toggleMobileMenu()">Perintah</a>
+        <a href="#usage" class="text-xl font-medium text-brand-600" onclick="toggleMobileMenu()">Live Demo</a>
+        <button class="absolute top-6 right-6 p-2" onclick="toggleMobileMenu()">
+            <i data-lucide="x" class="w-8 h-8 text-slate-400"></i>
+        </button>
+    </div>
+
+    <!-- Main Content -->
+    <!-- Main Content -->
+    <main
+        class="relative z-10 mt-24 mb-20 px-8 py-12 md:px-16 md:py-20 bg-white shadow-2xl max-w-4xl mx-auto min-h-screen">
+
+        <!-- Hero Section -->
+        <section class="max-w-7xl mx-auto mb-32 text-center">
+            <div
+                class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white border border-slate-200 shadow-sm text-slate-600 text-xs font-bold uppercase tracking-widest mb-8 animate-fade-in">
+                <i data-lucide="sparkles" class="w-3 h-3 text-amber-500 fill-amber-500"></i> Solusi Keuangan Cerdas
+            </div>
+
+            <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight mb-8 leading-[1.1] animate-fade-in"
+                style="animation-delay: 0.1s">
+                Pencatatan Keuangan <br />
+                <span class="text-gradient">Otomatis Berbasis AI</span>
+            </h1>
+
+            <p class="text-xl text-slate-500 max-w-3xl mx-auto mb-12 leading-relaxed animate-fade-in"
+                style="animation-delay: 0.2s">
+                Transformasi cara Anda mencatat keuangan. Cukup kirim pesan natural via WhatsApp atau Telegram, dan
+                biarkan AI kami yang mengurus sisanya. Akurat, Cepat, dan Aman.
+            </p>
+
+            <div class="flex flex-col sm:flex-row items-center justify-center gap-4 animate-fade-in"
+                style="animation-delay: 0.3s">
+                <a href="#usage"
+                    class="w-full sm:w-auto px-8 py-4 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-all shadow-xl shadow-slate-900/20 flex items-center justify-center gap-2">
+                    <i data-lucide="play-circle" class="w-5 h-5"></i> Coba Demo Interaktif
+                </a>
+                <a href="#features"
+                    class="w-full sm:w-auto px-8 py-4 bg-white text-slate-700 font-bold rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 transition-all flex items-center justify-center gap-2">
+                    Pelajari Fitur
+                </a>
+            </div>
+
+            <!-- Stats/Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mt-20 max-w-5xl mx-auto animate-fade-in"
+                style="animation-delay: 0.4s">
+                <div class="glass p-6 rounded-2xl text-left border-l-4 border-l-brand-500">
+                    <div class="text-slate-500 text-sm font-medium mb-1">Total Akurasi AI</div>
+                    <div class="text-3xl font-bold text-slate-900">99.8%</div>
+                </div>
+                <div class="glass p-6 rounded-2xl text-left border-l-4 border-l-purple-500">
+                    <div class="text-slate-500 text-sm font-medium mb-1">Kecepatan Proses</div>
+                    <div class="text-3xl font-bold text-slate-900">&lt; 2 Detik</div>
+                </div>
+                <div class="glass p-6 rounded-2xl text-left border-l-4 border-l-emerald-500">
+                    <div class="text-slate-500 text-sm font-medium mb-1">Platform Support</div>
+                    <div class="text-3xl font-bold text-slate-900">WA & Telegram</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Features Section -->
+        <section id="features" class="max-w-7xl mx-auto mb-32 scroll-mt-28">
+            <div class="flex flex-col md:flex-row justify-between items-end mb-16 gap-4">
+                <div>
+                    <h2 class="text-3xl md:text-4xl font-bold text-slate-900 mb-4">Fitur Utama</h2>
+                    <p class="text-slate-500 text-lg max-w-xl">Teknologi canggih yang bekerja di belakang layar untuk
+                        menyederhanakan hidup Anda.</p>
+                </div>
+                <div class="h-1 w-32 bg-gradient-to-r from-brand-500 to-purple-500 rounded-full"></div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Feature Cards -->
+                <div class="bg-white p-8 rounded-2xl border border-slate-100 shadow-sm hover-card group">
+                    <div
+                        class="w-14 h-14 bg-brand-50 rounded-xl flex items-center justify-center text-brand-600 mb-6 group-hover:bg-brand-600 group-hover:text-white transition-colors">
+                        <i data-lucide="cpu" class="w-7 h-7"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-slate-900 mb-3">AI Categorization</h3>
+                    <p class="text-slate-500 leading-relaxed">Klasifikasi otomatis transaksi dari teks natural dengan
+                        akurasi tinggi menggunakan LLM.</p>
+                </div>
+
+                <div class="bg-white p-8 rounded-2xl border border-slate-100 shadow-sm hover-card group">
+                    <div
+                        class="w-14 h-14 bg-rose-50 rounded-xl flex items-center justify-center text-rose-600 mb-6 group-hover:bg-rose-600 group-hover:text-white transition-colors">
+                        <i data-lucide="camera" class="w-7 h-7"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-slate-900 mb-3">OCR Struk Instan</h3>
+                    <p class="text-slate-500 leading-relaxed">Ekstrak data detail dari foto struk belanja yang kusut
+                        sekalipun secara otomatis.</p>
+                </div>
+
+                <div class="bg-white p-8 rounded-2xl border border-slate-100 shadow-sm hover-card group">
+                    <div
+                        class="w-14 h-14 bg-amber-50 rounded-xl flex items-center justify-center text-amber-600 mb-6 group-hover:bg-amber-600 group-hover:text-white transition-colors">
+                        <i data-lucide="mic" class="w-7 h-7"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-slate-900 mb-3">Voice Intelligence</h3>
+                    <p class="text-slate-500 leading-relaxed">Transkripsi voice note bahasa Indonesia yang cepat,
+                        akurat, dan natural.</p>
+                </div>
+
+                <div class="bg-white p-8 rounded-2xl border border-slate-100 shadow-sm hover-card group">
+                    <div
+                        class="w-14 h-14 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600 mb-6 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                        <i data-lucide="pie-chart" class="w-7 h-7"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-slate-900 mb-3">Laporan Real-time</h3>
+                    <p class="text-slate-500 leading-relaxed">Generate laporan PDF atau Excel mingguan dalam hitungan
+                        detik kapan saja.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Live Simulation Section -->
+        <section id="usage" class="max-w-6xl mx-auto mb-32 scroll-mt-28">
+            <div class="text-center mb-16">
+                <span class="text-brand-600 font-bold tracking-wider uppercase text-sm">Interactive Demo</span>
+                <h2 class="text-3xl md:text-5xl font-bold text-slate-900 mt-2">Coba Sendiri Sekarang</h2>
+                <p class="text-slate-500 mt-4 text-lg">Pilih mode input dan lihat bagaimana AI memproses data secara
+                    instan.</p>
+            </div>
+
+            <div
+                class="bg-white rounded-[2rem] p-8 md:p-12 border border-slate-200 shadow-2xl shadow-slate-200/50 flex flex-col gap-12 items-center relative overflow-hidden">
+                <!-- Decorative BG inside card -->
+                <div
+                    class="absolute top-0 right-0 w-96 h-96 bg-gradient-to-bl from-brand-50 to-purple-50 rounded-full blur-[80px] -z-0 pointer-events-none">
+                </div>
+
+                <!-- Controls -->
+                <div class="w-full relative z-10 space-y-8">
+                    <!-- Mode Switcher -->
+                    <div class="flex flex-wrap gap-2 p-1 bg-slate-100 rounded-full w-fit print:hidden">
+                        <button onclick="setDemoMode('text')" id="btn-text"
+                            class="px-6 py-2.5 rounded-full text-sm font-semibold transition-all shadow-sm bg-white text-slate-900">
+                            Text Input
+                        </button>
+                        <button onclick="setDemoMode('image')" id="btn-image"
+                            class="px-6 py-2.5 rounded-full text-sm font-semibold transition-all text-slate-500 hover:text-slate-900">
+                            Foto Struk
+                        </button>
+                        <button onclick="setDemoMode('voice')" id="btn-voice"
+                            class="px-6 py-2.5 rounded-full text-sm font-semibold transition-all text-slate-500 hover:text-slate-900">
+                            Voice Note
+                        </button>
+                    </div>
+
+                    <!-- Description -->
+                    <div id="demo-desc">
+                        <h3 class="text-2xl font-bold text-slate-900 mb-4">Input Teks Natural</h3>
+                        <p class="text-slate-600 text-lg leading-relaxed">
+                            Tidak perlu format kaku. Cukup ketik seperti sedang chatting dengan teman. <br />
+                            <span class="font-mono text-brand-600 bg-brand-50 px-2 py-1 rounded mt-2 inline-block">"Beli
+                                semen 5 sak 300rb"</span>
+                        </p>
+                    </div>
+
+                    <!-- Extracted Data Panel -->
+                    <div class="bg-slate-50 rounded-2xl p-6 border border-slate-200">
+                        <div class="flex items-center gap-2 mb-4">
+                            <i data-lucide="database" class="w-4 h-4 text-brand-600"></i>
+                            <span class="text-xs font-bold text-slate-400 uppercase tracking-widest">Extracted
+                                Data</span>
+                        </div>
+                        <div class="space-y-4">
+                            <div class="flex justify-between items-center">
+                                <span class="text-slate-500 text-sm">Nominal</span>
+                                <span id="data-nominal" class="font-mono font-bold text-slate-900 text-lg">Rp
+                                    300.000</span>
+                            </div>
+                            <div class="h-px bg-slate-200 w-full"></div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-slate-500 text-sm">Kategori</span>
+                                <span id="data-category"
+                                    class="px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-bold">PEMBANGUNAN</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Phone Mockup -->
+                <div class="w-full flex justify-center relative z-10">
+                    <div
+                        class="relative w-[320px] h-[650px] bg-slate-900 rounded-[3rem] border-[8px] border-slate-800 shadow-2xl overflow-hidden">
+                        <!-- Dynamic Island -->
+                        <div class="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-7 bg-black rounded-b-2xl z-20">
+                        </div>
+
+                        <!-- App Header -->
+                        <div class="bg-slate-50 pt-12 pb-4 px-4 border-b border-slate-200 flex items-center gap-3">
+                            <div
+                                class="w-10 h-10 rounded-full bg-brand-600 flex items-center justify-center text-white">
+                                <i data-lucide="bot" class="w-6 h-6"></i>
+                            </div>
+                            <div>
+                                <div class="font-bold text-slate-900 text-sm">FinBot AI</div>
+                                <div class="text-[10px] text-emerald-500 font-bold flex items-center gap-1">
+                                    <div class="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div> Online
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Chat Area -->
+                        <div class="bg-[#e4ddd6] h-full p-4 flex flex-col gap-4 overflow-y-auto pb-24"
+                            id="chat-container">
+                            <div class="flex justify-center my-2">
+                                <span class="text-[10px] bg-white/50 px-2 py-1 rounded text-slate-500 shadow-sm">Hari
+                                    Ini</span>
+                            </div>
+
+                            <!-- Dynamic Content Inserted via JS -->
+
+                        </div>
+
+                        <!-- Input Area -->
+                        <div
+                            class="absolute bottom-0 w-full bg-slate-50 p-3 border-t border-slate-200 flex items-center gap-2">
+                            <i data-lucide="plus" class="text-brand-600 w-6 h-6"></i>
+                            <div
+                                class="flex-1 bg-white border border-slate-200 rounded-full px-4 py-2 text-xs text-slate-400">
+                                Ketik pesan...
+                            </div>
+                            <div
+                                class="w-9 h-9 bg-brand-600 rounded-full flex items-center justify-center text-white shadow-lg">
+                                <i data-lucide="mic" class="w-4 h-4"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Architecture Section (Diagram) -->
+        <section id="architecture" class="max-w-7xl mx-auto mb-32 scroll-mt-28">
+            <h2 class="text-3xl md:text-4xl font-bold text-slate-900 mb-12 text-center">Arsitektur & Alur Kerja</h2>
+
+            <div class="grid lg:grid-cols-3 gap-8">
+                <!-- Tech Stack Cards -->
+                <div class="space-y-4">
+                    <div class="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex items-center gap-4">
+                        <div class="p-2 bg-indigo-50 text-indigo-600 rounded-lg"><i data-lucide="server"
+                                class="w-5 h-5"></i></div>
+                        <div>
+                            <div class="font-bold text-slate-900 text-sm">Python + Flask</div>
+                            <div class="text-xs text-slate-500">Backend API</div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex items-center gap-4">
+                        <div class="p-2 bg-violet-50 text-violet-600 rounded-lg"><i data-lucide="brain-circuit"
+                                class="w-5 h-5"></i></div>
+                        <div>
+                            <div class="font-bold text-slate-900 text-sm">Llama 3.3 70B</div>
+                            <div class="text-xs text-slate-500">AI Logic Engine</div>
+                        </div>
+                    </div>
+                    <div class="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex items-center gap-4">
+                        <div class="p-2 bg-rose-50 text-rose-600 rounded-lg"><i data-lucide="mic" class="w-5 h-5"></i>
+                        </div>
+                        <div>
+                            <div class="font-bold text-slate-900 text-sm">Whisper Large v3</div>
+                            <div class="text-xs text-slate-500">Speech to Text</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Visual Diagram -->
+                <div
+                    class="lg:col-span-2 bg-slate-900 rounded-2xl p-8 relative overflow-hidden text-white flex flex-col justify-center">
+                    <div class="absolute top-0 right-0 w-64 h-64 bg-brand-500/20 rounded-full blur-[80px]"></div>
+
+                    <div class="relative z-10 flex flex-col md:flex-row justify-between items-center gap-6">
+                        <!-- Step 1 -->
+                        <div class="text-center w-full">
+                            <div
+                                class="w-12 h-12 bg-white/10 rounded-full flex items-center justify-center mx-auto mb-3 border border-white/20">
+                                <i data-lucide="smartphone" class="w-6 h-6"></i>
+                            </div>
+                            <div class="text-sm font-bold">User Input</div>
+                            <div class="text-[10px] text-slate-400">WA/Telegram</div>
+                        </div>
+
+                        <!-- Arrow -->
+                        <div class="hidden md:block w-full h-px bg-slate-700 relative">
+                            <div class="absolute right-0 -top-1 w-2 h-2 border-t border-r border-slate-700 rotate-45">
+                            </div>
+                        </div>
+                        <div class="md:hidden h-8 w-px bg-slate-700"></div>
+
+                        <!-- Step 2 -->
+                        <div class="text-center w-full">
+                            <div
+                                class="w-12 h-12 bg-brand-600 rounded-full flex items-center justify-center mx-auto mb-3 shadow-[0_0_20px_rgba(14,165,233,0.5)]">
+                                <i data-lucide="cpu" class="w-6 h-6 animate-pulse"></i>
+                            </div>
+                            <div class="text-sm font-bold text-brand-400">Processing</div>
+                            <div class="text-[10px] text-slate-400">AI Logic</div>
+                        </div>
+
+                        <!-- Arrow -->
+                        <div class="hidden md:block w-full h-px bg-slate-700 relative">
+                            <div class="absolute right-0 -top-1 w-2 h-2 border-t border-r border-slate-700 rotate-45">
+                            </div>
+                        </div>
+                        <div class="md:hidden h-8 w-px bg-slate-700"></div>
+
+                        <!-- Step 3 -->
+                        <div class="text-center w-full">
+                            <div
+                                class="w-12 h-12 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-3 border border-emerald-500/50">
+                                <i data-lucide="database" class="w-6 h-6 text-emerald-400"></i>
+                            </div>
+                            <div class="text-sm font-bold text-emerald-400">Storage</div>
+                            <div class="text-[10px] text-slate-400">Google Sheets</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Commands & Categories Grid -->
+        <div class="grid lg:grid-cols-2 gap-12 max-w-7xl mx-auto mb-32">
+            <!-- Commands -->
+            <section id="commands" class="scroll-mt-28">
+                <h2 class="text-2xl font-bold text-slate-900 mb-6 flex items-center gap-2">
+                    <i data-lucide="terminal" class="text-slate-400"></i> Daftar Perintah
+                </h2>
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="divide-y divide-slate-100">
+                        <div class="p-4 hover:bg-slate-50 flex justify-between items-center">
+                            <div>
+                                <div class="font-mono text-brand-600 font-bold text-sm">/start</div>
+                                <div class="text-slate-500 text-xs">Memulai sesi</div>
+                            </div>
+                            <span
+                                class="text-[10px] bg-slate-100 px-2 py-1 rounded text-slate-500 font-bold">GENERAL</span>
+                        </div>
+                        <div class="p-4 hover:bg-slate-50 flex justify-between items-center">
+                            <div>
+                                <div class="font-mono text-brand-600 font-bold text-sm">/status</div>
+                                <div class="text-slate-500 text-xs">Ringkasan keuangan</div>
+                            </div>
+                            <span
+                                class="text-[10px] bg-slate-100 px-2 py-1 rounded text-slate-500 font-bold">REPORT</span>
+                        </div>
+                        <div class="p-4 hover:bg-slate-50 flex justify-between items-center">
+                            <div>
+                                <div class="font-mono text-brand-600 font-bold text-sm">/laporan</div>
+                                <div class="text-slate-500 text-xs">Laporan 7 hari terakhir</div>
+                            </div>
+                            <span
+                                class="text-[10px] bg-slate-100 px-2 py-1 rounded text-slate-500 font-bold">REPORT</span>
+                        </div>
+                        <div class="p-4 hover:bg-slate-50 flex justify-between items-center">
+                            <div>
+                                <div class="font-mono text-brand-600 font-bold text-sm">/tanya [query]</div>
+                                <div class="text-slate-500 text-xs">Analisis AI Natural</div>
+                            </div>
+                            <span class="text-[10px] bg-brand-50 text-brand-600 px-2 py-1 rounded font-bold">AI</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Categories -->
+            <section id="categories" class="scroll-mt-28">
+                <h2 class="text-2xl font-bold text-slate-900 mb-6 flex items-center gap-2">
+                    <i data-lucide="layers" class="text-slate-400"></i> Kategori Fixed
+                </h2>
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="p-3 rounded-lg bg-orange-50 border border-orange-100">
+                        <div class="text-sm font-bold text-orange-800">Pembangunan</div>
+                        <div class="text-[10px] text-orange-600 truncate">semen, pasir, besi</div>
+                    </div>
+                    <div class="p-3 rounded-lg bg-blue-50 border border-blue-100">
+                        <div class="text-sm font-bold text-blue-800">Operasional</div>
+                        <div class="text-[10px] text-blue-600 truncate">listrik, air, wifi</div>
+                    </div>
+                    <div class="p-3 rounded-lg bg-emerald-50 border border-emerald-100">
+                        <div class="text-sm font-bold text-emerald-800">Makanan</div>
+                        <div class="text-[10px] text-emerald-600 truncate">resto, kopi, snack</div>
+                    </div>
+                    <div class="p-3 rounded-lg bg-amber-50 border border-amber-100">
+                        <div class="text-sm font-bold text-amber-800">Transportasi</div>
+                        <div class="text-[10px] text-amber-600 truncate">bensin, parkir, toll</div>
+                    </div>
+                    <div class="p-3 rounded-lg bg-violet-50 border border-violet-100">
+                        <div class="text-sm font-bold text-violet-800">Gaji</div>
+                        <div class="text-[10px] text-violet-600 truncate">upah, tukang, bonus</div>
+                    </div>
+                    <div class="p-3 rounded-lg bg-slate-50 border border-slate-100">
+                        <div class="text-sm font-bold text-slate-800">Lainnya</div>
+                        <div class="text-[10px] text-slate-500 truncate">admin, umum</div>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Security & Reminder -->
+        <section id="security"
+            class="max-w-7xl mx-auto mb-20 bg-slate-900 rounded-[2rem] p-8 md:p-16 text-center relative overflow-hidden">
+            <div class="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10">
+            </div>
+            <div
+                class="absolute top-[-50%] left-[-20%] w-[800px] h-[800px] bg-brand-600/10 rounded-full blur-[120px] pointer-events-none">
+            </div>
+
+            <div class="relative z-10">
+                <div
+                    class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-slate-800 border border-slate-700 text-white text-xs font-bold uppercase tracking-widest mb-6">
+                    <i data-lucide="shield-check" class="w-3 h-3 text-emerald-400"></i> Security First
+                </div>
+                <h2 class="text-3xl md:text-5xl font-bold text-white mb-6">Keamanan Tingkat Enterprise</h2>
+                <p class="text-slate-400 text-lg max-w-2xl mx-auto mb-12">
+                    Dilengkapi dengan <span class="text-white font-semibold">Prompt Injection Shield</span> untuk
+                    memblokir manipulasi AI, dan sistem <span class="text-white font-semibold">Smart Reminder</span>
+                    untuk menjaga kedisiplinan pencatatan Anda.
+                </p>
+
+                <div class="grid md:grid-cols-3 gap-6 text-left">
+                    <div class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 backdrop-blur-sm">
+                        <i data-lucide="lock" class="w-8 h-8 text-brand-400 mb-4"></i>
+                        <h3 class="text-white font-bold mb-2">Data Encrypted</h3>
+                        <p class="text-slate-400 text-sm">Enkripsi end-to-end memastikan data transaksi Anda aman dari
+                            akses tidak sah.</p>
+                    </div>
+                    <div class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 backdrop-blur-sm">
+                        <i data-lucide="bell" class="w-8 h-8 text-amber-400 mb-4"></i>
+                        <h3 class="text-white font-bold mb-2">Smart Reminder</h3>
+                        <p class="text-slate-400 text-sm">Notifikasi otomatis via WhatsApp jika Anda lupa input data
+                            selama 3 hari.</p>
+                    </div>
+                    <div class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 backdrop-blur-sm">
+                        <i data-lucide="alert-triangle" class="w-8 h-8 text-rose-400 mb-4"></i>
+                        <h3 class="text-white font-bold mb-2">Budget Alert</h3>
+                        <p class="text-slate-400 text-sm">Peringatan dini saat pengeluaran mendekati limit budget
+                            bulanan yang ditetapkan.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="bg-white border-t border-slate-200 py-12">
+
+        <!-- Scripts -->
+        <script>
+            // Initialize Icons
+            lucide.createIcons();
+
+            // Navbar Scroll Effect
+            const navbar = document.getElementById('navbar');
+            window.addEventListener('scroll', () => {
+                if (window.scrollY > 20) {
+                    navbar.classList.add('shadow-sm', 'bg-white/90');
+                    navbar.classList.remove('bg-white/70');
+                } else {
+                    navbar.classList.remove('shadow-sm', 'bg-white/90');
+                    navbar.classList.add('bg-white/70');
+                }
+            });
+
+            // Mobile Menu
+            function toggleMobileMenu() {
+                const menu = document.getElementById('mobile-menu');
+                const isOpen = !menu.classList.contains('translate-x-full');
+
+                if (isOpen) {
+                    menu.classList.add('translate-x-full');
+                } else {
+                    menu.classList.remove('translate-x-full');
+                }
+            }
+
+            // Demo Logic
+            const chatContainer = document.getElementById('chat-container');
+            const demoDesc = document.getElementById('demo-desc');
+            const dataNominal = document.getElementById('data-nominal');
+            const dataCategory = document.getElementById('data-category');
+            const btns = {
+                text: document.getElementById('btn-text'),
+                image: document.getElementById('btn-image'),
+                voice: document.getElementById('btn-voice')
+            };
+
+            const demoData = {
+                text: {
+                    title: 'Input Teks Natural',
+                    desc: 'Tidak perlu format kaku. Cukup ketik seperti sedang chatting dengan teman.<br/><span class="font-mono text-brand-600 bg-brand-50 px-2 py-1 rounded mt-2 inline-block">"Beli semen 5 sak 300rb"</span>',
+                    nominal: 'Rp 300.000',
+                    category: 'PEMBANGUNAN',
+                    catColor: 'bg-amber-100 text-amber-700',
+                    chat: `
+                    <div class="flex justify-end animate-fade-in">
+                        <div class="bg-[#dcf8c6] p-3 rounded-lg rounded-tr-none shadow-sm max-w-[85%] text-sm">
+                            Beli semen 5 sak 300rb
+                            <div class="text-[10px] text-slate-500 text-right mt-1">09:41</div>
+                        </div>
+                    </div>
+                    <div class="flex justify-start animate-fade-in" style="animation-delay: 0.5s">
+                        <div class="bg-white p-3 rounded-lg rounded-tl-none shadow-sm max-w-[85%] text-sm border border-slate-100">
+                            ✅ <b>Transaksi Tercatat!</b><br/><br/>
+                            💸 Nominal: Rp 300.000<br/>
+                            📁 Kategori: Pembangunan
+                            <div class="text-[10px] text-slate-400 text-right mt-1">09:41</div>
+                        </div>
+                    </div>
+                `
+                },
+                image: {
+                    title: 'OCR Foto Struk',
+                    desc: 'Malas mengetik? Cukup foto struk belanja Anda. AI akan mengekstrak total belanja dan tanggal secara otomatis.',
+                    nominal: 'Rp 85.000',
+                    category: 'MAKANAN',
+                    catColor: 'bg-emerald-100 text-emerald-700',
+                    chat: `
+                    <div class="flex justify-end animate-fade-in">
+                        <div class="bg-[#dcf8c6] p-2 rounded-lg rounded-tr-none shadow-sm max-w-[70%]">
+                            <div class="w-32 h-40 bg-slate-300 rounded flex flex-col items-center justify-center text-slate-500 gap-2">
+                                <i data-lucide="camera" class="w-6 h-6"></i>
+                                <span class="text-[10px]">IMG_2024.jpg</span>
+                            </div>
+                            <div class="text-[10px] text-slate-500 text-right mt-1">10:23</div>
+                        </div>
+                    </div>
+                    <div class="flex justify-start animate-fade-in" style="animation-delay: 0.8s">
+                        <div class="bg-white p-3 rounded-lg rounded-tl-none shadow-sm max-w-[85%] text-sm border border-slate-100">
+                            ✅ <b>Transaksi Tercatat!</b><br/><br/>
+                            💸 Nominal: Rp 85.000<br/>
+                            📁 Kategori: Makanan
+                            <div class="text-[10px] text-slate-400 text-right mt-1">10:24</div>
+                        </div>
+                    </div>
+                `
+                },
+                voice: {
+                    title: 'Voice Note Transcription',
+                    desc: 'Sedang menyetir? Rekam suara dalam Bahasa Indonesia. <br/><span class="italic text-slate-500">"Bayar tukang hari ini lima ratus ribu rupiah"</span>',
+                    nominal: 'Rp 500.000',
+                    category: 'GAJI',
+                    catColor: 'bg-violet-100 text-violet-700',
+                    chat: `
+                    <div class="flex justify-end animate-fade-in">
+                        <div class="bg-[#dcf8c6] p-3 rounded-lg rounded-tr-none shadow-sm min-w-[140px]">
+                            <div class="flex items-center gap-2 text-slate-600">
+                                <i data-lucide="play" class="w-4 h-4 fill-slate-600"></i>
+                                <div class="h-1 w-12 bg-slate-400 rounded-full"></div>
+                                <span class="text-[10px]">0:05</span>
+                            </div>
+                            <div class="text-[10px] text-slate-500 text-right mt-1">14:15</div>
+                        </div>
+                    </div>
+                    <div class="flex justify-start animate-fade-in" style="animation-delay: 0.8s">
+                        <div class="bg-white p-3 rounded-lg rounded-tl-none shadow-sm max-w-[85%] text-sm border border-slate-100">
+                            🎤 <b>Transkripsi:</b><br/>
+                            "Bayar tukang lima ratus ribu"<br/><br/>
+                            ✅ <b>Transaksi Tercatat!</b><br/>
+                            💸 Nominal: Rp 500.000<br/>
+                            📁 Kategori: Gaji
+                            <div class="text-[10px] text-slate-400 text-right mt-1">14:15</div>
+                        </div>
+                    </div>
+                `
+                }
+            };
+
+            function setDemoMode(mode) {
+                // Update Buttons
+                Object.keys(btns).forEach(key => {
+                    const btn = btns[key];
+                    if (key === mode) {
+                        btn.classList.remove('bg-transparent', 'text-slate-500');
+                        btn.classList.add('bg-white', 'text-slate-900', 'shadow-sm');
+                    } else {
+                        btn.classList.add('bg-transparent', 'text-slate-500');
+                        btn.classList.remove('bg-white', 'text-slate-900', 'shadow-sm');
+                    }
+                });
+
+                // Update Content
+                const data = demoData[mode];
+                demoDesc.innerHTML = `<h3 class="text-2xl font-bold text-slate-900 mb-4 animate-fade-in">${data.title}</h3><p class="text-slate-600 text-lg leading-relaxed animate-fade-in">${data.desc}</p>`;
+
+                dataNominal.textContent = data.nominal;
+                dataCategory.textContent = data.category;
+                dataCategory.className = `px-3 py-1 rounded-full text-xs font-bold ${data.catColor}`;
+
+                chatContainer.innerHTML = '<div class="flex justify-center my-2"><span class="text-[10px] bg-white/50 px-2 py-1 rounded text-slate-500 shadow-sm">Hari Ini</span></div>' + data.chat;
+
+                // Re-init icons for dynamic content
+                lucide.createIcons();
+            }
+
+            // Init Default
+            setDemoMode('text');
+
+        </script>
+</body>
+
+</html>

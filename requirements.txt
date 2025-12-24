@@ -1,0 +1,31 @@
+# ============================================
+# Financial Bot - Production Dependencies
+# ============================================
+# Deploy to: Railway, Render, Fly.io
+
+# Core Framework
+flask>=2.3.0
+gunicorn>=21.0.0
+
+# Google Sheets Integration
+gspread>=5.12.0
+google-auth>=2.22.0
+google-auth-oauthlib>=1.0.0
+google-auth-httplib2>=0.1.0
+
+# AI & LLM (Groq - faster & free tier)
+groq>=0.4.0
+
+# OCR for Image Processing
+easyocr>=1.7.0
+Pillow>=10.0.0
+
+# HTTP Requests
+requests>=2.31.0
+
+# Environment Variables
+python-dotenv>=1.0.0
+
+# Image Processing (headless for server)
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
