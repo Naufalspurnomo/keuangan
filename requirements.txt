@@ -1,7 +1,7 @@
 # ============================================
-# Financial Bot - LIGHTWEIGHT Dependencies
+# Financial Bot - Cloud Deployment (Lightweight)
 # ============================================
-# Optimized for Koyeb/Render free tier
+# Compatible with: Koyeb, Render, Fly.io free tiers
 
 # Core Framework
 flask>=2.3.0
@@ -12,7 +12,7 @@ gspread>=5.12.0
 google-auth>=2.22.0
 google-auth-oauthlib>=1.0.0
 
-# AI (Groq - lighter than local whisper)
+# AI & LLM (Groq - untuk text & voice)
 groq>=0.4.0
 
 # HTTP Requests
@@ -21,5 +21,5 @@ requests>=2.31.0
 # Environment Variables
 python-dotenv>=1.0.0
 
-# Image Processing (LIGHTWEIGHT - no OpenCV)
+# Image Processing (Lightweight - untuk OCR via API)
 Pillow>=10.0.0
