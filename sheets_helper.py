@@ -340,7 +340,7 @@ def append_transactions(transactions: List[Dict], sender_name: str, source: str 
 
 def get_all_data(days: int = None) -> List[Dict]:
     """
-    Get all transaction data from the main sheet.
+    Get all transaction data from ALL project sheets (multi-project architecture).
     
     Args:
         days: Optional, only get data from last N days
@@ -349,10 +349,11 @@ def get_all_data(days: int = None) -> List[Dict]:
         List of transaction dicts
     """
     try:
-        sheet = get_main_sheet()
-        all_values = sheet.get_all_values()
+        projects = get_available_projects()
+        spreadsheet = get_spreadsheet()
         
-        if len(all_values) < 2:
+        if not projects:
+            secure_log("WARNING", "No project sheets found")
             return []
         
         data = []
@@ -361,41 +362,62 @@ def get_all_data(days: int = None) -> List[Dict]:
         if days:
             cutoff_date = datetime.now() - timedelta(days=days)
         
-        for row in all_values[1:]:  # Skip header
-            if len(row) < 5:
-                continue
-            
+        for proj in projects:
             try:
-                # Parse date
-                date_str = row[1] if len(row) > 1 else ''
-                if not date_str:
+                sheet = spreadsheet.worksheet(proj)
+                all_values = sheet.get_all_values()
+                
+                if len(all_values) < 2:
                     continue
                 
-                try:
-                    row_date = datetime.strptime(date_str, '%Y-%m-%d')
-                except ValueError:
-                    try:
-                        row_date = datetime.strptime(date_str, '%d/%m/%Y')
-                    except ValueError:
+                for row in all_values[1:]:  # Skip header
+                    if len(row) < 5:
                         continue
-                
-                if cutoff_date and row_date < cutoff_date:
-                    continue
-                
-                # Parse amount
-                amount_str = str(row[4]).replace('.', '').replace(',', '').replace('Rp', '').strip()
-                amount = int(float(amount_str)) if amount_str else 0
-                
-                data.append({
-                    'tanggal': date_str,
-                    'kategori': row[2] if len(row) > 2 else 'Lainnya',
-                    'keterangan': row[3] if len(row) > 3 else '',
-                    'jumlah': amount,
-                    'tipe': row[5] if len(row) > 5 else 'Pengeluaran',
-                    'oleh': row[6] if len(row) > 6 else '',
-                    'source': row[7] if len(row) > 7 else '',
-                })
-            except Exception:
+                    
+                    try:
+                        # Column indices: No(0), Tanggal(1), Keterangan(2), Jumlah(3), Tipe(4), Oleh(5), Source(6), Kategori(7)
+                        date_str = row[1] if len(row) > 1 else ''
+                        if not date_str:
+                            continue
+                        
+                        # Parse date - try multiple formats
+                        row_date = None
+                        for fmt in ['%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y']:
+                            try:
+                                row_date = datetime.strptime(date_str, fmt)
+                                break
+                            except ValueError:
+                                continue
+                        
+                        if not row_date:
+                            continue
+                        
+                        if cutoff_date and row_date < cutoff_date:
+                            continue
+                        
+                        # Parse amount - comma is thousands separator, period is decimal
+                        amount_str = str(row[3]).replace(',', '').replace('Rp', '').replace('IDR', '').strip()
+                        amount = int(float(amount_str)) if amount_str else 0
+                        
+                        # Get type
+                        tipe_raw = row[4] if len(row) > 4 else 'Pengeluaran'
+                        tipe = 'Pengeluaran' if 'pengeluaran' in tipe_raw.lower() else 'Pemasukan' if 'pemasukan' in tipe_raw.lower() else tipe_raw
+                        
+                        data.append({
+                            'tanggal': date_str,
+                            'keterangan': row[2] if len(row) > 2 else '',
+                            'jumlah': amount,
+                            'tipe': tipe,
+                            'oleh': row[5] if len(row) > 5 else '',
+                            'source': row[6] if len(row) > 6 else '',
+                            'kategori': row[7] if len(row) > 7 else 'Lainnya',
+                            'project': proj
+                        })
+                    except Exception:
+                        continue
+                        
+            except Exception as e:
+                secure_log("WARNING", f"Could not read project {proj}: {type(e).__name__}")
                 continue
         
         return data
