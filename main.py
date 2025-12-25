@@ -36,8 +36,7 @@ from sheets_helper import (
     get_all_categories, get_summary,
     format_data_for_ai, check_budget_alert,
     get_available_projects,
-    # Dashboard functions
-    sync_project_list, setup_dashboard,
+    # Status/Summary functions (Dashboard is now managed by Apps Script)
     format_dashboard_message, get_dashboard_summary
 )
 from security import (
@@ -113,7 +112,6 @@ AI akan otomatis:
 • `/laporan` - Ringkasan 7 hari terakhir
 • `/laporan 30` - Ringkasan 30 hari terakhir
 • `/project` - Lihat daftar project tersedia
-• `/dashboard` - Refresh sheet Dashboard di Google Sheets
 
 🤖 *Tanya AI*
 • `/tanya [pertanyaan]` - Analisis keuangan natural
@@ -321,21 +319,6 @@ def webhook_telegram():
                 send_telegram_reply(chat_id, reply)
                 return jsonify({'ok': True}), 200
             
-            # /dashboard - Refresh Dashboard sheet in Google Sheets
-            if text.lower() == '/dashboard':
-                api_url = get_telegram_api_url()
-                if api_url:
-                    requests.post(f"{api_url}/sendChatAction", 
-                                 json={'chat_id': chat_id, 'action': 'typing'},
-                                 timeout=5)
-                
-                success = setup_dashboard()
-                if success:
-                    reply = "✅ *Dashboard Updated!*\n\nSheet 'Dashboard' di Google Sheets telah di-refresh dengan data terbaru dari semua project.\n\n_Buka Google Sheets untuk melihat dashboard visual._"
-                else:
-                    reply = "❌ Gagal update Dashboard. Coba lagi nanti."
-                send_telegram_reply(chat_id, reply)
-                return jsonify({'ok': True}), 200
             
             # /laporan or /laporan30
             if text.lower().startswith('/laporan'):
