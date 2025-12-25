@@ -600,28 +600,40 @@ def get_dashboard_summary() -> Dict:
                 proj_count = 0
                 
                 for row in all_values[1:]:  # Skip header
-                    if len(row) < 6:
+                    if len(row) < 4:  # Minimal columns
                         continue
                     
                     try:
-                        # Column indices for user's format: No(0), Tanggal(1), Keterangan(2), Jumlah(3), Tipe(4), Oleh(5), Source(6), Kategori(7)
-                        amount_str = str(row[3]).replace('.', '').replace(',', '').replace('Rp', '').strip()
-                        amount = int(float(amount_str)) if amount_str else 0
-                        tipe = row[4] if len(row) > 4 else 'Pengeluaran'
+                        # Column indices: No(0), Tanggal(1), Keterangan(2), Jumlah(3), Tipe(4), Oleh(5), Source(6), Kategori(7)
+                        # Robust Amount Parsing
+                        raw_amount = str(row[3])
+                        amount_clean = raw_amount.replace('.', '').replace(',', '').replace('Rp', '').replace('IDR', '').strip()
+                        if not amount_clean:
+                            continue
+                            
+                        amount = int(float(amount_clean))
+                        
+                        # Robust Type Parsing
+                        raw_tipe = row[4] if len(row) > 4 else 'Pengeluaran'
+                        tipe = raw_tipe.lower().strip()
+                        
                         kategori = row[7] if len(row) > 7 else ALLOWED_CATEGORIES[0]
                         
-                        if tipe == 'Pengeluaran':
+                        # Logic: Check for 'keluar' or 'masuk' in the string
+                        if 'keluar' in tipe or 'expense' in tipe:
                             proj_expense += amount
                             total_expense += amount
                             if kategori in category_totals:
                                 category_totals[kategori] += amount
-                        elif tipe == 'Pemasukan':
+                        elif 'masuk' in tipe or 'income' in tipe:
                             proj_income += amount
                             total_income += amount
                         
                         proj_count += 1
                         total_transactions += 1
-                    except:
+                    except Exception as e:
+                        # Log specific error for debugging
+                        # secure_log("DEBUG", f"Row parse error in {proj}: {e}")
                         continue
                 
                 project_data.append({
@@ -632,7 +644,8 @@ def get_dashboard_summary() -> Dict:
                     'transactions': proj_count
                 })
                 
-            except Exception:
+            except Exception as e:
+                secure_log("ERROR", f"Failed to process project {proj}: {e}")
                 continue
         
         return {
