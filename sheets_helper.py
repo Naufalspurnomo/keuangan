@@ -599,11 +599,21 @@ def get_dashboard_summary() -> Dict:
                 proj_income = 0
                 proj_count = 0
                 
-                for row in all_values[1:]:  # Skip header
+                secure_log("DEBUG", f"Processing {proj} - Total rows: {len(all_values)}")
+                
+                # Check column headers
+                if len(all_values) > 0:
+                     secure_log("DEBUG", f"Header: {all_values[0]}")
+
+                for i, row in enumerate(all_values[1:]):  # Skip header
                     if len(row) < 4:  # Minimal columns
                         continue
                     
                     try:
+                        # Debug first 3 rows only
+                        if i < 3:
+                            secure_log("DEBUG", f"Raw Row {i+1}: {row}")
+
                         # Column indices: No(0), Tanggal(1), Keterangan(2), Jumlah(3), Tipe(4), Oleh(5), Source(6), Kategori(7)
                         # Robust Amount Parsing
                         raw_amount = str(row[3])
@@ -619,6 +629,9 @@ def get_dashboard_summary() -> Dict:
                         
                         kategori = row[7] if len(row) > 7 else ALLOWED_CATEGORIES[0]
                         
+                        if i < 3:
+                            secure_log("DEBUG", f"Parsed: Amount={amount}, Tipe={tipe}, Cat={kategori}")
+
                         # Logic: Check for 'keluar' or 'masuk' in the string
                         if 'keluar' in tipe or 'expense' in tipe:
                             proj_expense += amount
@@ -632,9 +645,11 @@ def get_dashboard_summary() -> Dict:
                         proj_count += 1
                         total_transactions += 1
                     except Exception as e:
-                        # Log specific error for debugging
-                        # secure_log("DEBUG", f"Row parse error in {proj}: {e}")
+                        secure_log("DEBUG", f"Row parse error in {proj} row {i+1}: {e}")
                         continue
+                
+                secure_log("INFO", f"Project {proj} summary: {proj_count} tx, Exp={proj_expense}, Inc={proj_income}")
+
                 
                 project_data.append({
                     'name': proj,
