@@ -40,13 +40,12 @@ SHEET_HEADERS = ['No', 'Tanggal', 'Keterangan', 'Jumlah', 'Tipe', 'Oleh', 'Sourc
 # Dashboard configuration
 DASHBOARD_SHEET_NAME = "Dashboard"
 META_SHEET_NAME = "Meta_Projek"
-SYSTEM_SHEETS = {'Config', 'Template', 'Settings', 'Master', DASHBOARD_SHEET_NAME, META_SHEET_NAME}
+SYSTEM_SHEETS = {'Config', 'Template', 'Settings', 'Master', DASHBOARD_SHEET_NAME, META_SHEET_NAME, 'Data_Agregat'}
 
 # Global instances
 _client = None
 _spreadsheet = None
 _main_sheet = None
-
 
 def authenticate():
     """
@@ -615,12 +614,14 @@ def get_dashboard_summary() -> Dict:
                             secure_log("DEBUG", f"Raw Row {i+1}: {row}")
 
                         # Column indices: No(0), Tanggal(1), Keterangan(2), Jumlah(3), Tipe(4), Oleh(5), Source(6), Kategori(7)
-                        # Robust Amount Parsing
+                        # Amount format: '1,500,000.00' where comma=thousands, period=decimal
                         raw_amount = str(row[3])
-                        amount_clean = raw_amount.replace('.', '').replace(',', '').replace('Rp', '').replace('IDR', '').strip()
+                        # Remove thousands separators (commas), keep decimal point
+                        amount_clean = raw_amount.replace(',', '').replace('Rp', '').replace('IDR', '').strip()
                         if not amount_clean:
                             continue
-                            
+                        
+                        # Parse as float first (handles decimals), then convert to int
                         amount = int(float(amount_clean))
                         
                         # Robust Type Parsing
@@ -632,13 +633,13 @@ def get_dashboard_summary() -> Dict:
                         if i < 3:
                             secure_log("DEBUG", f"Parsed: Amount={amount}, Tipe={tipe}, Cat={kategori}")
 
-                        # Logic: Check for 'keluar' or 'masuk' in the string
-                        if 'keluar' in tipe or 'expense' in tipe:
+                        # Type detection: check for full keywords
+                        if 'pengeluaran' in tipe or 'expense' in tipe or 'keluar' in tipe:
                             proj_expense += amount
                             total_expense += amount
                             if kategori in category_totals:
                                 category_totals[kategori] += amount
-                        elif 'masuk' in tipe or 'income' in tipe:
+                        elif 'pemasukan' in tipe or 'income' in tipe or 'masuk' in tipe:
                             proj_income += amount
                             total_income += amount
                         
