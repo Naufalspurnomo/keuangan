@@ -228,8 +228,11 @@ def format_success_reply(transactions: list) -> str:
 
 
 def get_status_message() -> str:
-    """Get current status message - aggregates all project data."""
-    # Use the dashboard message which aggregates all projects
+    """Get current status message - now uses Dashboard data for multi-project view."""
+    # Sync projects first to ensure dashboard is up-to-date
+    sync_project_list()
+    
+    # Use the new dashboard message which aggregates all projects
     return format_dashboard_message()
 
 

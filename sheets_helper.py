@@ -2,10 +2,7 @@ import os
 import gspread
 import json
 from datetime import datetime, timedelta
-from google.oauth2.credentials import Credentials
-from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
+from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 from typing import List, Dict, Optional
 
@@ -24,7 +21,6 @@ from security import (
 # Google Sheets configuration
 SPREADSHEET_ID = os.getenv('GOOGLE_SHEETS_ID')
 CREDENTIALS_FILE = os.getenv('CREDENTIALS_FILE', 'credentials.json')
-TOKEN_FILE = 'token.json'
 
 # Budget configuration
 DEFAULT_BUDGET = int(os.getenv('DEFAULT_PROJECT_BUDGET', '10000000'))
@@ -54,63 +50,45 @@ _main_sheet = None
 
 def authenticate():
     """
-    Authenticate with Google Sheets API.
+    Authenticate with Google Sheets API using Service Account.
     
-    Supports two modes:
-    1. Service Account (for cloud/server) - via GOOGLE_CREDENTIALS env var (JSON string)
-    2. OAuth2 (for local development) - via credentials.json file
+    Supports two methods:
+    1. GOOGLE_CREDENTIALS env var (JSON string) - for production/Koyeb
+    2. credentials.json file - for local development
     """
     global _client
     
     if _client is not None:
         return _client
     
-    # Mode 1: Service Account from environment variable (for cloud deployment)
+    creds = None
+    
+    # Method 1: Try environment variable first (production)
     google_creds_json = os.getenv('GOOGLE_CREDENTIALS')
     if google_creds_json:
         try:
             creds_dict = json.loads(google_creds_json)
-            creds = ServiceAccountCredentials.from_service_account_info(creds_dict, scopes=SCOPES)
-            _client = gspread.authorize(creds)
-            secure_log("INFO", "Google Sheets auth via Service Account (env var)")
-            return _client
+            creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+            secure_log("INFO", "Authenticated via GOOGLE_CREDENTIALS env var")
         except Exception as e:
-            secure_log("ERROR", f"Service Account auth failed: {type(e).__name__}")
-            raise
+            secure_log("ERROR", f"Failed to parse GOOGLE_CREDENTIALS: {type(e).__name__}")
     
-    # Mode 2: OAuth2 from file (for local development)
-    creds = None
-    
-    if os.path.exists(TOKEN_FILE):
+    # Method 2: Try credentials file (local development)
+    if not creds and os.path.exists(CREDENTIALS_FILE):
         try:
-            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-        except Exception:
-            pass
+            creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=SCOPES)
+            secure_log("INFO", f"Authenticated via {CREDENTIALS_FILE} file")
+        except Exception as e:
+            secure_log("ERROR", f"Failed to load {CREDENTIALS_FILE}: {type(e).__name__}")
     
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-            except Exception:
-                creds = None
-        
-        if not creds:
-            if not os.path.exists(CREDENTIALS_FILE):
-                raise FileNotFoundError(
-                    f"Tidak ada credentials! Set GOOGLE_CREDENTIALS env var (untuk cloud) "
-                    f"atau taruh file '{CREDENTIALS_FILE}' (untuk local)."
-                )
-            
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            secure_log("INFO", "OAuth login required - opening browser")
-            creds = flow.run_local_server(port=8888, open_browser=True)
-        
-        with open(TOKEN_FILE, 'w') as token:
-            token.write(creds.to_json())
+    if not creds:
+        raise FileNotFoundError(
+            "Google credentials not found! Set GOOGLE_CREDENTIALS env var "
+            f"or provide {CREDENTIALS_FILE} file."
+        )
     
     _client = gspread.authorize(creds)
-    secure_log("INFO", "Google Sheets auth via OAuth2 (local)")
-
+    secure_log("INFO", "Google Sheets authentication successful")
     return _client
 
 
