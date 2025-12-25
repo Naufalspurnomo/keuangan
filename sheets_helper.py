@@ -1,20 +1,9 @@
-"""
-sheets_helper.py - Google Sheets Integration Module v2.1 (Simplified)
-
-Features:
-- SINGLE Sheet architecture (no multi-sheet)
-- Fixed categories (validated from security module)
-- Budget Tracking & Alerts
-- Report Generation
-- Secure data formatting for AI
-
-ARCHITECTURE: All transactions in ONE sheet called "Transaksi"
-"""
-
 import os
 import gspread
+import json
 from datetime import datetime, timedelta
 from google.oauth2.credentials import Credentials
+from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from dotenv import load_dotenv
@@ -64,12 +53,32 @@ _main_sheet = None
 
 
 def authenticate():
-    """Authenticate with Google Sheets API using OAuth2."""
+    """
+    Authenticate with Google Sheets API.
+    
+    Supports two modes:
+    1. Service Account (for cloud/server) - via GOOGLE_CREDENTIALS env var (JSON string)
+    2. OAuth2 (for local development) - via credentials.json file
+    """
     global _client
     
     if _client is not None:
         return _client
     
+    # Mode 1: Service Account from environment variable (for cloud deployment)
+    google_creds_json = os.getenv('GOOGLE_CREDENTIALS')
+    if google_creds_json:
+        try:
+            creds_dict = json.loads(google_creds_json)
+            creds = ServiceAccountCredentials.from_service_account_info(creds_dict, scopes=SCOPES)
+            _client = gspread.authorize(creds)
+            secure_log("INFO", "Google Sheets auth via Service Account (env var)")
+            return _client
+        except Exception as e:
+            secure_log("ERROR", f"Service Account auth failed: {type(e).__name__}")
+            raise
+    
+    # Mode 2: OAuth2 from file (for local development)
     creds = None
     
     if os.path.exists(TOKEN_FILE):
@@ -87,7 +96,10 @@ def authenticate():
         
         if not creds:
             if not os.path.exists(CREDENTIALS_FILE):
-                raise FileNotFoundError(f"File '{CREDENTIALS_FILE}' tidak ditemukan!")
+                raise FileNotFoundError(
+                    f"Tidak ada credentials! Set GOOGLE_CREDENTIALS env var (untuk cloud) "
+                    f"atau taruh file '{CREDENTIALS_FILE}' (untuk local)."
+                )
             
             flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
             secure_log("INFO", "OAuth login required - opening browser")
@@ -97,7 +109,8 @@ def authenticate():
             token.write(creds.to_json())
     
     _client = gspread.authorize(creds)
-    secure_log("INFO", "Google Sheets authentication successful")
+    secure_log("INFO", "Google Sheets auth via OAuth2 (local)")
+
     return _client
 
 
