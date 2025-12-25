@@ -316,6 +316,32 @@ def webhook_telegram():
                 send_telegram_reply(chat_id, reply)
                 return jsonify({'ok': True}), 200
             
+            # /list - Show recent transactions
+            if text.lower() == '/list':
+                from sheets_helper import get_all_data
+                data = get_all_data(days=7)  # Last 7 days
+                if data:
+                    lines = ["📋 *Transaksi Terakhir (7 hari):*\n"]
+                    # Group by project
+                    by_project = {}
+                    for d in data[-20:]:  # Last 20 transactions
+                        proj = d.get('project', 'Unknown')
+                        if proj not in by_project:
+                            by_project[proj] = []
+                        by_project[proj].append(d)
+                    
+                    for proj, items in by_project.items():
+                        lines.append(f"\n*{proj}:*")
+                        for item in items[-5:]:  # 5 per project
+                            emoji = "💸" if item['tipe'] == 'Pengeluaran' else "💰"
+                            lines.append(f"  {emoji} {item['keterangan'][:30]} - Rp {item['jumlah']:,}".replace(',', '.'))
+                    
+                    reply = '\n'.join(lines)
+                else:
+                    reply = "📋 Tidak ada transaksi dalam 7 hari terakhir."
+                send_telegram_reply(chat_id, reply)
+                return jsonify({'ok': True}), 200
+            
             
             # /laporan or /laporan30
             if text.lower().startswith('/laporan'):
