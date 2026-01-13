@@ -23,10 +23,10 @@ from functools import wraps
 # ===================== FIXED CATEGORIES =====================
 
 ALLOWED_CATEGORIES = [
-    "Bahan",          # Material bangunan: semen, pasir, batu, kayu, cat, besi, keramik
-    "Alat",           # Peralatan: paku, gergaji, tang, obeng, gerinda, bor, meteran
-    "Operasional",    # Listrik, air, internet, sewa, maintenance, transport
-    "Gaji",           # Upah tukang, honor, fee, lembur
+    "Operasi Kantor",  # Office operations: listrik, air, internet, sewa, admin, pulsa
+    "Bahan Alat",      # Materials & tools: semen, cat, paku, gerinda, meteran, kayu, besi
+    "Gaji",            # Wages: upah tukang, honor, lembur, fee, mandor
+    "Lain-lain",       # Others: transport, makan, parkir, bensin, dll
 ]
 
 
@@ -204,57 +204,59 @@ def validate_category(category: str) -> str:
         category: Category string from AI or user
         
     Returns:
-        Valid category (defaults to first category if invalid - no Lainnya)
+        Valid category (defaults to Lain-lain if no match)
     """
     if not category:
-        return ALLOWED_CATEGORIES[0]  # Default to first category
+        return "Lain-lain"  # Default to Lain-lain
     
-    # Normalize: strip, title case
-    normalized = category.strip().title()
+    # Normalize: strip
+    normalized = category.strip()
     
-    # Check if in allowed list
-    if normalized in ALLOWED_CATEGORIES:
-        return normalized
+    # Check if in allowed list (case-insensitive)
+    for allowed in ALLOWED_CATEGORIES:
+        if normalized.lower() == allowed.lower():
+            return allowed
     
     # Keyword-based matching for new categories
     category_lower = normalized.lower()
     
-    # Bahan - material bangunan
-    bahan_keywords = ['semen', 'pasir', 'batu', 'kayu', 'cat', 'besi', 'keramik', 
-                      'genteng', 'pipa', 'kabel', 'triplek', 'gypsum', 'material',
-                      'bahan', 'bata', 'seng', 'asbes']
-    if any(kw in category_lower for kw in bahan_keywords):
-        return "Bahan"
+    # Operasi Kantor - office operations
+    operasi_keywords = ['listrik', 'air', 'internet', 'sewa', 'pulsa', 'admin',
+                        'kantor', 'operasi', 'operasional', 'wifi', 'telepon',
+                        'maintenance', 'kebersihan', 'atk', 'office']
+    if any(kw in category_lower for kw in operasi_keywords):
+        return "Operasi Kantor"
     
-    # Alat - peralatan
-    alat_keywords = ['paku', 'gergaji', 'tang', 'obeng', 'gerinda', 'bor', 'meteran',
-                     'cangkul', 'sekop', 'palu', 'kunci', 'alat', 'tool', 'mesin',
-                     'kikir', 'amplas', 'kuas', 'ember']
-    if any(kw in category_lower for kw in alat_keywords):
-        return "Alat"
+    # Bahan Alat - materials and tools combined
+    bahan_alat_keywords = ['semen', 'pasir', 'batu', 'kayu', 'cat', 'besi', 'keramik',
+                           'genteng', 'pipa', 'kabel', 'triplek', 'gypsum', 'material',
+                           'bahan', 'bata', 'seng', 'asbes', 'paku', 'gergaji', 'tang',
+                           'obeng', 'gerinda', 'bor', 'meteran', 'cangkul', 'sekop',
+                           'palu', 'kunci', 'alat', 'tool', 'mesin', 'kikir', 'amplas',
+                           'kuas', 'ember', 'mur', 'baut', 'lem']
+    if any(kw in category_lower for kw in bahan_alat_keywords):
+        return "Bahan Alat"
     
-    # Gaji - upah pekerja
+    # Gaji - wages
     gaji_keywords = ['gaji', 'upah', 'tukang', 'honor', 'fee', 'lembur', 'bayar pekerja',
-                     'mandor', 'kuli', 'pekerja', 'buruh', 'borongan']
+                     'mandor', 'kuli', 'pekerja', 'buruh', 'borongan', 'karyawan',
+                     'salary', 'wage']
     if any(kw in category_lower for kw in gaji_keywords):
         return "Gaji"
     
-    # Operasional - biaya operasi
-    operasional_keywords = ['listrik', 'air', 'internet', 'sewa', 'pulsa', 'transport',
-                            'bensin', 'solar', 'makan', 'konsumsi', 'parkir', 'toll',
-                            'operasional', 'biaya', 'admin']
-    if any(kw in category_lower for kw in operasional_keywords):
-        return "Operasional"
+    # Lain-lain - others (transport, food, parking, etc.)
+    lainnya_keywords = ['transport', 'bensin', 'solar', 'makan', 'konsumsi', 'parkir',
+                        'toll', 'tol', 'ongkir', 'kirim', 'biaya', 'lain']
+    if any(kw in category_lower for kw in lainnya_keywords):
+        return "Lain-lain"
     
     # Try fuzzy matching with allowed categories
     for allowed in ALLOWED_CATEGORIES:
-        if category_lower == allowed.lower():
-            return allowed
         if category_lower in allowed.lower() or allowed.lower() in category_lower:
             return allowed
     
-    # Default to first category (no Lainnya available)
-    return ALLOWED_CATEGORIES[0]
+    # Default to Lain-lain
+    return "Lain-lain"
 
 
 def validate_media_url(url: str) -> Tuple[bool, Optional[str]]:

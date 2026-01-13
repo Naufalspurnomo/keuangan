@@ -32,10 +32,17 @@ SCOPES = [
     'https://www.googleapis.com/auth/drive'
 ]
 
-# Sheet configuration - matches user's actual format
-MAIN_SHEET_NAME = "Transaksi"
-# User's actual column order: No, Tanggal, Keterangan, Jumlah, Tipe, Oleh, Source, Kategori
-SHEET_HEADERS = ['No', 'Tanggal', 'Keterangan', 'Jumlah', 'Tipe', 'Oleh', 'Source', 'Kategori']
+# Sheet configuration - Company sheets (5 main company sheets)
+COMPANY_SHEETS = [
+    "TEXTURIN-Bali",
+    "TEXTURIN-Surabaya",
+    "HOLLA",
+    "HOJJA",
+    "KANTOR"
+]
+
+# Column order: No, Tanggal, Keterangan, Jumlah, Tipe, Oleh, Source, Kategori, Nama Projek
+SHEET_HEADERS = ['No', 'Tanggal', 'Keterangan', 'Jumlah', 'Tipe', 'Oleh', 'Source', 'Kategori', 'Nama Projek']
 
 # Dashboard configuration
 DASHBOARD_SHEET_NAME = "Dashboard"
@@ -45,7 +52,6 @@ SYSTEM_SHEETS = {'Config', 'Template', 'Settings', 'Master', DASHBOARD_SHEET_NAM
 # Global instances
 _client = None
 _spreadsheet = None
-_main_sheet = None
 
 def authenticate():
     """
@@ -103,107 +109,61 @@ def get_spreadsheet():
     return _spreadsheet
 
 
-def get_main_sheet():
-    """Get the main transaction sheet (NO AUTO-CREATE).
-    
-    Raises:
-        ValueError: If sheet not found - only admin can create sheets
-    """
-    global _main_sheet
-    
-    if _main_sheet is not None:
-        return _main_sheet
-    
-    spreadsheet = get_spreadsheet()
-    
-    try:
-        _main_sheet = spreadsheet.worksheet(MAIN_SHEET_NAME)
-        secure_log("INFO", f"Using existing sheet: {MAIN_SHEET_NAME}")
-    except gspread.WorksheetNotFound:
-        # DO NOT CREATE - only admin can create sheets
-        raise ValueError(f"Sheet '{MAIN_SHEET_NAME}' tidak ditemukan. Hubungi admin untuk membuat sheet.")
-    
-    return _main_sheet
-
-
-def get_available_projects() -> List[str]:
-    """Get list of available project sheets in the spreadsheet.
-    
-    Returns all sheets except system sheets (like 'Config', 'Template', etc.)
-    More flexible validation - accepts any sheet with data.
+def get_company_sheets() -> List[str]:
+    """Get list of available company sheets.
     
     Returns:
-        List of project/sheet names
+        List of company sheet names
     """
-    try:
-        spreadsheet = get_spreadsheet()
-        all_sheets = spreadsheet.worksheets()
-        
-        # Debug: Log all sheets found
-        all_sheet_names = [s.title for s in all_sheets]
-        secure_log("INFO", f"All sheets in spreadsheet: {all_sheet_names}")
-        secure_log("INFO", f"System sheets to exclude: {SYSTEM_SHEETS}")
-        
-        project_list = []
-        for sheet in all_sheets:
-            sheet_name = sheet.title
-            
-            # Skip system sheets
-            if sheet_name in SYSTEM_SHEETS:
-                secure_log("DEBUG", f"Skipping system sheet: {sheet_name}")
-                continue
-            
-            # More flexible validation - just check if sheet has some structure
-            try:
-                header_row = sheet.row_values(1)
-                col_count = len(header_row)
-                secure_log("DEBUG", f"Sheet '{sheet_name}' has {col_count} columns: {header_row[:3]}...")
-                
-                # Accept sheet if it has at least 3 columns (minimal structure)
-                if col_count >= 3:
-                    project_list.append(sheet_name)
-                    secure_log("INFO", f"✓ Added project sheet: {sheet_name}")
-                else:
-                    secure_log("DEBUG", f"✗ Rejected '{sheet_name}': only {col_count} columns")
-            except Exception as e:
-                secure_log("WARNING", f"Could not read header for {sheet_name}: {type(e).__name__}: {str(e)}")
-                continue
-        
-        secure_log("INFO", f"Found {len(project_list)} valid project sheets: {project_list}")
-        return project_list
-        
-    except Exception as e:
-        secure_log("ERROR", f"Failed to get projects: {type(e).__name__}: {str(e)}")
-        return []
+    return COMPANY_SHEETS.copy()
 
 
-def get_project_sheet(project_name: str):
-    """Get a specific project sheet by name (NO AUTO-CREATE).
+def get_company_sheet(company_name: str):
+    """Get a specific company sheet by name (NO AUTO-CREATE).
     
     Args:
-        project_name: Name of the project/sheet to get
+        company_name: Name of the company sheet (e.g., 'TEXTURIN-Bali')
         
     Returns:
         gspread.Worksheet object
         
     Raises:
-        ValueError: If sheet not found - only admin can create sheets
+        ValueError: If sheet not found
     """
+    if company_name not in COMPANY_SHEETS:
+        available_str = ', '.join(COMPANY_SHEETS)
+        raise ValueError(
+            f"Company '{company_name}' tidak valid.\n"
+            f"Pilih dari: {available_str}"
+        )
+    
     spreadsheet = get_spreadsheet()
     
     try:
-        sheet = spreadsheet.worksheet(project_name)
-        secure_log("INFO", f"Using project sheet: {project_name}")
+        sheet = spreadsheet.worksheet(company_name)
+        secure_log("INFO", f"Using company sheet: {company_name}")
         return sheet
     except gspread.WorksheetNotFound:
-        # DO NOT CREATE - only admin can create sheets
-        available = get_available_projects()
-        available_str = ', '.join(available) if available else 'Tidak ada sheet'
         raise ValueError(
-            f"Project '{project_name}' tidak ditemukan.\n"
-            f"Sheet tersedia: {available_str}\n"
-            f"Hubungi admin untuk membuat project baru."
+            f"Sheet '{company_name}' tidak ditemukan di spreadsheet.\n"
+            f"Hubungi admin untuk membuat sheet."
         )
+
+
+def get_available_projects() -> List[str]:
+    """Get list of available company sheets.
+    
+    This is now a simple wrapper around COMPANY_SHEETS for backward compatibility.
+    
+    Returns:
+        List of company sheet names
+    """
+    return COMPANY_SHEETS.copy()
+
+
+def get_project_sheet(company_name: str):
+    """Alias for get_company_sheet for backward compatibility."""
+    return get_company_sheet(company_name)
 
 
 def get_all_categories() -> List[str]:
@@ -212,19 +172,20 @@ def get_all_categories() -> List[str]:
 
 
 def append_transaction(transaction: Dict, sender_name: str, source: str = "Text", 
-                       project_name: str = None) -> bool:
+                       company_sheet: str = None, nama_projek: str = None) -> bool:
     """
-    Append a single transaction to a project sheet.
+    Append a single transaction to a company sheet.
     
     Args:
         transaction: Transaction dict with tanggal, kategori, keterangan, jumlah, tipe
         sender_name: Name of the person recording
         source: Input source (Text/Image/Voice)
-        project_name: Target project/sheet name (uses main sheet if None)
+        company_sheet: Target company sheet name (e.g., 'TEXTURIN-Bali')
+        nama_projek: Project name within the company (e.g., 'Purana Ubud')
     
     Transaction dict should have:
     - tanggal: YYYY-MM-DD
-    - kategori: One of ALLOWED_CATEGORIES (Bahan, Alat, Operasional, Gaji)
+    - kategori: One of ALLOWED_CATEGORIES (Operasi Kantor, Bahan Alat, Gaji, Lain-lain)
     - keterangan: Description
     - jumlah: Amount (positive number)
     - tipe: "Pengeluaran" or "Pemasukan"
@@ -233,17 +194,20 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
         True if successful, False otherwise
         
     Raises:
-        ValueError: If project not found (NO AUTO-CREATE)
+        ValueError: If company_sheet not specified or not found
     """
     try:
-        # Use project-specific sheet or fallback to main sheet
-        if project_name:
-            sheet = get_project_sheet(project_name)
-        else:
-            sheet = get_main_sheet()
+        # Company sheet is required
+        if not company_sheet:
+            raise ValueError(
+                "Company sheet harus dipilih.\n"
+                f"Pilih dari: {', '.join(COMPANY_SHEETS)}"
+            )
+        
+        sheet = get_company_sheet(company_sheet)
         
         # Validate and sanitize category
-        kategori = validate_category(transaction.get('kategori', 'Bahan'))
+        kategori = validate_category(transaction.get('kategori', 'Lain-lain'))
         
         # Sanitize keterangan
         keterangan = sanitize_input(str(transaction.get('keterangan', '')))[:200]
@@ -262,17 +226,17 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
         # Sanitize sender name
         safe_sender = sanitize_input(sender_name)[:50]
         
+        # Sanitize nama_projek
+        safe_nama_projek = sanitize_input(str(nama_projek or ''))[:100]
+        
         # Calculate No (Auto-increment)
         try:
-            # Check length of column B (Tanggal) to determine next number
-            # If only header (1 row), len is 1, next number is 1
-            # If header + 1 data (2 rows), len is 2, next number is 2
             existing_rows = len(sheet.col_values(2))
             next_no = existing_rows
         except Exception:
             next_no = 1
 
-        # Row order matches user's spreadsheet: No, Tanggal, Keterangan, Jumlah, Tipe, Oleh, Source, Kategori
+        # Row order: No, Tanggal, Keterangan, Jumlah, Tipe, Oleh, Source, Kategori, Nama Projek
         row = [
             next_no,  # A: Auto-generated Number
             transaction.get('tanggal', datetime.now().strftime('%Y-%m-%d')),  # B: Tanggal
@@ -281,17 +245,16 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
             tipe,  # E: Tipe (Pengeluaran/Pemasukan)
             safe_sender,  # F: Oleh (recorded by)
             source,  # G: Source (Text/Image/Voice)
-            kategori  # H: Kategori (LAST column!)
+            kategori,  # H: Kategori
+            safe_nama_projek  # I: Nama Projek
         ]
         
         sheet.append_row(row, value_input_option='USER_ENTERED')
-        project_info = f" -> {project_name}" if project_name else ""
-        secure_log("INFO", f"Transaction added{project_info}: {kategori} - {jumlah}")
+        secure_log("INFO", f"Transaction added to {company_sheet}: {kategori} - {jumlah} - {safe_nama_projek}")
         return True
         
     except ValueError as e:
-        # Sheet not found error - propagate for proper handling
-        secure_log("ERROR", f"Project not found: {str(e)}")
+        secure_log("ERROR", f"Transaction error: {str(e)}")
         raise
     except Exception as e:
         secure_log("ERROR", f"Failed to add transaction: {type(e).__name__}")
@@ -299,32 +262,40 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
 
 
 def append_transactions(transactions: List[Dict], sender_name: str, source: str = "Text",
-                        project_name: str = None) -> Dict:
-    """Append multiple transactions to a project sheet.
+                        company_sheet: str = None) -> Dict:
+    """Append multiple transactions to a company sheet.
     
     Args:
-        transactions: List of transaction dicts
+        transactions: List of transaction dicts (each may have 'nama_projek')
         sender_name: Name of the person recording
         source: Input source (Text/Image/Voice)
-        project_name: Target project/sheet name (uses main sheet if None)
+        company_sheet: Target company sheet name (REQUIRED)
         
     Returns:
         Dict with success status, rows_added count, and errors
     """
     rows_added = 0
     errors = []
-    project_error = None
+    company_error = None
+    
+    if not company_sheet:
+        return {
+            'success': False,
+            'rows_added': 0,
+            'total_transactions': len(transactions),
+            'errors': ['company_sheet_required'],
+            'company_error': 'Company sheet belum dipilih'
+        }
     
     for t in transactions:
         try:
-            # Use project from transaction if available, otherwise use parameter
-            target_project = t.get('project') or project_name
-            if append_transaction(t, sender_name, source, project_name=target_project):
+            nama_projek = t.get('nama_projek', '')
+            if append_transaction(t, sender_name, source, 
+                                  company_sheet=company_sheet, nama_projek=nama_projek):
                 rows_added += 1
         except ValueError as e:
-            # Project not found - capture error and stop
-            project_error = str(e)
-            errors.append("project_not_found")
+            company_error = str(e)
+            errors.append("company_not_found")
             break
         except Exception:
             errors.append("transaction_failed")
@@ -334,27 +305,22 @@ def append_transactions(transactions: List[Dict], sender_name: str, source: str 
         'rows_added': rows_added,
         'total_transactions': len(transactions),
         'errors': errors,
-        'project_error': project_error
+        'company_error': company_error
     }
 
 
 def get_all_data(days: int = None) -> List[Dict]:
     """
-    Get all transaction data from ALL project sheets (multi-project architecture).
+    Get all transaction data from ALL company sheets.
     
     Args:
         days: Optional, only get data from last N days
         
     Returns:
-        List of transaction dicts
+        List of transaction dicts with company_sheet and nama_projek
     """
     try:
-        projects = get_available_projects()
         spreadsheet = get_spreadsheet()
-        
-        if not projects:
-            secure_log("WARNING", "No project sheets found")
-            return []
         
         data = []
         
@@ -362,9 +328,9 @@ def get_all_data(days: int = None) -> List[Dict]:
         if days:
             cutoff_date = datetime.now() - timedelta(days=days)
         
-        for proj in projects:
+        for company in COMPANY_SHEETS:
             try:
-                sheet = spreadsheet.worksheet(proj)
+                sheet = spreadsheet.worksheet(company)
                 all_values = sheet.get_all_values()
                 
                 if len(all_values) < 2:
@@ -375,7 +341,8 @@ def get_all_data(days: int = None) -> List[Dict]:
                         continue
                     
                     try:
-                        # Column indices: No(0), Tanggal(1), Keterangan(2), Jumlah(3), Tipe(4), Oleh(5), Source(6), Kategori(7)
+                        # Column indices: No(0), Tanggal(1), Keterangan(2), Jumlah(3), Tipe(4), 
+                        #                 Oleh(5), Source(6), Kategori(7), Nama Projek(8)
                         date_str = row[1] if len(row) > 1 else ''
                         if not date_str:
                             continue
@@ -392,10 +359,12 @@ def get_all_data(days: int = None) -> List[Dict]:
                         if not row_date:
                             continue
                         
-                        if cutoff_date and row_date < cutoff_date:
+                        # Only filter out past transactions older than cutoff
+                        # Future-dated transactions are always included
+                        if cutoff_date and row_date < cutoff_date and row_date < datetime.now():
                             continue
                         
-                        # Parse amount - comma is thousands separator, period is decimal
+                        # Parse amount
                         amount_str = str(row[3]).replace(',', '').replace('Rp', '').replace('IDR', '').strip()
                         amount = int(float(amount_str)) if amount_str else 0
                         
@@ -410,14 +379,15 @@ def get_all_data(days: int = None) -> List[Dict]:
                             'tipe': tipe,
                             'oleh': row[5] if len(row) > 5 else '',
                             'source': row[6] if len(row) > 6 else '',
-                            'kategori': row[7] if len(row) > 7 else 'Lainnya',
-                            'project': proj
+                            'kategori': row[7] if len(row) > 7 else 'Lain-lain',
+                            'nama_projek': row[8] if len(row) > 8 else '',
+                            'company_sheet': company
                         })
                     except Exception:
                         continue
                         
             except Exception as e:
-                secure_log("WARNING", f"Could not read project {proj}: {type(e).__name__}")
+                secure_log("WARNING", f"Could not read company {company}: {type(e).__name__}")
                 continue
         
         return data
@@ -503,33 +473,80 @@ def format_data_for_ai(days: int = 30) -> str:
     Format all data as text for AI context.
     Used for /tanya queries.
     SECURED: No sensitive data included.
+    Includes transaction details with nama_projek for specific queries.
     """
-    summary = get_summary(days)
+    # Get raw transaction data
+    data = get_all_data(days)
     
-    if summary['transaction_count'] == 0:
+    if not data:
         return "Tidak ada data transaksi."
+    
+    # Calculate summary
+    total_pengeluaran = sum(d['jumlah'] for d in data if d.get('tipe') == 'Pengeluaran')
+    total_pemasukan = sum(d['jumlah'] for d in data if d.get('tipe') == 'Pemasukan')
     
     lines = [
         f"DATA KEUANGAN ({days} HARI TERAKHIR)",
         "=" * 40,
         "",
-        f"Total Pengeluaran: Rp {summary['total_pengeluaran']:,}".replace(',', '.'),
-        f"Total Pemasukan: Rp {summary['total_pemasukan']:,}".replace(',', '.'),
-        f"Saldo: Rp {summary['saldo']:,}".replace(',', '.'),
-        f"Jumlah Transaksi: {summary['transaction_count']}",
+        f"Total Pengeluaran: Rp {total_pengeluaran:,}".replace(',', '.'),
+        f"Total Pemasukan: Rp {total_pemasukan:,}".replace(',', '.'),
+        f"Saldo: Rp {total_pemasukan - total_pengeluaran:,}".replace(',', '.'),
+        f"Jumlah Transaksi: {len(data)}",
         "",
     ]
     
-    if summary['by_kategori']:
+    # Group by kategori
+    by_kategori = {}
+    for d in data:
+        if d.get('tipe') == 'Pengeluaran':
+            kat = d.get('kategori', 'Lain-lain')
+            by_kategori[kat] = by_kategori.get(kat, 0) + d['jumlah']
+    
+    if by_kategori:
         lines.append("PER KATEGORI:")
-        for kat, amount in sorted(summary['by_kategori'].items(), key=lambda x: -x[1]):
+        for kat, amount in sorted(by_kategori.items(), key=lambda x: -x[1]):
             lines.append(f"  - {kat}: Rp {amount:,}".replace(',', '.'))
         lines.append("")
     
-    if summary['by_oleh']:
-        lines.append("PER PENCATAT:")
-        for oleh, amount in sorted(summary['by_oleh'].items(), key=lambda x: -x[1]):
-            lines.append(f"  - {oleh}: Rp {amount:,}".replace(',', '.'))
+    # Group by nama_projek
+    by_projek = {}
+    for d in data:
+        projek = d.get('nama_projek', '').strip()
+        if projek and d.get('tipe') == 'Pengeluaran':
+            if projek not in by_projek:
+                by_projek[projek] = {'total': 0, 'company': d.get('company_sheet', '')}
+            by_projek[projek]['total'] += d['jumlah']
+    
+    if by_projek:
+        lines.append("PER NAMA PROJEK:")
+        for projek, info in sorted(by_projek.items(), key=lambda x: -x[1]['total']):
+            lines.append(f"  - {projek} ({info['company']}): Rp {info['total']:,}".replace(',', '.'))
+        lines.append("")
+    
+    # Group by company_sheet
+    by_company = {}
+    for d in data:
+        company = d.get('company_sheet', 'Unknown')
+        if d.get('tipe') == 'Pengeluaran':
+            by_company[company] = by_company.get(company, 0) + d['jumlah']
+    
+    if by_company:
+        lines.append("PER COMPANY SHEET:")
+        for company, amount in sorted(by_company.items(), key=lambda x: -x[1]):
+            lines.append(f"  - {company}: Rp {amount:,}".replace(',', '.'))
+        lines.append("")
+    
+    # Add transaction details (limit to last 50 for context size)
+    lines.append("DETAIL TRANSAKSI TERBARU:")
+    for d in data[-50:]:
+        tipe = "+" if d.get('tipe') == 'Pemasukan' else "-"
+        projek = f" [{d.get('nama_projek', '')}]" if d.get('nama_projek') else ""
+        company = d.get('company_sheet', '')
+        lines.append(
+            f"  {tipe} {d.get('tanggal', '')} | {company} | {d.get('keterangan', '')}{projek} | "
+            f"Rp {d.get('jumlah', 0):,} | {d.get('kategori', '')}".replace(',', '.')
+        )
     
     return '\n'.join(lines)
 

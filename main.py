@@ -35,7 +35,7 @@ from sheets_helper import (
     generate_report, format_report_message,
     get_all_categories, get_summary,
     format_data_for_ai, check_budget_alert,
-    get_available_projects,
+    get_company_sheets, COMPANY_SHEETS,
     # Status/Summary functions (Dashboard is now managed by Apps Script)
     format_dashboard_message, get_dashboard_summary
 )
@@ -75,84 +75,73 @@ def get_telegram_api_url():
     return _TELEGRAM_API_URL
 
 
+# Pending transactions waiting for company selection
+# Format: {user_id: {'transactions': [...], 'sender_name': str, 'source': str, 'timestamp': datetime}}
+_pending_transactions = {}
+
+
 # ===================== START MESSAGE =====================
 
 # Build categories list for display
 CATEGORIES_DISPLAY = '\n'.join(f"  • {cat}" for cat in ALLOWED_CATEGORIES)
+COMPANY_DISPLAY = '\n'.join(f"  {i+1}. {c}" for i, c in enumerate(COMPANY_SHEETS))
 
-START_MESSAGE = f"""👋 *Selamat datang di Bot Keuangan v2.3!*
+START_MESSAGE = f"""👋 *Selamat datang di Bot Keuangan v3.0!*
 
-Bot ini mencatat pengeluaran & pemasukan secara otomatis dengan AI.
-
-━━━━━━━━━━━━━━━━━━━━━
-📝 *CARA PAKAI (SUPER MUDAH)*
-━━━━━━━━━━━━━━━━━━━━━
-
-*Langsung kirim transaksi:*
-• `Beli semen 300rb untuk proyek A`
-• `Bayar tukang 500rb`
-• `Terima DP 5jt`
-
-*Format Bebas:*
-• 📷 Foto struk/nota
-• 🎤 Voice note (Bahasa Indonesia)
-
-AI akan otomatis:
-✓ Deteksi kategori ({', '.join(ALLOWED_CATEGORIES)})
-✓ Deteksi tipe (Masuk/Keluar)
-✓ Pilih project yang tepat
-✓ Simpan ke Google Sheets
+Bot ini mencatat pengeluaran & pemasukan ke Google Sheets.
 
 ━━━━━━━━━━━━━━━━━━━━━
-⚙️ *DAFTAR PERINTAH LENGKAP*
+📝 *CARA PAKAI (2 LANGKAH)*
 ━━━━━━━━━━━━━━━━━━━━━
 
-📊 *Laporan & Status*
-• `/status` - Dashboard global semua project
-• `/laporan` - Ringkasan 7 hari terakhir
-• `/laporan 30` - Ringkasan 30 hari terakhir
-• `/project` - Lihat daftar project tersedia
+*Langkah 1:* Kirim transaksi
+• `Beli cat 500rb untuk Purana Ubud`
+• `Bayar tukang 1.5jt`
+• 📷 Foto struk
+• 🎤 Voice note
 
-🤖 *Tanya AI*
-• `/tanya [pertanyaan]` - Analisis keuangan natural
-  Contoh: `/tanya pengeluaran terbesar bulan ini apa?`
+*Langkah 2:* Pilih company sheet
+Bot akan tanya: "Simpan ke company mana?"
+Balas dengan nomor 1-5.
 
-🔔 *Pengingat (Smart Reminder)*
-• `/reminder on` - Nyalakan pengingat otomatis
-• `/reminder off` - Matikan pengingat
+*5 Company Sheets:*
+{COMPANY_DISPLAY}
 
-📂 *Info Lain*
-• `/kategori` - Lihat daftar kategori
-• `/start` - Tampilkan pesan ini lagi
-• `/help` - Bantuan singkat
+*4 Kategori (Auto-detect):*
+{CATEGORIES_DISPLAY}
 
-🔒 *Keamanan*
-Bot ini hanya bisa MENAMBAH data, tidak bisa menghapus.
-Untuk koreksi data, edit langsung di Google Sheets.
+━━━━━━━━━━━━━━━━━━━━━
+⚙️ *PERINTAH*
+━━━━━━━━━━━━━━━━━━━━━
+• `/status` - Dashboard semua company
+• `/laporan` - Ringkasan 7 hari
+• `/company` - Lihat daftar company
+• `/tanya [x]` - Tanya AI
+• `/reminder on/off` - Pengingat
 
-_Tips: Sebutkan nama project agar AI tahu menyimpan dimana!_
+🔒 Bot hanya MENAMBAH data, tidak bisa hapus.
 """
 
 
-HELP_MESSAGE = f"""📖 *PANDUAN BOT KEUANGAN*
+HELP_MESSAGE = f"""📖 *PANDUAN BOT KEUANGAN v3.0*
 
 *Input Transaksi:*
-Langsung kirim salah satu:
-• Text: `Beli cat 200rb untuk proyek A`
-• Foto struk
-• Voice note
+1. Kirim text/foto/voice
+2. Pilih nomor company (1-5)
 
-*Perintah:*
-• `/status` - Ringkasan keuangan
-• `/laporan` - Laporan mingguan
-• `/project` - Lihat project tersedia
-• `/tanya [x]` - Tanya AI tentang data
-• `/reminder` - On/off reminder
+*Company Sheets:*
+{COMPANY_DISPLAY}
 
-*Kategori (Auto-detect):*
+*Kategori (Auto):*
 {', '.join(ALLOWED_CATEGORIES)}
 
-_Note: Bot hanya bisa menambah data ke project yang sudah ada._"""
+*Perintah:*
+• `/status` - Ringkasan
+• `/laporan` - Laporan
+• `/company` - Daftar company
+• `/tanya [x]` - Tanya AI
+
+_Koreksi data langsung di Google Sheets._"""
 
 
 # ===================== HELPERS =====================
@@ -194,30 +183,31 @@ def send_whatsapp_reply(phone_number: str, message: str):
         return None
 
 
-def format_success_reply(transactions: list) -> str:
-    """Format success reply message with project info."""
+def format_success_reply(transactions: list, company_sheet: str) -> str:
+    """Format success reply message with company and project info."""
     lines = ["✅ *Transaksi Tercatat!*\n"]
     
     total = 0
-    projects_used = set()
+    nama_projek_set = set()
     
     for t in transactions:
         amount = t.get('jumlah', 0)
         total += amount
         tipe_icon = "💰" if t.get('tipe') == 'Pemasukan' else "💸"
         lines.append(f"{tipe_icon} {t.get('keterangan', '-')}: Rp {amount:,}".replace(',', '.'))
-        lines.append(f"   📁 {t.get('kategori', 'Bahan')}")
+        lines.append(f"   📁 {t.get('kategori', 'Lain-lain')}")
         
-        # Track projects used
-        if t.get('project'):
-            projects_used.add(t['project'])
+        # Track nama projek
+        if t.get('nama_projek'):
+            nama_projek_set.add(t['nama_projek'])
     
     lines.append(f"\n*Total: Rp {total:,}*".replace(',', '.'))
     
-    # Show project info
-    if projects_used:
-        projects_str = ', '.join(projects_used)
-        lines.append(f"📋 *Project:* {projects_str}")
+    # Show company and project info
+    lines.append(f"🏢 *Company:* {company_sheet}")
+    if nama_projek_set:
+        projek_str = ', '.join(nama_projek_set)
+        lines.append(f"📋 *Nama Projek:* {projek_str}")
     
     # Check budget
     alert = check_budget_alert()
@@ -283,6 +273,34 @@ def webhook_telegram():
             # Sanitize input
             text = sanitize_input(text)
             
+            # Check for pending transaction - company selection (numbers 1-5)
+            if user_id in _pending_transactions and text in ['1', '2', '3', '4', '5']:
+                pending = _pending_transactions.pop(user_id)
+                company_idx = int(text) - 1
+                company_sheet = COMPANY_SHEETS[company_idx]
+                
+                # Save transactions to selected company
+                result = append_transactions(
+                    pending['transactions'], 
+                    pending['sender_name'], 
+                    pending['source'],
+                    company_sheet=company_sheet
+                )
+                
+                if result['success']:
+                    update_user_activity(user_id, 'telegram', pending['sender_name'])
+                    reply = format_success_reply(pending['transactions'], company_sheet)
+                    send_telegram_reply(chat_id, reply)
+                else:
+                    send_telegram_reply(chat_id, f"❌ Gagal menyimpan: {result.get('company_error', 'Error')}")
+                return jsonify({'ok': True}), 200
+            
+            # Cancel pending if user sends new text that's not a number
+            if user_id in _pending_transactions and text.lower() in ['/cancel', 'batal']:
+                _pending_transactions.pop(user_id, None)
+                send_telegram_reply(chat_id, "❌ Transaksi dibatalkan.")
+                return jsonify({'ok': True}), 200
+            
             # /start
             if text.lower() == '/start':
                 send_telegram_reply(chat_id, START_MESSAGE)
@@ -305,14 +323,10 @@ def webhook_telegram():
                 send_telegram_reply(chat_id, reply)
                 return jsonify({'ok': True}), 200
             
-            # /project - List available projects
-            if text.lower() == '/project':
-                projects = get_available_projects()
-                if projects:
-                    projects_list = '\n'.join(f"  • {p}" for p in projects)
-                    reply = f"📋 *Project Tersedia:*\n\n{projects_list}\n\n_Sebutkan nama project saat input transaksi._"
-                else:
-                    reply = "📋 *Belum ada project.*\n\nHubungi admin untuk membuat project baru di Google Sheets."
+            # /company - List available company sheets
+            if text.lower() in ['/company', '/project']:
+                company_list = '\n'.join(f"  {i+1}. {c}" for i, c in enumerate(COMPANY_SHEETS))
+                reply = f"🏢 *Company Sheets:*\n\n{company_list}\n\n_Kirim transaksi, lalu pilih nomor company._"
                 send_telegram_reply(chat_id, reply)
                 return jsonify({'ok': True}), 200
             
@@ -322,19 +336,21 @@ def webhook_telegram():
                 data = get_all_data(days=7)  # Last 7 days
                 if data:
                     lines = ["📋 *Transaksi Terakhir (7 hari):*\n"]
-                    # Group by project
-                    by_project = {}
+                    # Group by company_sheet
+                    by_company = {}
                     for d in data[-20:]:  # Last 20 transactions
-                        proj = d.get('project', 'Unknown')
-                        if proj not in by_project:
-                            by_project[proj] = []
-                        by_project[proj].append(d)
+                        company = d.get('company_sheet', 'Unknown')
+                        if company not in by_company:
+                            by_company[company] = []
+                        by_company[company].append(d)
                     
-                    for proj, items in by_project.items():
-                        lines.append(f"\n*{proj}:*")
-                        for item in items[-5:]:  # 5 per project
+                    for company, items in by_company.items():
+                        lines.append(f"\n*{company}:*")
+                        for item in items[-5:]:  # 5 per company
                             emoji = "💸" if item['tipe'] == 'Pengeluaran' else "💰"
-                            lines.append(f"  {emoji} {item['keterangan'][:30]} - Rp {item['jumlah']:,}".replace(',', '.'))
+                            nama = item.get('nama_projek', '')
+                            nama_str = f" ({nama})" if nama else ""
+                            lines.append(f"  {emoji} {item['keterangan'][:25]}{nama_str} - Rp {item['jumlah']:,}".replace(',', '.'))
                     
                     reply = '\n'.join(lines)
                 else:
@@ -461,10 +477,7 @@ def webhook_telegram():
         if input_type == 'text' and not text:
             return jsonify({'ok': True}), 200
         
-        # Get available projects from spreadsheet
-        available_projects = get_available_projects()
-        
-        # Extract data with AI (passes available_projects for smart selection)
+        # Extract data with AI
         try:
             source = {"text": "Text", "image": "Image", "audio": "Voice"}[input_type]
             
@@ -473,8 +486,7 @@ def webhook_telegram():
                 input_type=input_type,
                 sender_name=sender_name,
                 media_url=media_url,
-                caption=caption,
-                available_projects=available_projects
+                caption=caption
             )
         except SecurityError as e:
             send_telegram_reply(chat_id, f"❌ {str(e)}")
@@ -492,21 +504,34 @@ def webhook_telegram():
                 "• `Bayar tukang 500rb`")
             return jsonify({'ok': True}), 200
         
-        # Save to Sheets (transactions may include 'project' field from AI)
-        result = append_transactions(transactions, sender_name, source)
+        # Store pending transaction and ask for company selection
+        _pending_transactions[user_id] = {
+            'transactions': transactions,
+            'sender_name': sender_name,
+            'source': source,
+            'timestamp': datetime.now()
+        }
         
-        if result['success']:
-            # Track user activity for smart reminders
-            update_user_activity(user_id, 'telegram', sender_name)
-            
-            reply = format_success_reply(transactions)
-            send_telegram_reply(chat_id, reply)
-        elif result.get('project_error'):
-            # Project not found error
-            send_telegram_reply(chat_id, f"❌ {result['project_error']}")
-        else:
-            send_telegram_reply(chat_id, "❌ Gagal menyimpan. Coba lagi.")
+        # Format preview
+        preview_lines = []
+        total = 0
+        for t in transactions:
+            amt = t.get('jumlah', 0)
+            total += amt
+            preview_lines.append(f"• {t.get('keterangan', '-')}: Rp {amt:,}".replace(',', '.'))
         
+        company_options = '\n'.join(f"  {i+1}. {c}" for i, c in enumerate(COMPANY_SHEETS))
+        
+        reply = (
+            "📝 *Transaksi Terdeteksi:*\n" +
+            '\n'.join(preview_lines) +
+            f"\n\n*Total: Rp {total:,}*\n\n".replace(',', '.') +
+            "🏢 *Simpan ke company mana?*\n\n" +
+            company_options +
+            "\n\n_Balas dengan nomor 1-5, atau ketik /cancel untuk batal._"
+        )
+        
+        send_telegram_reply(chat_id, reply)
         return jsonify({'ok': True}), 200
     
     except Exception as e:
@@ -551,6 +576,33 @@ def webhook_fonnte():
         
         secure_log("INFO", f"WhatsApp message from user")
         
+        # === COMPANY SELECTION (numbers 1-5) ===
+        if user_id in _pending_transactions and message in ['1', '2', '3', '4', '5']:
+            pending = _pending_transactions.pop(user_id)
+            company_idx = int(message) - 1
+            company_sheet = COMPANY_SHEETS[company_idx]
+            
+            result = append_transactions(
+                pending['transactions'],
+                pending['sender_name'],
+                pending['source'],
+                company_sheet=company_sheet
+            )
+            
+            if result['success']:
+                update_user_activity(user_id, 'whatsapp', pending['sender_name'])
+                reply = format_success_reply(pending['transactions'], company_sheet).replace('*', '')
+                send_whatsapp_reply(sender_number, reply)
+            else:
+                send_whatsapp_reply(sender_number, f"❌ Gagal: {result.get('company_error', 'Error')}")
+            return jsonify({'success': True}), 200
+        
+        # Cancel pending
+        if user_id in _pending_transactions and message.lower() in ['batal', 'cancel']:
+            _pending_transactions.pop(user_id, None)
+            send_whatsapp_reply(sender_number, "❌ Transaksi dibatalkan.")
+            return jsonify({'success': True}), 200
+        
         # === COMMANDS ===
         
         # start
@@ -561,6 +613,13 @@ def webhook_fonnte():
         # status
         if message.lower() == 'status':
             reply = get_status_message().replace('*', '')
+            send_whatsapp_reply(sender_number, reply)
+            return jsonify({'success': True}), 200
+        
+        # company
+        if message.lower() in ['company', 'project']:
+            company_list = '\n'.join(f"  {i+1}. {c}" for i, c in enumerate(COMPANY_SHEETS))
+            reply = f"🏢 Company Sheets:\n\n{company_list}\n\nKirim transaksi, lalu pilih nomor."
             send_whatsapp_reply(sender_number, reply)
             return jsonify({'success': True}), 200
         
@@ -602,9 +661,6 @@ def webhook_fonnte():
         
         # === TRANSACTION ===
         
-        # Get available projects from spreadsheet
-        available_projects = get_available_projects()
-        
         # Determine input type
         if msg_type in ['image'] or (media_url and 'image' in media_url.lower()):
             input_type = 'image'
@@ -613,7 +669,7 @@ def webhook_fonnte():
         else:
             input_type = 'text'
         
-        # Process (with available_projects for AI selection)
+        # Process
         try:
             source = {"text": "Text", "image": "Image", "audio": "Voice"}[input_type]
             
@@ -622,8 +678,7 @@ def webhook_fonnte():
                 input_type=input_type,
                 sender_name=sender_name,
                 media_url=media_url if input_type != 'text' else None,
-                caption=message if input_type == 'image' else None,
-                available_projects=available_projects
+                caption=message if input_type == 'image' else None
             )
         except SecurityError as e:
             send_whatsapp_reply(sender_number, f"❌ {str(e)}")
@@ -637,18 +692,35 @@ def webhook_fonnte():
             send_whatsapp_reply(sender_number, "❓ Transaksi tidak terdeteksi. Contoh: Beli semen 300rb")
             return jsonify({'success': True}), 200
         
-        # Save (transactions may include 'project' field from AI)
-        result = append_transactions(transactions, sender_name, source)
+        # Store pending and ask for company selection
+        _pending_transactions[user_id] = {
+            'transactions': transactions,
+            'sender_name': sender_name,
+            'source': source,
+            'timestamp': datetime.now()
+        }
         
-        if result['success']:
-            reply = format_success_reply(transactions).replace('*', '')
-            send_whatsapp_reply(sender_number, reply)
-        elif result.get('project_error'):
-            send_whatsapp_reply(sender_number, f"❌ {result['project_error']}")
-        else:
-            send_whatsapp_reply(sender_number, "❌ Gagal menyimpan.")
+        # Format preview
+        preview_lines = []
+        total = 0
+        for t in transactions:
+            amt = t.get('jumlah', 0)
+            total += amt
+            preview_lines.append(f"• {t.get('keterangan', '-')}: Rp {amt:,}".replace(',', '.'))
         
-        return jsonify({'success': result['success']}), 200
+        company_options = '\n'.join(f"  {i+1}. {c}" for i, c in enumerate(COMPANY_SHEETS))
+        
+        reply = (
+            "📝 Transaksi Terdeteksi:\n" +
+            '\n'.join(preview_lines) +
+            f"\n\nTotal: Rp {total:,}\n\n".replace(',', '.') +
+            "🏢 Simpan ke company mana?\n\n" +
+            company_options +
+            "\n\nBalas dengan nomor 1-5, atau ketik batal"
+        )
+        
+        send_whatsapp_reply(sender_number, reply)
+        return jsonify({'success': True}), 200
     
     except Exception as e:
         secure_log("ERROR", f"Fonnte webhook error: {type(e).__name__}")
@@ -661,8 +733,8 @@ def webhook_fonnte():
 def health_check():
     return jsonify({
         'status': 'healthy',
-        'version': '2.1',
-        'features': ['simplified-workflow', 'fixed-categories', 'security-hardened']
+        'version': '3.0',
+        'features': ['company-sheets', '4-categories', 'company-selection']
     }), 200
 
 
@@ -687,40 +759,40 @@ def home():
 
 if __name__ == '__main__':
     print("=" * 50)
-    print("Financial Recording Bot v2.1 (Secured)")
+    print("Financial Recording Bot v3.0")
     print("=" * 50)
     
     print("\nFeatures:")
-    print("  ✓ Simplified Workflow (no project selection)")
-    print("  ✓ Fixed 8 Categories")
-    print("  ✓ Prompt Injection Protection")
-    print("  ✓ Rate Limiting")
-    print("  ✓ Secure Logging")
+    print("  [OK] 5 Company Sheets")
+    print("  [OK] 4 Categories")
+    print("  [OK] Company Selection Workflow")
+    print("  [OK] Nama Projek Column")
     
-    print(f"\nCategories: {', '.join(ALLOWED_CATEGORIES)}")
+    print(f"\nCompany Sheets: {', '.join(COMPANY_SHEETS)}")
+    print(f"Categories: {', '.join(ALLOWED_CATEGORIES)}")
     
     print("\nTesting connections...")
     try:
         if test_connection():
-            print("✓ Google Sheets OK")
+            print("[OK] Google Sheets connected")
     except Exception as e:
-        print(f"✗ Sheets error")
+        print("[ERR] Sheets error")
     
-    print(f"\nFonnte: {'✓' if FONNTE_TOKEN else '✗'}")
-    print(f"Telegram: {'✓' if TELEGRAM_BOT_TOKEN else '✗'}")
+    print(f"\nFonnte: {'[OK]' if FONNTE_TOKEN else '[X]'}")
+    print(f"Telegram: {'[OK]' if TELEGRAM_BOT_TOKEN else '[X]'}")
     
     print("\nCommands:")
-    print("  /status    - Check status")
+    print("  /status    - Dashboard")
     print("  /laporan   - Weekly report")
+    print("  /company   - List companies")
     print("  /tanya     - Ask AI")
-    print("  /kategori  - List categories")
-    print("  /reminder  - Toggle reminder")
     
     # Start smart reminder scheduler
     print("\nStarting reminder scheduler...")
     start_scheduler()
-    print("✓ Reminder scheduler active")
+    print("[OK] Reminder scheduler active")
     
     print("=" * 50)
     
     app.run(host='0.0.0.0', port=5000, debug=DEBUG, use_reloader=False)
+
