@@ -55,7 +55,7 @@ def get_ocr_reader():
     if _ocr_reader is None:
         import easyocr
         secure_log("INFO", "Loading EasyOCR model (first time only)...")
-        _ocr_reader = easyocr.Reader(['id', 'en'], gpu=False)
+        _ocr_reader = easyocr.Reader(['id'], gpu=False)
         secure_log("INFO", "EasyOCR ready!")
     return _ocr_reader
 
