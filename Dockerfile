@@ -19,10 +19,6 @@ RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pre-download EasyOCR models (during build) to prevent OOM at runtime
-# This bakes the model into the image
-RUN python -c "import easyocr; easyocr.Reader(['id'], gpu=False)"
-
 # Copy application code
 COPY . .
 

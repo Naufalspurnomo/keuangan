@@ -50,14 +50,49 @@ _ocr_reader = None
 
 
 def get_ocr_reader():
-    """Get or create EasyOCR reader (lazy loading)."""
-    global _ocr_reader
-    if _ocr_reader is None:
-        import easyocr
-        secure_log("INFO", "Loading EasyOCR model (first time only)...")
-        _ocr_reader = easyocr.Reader(['id'], gpu=False)
-        secure_log("INFO", "EasyOCR ready!")
-    return _ocr_reader
+    """Get EasyOCR reader (fresh instance)."""
+    # NO GLOBAL INSTANCE - to save RAM
+    import easyocr
+    secure_log("INFO", "Loading EasyOCR model (on-demand)...")
+    # Low memory mode: quantized=True (faster, less RAM)
+    return easyocr.Reader(['id'], gpu=False, quantize=True)
+
+def ocr_image(image_path: str) -> str:
+    """Extract text from image using EasyOCR."""
+    try:
+        secure_log("INFO", "Running OCR on image...")
+        
+        # Suppress EasyOCR progress bar
+        import sys
+        import io
+        import gc  # Garbage collector
+        
+        reader = get_ocr_reader()
+        
+        # Redirect stdout
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            results = reader.readtext(image_path, detail=0)
+        finally:
+            sys.stdout = old_stdout
+            
+        extracted_text = '\n'.join(results)
+        
+        # CLEANUP RAM IMMEDIATELY
+        del reader
+        gc.collect()
+        secure_log("INFO", "OCR memory cleaned up")
+        
+        # Sanitize OCR result
+        extracted_text = sanitize_input(extracted_text)
+        
+        secure_log("INFO", f"OCR complete: {len(extracted_text)} chars")
+        return extracted_text
+        
+    except Exception as e:
+        secure_log("ERROR", f"OCR failed: {type(e).__name__}")
+        raise
 
 
 def get_extraction_prompt(sender_name: str) -> str:
