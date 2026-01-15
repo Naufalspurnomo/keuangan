@@ -11,7 +11,7 @@
     "platform": "telegram",
     "name": "Naufalspurnomo. 🐾",
     "first_seen": "2025-12-17T09:28:13.468616",
-    "last_transaction": "2025-12-24T09:12:00.685792",
+    "last_transaction": "2026-01-14T13:55:26.407861",
     "last_reminder": "2026-01-13T16:07:08.938816",
     "reminder_enabled": true
   },
@@ -20,7 +20,7 @@
     "name": "Evan",
     "first_seen": "2025-12-17T10:01:38.394445",
     "last_transaction": "2025-12-17T10:01:38.394445",
-    "last_reminder": "2026-01-13T16:07:10.420056",
+    "last_reminder": "2026-01-15T14:29:23.150938",
     "reminder_enabled": true
   },
   "760132729": {
@@ -28,7 +28,23 @@
     "name": "Aditya",
     "first_seen": "2025-12-17T10:21:45.632452",
     "last_transaction": "2025-12-17T10:21:45.632452",
-    "last_reminder": "2026-01-13T16:07:11.969216",
+    "last_reminder": "2026-01-15T14:29:24.342410",
+    "reminder_enabled": true
+  },
+  "6283824702817": {
+    "platform": "whatsapp",
+    "name": "Fira - Holla Wall",
+    "first_seen": "2026-01-14T09:22:20.671835",
+    "last_transaction": "2026-01-14T09:23:59.622219",
+    "last_reminder": null,
+    "reminder_enabled": true
+  },
+  "8061056095": {
+    "platform": "telegram",
+    "name": "Hiitsme",
+    "first_seen": "2026-01-14T10:30:19.718574",
+    "last_transaction": "2026-01-14T10:33:55.589397",
+    "last_reminder": null,
     "reminder_enabled": true
   }
 }

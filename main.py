@@ -1,5 +1,5 @@
 """
-main.py - Financial Recording Bot v2.2 (Simplified & Secured)
+main.py - Financial Recording Bot
 
 Features:
 - SIMPLIFIED WORKFLOW: No mandatory project selection
@@ -37,7 +37,8 @@ from sheets_helper import (
     format_data_for_ai, check_budget_alert,
     get_company_sheets, COMPANY_SHEETS,
     # Status/Summary functions (Dashboard is now managed by Apps Script)
-    format_dashboard_message, get_dashboard_summary
+    format_dashboard_message, get_dashboard_summary,
+    get_wallet_balances
 )
 from security import (
     sanitize_input,
@@ -54,6 +55,7 @@ from reminder import (
     start_scheduler,
     get_weekly_summary,
 )
+from pdf_report import generate_pdf_from_input, parse_month_input
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -86,7 +88,7 @@ _pending_transactions = {}
 CATEGORIES_DISPLAY = '\n'.join(f"  • {cat}" for cat in ALLOWED_CATEGORIES)
 COMPANY_DISPLAY = '\n'.join(f"  {i+1}. {c}" for i, c in enumerate(COMPANY_SHEETS))
 
-START_MESSAGE = f"""👋 *Selamat datang di Bot Keuangan v3.0!*
+START_MESSAGE = f"""👋 *Selamat datang di Bot Keuangan!*
 
 Bot ini mencatat pengeluaran & pemasukan ke Google Sheets.
 
@@ -118,12 +120,13 @@ Balas dengan nomor 1-5.
 • `/company` - Lihat daftar company
 • `/tanya [x]` - Tanya AI
 • `/reminder on/off` - Pengingat
+• `/exportpdf 2026-01` - Export PDF bulanan
 
 🔒 Bot hanya MENAMBAH data, tidak bisa hapus.
 """
 
 
-HELP_MESSAGE = f"""📖 *PANDUAN BOT KEUANGAN v3.0*
+HELP_MESSAGE = f"""📖 *PANDUAN BOT KEUANGAN*
 
 *Input Transaksi:*
 1. Kirim text/foto/voice
@@ -140,6 +143,7 @@ HELP_MESSAGE = f"""📖 *PANDUAN BOT KEUANGAN v3.0*
 • `/laporan` - Laporan
 • `/company` - Daftar company
 • `/tanya [x]` - Tanya AI
+• `/exportpdf` - Export PDF
 
 _Koreksi data langsung di Google Sheets._"""
 
@@ -317,6 +321,12 @@ def webhook_telegram():
                 send_telegram_reply(chat_id, reply)
                 return jsonify({'ok': True}), 200
             
+            # /saldo
+            if text.lower() == '/saldo':
+                reply = get_wallet_balances()
+                send_telegram_reply(chat_id, reply)
+                return jsonify({'ok': True}), 200
+            
             # /kategori
             if text.lower() == '/kategori':
                 reply = f"📁 *Kategori Tersedia:*\n\n{CATEGORIES_DISPLAY}"
@@ -404,6 +414,55 @@ def webhook_telegram():
                 
                 reply = f"💡 *Jawaban:*\n\n{answer}"
                 send_telegram_reply(chat_id, reply)
+                return jsonify({'ok': True}), 200
+            
+            # /exportpdf - Export monthly PDF report
+            if text.lower().startswith('/exportpdf'):
+                month_arg = text[10:].strip()
+                
+                if not month_arg:
+                    # Use current month as default
+                    now = datetime.now()
+                    month_arg = f"{now.year}-{now.month:02d}"
+                
+                # Show typing indicator
+                api_url = get_telegram_api_url()
+                if api_url:
+                    requests.post(f"{api_url}/sendChatAction", 
+                                 json={'chat_id': chat_id, 'action': 'upload_document'},
+                                 timeout=5)
+                
+                try:
+                    # Generate PDF
+                    pdf_path = generate_pdf_from_input(month_arg)
+                    
+                    # Send PDF file via Telegram
+                    with open(pdf_path, 'rb') as pdf_file:
+                        files = {'document': pdf_file}
+                        data = {
+                            'chat_id': chat_id,
+                            'caption': f"📊 Laporan Keuangan Bulanan\n📅 Periode: {month_arg}"
+                        }
+                        response = requests.post(
+                            f"{api_url}/sendDocument",
+                            data=data,
+                            files=files,
+                            timeout=60
+                        )
+                    
+                    if response.status_code == 200:
+                        secure_log("INFO", f"PDF sent to user {user_id}")
+                    else:
+                        send_telegram_reply(chat_id, "❌ Gagal mengirim PDF. Coba lagi.")
+                        
+                except ValueError as e:
+                    send_telegram_reply(chat_id, f"❌ {str(e)}\n\nFormat: `/exportpdf 2026-01` atau `/exportpdf januari 2026`")
+                except ImportError:
+                    send_telegram_reply(chat_id, "❌ PDF generator belum terinstall. Hubungi admin.")
+                except Exception as e:
+                    secure_log("ERROR", f"PDF export failed: {type(e).__name__}")
+                    send_telegram_reply(chat_id, f"❌ Gagal generate PDF: {str(e)[:100]}")
+                
                 return jsonify({'ok': True}), 200
             
             # /reminder - Toggle reminder on/off
@@ -541,9 +600,14 @@ def webhook_telegram():
 
 # ===================== WHATSAPP HANDLERS =====================
 
-@app.route('/webhook', methods=['POST'])
+@app.route('/webhook', methods=['GET', 'POST'])
 def webhook_fonnte():
     """Webhook endpoint for Fonnte WhatsApp - SECURED."""
+    # Handle GET request (Fonnte verification)
+    if request.method == 'GET':
+        return jsonify({'status': 'ok', 'message': 'Webhook ready'}), 200
+    
+    # Handle POST request (actual messages)
     try:
         if request.is_json:
             payload = request.get_json()
@@ -558,6 +622,13 @@ def webhook_fonnte():
         message = payload.get('message', '').strip()
         media_url = payload.get('url', '')
         msg_type = payload.get('type', 'text').lower()
+        
+        # DEBUG: Write full payload to file
+        import json
+        with open('fonnte_debug.log', 'a', encoding='utf-8') as f:
+            f.write(f"\n=== {datetime.now()} ===\n")
+            f.write(json.dumps(payload, ensure_ascii=False, indent=2))
+            f.write(f"\n--- Extracted: type={msg_type}, url={media_url}, msg_len={len(message)} ---\n")
         
         if not sender_number:
             return jsonify({'success': True}), 200
@@ -603,28 +674,39 @@ def webhook_fonnte():
             send_whatsapp_reply(sender_number, "❌ Transaksi dibatalkan.")
             return jsonify({'success': True}), 200
         
-        # === COMMANDS ===
+        # === COMMANDS (support both with and without slash) ===
         
         # start
-        if message.lower() in ['start', 'mulai', 'hi', 'halo']:
+        if message.lower() in ['start', 'mulai', 'hi', 'halo', '/start']:
             send_whatsapp_reply(sender_number, START_MESSAGE.replace('*', ''))
             return jsonify({'success': True}), 200
         
+        # help
+        if message.lower() in ['help', 'bantuan', '/help']:
+            send_whatsapp_reply(sender_number, HELP_MESSAGE.replace('*', ''))
+            return jsonify({'success': True}), 200
+        
         # status
-        if message.lower() == 'status':
+        if message.lower() in ['status', '/status']:
             reply = get_status_message().replace('*', '')
             send_whatsapp_reply(sender_number, reply)
             return jsonify({'success': True}), 200
         
+        # saldo
+        if message.lower() in ['saldo', '/saldo']:
+            reply = get_wallet_balances().replace('*', '')
+            send_whatsapp_reply(sender_number, reply)
+            return jsonify({'success': True}), 200
+        
         # company
-        if message.lower() in ['company', 'project']:
+        if message.lower() in ['company', 'project', '/company', '/project']:
             company_list = '\n'.join(f"  {i+1}. {c}" for i, c in enumerate(COMPANY_SHEETS))
             reply = f"🏢 Company Sheets:\n\n{company_list}\n\nKirim transaksi, lalu pilih nomor."
             send_whatsapp_reply(sender_number, reply)
             return jsonify({'success': True}), 200
         
         # laporan
-        if message.lower().startswith('laporan'):
+        if message.lower().startswith('laporan') or message.lower().startswith('/laporan'):
             days = 30 if '30' in message else 7
             report = generate_report(days=days)
             reply = format_report_message(report).replace('*', '')
@@ -632,8 +714,12 @@ def webhook_fonnte():
             return jsonify({'success': True}), 200
         
         # tanya
-        if message.lower().startswith('tanya '):
-            question = message[6:].strip()
+        if message.lower().startswith('tanya ') or message.lower().startswith('/tanya '):
+            # Remove prefix
+            if message.lower().startswith('/tanya '):
+                question = message[7:].strip()
+            else:
+                question = message[6:].strip()
             
             # Check injection
             is_injection, _ = detect_prompt_injection(question)
@@ -647,8 +733,49 @@ def webhook_fonnte():
             send_whatsapp_reply(sender_number, reply)
             return jsonify({'success': True}), 200
         
+        # exportpdf
+        if message.lower().startswith('exportpdf') or message.lower().startswith('/exportpdf'):
+            # Extract month argument
+            if message.lower().startswith('/exportpdf'):
+                month_arg = message[10:].strip()
+            else:
+                month_arg = message[9:].strip()
+            
+            if not month_arg:
+                now = datetime.now()
+                month_arg = f"{now.year}-{now.month:02d}"
+            
+            try:
+                # Generate PDF
+                pdf_path = generate_pdf_from_input(month_arg)
+                
+                # Note: Fonnte has limited file sending capability
+                # We'll notify user that PDF is generated and provide info
+                import os
+                file_size = os.path.getsize(pdf_path) / 1024  # KB
+                
+                reply = (
+                    f"📊 Laporan Keuangan Bulanan\n"
+                    f"📅 Periode: {month_arg}\n"
+                    f"📄 File: Laporan_Keuangan_{month_arg.replace('-', '_')}.pdf\n"
+                    f"📦 Ukuran: {file_size:.1f} KB\n\n"
+                    f"✅ PDF berhasil dibuat!\n\n"
+                    f"⚠️ Untuk download PDF, gunakan Telegram bot atau hubungi admin."
+                )
+                send_whatsapp_reply(sender_number, reply)
+                
+            except ValueError as e:
+                send_whatsapp_reply(sender_number, f"❌ {str(e)}\n\nFormat: exportpdf 2026-01 atau exportpdf januari 2026")
+            except ImportError:
+                send_whatsapp_reply(sender_number, "❌ PDF generator belum terinstall.")
+            except Exception as e:
+                secure_log("ERROR", f"PDF export failed (WA): {type(e).__name__}")
+                send_whatsapp_reply(sender_number, f"❌ Gagal generate PDF.")
+            
+            return jsonify({'success': True}), 200
+        
         # kategori
-        if message.lower() == 'kategori':
+        if message.lower() in ['kategori', '/kategori']:
             reply = "📁 Kategori:\n" + '\n'.join(f"• {cat}" for cat in ALLOWED_CATEGORIES)
             send_whatsapp_reply(sender_number, reply)
             return jsonify({'success': True}), 200
@@ -733,7 +860,6 @@ def webhook_fonnte():
 def health_check():
     return jsonify({
         'status': 'healthy',
-        'version': '3.0',
         'features': ['company-sheets', '4-categories', 'company-selection']
     }), 200
 
@@ -749,8 +875,7 @@ def test_sheets():
 @app.route('/', methods=['GET'])
 def home():
     return jsonify({
-        'name': 'Financial Recording Bot',
-        'version': '2.1',
+        'name': 'Bot Keuangan',
         'status': 'running'
     }), 200
 
@@ -759,7 +884,7 @@ def home():
 
 if __name__ == '__main__':
     print("=" * 50)
-    print("Financial Recording Bot v3.0")
+    print("Bot Keuangan")
     print("=" * 50)
     
     print("\nFeatures:")

@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Laporan Keuangan - {{ period }}</title>
+</head>
+
+<body>
+    <!-- ==================== COVER PAGE ==================== -->
+    <div class="cover-page">
+        <h1>📊 Laporan Keuangan Bulanan</h1>
+        <div class="cover-period">{{ period }}</div>
+        <div class="cover-entities">
+            {% for company in companies %}
+            {{ company }}{% if not loop.last %} • {% endif %}
+            {% endfor %}
+        </div>
+        <div class="cover-timestamp">
+            Dibuat otomatis pada {{ timestamp }}
+        </div>
+    </div>
+
+    <!-- ==================== EXECUTIVE SUMMARY ==================== -->
+    <div class="section-page">
+        <h2>Executive Summary</h2>
+
+        <!-- KPI Boxes -->
+        <div class="kpi-grid">
+            <div class="kpi-box income">
+                <div class="kpi-label">Total Pemasukan</div>
+                <div class="kpi-value">{{ executive_summary.total_income | currency }}</div>
+            </div>
+            <div class="kpi-box expense">
+                <div class="kpi-label">Total Pengeluaran</div>
+                <div class="kpi-value">{{ executive_summary.total_expense | currency }}</div>
+            </div>
+            <div class="kpi-box profit {% if executive_summary.net_profit < 0 %}loss{% endif %}">
+                <div class="kpi-label">Laba/Rugi Bersih</div>
+                <div class="kpi-value">{{ executive_summary.net_profit | currency }}</div>
+            </div>
+        </div>
+
+        <p class="small mb-2">Total {{ executive_summary.total_transactions }} transaksi dalam periode {{ period }}</p>
+
+        <!-- Highlight Section -->
+        <h3>📈 Highlight</h3>
+
+        <div class="highlight-section">
+            <div class="highlight-box success">
+                <strong>Top 3 Projek Paling Untung:</strong><br>
+                {% for proj in executive_summary.top_3_profit %}
+                {{ loop.index }}. {{ proj.name }} ({{ proj.company }}): {{ proj.profit | currency }}<br>
+                {% else %}
+                Belum ada data projek
+                {% endfor %}
+            </div>
+
+            <div class="highlight-box warning">
+                <strong>Top 3 Pengeluaran Terbesar:</strong><br>
+                {% for tx in executive_summary.top_3_expenses %}
+                {{ loop.index }}. {{ tx.keterangan[:40] }}: {{ tx.jumlah | currency }}<br>
+                {% else %}
+                Belum ada pengeluaran
+                {% endfor %}
+            </div>
+
+            <div class="highlight-box">
+                <strong>Kategori Pengeluaran Terbesar:</strong><br>
+                {{ executive_summary.biggest_category[0] }}: {{ executive_summary.biggest_category[1] | currency }}
+            </div>
+        </div>
+
+        <!-- Company Summary Table -->
+        <h3>📊 Ringkasan per Company</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Company</th>
+                    <th class="text-right">Income</th>
+                    <th class="text-right">Expense</th>
+                    <th class="text-right">Net Profit</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for company in executive_summary.company_summary %}
+                <tr>
+                    <td>{{ company.name }}</td>
+                    <td class="text-right">{{ company.income | currency }}</td>
+                    <td class="text-right">{{ company.expense | currency }}</td>
+                    <td
+                        class="text-right {% if company.profit >= 0 %}amount-positive{% else %}amount-negative{% endif %}">
+                        {{ company.profit | currency }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ==================== CONSOLIDATED P&L ==================== -->
+    <div class="section-page">
+        <h2>Laporan Laba Rugi Konsolidasi</h2>
+        <p class="small mb-2">Periode: {{ period }} | Gabungan semua company</p>
+
+        <div class="pnl-statement">
+            <!-- Income Section -->
+            <div class="pnl-row subtotal">
+                <span><strong>Pendapatan (Income)</strong></span>
+                <span></span>
+            </div>
+            <div class="pnl-row total">
+                <span>Total Pendapatan</span>
+                <span class="amount-positive">{{ consolidated_pnl.income | currency }}</span>
+            </div>
+
+            <!-- Expense Section -->
+            <div class="pnl-row subtotal mt-2">
+                <span><strong>Beban (Expense)</strong></span>
+                <span></span>
+            </div>
+
+            {% for category in categories %}
+            <div class="pnl-row category">
+                <span>{{ category }}</span>
+                <span>{{ consolidated_pnl.by_category[category] | currency }}</span>
+            </div>
+            {% endfor %}
+
+            <div class="pnl-row total">
+                <span>Total Beban</span>
+                <span class="amount-negative">{{ consolidated_pnl.expense | currency }}</span>
+            </div>
+
+            <!-- Net Profit -->
+            <div class="pnl-row net-profit {% if consolidated_pnl.profit < 0 %}loss{% endif %}">
+                <span>Laba/Rugi Bersih</span>
+                <span>{{ consolidated_pnl.profit | currency }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== PROFIT BY PROJECT ==================== -->
+    <div class="section-page">
+        <h2>Konsolidasi Profit by Project</h2>
+        <p class="small mb-2">{{ project_table | length }} projek dalam periode {{ period }}</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 5%;">#</th>
+                    <th style="width: 25%;">Nama Projek</th>
+                    <th style="width: 15%;">Company</th>
+                    <th class="text-right" style="width: 15%;">Income</th>
+                    <th class="text-right" style="width: 15%;">Expense</th>
+                    <th class="text-right" style="width: 15%;">Profit</th>
+                    <th class="text-right" style="width: 10%;">Margin</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for proj in project_table %}
+                <tr>
+                    <td>
+                        <span
+                            class="profit-indicator {% if proj.is_profit %}positive{% else %}negative{% endif %}"></span>
+                    </td>
+                    <td>{{ proj.name[:30] }}</td>
+                    <td>{{ proj.company }}</td>
+                    <td class="text-right">{{ proj.income | currency }}</td>
+                    <td class="text-right">{{ proj.expense | currency }}</td>
+                    <td class="text-right {% if proj.is_profit %}amount-positive{% else %}amount-negative{% endif %}">
+                        {{ proj.profit | currency }}
+                    </td>
+                    <td class="text-right">{{ "%.1f" | format(proj.margin) }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ==================== PROJECT DETAILS ==================== -->
+    {% for proj in project_details %}
+    <div class="section-page no-break">
+        <div class="project-header">
+            <h3>📋 Projek: {{ proj.name }}</h3>
+            <span class="company-tag">Company: {{ proj.company }} | Periode: {{ proj.period }}</span>
+        </div>
+
+        <div class="project-summary">
+            <div class="kpi-grid">
+                <div class="kpi-box income">
+                    <div class="kpi-label">Income</div>
+                    <div class="kpi-value" style="font-size: 14pt;">{{ proj.income | currency }}</div>
+                </div>
+                <div class="kpi-box expense">
+                    <div class="kpi-label">Expense</div>
+                    <div class="kpi-value" style="font-size: 14pt;">{{ proj.expense | currency }}</div>
+                </div>
+                <div class="kpi-box profit {% if not proj.is_profit %}loss{% endif %}">
+                    <div class="kpi-label">Profit/Loss</div>
+                    <div class="kpi-value" style="font-size: 14pt;">{{ proj.profit | currency }}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Category Breakdown -->
+        {% if proj.category_breakdown %}
+        <h3>Breakdown Beban per Kategori</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Kategori</th>
+                    <th class="text-right">Total</th>
+                    <th class="text-right">% dari Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for cat in proj.category_breakdown %}
+                <tr>
+                    <td>{{ cat.category }}</td>
+                    <td class="text-right">{{ cat.amount | currency }}</td>
+                    <td class="text-right">{{ "%.1f" | format(cat.percentage) }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        <!-- Top Expenses -->
+        {% if proj.top_expenses %}
+        <h3>Top 10 Pengeluaran</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Tanggal</th>
+                    <th>Keterangan</th>
+                    <th>Kategori</th>
+                    <th class="text-right">Jumlah</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for tx in proj.top_expenses[:10] %}
+                <tr>
+                    <td>{{ tx.tanggal }}</td>
+                    <td>{{ tx.keterangan[:35] }}</td>
+                    <td>{{ tx.kategori }}</td>
+                    <td class="text-right">{{ tx.jumlah | currency }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+    {% endfor %}
+
+    <!-- ==================== APPENDIX ==================== -->
+    <div class="section-page">
+        <h2>Lampiran</h2>
+
+        {% if anomalies %}
+        <h3>⚠️ Catatan Anomali Data</h3>
+        <p class="small mb-2">Ditemukan {{ anomalies | length }} transaksi dengan data tidak lengkap:</p>
+
+        <table class="appendix-table">
+            <thead>
+                <tr>
+                    <th>Tanggal</th>
+                    <th>Keterangan</th>
+                    <th>Company</th>
+                    <th class="text-right">Jumlah</th>
+                    <th>Masalah</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in anomalies[:50] %}
+                <tr>
+                    <td>{{ item.tanggal }}</td>
+                    <td>{{ item.keterangan }}</td>
+                    <td>{{ item.company }}</td>
+                    <td class="text-right">{{ item.jumlah | currency }}</td>
+                    <td><span class="anomaly-tag">{{ item.issues }}</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        {% if anomalies | length > 50 %}
+        <p class="small mt-1">... dan {{ anomalies | length - 50 }} anomali lainnya</p>
+        {% endif %}
+
+        {% else %}
+        <div class="highlight-box success">
+            <strong>✅ Data Lengkap</strong><br>
+            Tidak ditemukan anomali data pada periode ini.
+        </div>
+        {% endif %}
+
+        <div class="mt-3">
+            <p class="small">
+                <strong>Catatan:</strong><br>
+                • Laporan ini dibuat secara otomatis berdasarkan data di Google Sheets<br>
+                • Pemasukan = transaksi tipe "Pemasukan"<br>
+                • Pengeluaran = transaksi tipe "Pengeluaran"<br>
+                • Profit = Income - Expense<br>
+                • Timestamp: {{ timestamp }}
+            </p>
+        </div>
+    </div>
+</body>
+
+</html>

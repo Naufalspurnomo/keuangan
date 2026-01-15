@@ -463,18 +463,30 @@ def secure_log(level: str, message: str, **kwargs) -> None:
         message: Log message
         **kwargs: Additional context
     """
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    masked_message = mask_sensitive_data(message)
-    
-    # Mask any additional kwargs
-    masked_kwargs = {
-        k: mask_sensitive_data(str(v)) 
-        for k, v in kwargs.items()
-    }
-    
-    context = ' '.join(f"{k}={v}" for k, v in masked_kwargs.items())
-    
-    print(f"[{timestamp}] [{level}] {masked_message} {context}".strip())
+    try:
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        masked_message = mask_sensitive_data(message)
+        
+        # Mask any additional kwargs
+        masked_kwargs = {
+            k: mask_sensitive_data(str(v)) 
+            for k, v in kwargs.items()
+        }
+        
+        context = ' '.join(f"{k}={v}" for k, v in masked_kwargs.items())
+        
+        log_line = f"[{timestamp}] [{level}] {masked_message} {context}".strip()
+        
+        # Handle Windows console encoding issues
+        try:
+            print(log_line)
+        except UnicodeEncodeError:
+            # Replace problematic characters with ASCII equivalents
+            safe_line = log_line.encode('ascii', errors='replace').decode('ascii')
+            print(safe_line)
+    except Exception:
+        # Silently fail - don't let logging break the application
+        pass
 
 
 # ===================== DECORATORS =====================

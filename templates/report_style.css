@@ -1,0 +1,375 @@
+/* 
+ * PDF Report Stylesheet
+ * Professional financial report styling for WeasyPrint
+ */
+
+/* ==================== BASE STYLES ==================== */
+
+@page {
+    size: A4;
+    margin: 2cm 1.5cm;
+    
+    @top-right {
+        content: "Laporan Keuangan";
+        font-size: 9pt;
+        color: #666;
+    }
+    
+    @bottom-center {
+        content: counter(page) " / " counter(pages);
+        font-size: 9pt;
+        color: #666;
+    }
+}
+
+@page cover {
+    margin: 0;
+    @top-right { content: none; }
+    @bottom-center { content: none; }
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Segoe UI', 'Arial', sans-serif;
+    font-size: 10pt;
+    line-height: 1.5;
+    color: #333;
+}
+
+/* ==================== TYPOGRAPHY ==================== */
+
+h1 {
+    font-size: 24pt;
+    font-weight: 700;
+    color: #1a365d;
+    margin-bottom: 0.5em;
+}
+
+h2 {
+    font-size: 16pt;
+    font-weight: 600;
+    color: #2d3748;
+    margin-top: 1.5em;
+    margin-bottom: 0.75em;
+    padding-bottom: 0.3em;
+    border-bottom: 2px solid #4299e1;
+}
+
+h3 {
+    font-size: 12pt;
+    font-weight: 600;
+    color: #4a5568;
+    margin-top: 1em;
+    margin-bottom: 0.5em;
+}
+
+p {
+    margin-bottom: 0.75em;
+}
+
+/* ==================== COVER PAGE ==================== */
+
+.cover-page {
+    page: cover;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    background: linear-gradient(135deg, #1a365d 0%, #2d3748 100%);
+    color: white;
+    page-break-after: always;
+}
+
+.cover-page h1 {
+    font-size: 32pt;
+    color: white;
+    margin-bottom: 0.25em;
+}
+
+.cover-period {
+    font-size: 24pt;
+    font-weight: 300;
+    color: #90cdf4;
+    margin-bottom: 2em;
+}
+
+.cover-entities {
+    font-size: 11pt;
+    color: #cbd5e0;
+    line-height: 1.8;
+    margin-bottom: 3em;
+}
+
+.cover-timestamp {
+    font-size: 9pt;
+    color: #718096;
+}
+
+/* ==================== SECTION PAGES ==================== */
+
+.section-page {
+    page-break-before: always;
+}
+
+/* ==================== KPI BOXES ==================== */
+
+.kpi-grid {
+    display: flex;
+    justify-content: space-between;
+    gap: 1em;
+    margin-bottom: 1.5em;
+}
+
+.kpi-box {
+    flex: 1;
+    padding: 1em;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.kpi-box.income {
+    background: #c6f6d5;
+    border: 1px solid #9ae6b4;
+}
+
+.kpi-box.expense {
+    background: #fed7d7;
+    border: 1px solid #feb2b2;
+}
+
+.kpi-box.profit {
+    background: #bee3f8;
+    border: 1px solid #90cdf4;
+}
+
+.kpi-box.profit.loss {
+    background: #feb2b2;
+    border: 1px solid #fc8181;
+}
+
+.kpi-label {
+    font-size: 9pt;
+    color: #4a5568;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.kpi-value {
+    font-size: 18pt;
+    font-weight: 700;
+    color: #1a202c;
+    margin-top: 0.25em;
+}
+
+/* ==================== TABLES ==================== */
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1.5em;
+    font-size: 9pt;
+}
+
+th, td {
+    padding: 0.5em 0.75em;
+    text-align: left;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+th {
+    background: #edf2f7;
+    font-weight: 600;
+    color: #2d3748;
+    text-transform: uppercase;
+    font-size: 8pt;
+    letter-spacing: 0.5px;
+}
+
+tr:nth-child(even) {
+    background: #f7fafc;
+}
+
+.text-right {
+    text-align: right;
+}
+
+.text-center {
+    text-align: center;
+}
+
+/* ==================== PROFIT/LOSS INDICATORS ==================== */
+
+.profit-indicator {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 0.5em;
+}
+
+.profit-indicator.positive {
+    background: #48bb78;
+}
+
+.profit-indicator.negative {
+    background: #f56565;
+}
+
+.amount-positive {
+    color: #276749;
+    font-weight: 600;
+}
+
+.amount-negative {
+    color: #c53030;
+    font-weight: 600;
+}
+
+/* ==================== P&L STATEMENT ==================== */
+
+.pnl-statement {
+    margin-bottom: 2em;
+}
+
+.pnl-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.5em 0;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.pnl-row.category {
+    padding-left: 1.5em;
+    color: #4a5568;
+}
+
+.pnl-row.total {
+    font-weight: 700;
+    border-top: 2px solid #2d3748;
+    border-bottom: 2px solid #2d3748;
+    background: #edf2f7;
+    padding: 0.75em;
+}
+
+.pnl-row.subtotal {
+    font-weight: 600;
+    background: #f7fafc;
+}
+
+.pnl-row.net-profit {
+    font-size: 14pt;
+    font-weight: 700;
+    background: #ebf8ff;
+    padding: 1em;
+    border-radius: 4px;
+    margin-top: 1em;
+}
+
+.pnl-row.net-profit.loss {
+    background: #fff5f5;
+}
+
+/* ==================== HIGHLIGHT BOXES ==================== */
+
+.highlight-section {
+    margin-bottom: 1.5em;
+}
+
+.highlight-box {
+    background: #f7fafc;
+    border-left: 4px solid #4299e1;
+    padding: 1em;
+    margin-bottom: 0.75em;
+}
+
+.highlight-box.warning {
+    border-left-color: #ed8936;
+    background: #fffaf0;
+}
+
+.highlight-box.success {
+    border-left-color: #48bb78;
+    background: #f0fff4;
+}
+
+.highlight-box.danger {
+    border-left-color: #f56565;
+    background: #fff5f5;
+}
+
+/* ==================== PROJECT DETAIL PAGE ==================== */
+
+.project-header {
+    background: #1a365d;
+    color: white;
+    padding: 1em 1.5em;
+    border-radius: 8px 8px 0 0;
+    margin-bottom: 0;
+}
+
+.project-header h3 {
+    color: white;
+    margin: 0;
+    font-size: 14pt;
+}
+
+.project-header .company-tag {
+    font-size: 9pt;
+    color: #90cdf4;
+}
+
+.project-summary {
+    background: #edf2f7;
+    padding: 1em 1.5em;
+    border-radius: 0 0 8px 8px;
+    margin-bottom: 1.5em;
+}
+
+/* ==================== APPENDIX ==================== */
+
+.appendix-table {
+    font-size: 8pt;
+}
+
+.appendix-table th,
+.appendix-table td {
+    padding: 0.4em 0.5em;
+}
+
+.anomaly-tag {
+    display: inline-block;
+    background: #fed7d7;
+    color: #c53030;
+    padding: 0.1em 0.4em;
+    border-radius: 4px;
+    font-size: 7pt;
+}
+
+/* ==================== UTILITIES ==================== */
+
+.page-break {
+    page-break-after: always;
+}
+
+.no-break {
+    page-break-inside: avoid;
+}
+
+.small {
+    font-size: 8pt;
+    color: #718096;
+}
+
+.mb-1 { margin-bottom: 0.5em; }
+.mb-2 { margin-bottom: 1em; }
+.mb-3 { margin-bottom: 1.5em; }
+.mt-1 { margin-top: 0.5em; }
+.mt-2 { margin-top: 1em; }
+.mt-3 { margin-top: 1.5em; }
