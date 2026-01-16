@@ -90,7 +90,7 @@ import base64
 
 def ocr_image(image_path: str) -> str:
     """
-    Extract text from image using Groq Vision (Llama 3.2 Vision).
+    Extract text from image using Groq Vision (Llama 4 Scout).
     
     This is a lightweight alternative to EasyOCR that doesn't require
     heavy ML models to be loaded in RAM. Uses Groq's free API tier.
@@ -107,9 +107,9 @@ def ocr_image(image_path: str) -> str:
         mime_types = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp'}
         mime_type = mime_types.get(ext, 'image/jpeg')
         
-        # Call Groq Vision API
+        # Call Groq Vision API with Llama 4 Scout
         response = groq_client.chat.completions.create(
-            model="llama-3.2-11b-vision-preview",  # Groq's vision model
+            model="meta-llama/llama-4-scout-17b-16e-instruct",  # Groq's latest vision model
             messages=[
                 {
                     "role": "user",
@@ -128,7 +128,7 @@ def ocr_image(image_path: str) -> str:
                 }
             ],
             temperature=0.0,
-            max_tokens=1024
+            max_completion_tokens=1024
         )
         
         extracted_text = response.choices[0].message.content.strip()
@@ -140,7 +140,7 @@ def ocr_image(image_path: str) -> str:
         return extracted_text
         
     except Exception as e:
-        secure_log("ERROR", f"Groq Vision OCR failed: {type(e).__name__}")
+        secure_log("ERROR", f"Groq Vision OCR failed: {type(e).__name__}: {str(e)}")
         raise
 
 
