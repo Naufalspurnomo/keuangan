@@ -167,55 +167,102 @@ def _safe_filename(name: str) -> str:
 # MONTH PARSER
 # =========================
 
+# Valid year range for reports
+MIN_YEAR = 2020
+MAX_YEAR = 2100
+
+
 def parse_month_input(month_input: str) -> Tuple[int, int]:
     """
-    Supported:
+    Parse month input with validation.
+    
+    Supported formats:
       - "2026-01" / "2026/01"
       - "01-2026" / "01/2026"
       - "januari 2026" / "jan 2026" / "Jan 2026"
+    
+    Raises:
+        ValueError: If format invalid, month out of range (1-12), or year out of range (2020-2100)
     """
     month_input = (month_input or "").strip().lower()
     if not month_input:
-        raise ValueError("month_input kosong")
+        raise ValueError("Input periode kosong. Contoh: 2026-01 atau januari 2026")
+
+    year = None
+    month = None
 
     # 2026-01 or 01-2026 (also with /)
     if "-" in month_input or "/" in month_input:
         sep = "-" if "-" in month_input else "/"
         parts = [p.strip() for p in month_input.split(sep) if p.strip()]
         if len(parts) == 2:
-            if len(parts[0]) == 4:
-                year = int(parts[0])
-                month = int(parts[1])
-            else:
-                month = int(parts[0])
-                year = int(parts[1])
-            if month < 1 or month > 12:
-                raise ValueError(f"Bulan tidak valid: {month}")
-            return year, month
+            try:
+                part0 = int(parts[0])
+                part1 = int(parts[1])
+                
+                # Determine which part is year vs month
+                # If first part >= 1000, it's likely a year (YYYY-MM format)
+                # Otherwise assume MM-YYYY format
+                if part0 >= 1000:
+                    year = part0
+                    month = part1
+                else:
+                    month = part0
+                    year = part1
+            except ValueError:
+                raise ValueError(f"Format tidak valid: {month_input}. Gunakan format YYYY-MM atau MM-YYYY")
+    else:
+        # Try month name format
+        month_map = {
+            "januari": 1, "jan": 1,
+            "februari": 2, "february": 2, "feb": 2,
+            "maret": 3, "mar": 3,
+            "april": 4, "apr": 4,
+            "mei": 5, "may": 5,
+            "juni": 6, "jun": 6,
+            "juli": 7, "jul": 7,
+            "agustus": 8, "aug": 8, "ags": 8,
+            "september": 9, "sep": 9,
+            "oktober": 10, "okt": 10, "oct": 10,
+            "november": 11, "nov": 11,
+            "desember": 12, "des": 12, "dec": 12,
+        }
 
-    month_map = {
-        "januari": 1, "jan": 1,
-        "februari": 2, "february": 2, "feb": 2,
-        "maret": 3, "mar": 3,
-        "april": 4, "apr": 4,
-        "mei": 5, "may": 5,
-        "juni": 6, "jun": 6,
-        "juli": 7, "jul": 7,
-        "agustus": 8, "aug": 8, "ags": 8,
-        "september": 9, "sep": 9,
-        "oktober": 10, "okt": 10, "oct": 10,
-        "november": 11, "nov": 11,
-        "desember": 12, "des": 12, "dec": 12,
-    }
+        for key, month_num in month_map.items():
+            if re.search(rf"\b{re.escape(key)}\b", month_input):
+                ym = re.search(r"(\d{4})", month_input)
+                if not ym:
+                    raise ValueError(f"Tahun tidak ditemukan dalam input: {month_input}")
+                year = int(ym.group(1))
+                month = month_num
+                break
 
-    for key, month_num in month_map.items():
-        if re.search(rf"\b{re.escape(key)}\b", month_input):
-            ym = re.search(r"(\d{4})", month_input)
-            if not ym:
-                raise ValueError(f"Tahun tidak ditemukan dalam input: {month_input}")
-            return int(ym.group(1)), month_num
+    # Validate parsed values
+    if year is None or month is None:
+        raise ValueError(f"Format tidak dikenali: {month_input}. Contoh: 2026-01 atau januari 2026")
+    
+    # Validate month range
+    if month < 1 or month > 12:
+        raise ValueError(f"Bulan tidak valid: {month}. Harus antara 1-12")
+    
+    # Validate year range
+    if year < MIN_YEAR or year > MAX_YEAR:
+        raise ValueError(f"Tahun tidak valid: {year}. Harus antara {MIN_YEAR}-{MAX_YEAR}")
 
-    raise ValueError(f"Format tidak dikenali: {month_input}")
+    return year, month
+
+
+def validate_period_data(year: int, month: int) -> Tuple[bool, int, str]:
+    """
+    Validate if there's data available for the given period.
+    
+    Returns:
+        Tuple of (has_data: bool, transaction_count: int, period_name: str)
+    """
+    data = get_monthly_data(year, month)
+    tx_count = len(data["transactions"])
+    period_name = data["period"]
+    return (tx_count > 0, tx_count, period_name)
 
 
 # =========================

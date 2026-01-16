@@ -55,7 +55,7 @@ from reminder import (
     start_scheduler,
     get_weekly_summary,
 )
-from pdf_report import generate_pdf_from_input, parse_month_input
+from pdf_report import generate_pdf_from_input, parse_month_input, validate_period_data
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -433,7 +433,27 @@ def webhook_telegram():
                                  timeout=5)
                 
                 try:
-                    # Generate PDF
+                    # Step 1: Parse and validate period (year/month range)
+                    year, month = parse_month_input(month_arg)
+                    
+                    # Step 2: Check if data exists for this period
+                    has_data, tx_count, period_name = validate_period_data(year, month)
+                    
+                    if not has_data:
+                        send_telegram_reply(chat_id, 
+                            f"❌ *Tidak ada transaksi untuk {period_name}*\n\n"
+                            f"PDF tidak dibuat karena tidak ada data.\n\n"
+                            f"💡 Tips:\n"
+                            f"• Cek periode yang benar\n"
+                            f"• Gunakan `/status` untuk lihat data tersedia")
+                        return jsonify({'ok': True}), 200
+                    
+                    # Step 3: Notify user about data found
+                    send_telegram_reply(chat_id, 
+                        f"✅ Ditemukan *{tx_count} transaksi* untuk {period_name}\n"
+                        f"📊 Generating PDF...")
+                    
+                    # Step 4: Generate PDF
                     pdf_path = generate_pdf_from_input(month_arg)
                     
                     # Send PDF file via Telegram
@@ -441,7 +461,7 @@ def webhook_telegram():
                         files = {'document': pdf_file}
                         data = {
                             'chat_id': chat_id,
-                            'caption': f"📊 Laporan Keuangan Bulanan\n📅 Periode: {month_arg}"
+                            'caption': f"📊 Laporan Keuangan Bulanan\n📅 Periode: {period_name}\n📝 Total: {tx_count} transaksi"
                         }
                         response = requests.post(
                             f"{api_url}/sendDocument",
@@ -750,7 +770,27 @@ def webhook_fonnte():
                 month_arg = f"{now.year}-{now.month:02d}"
             
             try:
-                # Generate PDF
+                # Step 1: Parse and validate period (year/month range)
+                year, month = parse_month_input(month_arg)
+                
+                # Step 2: Check if data exists for this period
+                has_data, tx_count, period_name = validate_period_data(year, month)
+                
+                if not has_data:
+                    send_whatsapp_reply(sender_number, 
+                        f"❌ Tidak ada transaksi untuk {period_name}\n\n"
+                        f"PDF tidak dibuat karena tidak ada data.\n\n"
+                        f"💡 Tips:\n"
+                        f"• Cek periode yang benar\n"
+                        f"• Gunakan 'status' untuk lihat data tersedia")
+                    return jsonify({'success': True}), 200
+                
+                # Step 3: Notify user about data found and generating
+                send_whatsapp_reply(sender_number, 
+                    f"✅ Ditemukan {tx_count} transaksi untuk {period_name}\n"
+                    f"📊 Generating PDF...")
+                
+                # Step 4: Generate PDF
                 pdf_path = generate_pdf_from_input(month_arg)
                 
                 # Note: Fonnte has limited file sending capability
@@ -759,8 +799,8 @@ def webhook_fonnte():
                 
                 reply = (
                     f"📊 Laporan Keuangan Bulanan\n"
-                    f"📅 Periode: {month_arg}\n"
-                    f"📄 File: Laporan_Keuangan_{month_arg.replace('-', '_')}.pdf\n"
+                    f"📅 Periode: {period_name}\n"
+                    f"📝 Total: {tx_count} transaksi\n"
                     f"📦 Ukuran: {file_size:.1f} KB\n\n"
                     f"✅ PDF berhasil dibuat!\n\n"
                     f"⚠️ Untuk download PDF, gunakan Telegram bot atau hubungi admin."
