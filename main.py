@@ -623,12 +623,16 @@ def webhook_fonnte():
         media_url = payload.get('url', '')
         msg_type = payload.get('type', 'text').lower()
         
-        # DEBUG: Write full payload to file
-        import json
-        with open('fonnte_debug.log', 'a', encoding='utf-8') as f:
-            f.write(f"\n=== {datetime.now()} ===\n")
-            f.write(json.dumps(payload, ensure_ascii=False, indent=2))
-            f.write(f"\n--- Extracted: type={msg_type}, url={media_url}, msg_len={len(message)} ---\n")
+        # Conditional debug logging (only if FLASK_DEBUG=1)
+        if DEBUG:
+            import json as _json
+            try:
+                with open('fonnte_debug.log', 'a', encoding='utf-8') as f:
+                    f.write(f"\n=== {datetime.now()} ===\n")
+                    f.write(_json.dumps(payload, ensure_ascii=False, indent=2))
+                    f.write(f"\n--- Extracted: type={msg_type}, url={media_url}, msg_len={len(message)} ---\n")
+            except Exception:
+                pass  # Silent fail for debug logging
         
         if not sender_number:
             return jsonify({'success': True}), 200
@@ -751,7 +755,6 @@ def webhook_fonnte():
                 
                 # Note: Fonnte has limited file sending capability
                 # We'll notify user that PDF is generated and provide info
-                import os
                 file_size = os.path.getsize(pdf_path) / 1024  # KB
                 
                 reply = (

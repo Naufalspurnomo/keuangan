@@ -5,8 +5,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-NGROK_URL = "https://6e34567b8e3d.ngrok-free.app"  # Update this if ngrok restarts
-WEBHOOK_URL = f"{NGROK_URL}/telegram"
+KOYEB_URL = "https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app"
+WEBHOOK_URL = f"{KOYEB_URL}/telegram"
 
 def set_webhook():
     if not TOKEN:

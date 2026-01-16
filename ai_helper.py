@@ -45,51 +45,102 @@ GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 from groq import Groq
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# EasyOCR reader (lazy load)
-_ocr_reader = None
+# ===================== OCR CONFIGURATION =====================
+# Set USE_EASYOCR=True in .env to use local EasyOCR (requires 2GB RAM)
+# Set USE_EASYOCR=False (default) to use Groq Vision API (lightweight, 512MB RAM)
+USE_EASYOCR = os.getenv('USE_EASYOCR', 'false').lower() == 'true'
 
 
-def get_ocr_reader():
-    """Get or create EasyOCR reader (lazy loading)."""
-    global _ocr_reader
-    if _ocr_reader is None:
-        import easyocr
-        secure_log("INFO", "Loading EasyOCR model (first time only)...")
-        # GPU=False for server stability, but keep model in RAM for speed
-        _ocr_reader = easyocr.Reader(['id', 'en'], gpu=False)
-        secure_log("INFO", "EasyOCR ready!")
-    return _ocr_reader
+# ===================== EASYOCR (COMMENTED - BACKUP) =====================
+# Uncomment this section if you want to use EasyOCR instead of Groq Vision
+# Requires: pip install easyocr (adds ~1.5GB RAM usage)
+#
+# _ocr_reader = None
+#
+# def get_ocr_reader():
+#     """Get or create EasyOCR reader (lazy loading)."""
+#     global _ocr_reader
+#     if _ocr_reader is None:
+#         import easyocr
+#         secure_log("INFO", "Loading EasyOCR model (first time only)...")
+#         _ocr_reader = easyocr.Reader(['id', 'en'], gpu=False)
+#         secure_log("INFO", "EasyOCR ready!")
+#     return _ocr_reader
+#
+# def ocr_image_easyocr(image_path: str) -> str:
+#     """Extract text from image using EasyOCR."""
+#     try:
+#         import sys, io
+#         reader = get_ocr_reader()
+#         old_stdout = sys.stdout
+#         sys.stdout = io.StringIO()
+#         try:
+#             results = reader.readtext(image_path, detail=0)
+#         finally:
+#             sys.stdout = old_stdout
+#         extracted_text = '\n'.join(results)
+#         return sanitize_input(extracted_text)
+#     except Exception as e:
+#         secure_log("ERROR", f"EasyOCR failed: {type(e).__name__}")
+#         raise
 
+
+# ===================== GROQ VISION OCR (ACTIVE) =====================
+import base64
 
 def ocr_image(image_path: str) -> str:
-    """Extract text from image using EasyOCR."""
+    """
+    Extract text from image using Groq Vision (Llama 3.2 Vision).
+    
+    This is a lightweight alternative to EasyOCR that doesn't require
+    heavy ML models to be loaded in RAM. Uses Groq's free API tier.
+    """
     try:
-        secure_log("INFO", "Running OCR on image...")
+        secure_log("INFO", "Running OCR via Groq Vision...")
         
-        # Suppress EasyOCR progress bar to avoid Windows Unicode console errors
-        import sys
-        import io
+        # Read and encode image to base64
+        with open(image_path, 'rb') as img_file:
+            image_data = base64.b64encode(img_file.read()).decode('utf-8')
         
-        reader = get_ocr_reader()
+        # Determine MIME type
+        ext = os.path.splitext(image_path)[1].lower()
+        mime_types = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp'}
+        mime_type = mime_types.get(ext, 'image/jpeg')
         
-        # Redirect stdout to suppress progress bar
-        old_stdout = sys.stdout
-        sys.stdout = io.StringIO()
-        try:
-            results = reader.readtext(image_path, detail=0)
-        finally:
-            sys.stdout = old_stdout
+        # Call Groq Vision API
+        response = groq_client.chat.completions.create(
+            model="llama-3.2-11b-vision-preview",  # Groq's vision model
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Extract ALL text from this image. Output ONLY the extracted text, nothing else. If it's a receipt/struk, include all items, prices, totals, dates, and store names."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{image_data}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            temperature=0.0,
+            max_tokens=1024
+        )
         
-        extracted_text = '\n'.join(results)
+        extracted_text = response.choices[0].message.content.strip()
         
-        # Sanitize OCR result
+        # Sanitize result
         extracted_text = sanitize_input(extracted_text)
         
-        secure_log("INFO", f"OCR complete: {len(extracted_text)} chars")
+        secure_log("INFO", f"Groq Vision OCR complete: {len(extracted_text)} chars")
         return extracted_text
         
     except Exception as e:
-        secure_log("ERROR", f"OCR failed: {type(e).__name__}")
+        secure_log("ERROR", f"Groq Vision OCR failed: {type(e).__name__}")
         raise
 
 
@@ -273,38 +324,6 @@ def transcribe_audio(audio_path: str) -> str:
         raise
 
 
-def ocr_image(image_path: str) -> str:
-    """Extract text from image using EasyOCR."""
-    try:
-        secure_log("INFO", "Running OCR on image...")
-        
-        # Suppress EasyOCR progress bar to avoid Windows Unicode console errors
-        import sys
-        import io
-        
-        reader = get_ocr_reader()
-        
-        # Redirect stdout to suppress progress bar
-        old_stdout = sys.stdout
-        sys.stdout = io.StringIO()
-        try:
-            results = reader.readtext(image_path, detail=0)
-        finally:
-            sys.stdout = old_stdout
-        
-        extracted_text = '\n'.join(results)
-        
-        # Sanitize OCR result
-        extracted_text = sanitize_input(extracted_text)
-        
-        secure_log("INFO", f"OCR complete: {len(extracted_text)} chars")
-        return extracted_text
-        
-    except Exception as e:
-        secure_log("ERROR", f"OCR failed: {type(e).__name__}")
-        raise
-
-
 def extract_from_text(text: str, sender_name: str) -> List[Dict]:
     """
     Extract financial data from text using Groq (Llama 3.3).
@@ -456,11 +475,19 @@ def extract_financial_data(input_data: str, input_type: str, sender_name: str,
     """
     temp_file = None
     
-    # DEBUG: Log to file
-    from datetime import datetime
-    with open('extract_debug.log', 'a', encoding='utf-8') as f:
-        f.write(f"\n=== {datetime.now()} ===\n")
-        f.write(f"input_type={input_type}, has_media_url={bool(media_url)}, media_url={media_url[:100] if media_url else 'None'}\n")
+    # Conditional debug logging (only if FLASK_DEBUG=1)
+    DEBUG_MODE = os.getenv('FLASK_DEBUG', '0') == '1'
+    
+    def _debug_log(message: str):
+        """Write debug log only in debug mode."""
+        if DEBUG_MODE:
+            try:
+                with open('extract_debug.log', 'a', encoding='utf-8') as f:
+                    f.write(f"[{datetime.now()}] {message}\n")
+            except Exception:
+                pass  # Silent fail for debug logging
+    
+    _debug_log(f"input_type={input_type}, has_media_url={bool(media_url)}, media_url={media_url[:100] if media_url else 'None'}")
     
     try:
         if input_type == 'text':
@@ -468,26 +495,21 @@ def extract_financial_data(input_data: str, input_type: str, sender_name: str,
         
         elif input_type == 'audio':
             if media_url:
-                with open('extract_debug.log', 'a', encoding='utf-8') as f:
-                    f.write(f"Downloading audio from: {media_url[:100]}\n")
+                _debug_log(f"Downloading audio from: {media_url[:100]}")
                 temp_file = download_media(media_url, '.ogg')
-                with open('extract_debug.log', 'a', encoding='utf-8') as f:
-                    f.write(f"Downloaded to: {temp_file}\n")
+                _debug_log(f"Downloaded to: {temp_file}")
             else:
                 temp_file = input_data
             
             transcribed_text = transcribe_audio(temp_file)
-            with open('extract_debug.log', 'a', encoding='utf-8') as f:
-                f.write(f"Transcribed: {transcribed_text[:100] if transcribed_text else 'EMPTY'}\n")
+            _debug_log(f"Transcribed: {transcribed_text[:100] if transcribed_text else 'EMPTY'}")
             return extract_from_text(transcribed_text, sender_name)
         
         elif input_type == 'image':
             if media_url:
-                with open('extract_debug.log', 'a', encoding='utf-8') as f:
-                    f.write(f"Downloading image from: {media_url[:100]}\n")
+                _debug_log(f"Downloading image from: {media_url[:100]}")
                 temp_file = download_media(media_url)
-                with open('extract_debug.log', 'a', encoding='utf-8') as f:
-                    f.write(f"Downloaded to: {temp_file}\n")
+                _debug_log(f"Downloaded to: {temp_file}")
             else:
                 temp_file = input_data
             
@@ -497,8 +519,7 @@ def extract_financial_data(input_data: str, input_type: str, sender_name: str,
             raise ValueError(f"Tipe input tidak dikenal: {input_type}")
     
     except Exception as e:
-        with open('extract_debug.log', 'a', encoding='utf-8') as f:
-            f.write(f"ERROR: {type(e).__name__}: {str(e)}\n")
+        _debug_log(f"ERROR: {type(e).__name__}: {str(e)}")
         raise
     
     finally:
