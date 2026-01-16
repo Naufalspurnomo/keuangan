@@ -1,4 +1,5 @@
 import os
+import time
 import gspread
 import json
 from datetime import datetime, timedelta
@@ -689,15 +690,34 @@ def test_connection() -> bool:
 # Note: Dashboard sheet is now managed by Google Apps Script (Dashboard.gs)
 # These functions provide data for /status command in Telegram
 
+# Dashboard Cache
+_dashboard_cache = None
+_dashboard_last_update = 0
+DASHBOARD_CACHE_TTL = 300  # 5 minutes
+
+def invalidate_dashboard_cache():
+    """Invalidate dashboard cache (call this after adding transactions)."""
+    global _dashboard_cache
+    _dashboard_cache = None
+    secure_log("INFO", "Dashboard cache invalidated")
+
 
 def get_dashboard_summary() -> Dict:
     """
-    Get aggregated data from all projects for status/reporting.
-    This is a programmatic way to get dashboard data without reading the sheet.
-    
-    Returns:
-        Dict with aggregated metrics
+    Get financial summary across all projects.
+    Uses caching (5 mins) to optimize performance.
     """
+    global _dashboard_cache, _dashboard_last_update
+    
+    current_time = time.time()
+    
+    # Check cache validity
+    if _dashboard_cache and (current_time - _dashboard_last_update < DASHBOARD_CACHE_TTL):
+        secure_log("INFO", "Serving dashboard summary from CACHE")
+        return _dashboard_cache
+
+    secure_log("INFO", "Fetching fresh dashboard summary...")
+    
     try:
         projects = get_available_projects()
         spreadsheet = get_spreadsheet()
@@ -760,7 +780,7 @@ def get_dashboard_summary() -> Dict:
                         
                         proj_count += 1
                         total_transactions += 1
-                    except Exception as e:
+                    except (ValueError, IndexError):
                         # Silently skip invalid rows
                         continue
                 
@@ -772,14 +792,15 @@ def get_dashboard_summary() -> Dict:
                     'expense': proj_expense,
                     'income': proj_income,
                     'balance': proj_income - proj_expense,
-                    'transactions': proj_count
+                    'count': proj_count
                 })
                 
             except Exception as e:
-                secure_log("ERROR", f"Failed to process project {proj}: {e}")
+                secure_log("ERROR", f"Error processing {proj}: {str(e)}")
                 continue
         
-        return {
+        # Update Cache
+        _dashboard_cache = {
             'total_expense': total_expense,
             'total_income': total_income,
             'balance': total_income - total_expense,
@@ -788,15 +809,16 @@ def get_dashboard_summary() -> Dict:
             'projects': project_data,
             'by_category': category_totals
         }
+        _dashboard_last_update = current_time
+        
+        secure_log("INFO", "Dashboard cache updated")
+        return _dashboard_cache
         
     except Exception as e:
-        secure_log("ERROR", f"Get dashboard summary failed: {type(e).__name__}")
+        secure_log("ERROR", f"Dashboard summary failed: {type(e).__name__}")
         return {
-            'total_expense': 0,
-            'total_income': 0,
-            'balance': 0,
-            'total_transactions': 0,
-            'project_count': 0,
+            'total_income': 0, 'total_expense': 0, 'balance': 0,
+            'total_transactions': 0, 'project_count': 0,
             'projects': [],
             'by_category': {}
         }

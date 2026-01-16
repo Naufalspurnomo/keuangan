@@ -36,9 +36,9 @@ from sheets_helper import (
     get_all_categories, get_summary,
     format_data_for_ai, check_budget_alert,
     get_company_sheets, COMPANY_SHEETS,
-    # Status/Summary functions (Dashboard is now managed by Apps Script)
     format_dashboard_message, get_dashboard_summary,
-    get_wallet_balances
+    get_wallet_balances,
+    invalidate_dashboard_cache,
 )
 from security import (
     sanitize_input,
@@ -67,6 +67,35 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 
 # Build Telegram API URL safely (don't log this)
 _TELEGRAM_API_URL = None
+_telegram_session = None  # Global session for connection pooling
+
+def get_telegram_session():
+    """Get or create requests Session with connection pooling."""
+    global _telegram_session
+    if _telegram_session is None:
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        
+        _telegram_session = requests.Session()
+        
+        # Configure retry strategy
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        
+        # Configure connection pool
+        adapter = HTTPAdapter(
+            pool_connections=10,  # Keep 10 connections matching
+            pool_maxsize=10,     # Allow 10 concurrent connections
+            max_retries=retry_strategy
+        )
+        
+        _telegram_session.mount("https://", adapter)
+        _telegram_session.mount("http://", adapter)
+        
+    return _telegram_session
 
 
 def get_telegram_api_url():
@@ -157,7 +186,10 @@ def send_telegram_reply(chat_id: int, message: str, parse_mode: str = 'Markdown'
         if not api_url:
             return None
         
-        response = requests.post(
+        # Use existing session (fast) or create new (slow first time)
+        session = get_telegram_session()
+        
+        response = session.post(
             f"{api_url}/sendMessage",
             json={
                 'chat_id': chat_id,
@@ -293,6 +325,7 @@ def webhook_telegram():
                 
                 if result['success']:
                     update_user_activity(user_id, 'telegram', pending['sender_name'])
+                    invalidate_dashboard_cache()  # Reset cache so /status is up-to-date
                     reply = format_success_reply(pending['transactions'], company_sheet)
                     send_telegram_reply(chat_id, reply)
                 else:
@@ -686,6 +719,7 @@ def webhook_fonnte():
             
             if result['success']:
                 update_user_activity(user_id, 'whatsapp', pending['sender_name'])
+                invalidate_dashboard_cache()  # Reset cache
                 reply = format_success_reply(pending['transactions'], company_sheet).replace('*', '')
                 send_whatsapp_reply(sender_number, reply)
             else:
