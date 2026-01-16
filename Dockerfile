@@ -19,6 +19,10 @@ RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download EasyOCR models (during build) so startup is INSTANT
+# This requires more build time/space but makes the container start faster
+RUN python -c "import easyocr; easyocr.Reader(['id', 'en'], gpu=False)"
+
 # Copy application code
 COPY . .
 
