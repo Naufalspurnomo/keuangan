@@ -318,6 +318,10 @@ def webhook_wuzapi():
         
         secure_log("DEBUG", f"WuzAPI Event: {json.dumps(event_data)[:300]}")
         
+        # Check if WuzAPI sends base64 image directly in event
+        # Format: {"base64": "/9j/4AAQSkZJRg...", "event": {...}}
+        base64_image = event_data.get('base64', '')
+        
         # Check event type
         event_type = event_data.get('type', '')
         event = event_data.get('event', {})
@@ -356,7 +360,7 @@ def webhook_wuzapi():
         message_obj = event.get('Message', {})
         text = ''
         input_type = 'text'
-        media_path = None
+        media_url = None  # Changed from media_path to media_url
         
         if msg_type == 'text':
             # Text message - check various fields
@@ -365,32 +369,46 @@ def webhook_wuzapi():
                    message_obj.get('extendedTextMessage', {}).get('text', '') or \
                    message_obj.get('ExtendedTextMessage', {}).get('Text', '')
         elif msg_type == 'media':
-            # Media with caption - try to download image
+            # Media with caption
             caption = message_obj.get('imageMessage', {}).get('caption', '') or \
                      message_obj.get('ImageMessage', {}).get('Caption', '') or \
                      message_obj.get('caption', '')
             text = caption
             input_type = 'image'
             
-            # Try to download the image from WuzAPI
-            if message_id and chat_jid:
-                secure_log("INFO", f"WuzAPI downloading image: msg={message_id}, chat={chat_jid}")
-                media_path = download_wuzapi_image(message_id, chat_jid)
-                
-                if media_path:
-                    secure_log("INFO", f"WuzAPI image downloaded to: {media_path}")
-                else:
-                    secure_log("WARNING", "WuzAPI image download failed, using caption only")
+            # Use base64 image directly from event_data if available
+            if base64_image:
+                secure_log("INFO", f"WuzAPI: Using base64 image from webhook (length: {len(base64_image)})")
+                media_url = f"data:image/jpeg;base64,{base64_image}"
+            else:
+                # Fallback: try to download the image from WuzAPI
+                if message_id and chat_jid:
+                    secure_log("INFO", f"WuzAPI downloading image: msg={message_id}, chat={chat_jid}")
+                    media_path = download_wuzapi_image(message_id, chat_jid)
+                    
+                    if media_path:
+                        secure_log("INFO", f"WuzAPI image downloaded to: {media_path}")
+                        # Convert to base64
+                        import base64 as b64
+                        try:
+                            with open(media_path, 'rb') as f:
+                                img_data = b64.b64encode(f.read()).decode('utf-8')
+                                media_url = f"data:image/jpeg;base64,{img_data}"
+                        except Exception as e:
+                            secure_log("ERROR", f"Failed to read downloaded image: {str(e)}")
+                    else:
+                        secure_log("WARNING", "WuzAPI image download failed, using caption only")
+                        input_type = 'text'  # Fall back to text-only processing
         
         # For text messages without any text, skip
         if not text and input_type == 'text':
             secure_log("DEBUG", f"WuzAPI: No text in message. Type={msg_type}, Msg={json.dumps(message_obj)[:200]}")
             return jsonify({'status': 'no_text'}), 200
         
-        secure_log("INFO", f"WuzAPI message from {sender_number}: {text[:50] if text else '[image]'}")
+        secure_log("INFO", f"WuzAPI message from {sender_number}: {text[:50] if text else '[image]'}, has_media={media_url is not None}")
         
-        # Process the message (with image if available)
-        return process_wuzapi_message(sender_number, push_name, text, input_type, media_path)
+        # Process the message (with image URL if available)
+        return process_wuzapi_message(sender_number, push_name, text, input_type, media_url)
         
     except Exception as e:
         secure_log("ERROR", f"Webhook WuzAPI Error: {traceback.format_exc()}")
@@ -398,11 +416,18 @@ def webhook_wuzapi():
 
 
 def process_wuzapi_message(sender_number: str, sender_name: str, text: str, 
-                           input_type: str = 'text', media_path: str = None):
+                           input_type: str = 'text', media_url: str = None):
     """Process a WuzAPI message and return response.
     
     This mirrors the Telegram command handling for consistency.
     Supports both text and image input types.
+    
+    Args:
+        sender_number: Phone number of sender
+        sender_name: Display name of sender  
+        text: Message text or caption
+        input_type: 'text' or 'image'
+        media_url: Base64 data URL for images (data:image/jpeg;base64,...)
     """
     try:
         # Rate Limit
@@ -546,19 +571,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
 
         # AI Extraction for transactions
         try:
-            # Determine media URL for AI processing
-            # If we have a local media_path, read it as base64 for AI
-            media_url = None
-            if media_path and input_type == 'image':
-                import base64
-                try:
-                    with open(media_path, 'rb') as f:
-                        img_data = base64.b64encode(f.read()).decode('utf-8')
-                        media_url = f"data:image/jpeg;base64,{img_data}"
-                    secure_log("INFO", f"WuzAPI: Prepared image for AI processing")
-                except Exception as e:
-                    secure_log("ERROR", f"WuzAPI: Failed to read image: {str(e)}")
-            
+            # media_url is now passed directly from webhook (already a data URL)
             transactions = extract_financial_data(
                 input_data=text or '', 
                 input_type=input_type,
