@@ -470,7 +470,7 @@ def extract_financial_data(input_data: str, input_type: str, sender_name: str,
         input_data: Text content or file path
         input_type: 'text', 'audio', or 'image'
         sender_name: Name of the sender
-        media_url: URL to download media from
+        media_url: URL to download media from (or data:image/... URI)
         caption: Optional caption for images
     """
     temp_file = None
@@ -507,9 +507,38 @@ def extract_financial_data(input_data: str, input_type: str, sender_name: str,
         
         elif input_type == 'image':
             if media_url:
-                _debug_log(f"Downloading image from: {media_url[:100]}")
-                temp_file = download_media(media_url)
-                _debug_log(f"Downloaded to: {temp_file}")
+                # Check if it's a data URI (base64 embedded image)
+                if media_url.startswith('data:image/'):
+                    _debug_log("Processing base64 data URI directly")
+                    # Extract base64 data and save to temp file
+                    try:
+                        # Parse data URI: data:image/jpeg;base64,XXXX
+                        if ';base64,' in media_url:
+                            header, b64_data = media_url.split(';base64,', 1)
+                            mime_type = header.replace('data:', '')
+                            
+                            # Determine extension from mime type
+                            ext_map = {'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp'}
+                            ext = ext_map.get(mime_type, '.jpg')
+                            
+                            # Decode and save to temp file
+                            img_bytes = base64.b64decode(b64_data)
+                            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
+                            temp_file.write(img_bytes)
+                            temp_file.close()
+                            temp_file = temp_file.name
+                            
+                            _debug_log(f"Base64 image saved to: {temp_file}")
+                        else:
+                            raise ValueError("Invalid data URI format")
+                    except Exception as e:
+                        _debug_log(f"Data URI parse error: {type(e).__name__}: {str(e)}")
+                        raise ValueError(f"Gagal memproses gambar: {str(e)}")
+                else:
+                    # Regular HTTPS URL - download it
+                    _debug_log(f"Downloading image from: {media_url[:100]}")
+                    temp_file = download_media(media_url)
+                    _debug_log(f"Downloaded to: {temp_file}")
             else:
                 temp_file = input_data
             
