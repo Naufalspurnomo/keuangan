@@ -28,30 +28,53 @@ def get_wuzapi_session():
     return _wuzapi_session
 
 def send_wuzapi_reply(to: str, body: str) -> Optional[Dict]:
-    """Send WhatsApp message via WuzAPI."""
+    """Send WhatsApp message via WuzAPI.
+    
+    WuzAPI uses /chat/send/text endpoint with token in header.
+    Phone format: country code + number (no + prefix)
+    """
     try:
         if not WUZAPI_DOMAIN or not WUZAPI_TOKEN:
             secure_log("ERROR", "WuzAPI params missing")
             return None
 
-        # WuzAPI uses JID (phone@s.whatsapp.net). Ensure 'to' has it.
-        if '@' not in to:
-            to = f"{to}@s.whatsapp.net"
-
-        url = f"{WUZAPI_DOMAIN}/message/text?key={WUZAPI_TOKEN}"
+        # WuzAPI uses phone number without @ suffix for sending
+        # Format: country code + number (e.g. 6281212042709)
+        phone = to.split('@')[0].split(':')[0] if '@' in to else to
+        
+        # Try multiple endpoint formats since WuzAPI versions differ
+        endpoints = [
+            f"{WUZAPI_DOMAIN}/chat/send/text",  # Standard WuzAPI format
+            f"{WUZAPI_DOMAIN}/send/text",        # Alternative format
+            f"{WUZAPI_DOMAIN}/message/text",     # Another variant
+        ]
+        
+        # Standard WuzAPI payload
         payload = {
-            "id": to,
-            "message": body
+            "Phone": phone,
+            "Body": body
         }
         
         session = get_wuzapi_session()
-        response = session.post(url, json=payload, timeout=10)
         
-        if response.status_code not in [200, 201]:
-            secure_log("ERROR", f"WuzAPI Send Failed {response.status_code}: {response.text}")
-            return None
-            
-        return response.json()
+        for url in endpoints:
+            try:
+                response = session.post(url, json=payload, timeout=10)
+                
+                if response.status_code in [200, 201]:
+                    secure_log("INFO", f"WuzAPI Send OK via {url.split('/')[-1]}")
+                    return response.json()
+                elif response.status_code == 404:
+                    continue  # Try next endpoint
+                else:
+                    secure_log("ERROR", f"WuzAPI Send {response.status_code}: {response.text[:100]}")
+            except Exception as e:
+                secure_log("ERROR", f"WuzAPI endpoint {url} failed: {str(e)}")
+                continue
+        
+        secure_log("ERROR", "WuzAPI: All send endpoints failed")
+        return None
+        
     except Exception as e:
         secure_log("ERROR", f"WuzAPI Send Except: {type(e).__name__}: {str(e)}")
         return None
