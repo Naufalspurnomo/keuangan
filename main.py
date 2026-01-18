@@ -260,94 +260,126 @@ def format_success_reply(transactions: list, company_sheet: str) -> str:
 
 @app.route('/webhook_wuzapi', methods=['POST'])
 def webhook_wuzapi():
-    """Handle incoming messages from WuzAPI."""
+    """Handle incoming messages from WuzAPI.
+    
+    WuzAPI sends webhooks as URL-encoded form data:
+    - instanceName: instance name
+    - jsonData: URL-encoded JSON with event data
+    - userID: instance ID
+    """
     try:
-        # WuzAPI sends data in specific format
-        # Check if this is a message event
-        # Use force=True because WuzAPI may not send Content-Type: application/json header
-        data = request.get_json(force=True, silent=True)
-        
-        # DEBUG: Log raw incoming data to understand WuzAPI structure
         import json
-        raw_body = request.get_data(as_text=True)[:500]  # First 500 chars
-        secure_log("DEBUG", f"WuzAPI RAW: {raw_body}")
-        secure_log("DEBUG", f"WuzAPI PARSED: {json.dumps(data)[:500] if data else 'None'}")
+        from urllib.parse import unquote
         
-        # Structure check: WuzAPI sends 'data' object
-        # Example: {"data": {"message": "...", "pushName": "...", "key": {"remoteJid": "..."}}}
-        if not data or 'data' not in data:
-            secure_log("DEBUG", f"WuzAPI: No 'data' key. Keys: {list(data.keys()) if data else 'None'}")
-            return jsonify({'status': 'ignored'}), 200
-            
-        msg_data = data['data']
+        # WuzAPI sends form data, not JSON!
+        # Format: instanceName=...&jsonData=...&userID=...
+        instance_name = request.form.get('instanceName')
+        json_data_raw = request.form.get('jsonData')
+        user_id_param = request.form.get('userID')
         
-        # Validasi field penting
-        if 'message' not in msg_data or 'key' not in msg_data:
-             return jsonify({'status': 'ignored'}), 200
-
-        remote_jid = msg_data['key'].get('remoteJid')
-        if not remote_jid or '@s.whatsapp.net' not in remote_jid:
-            return jsonify({'status': 'ignored_group'}), 200 # Ignore groups for now (ends with @g.us)
-
-        # Extract number
-        sender_number = remote_jid.split('@')[0]
-        user_id = remote_jid
-        sender_name = msg_data.get('pushName', 'WuzAPI User')
+        # Debug log
+        secure_log("DEBUG", f"WuzAPI Form: instance={instance_name}, userID={user_id_param}")
         
-        # Message content
-        # WuzAPI message field can be object or string depending on version?
-        # Usually 'message' contains the text or media struct.
-        # Based on docs (WuzAPI is based on Baileys), check 'message' structure
+        if not json_data_raw:
+            # Fallback: try JSON body (for manual testing)
+            data = request.get_json(force=True, silent=True)
+            if data and 'data' in data:
+                # Manual test format
+                msg_data = data['data']
+                remote_jid = msg_data.get('key', {}).get('remoteJid', '')
+                sender_number = remote_jid.split('@')[0] if remote_jid else ''
+                sender_name = msg_data.get('pushName', 'User')
+                raw_msg = msg_data.get('message', {})
+                text = raw_msg.get('conversation', '')
+                
+                if text:
+                    secure_log("INFO", f"WuzAPI message from {sender_number}")
+                    return process_wuzapi_message(sender_number, sender_name, text)
+            return jsonify({'status': 'no_data'}), 200
         
-        raw_msg = msg_data['message']
-        text = ''
-        input_type = 'text'
-        media_url = None
-        caption = None
+        # Parse the URL-encoded JSON data
+        try:
+            event_data = json.loads(json_data_raw)
+        except json.JSONDecodeError:
+            secure_log("ERROR", f"WuzAPI JSON parse failed: {json_data_raw[:200]}")
+            return jsonify({'status': 'parse_error'}), 200
         
-        # 1. Text Message (conversation or extendedTextMessage)
-        if 'conversation' in raw_msg:
-            text = raw_msg['conversation']
-        elif 'extendedTextMessage' in raw_msg:
-             text = raw_msg['extendedTextMessage'].get('text', '')
-        # 2. Image Message
-        elif 'imageMessage' in raw_msg:
-            input_type = 'image'
-            img_msg = raw_msg['imageMessage']
-            caption = img_msg.get('caption', '')
-            # WuzAPI usually handles media via separate endpoint or direct URL if configured S3
-            # But standard Webhook might just give url if configured?
-            # IF NO URL: We rely on text. 
-            # WuzAPI documentation says: "To get media, you might need to use /chat/message/{id} or configure webhook details"
-            # Assumption: Input text as fallback or skip media if complex.
-            # FOR NOW: Let's assume WuzAPI sends `url` or we skip media until configured.
-            # FIX: Only handle text for initial stability unless user configured S3 storage in WuzAPI.
-            text = caption
-            media_url = img_msg.get('url') # Try getting URL
-            
-        elif 'audioMessage' in raw_msg:
-            input_type = 'audio'
-            # Audio handling similar to image
-            
+        secure_log("DEBUG", f"WuzAPI Event: {json.dumps(event_data)[:300]}")
+        
+        # Check event type
+        event_type = event_data.get('type', '')
+        event = event_data.get('event', {})
+        
+        # Skip non-message events
+        if event_type in ['Connected', 'OfflineSyncCompleted', 'OfflineSyncPreview', 'ReadReceipt', 'Receipt']:
+            return jsonify({'status': 'ignored_event'}), 200
+        
+        # Get message info
+        info = event.get('Info', event)  # Some events have Info wrapper, some don't
+        
+        # Skip if IsFromMe (bot's own messages)
+        if info.get('IsFromMe', False):
+            return jsonify({'status': 'own_message'}), 200
+        
+        # Get sender - prefer SenderAlt which has the phone@s.whatsapp.net format
+        sender_alt = info.get('SenderAlt', '')
+        sender_jid = info.get('Sender', '')
+        
+        # Extract phone number from SenderAlt (format: 6281212042709:72@s.whatsapp.net or 6281212042709@s.whatsapp.net)
+        if sender_alt and '@s.whatsapp.net' in sender_alt:
+            sender_number = sender_alt.split('@')[0].split(':')[0]
+        elif sender_jid and '@' in sender_jid:
+            sender_number = sender_jid.split('@')[0].split(':')[0]
         else:
-            # Fallback for simple structure test (just in case WuzAPI sends flat text in 'message' field in some versions)
-            if isinstance(raw_msg, str):
-                text = raw_msg
+            secure_log("DEBUG", f"WuzAPI: No valid sender found")
+            return jsonify({'status': 'no_sender'}), 200
+        
+        # Get message content
+        msg_type = info.get('Type', '')
+        push_name = info.get('PushName', 'User')
+        
+        # Get the actual message text
+        message_obj = event.get('Message', {})
+        text = ''
+        
+        if msg_type == 'text':
+            # Text message - check various fields
+            text = message_obj.get('conversation', '') or \
+                   message_obj.get('Conversation', '') or \
+                   message_obj.get('extendedTextMessage', {}).get('text', '') or \
+                   message_obj.get('ExtendedTextMessage', {}).get('Text', '')
+        elif msg_type == 'media':
+            # Media with caption
+            caption = message_obj.get('imageMessage', {}).get('caption', '') or \
+                     message_obj.get('ImageMessage', {}).get('Caption', '')
+            text = caption
+        
+        if not text:
+            secure_log("DEBUG", f"WuzAPI: No text in message. Type={msg_type}, Msg={json.dumps(message_obj)[:200]}")
+            return jsonify({'status': 'no_text'}), 200
+        
+        secure_log("INFO", f"WuzAPI message from {sender_number}: {text[:50]}")
+        
+        # Process the message
+        return process_wuzapi_message(sender_number, push_name, text)
+        
+    except Exception as e:
+        secure_log("ERROR", f"Webhook WuzAPI Error: {traceback.format_exc()}")
+        return jsonify({'status': 'error'}), 500
 
-        if not text and input_type == 'text':
-             return jsonify({'status': 'no_text'}), 200
-             
+
+def process_wuzapi_message(sender_number: str, sender_name: str, text: str):
+    """Process a WuzAPI message and return response."""
+    try:
         # Rate Limit
         allowed, wait_time = rate_limit_check(sender_number)
         if not allowed:
             return jsonify({'status': 'rate_limited'}), 200
-
-        secure_log("INFO", f"WuzAPI message from {sender_number}")
-
-        # === PROCESS COMMANDS (Same logic as Telegram) ===
+        
         # Sanitize
         text = sanitize_input(text or '')
-
+        
+        # Check for pending transaction - company selection
         if sender_number in _pending_transactions and text in ['1', '2', '3', '4', '5']:
             pending = _pending_transactions.pop(sender_number)
             company_idx = int(text) - 1
@@ -369,40 +401,52 @@ def webhook_wuzapi():
                 send_wuzapi_reply(sender_number, f"❌ Gagal: {result.get('company_error', 'Error')}")
             return jsonify({'status': 'processed'}), 200
 
+        # Cancel pending
         if sender_number in _pending_transactions and text.lower() in ['/cancel', 'batal']:
             _pending_transactions.pop(sender_number, None)
             send_wuzapi_reply(sender_number, "❌ Transaksi dibatalkan.")
             return jsonify({'status': 'cancelled'}), 200
         
+        # /start
+        if text.lower() == '/start':
+            reply = START_MESSAGE.replace('*', '')
+            send_wuzapi_reply(sender_number, reply)
+            return jsonify({'status': 'ok'}), 200
+        
+        # /help
+        if text.lower() == '/help':
+            reply = HELP_MESSAGE.replace('*', '')
+            send_wuzapi_reply(sender_number, reply)
+            return jsonify({'status': 'ok'}), 200
+        
         # /status
         if text.lower() == '/status':
-             data = get_dashboard_summary()
-             reply = (f"📊 DASHBOARD\n"
-                      f"💰 In: {data['total_income']:,}\n"
-                      f"💸 Out: {data['total_expense']:,}\n"
-                      f"📈 P/L: {data['balance']:,}")
-             send_wuzapi_reply(sender_number, reply)
-             return jsonify({'status': 'ok'}), 200
+            data = get_dashboard_summary()
+            reply = (f"📊 DASHBOARD\n"
+                     f"💰 In: {data['total_income']:,}\n"
+                     f"💸 Out: {data['total_expense']:,}\n"
+                     f"📈 P/L: {data['balance']:,}")
+            send_wuzapi_reply(sender_number, reply)
+            return jsonify({'status': 'ok'}), 200
 
-        # === AI EXTRACTION ===
+        # Check for prompt injection
         is_injection, _ = detect_prompt_injection(text)
         if is_injection:
             send_wuzapi_reply(sender_number, "❌ Input tidak valid.")
             return jsonify({'status': 'blocked'}), 200
 
+        # AI Extraction for transactions
         try:
-            # AI Extraction
-            # Note: For WuzAPI simple, we focus on Text first. Media support requires S3 setup usually.
             transactions = extract_financial_data(
                 input_data=text, 
-                input_type='text', # Force text 
+                input_type='text',
                 sender_name=sender_name,
-                media_url=None # WuzAPI media needs complex handling, skipping for now
+                media_url=None
             )
             
             if not transactions:
-                # Silent if no transactions found to avoid spamming
-                pass 
+                # No transactions detected - could be a question or invalid input
+                pass
             else:
                 # Save to pending
                 _pending_transactions[sender_number] = {
@@ -413,7 +457,7 @@ def webhook_wuzapi():
                 }
                 
                 total_estimasi = sum(t.get('jumlah', 0) for t in transactions)
-                reply = (f"📝 *Konfirmasi Transaksi*\n"
+                reply = (f"📝 Konfirmasi Transaksi\n"
                          f"Total: Rp {total_estimasi:,}\n\n"
                          f"Simpan ke company mana?\n"
                          f"1. TEXTURIN-Bali\n"
@@ -421,17 +465,19 @@ def webhook_wuzapi():
                          f"3. HOLLA\n"
                          f"4. HOJJA\n"
                          f"5. KANTOR\n\n"
-                         f"_Ketik 1-5_")
+                         f"Ketik 1-5")
                 send_wuzapi_reply(sender_number, reply)
 
         except Exception as e:
             secure_log("ERROR", f"WuzAPI AI Error: {str(e)}")
         
         return jsonify({'status': 'ok'}), 200
-
+        
     except Exception as e:
-        secure_log("ERROR", f"Webhook WuzAPI Error: {traceback.format_exc()}")
-        return jsonify({'status': 'error'}), 500                   
+        secure_log("ERROR", f"Process WuzAPI Error: {traceback.format_exc()}")
+        return jsonify({'status': 'error'}), 500
+
+
 def get_status_message() -> str:
     """Get current status message - aggregates data from all projects."""
     # Use the dashboard message which aggregates all projects
