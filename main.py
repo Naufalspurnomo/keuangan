@@ -146,14 +146,18 @@ Balas dengan nomor 1-5.
 {CATEGORIES_DISPLAY}
 
 ━━━━━━━━━━━━━━━━━━━━━
-⚙️ *PERINTAH*
+⚙️ *PERINTAH TERSEDIA*
 ━━━━━━━━━━━━━━━━━━━━━
-• `/status` - Dashboard semua company
-• `/laporan` - Ringkasan 7 hari
-• `/company` - Lihat daftar company
-• `/tanya [x]` - Tanya AI
-• `/reminder on/off` - Pengingat
-• `/exportpdf 2026-01` - Export PDF bulanan
+📊 `/status` - Dashboard semua company
+💰 `/saldo` - Lihat saldo per sumber dana
+📋 `/list` - Transaksi terakhir 7 hari
+📈 `/laporan` - Ringkasan laporan 7 hari
+📈 `/laporan30` - Ringkasan laporan 30 hari
+🏢 `/company` - Daftar company sheets
+🗂️ `/kategori` - Daftar kategori
+🤖 `/tanya [x]` - Tanya AI tentang keuangan
+📄 `/exportpdf` - Export PDF bulan ini
+❓ `/help` - Panduan lengkap
 
 🔒 Bot hanya MENAMBAH data, tidak bisa hapus.
 """
@@ -168,15 +172,22 @@ HELP_MESSAGE = f"""📖 *PANDUAN BOT KEUANGAN*
 *Company Sheets:*
 {COMPANY_DISPLAY}
 
-*Kategori (Auto):*
+*Kategori (Auto-detect):*
 {', '.join(ALLOWED_CATEGORIES)}
 
-*Perintah:*
-• `/status` - Ringkasan
-• `/laporan` - Laporan
-• `/company` - Daftar company
-• `/tanya [x]` - Tanya AI
-• `/exportpdf` - Export PDF
+━━━━━━━━━━━━━━━━━━━━━
+*DAFTAR PERINTAH:*
+━━━━━━━━━━━━━━━━━━━━━
+📊 `/status` - Dashboard ringkasan semua company
+💰 `/saldo` - Lihat saldo per sumber dana
+📋 `/list` - Lihat transaksi 7 hari terakhir
+📈 `/laporan` - Ringkasan laporan 7 hari
+📈 `/laporan30` - Ringkasan laporan 30 hari
+🏢 `/company` - Daftar company sheets
+🗂️ `/kategori` - Daftar kategori tersedia
+🤖 `/tanya [pertanyaan]` - Tanya AI
+📄 `/exportpdf` - Export PDF bulan ini
+📄 `/exportpdf 2026-01` - Export PDF bulan tertentu
 
 _Koreksi data langsung di Google Sheets._"""
 
@@ -369,7 +380,10 @@ def webhook_wuzapi():
 
 
 def process_wuzapi_message(sender_number: str, sender_name: str, text: str):
-    """Process a WuzAPI message and return response."""
+    """Process a WuzAPI message and return response.
+    
+    This mirrors the Telegram command handling for consistency.
+    """
     try:
         # Rate Limit
         allowed, wait_time = rate_limit_check(sender_number)
@@ -409,25 +423,101 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str):
         
         # /start
         if text.lower() == '/start':
-            reply = START_MESSAGE.replace('*', '')
+            reply = START_MESSAGE.replace('*', '').replace('_', '')
             send_wuzapi_reply(sender_number, reply)
             return jsonify({'status': 'ok'}), 200
         
         # /help
         if text.lower() == '/help':
-            reply = HELP_MESSAGE.replace('*', '')
+            reply = HELP_MESSAGE.replace('*', '').replace('_', '')
             send_wuzapi_reply(sender_number, reply)
             return jsonify({'status': 'ok'}), 200
         
-        # /status
+        # /status - Full dashboard like Telegram
         if text.lower() == '/status':
-            data = get_dashboard_summary()
-            reply = (f"📊 DASHBOARD\n"
-                     f"💰 In: {data['total_income']:,}\n"
-                     f"💸 Out: {data['total_expense']:,}\n"
-                     f"📈 P/L: {data['balance']:,}")
+            reply = get_status_message().replace('*', '').replace('_', '')
             send_wuzapi_reply(sender_number, reply)
             return jsonify({'status': 'ok'}), 200
+        
+        # /saldo
+        if text.lower() == '/saldo':
+            reply = get_wallet_balances().replace('*', '').replace('_', '')
+            send_wuzapi_reply(sender_number, reply)
+            return jsonify({'status': 'ok'}), 200
+        
+        # /kategori
+        if text.lower() == '/kategori':
+            reply = f"📁 Kategori Tersedia:\n\n{CATEGORIES_DISPLAY}"
+            send_wuzapi_reply(sender_number, reply)
+            return jsonify({'status': 'ok'}), 200
+        
+        # /company or /project
+        if text.lower() in ['/company', '/project']:
+            company_list = '\n'.join(f"  {i+1}. {c}" for i, c in enumerate(COMPANY_SHEETS))
+            reply = f"🏢 Company Sheets:\n\n{company_list}\n\nKirim transaksi, lalu pilih nomor company."
+            send_wuzapi_reply(sender_number, reply)
+            return jsonify({'status': 'ok'}), 200
+        
+        # /list - Show recent transactions
+        if text.lower() == '/list':
+            from sheets_helper import get_all_data
+            data = get_all_data(days=7)
+            if data:
+                lines = ["📋 Transaksi Terakhir (7 hari):\n"]
+                by_company = {}
+                for d in data[-20:]:
+                    company = d.get('company_sheet', 'Unknown')
+                    if company not in by_company:
+                        by_company[company] = []
+                    by_company[company].append(d)
+                
+                for company, items in by_company.items():
+                    lines.append(f"\n{company}:")
+                    for item in items[-5:]:
+                        emoji = "💸" if item['tipe'] == 'Pengeluaran' else "💰"
+                        nama = item.get('nama_projek', '')
+                        nama_str = f" ({nama})" if nama else ""
+                        lines.append(f"  {emoji} {item['keterangan'][:25]}{nama_str} - Rp {item['jumlah']:,}".replace(',', '.'))
+                
+                reply = '\n'.join(lines)
+            else:
+                reply = "📋 Tidak ada transaksi dalam 7 hari terakhir."
+            send_wuzapi_reply(sender_number, reply)
+            return jsonify({'status': 'ok'}), 200
+        
+        # /laporan or /laporan30
+        if text.lower().startswith('/laporan'):
+            days = 30 if '30' in text else 7
+            report = generate_report(days=days)
+            reply = format_report_message(report).replace('*', '').replace('_', '')
+            send_wuzapi_reply(sender_number, reply)
+            return jsonify({'status': 'ok'}), 200
+        
+        # /tanya [question]
+        if text.lower().startswith('/tanya'):
+            question = text[6:].strip()
+            if not question:
+                send_wuzapi_reply(sender_number, 
+                    "❓ Format: /tanya [pertanyaan]\n\n"
+                    "Contoh:\n"
+                    "• /tanya total pengeluaran bulan ini\n"
+                    "• /tanya kategori terbesar")
+                return jsonify({'status': 'ok'}), 200
+            
+            # Check for injection
+            is_injection, _ = detect_prompt_injection(question)
+            if is_injection:
+                send_wuzapi_reply(sender_number, "❌ Pertanyaan tidak valid.")
+                return jsonify({'status': 'blocked'}), 200
+            
+            # Get data context and query AI
+            data_context = format_data_for_ai(days=30)
+            answer = query_data(question, data_context)
+            reply = f"💡 Jawaban:\n\n{answer}"
+            send_wuzapi_reply(sender_number, reply)
+            return jsonify({'status': 'ok'}), 200
+        
+
 
         # Check for prompt injection
         is_injection, _ = detect_prompt_injection(text)
