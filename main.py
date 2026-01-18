@@ -267,9 +267,16 @@ def webhook_wuzapi():
         # Use force=True because WuzAPI may not send Content-Type: application/json header
         data = request.get_json(force=True, silent=True)
         
+        # DEBUG: Log raw incoming data to understand WuzAPI structure
+        import json
+        raw_body = request.get_data(as_text=True)[:500]  # First 500 chars
+        secure_log("DEBUG", f"WuzAPI RAW: {raw_body}")
+        secure_log("DEBUG", f"WuzAPI PARSED: {json.dumps(data)[:500] if data else 'None'}")
+        
         # Structure check: WuzAPI sends 'data' object
         # Example: {"data": {"message": "...", "pushName": "...", "key": {"remoteJid": "..."}}}
         if not data or 'data' not in data:
+            secure_log("DEBUG", f"WuzAPI: No 'data' key. Keys: {list(data.keys()) if data else 'None'}")
             return jsonify({'status': 'ignored'}), 200
             
         msg_data = data['data']
