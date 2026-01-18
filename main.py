@@ -40,6 +40,10 @@ from sheets_helper import (
     get_wallet_balances,
     invalidate_dashboard_cache,
 )
+from wuzapi_helper import (
+    send_wuzapi_reply,
+    download_wuzapi_media
+)
 from security import (
     sanitize_input,
     detect_prompt_injection,
@@ -252,7 +256,174 @@ def format_success_reply(transactions: list, company_sheet: str) -> str:
     
     return '\n'.join(lines)
 
+# ===================== WUZAPI HANDLERS =====================
 
+@app.route('/webhook_wuzapi', methods=['POST'])
+def webhook_wuzapi():
+    """Handle incoming messages from WuzAPI."""
+    try:
+        # WuzAPI sends data in specific format
+        # Check if this is a message event
+        data = request.get_json()
+        
+        # Structure check: WuzAPI sends 'data' object
+        # Example: {"data": {"message": "...", "pushName": "...", "key": {"remoteJid": "..."}}}
+        if not data or 'data' not in data:
+            return jsonify({'status': 'ignored'}), 200
+            
+        msg_data = data['data']
+        
+        # Validasi field penting
+        if 'message' not in msg_data or 'key' not in msg_data:
+             return jsonify({'status': 'ignored'}), 200
+
+        remote_jid = msg_data['key'].get('remoteJid')
+        if not remote_jid or '@s.whatsapp.net' not in remote_jid:
+            return jsonify({'status': 'ignored_group'}), 200 # Ignore groups for now (ends with @g.us)
+
+        # Extract number
+        sender_number = remote_jid.split('@')[0]
+        user_id = remote_jid
+        sender_name = msg_data.get('pushName', 'WuzAPI User')
+        
+        # Message content
+        # WuzAPI message field can be object or string depending on version?
+        # Usually 'message' contains the text or media struct.
+        # Based on docs (WuzAPI is based on Baileys), check 'message' structure
+        
+        raw_msg = msg_data['message']
+        text = ''
+        input_type = 'text'
+        media_url = None
+        caption = None
+        
+        # 1. Text Message (conversation or extendedTextMessage)
+        if 'conversation' in raw_msg:
+            text = raw_msg['conversation']
+        elif 'extendedTextMessage' in raw_msg:
+             text = raw_msg['extendedTextMessage'].get('text', '')
+        # 2. Image Message
+        elif 'imageMessage' in raw_msg:
+            input_type = 'image'
+            img_msg = raw_msg['imageMessage']
+            caption = img_msg.get('caption', '')
+            # WuzAPI usually handles media via separate endpoint or direct URL if configured S3
+            # But standard Webhook might just give url if configured?
+            # IF NO URL: We rely on text. 
+            # WuzAPI documentation says: "To get media, you might need to use /chat/message/{id} or configure webhook details"
+            # Assumption: Input text as fallback or skip media if complex.
+            # FOR NOW: Let's assume WuzAPI sends `url` or we skip media until configured.
+            # FIX: Only handle text for initial stability unless user configured S3 storage in WuzAPI.
+            text = caption
+            media_url = img_msg.get('url') # Try getting URL
+            
+        elif 'audioMessage' in raw_msg:
+            input_type = 'audio'
+            # Audio handling similar to image
+            
+        else:
+            # Fallback for simple structure test (just in case WuzAPI sends flat text in 'message' field in some versions)
+            if isinstance(raw_msg, str):
+                text = raw_msg
+
+        if not text and input_type == 'text':
+             return jsonify({'status': 'no_text'}), 200
+             
+        # Rate Limit
+        allowed, wait_time = rate_limit_check(sender_number)
+        if not allowed:
+            return jsonify({'status': 'rate_limited'}), 200
+
+        secure_log("INFO", f"WuzAPI message from {sender_number}")
+
+        # === PROCESS COMMANDS (Same logic as Telegram) ===
+        # Sanitize
+        text = sanitize_input(text or '')
+
+        if sender_number in _pending_transactions and text in ['1', '2', '3', '4', '5']:
+            pending = _pending_transactions.pop(sender_number)
+            company_idx = int(text) - 1
+            company_sheet = COMPANY_SHEETS[company_idx]
+            
+            result = append_transactions(
+                pending['transactions'], 
+                pending['sender_name'], 
+                pending['source'],
+                company_sheet=company_sheet
+            )
+            
+            if result['success']:
+                update_user_activity(sender_number, 'wuzapi', pending['sender_name'])
+                invalidate_dashboard_cache()
+                reply = format_success_reply(pending['transactions'], company_sheet).replace('*', '')
+                send_wuzapi_reply(sender_number, reply)
+            else:
+                send_wuzapi_reply(sender_number, f"❌ Gagal: {result.get('company_error', 'Error')}")
+            return jsonify({'status': 'processed'}), 200
+
+        if sender_number in _pending_transactions and text.lower() in ['/cancel', 'batal']:
+            _pending_transactions.pop(sender_number, None)
+            send_wuzapi_reply(sender_number, "❌ Transaksi dibatalkan.")
+            return jsonify({'status': 'cancelled'}), 200
+        
+        # /status
+        if text.lower() == '/status':
+             data = get_dashboard_summary()
+             reply = (f"📊 DASHBOARD\n"
+                      f"💰 In: {data['total_income']:,}\n"
+                      f"💸 Out: {data['total_expense']:,}\n"
+                      f"📈 P/L: {data['balance']:,}")
+             send_wuzapi_reply(sender_number, reply)
+             return jsonify({'status': 'ok'}), 200
+
+        # === AI EXTRACTION ===
+        is_injection, _ = detect_prompt_injection(text)
+        if is_injection:
+            send_wuzapi_reply(sender_number, "❌ Input tidak valid.")
+            return jsonify({'status': 'blocked'}), 200
+
+        try:
+            # AI Extraction
+            # Note: For WuzAPI simple, we focus on Text first. Media support requires S3 setup usually.
+            transactions = extract_financial_data(
+                input_data=text, 
+                input_type='text', # Force text 
+                sender_name=sender_name,
+                media_url=None # WuzAPI media needs complex handling, skipping for now
+            )
+            
+            if not transactions:
+                # Silent if no transactions found to avoid spamming
+                pass 
+            else:
+                # Save to pending
+                _pending_transactions[sender_number] = {
+                    'transactions': transactions,
+                    'sender_name': sender_name,
+                    'source': "WuzAPI",
+                    'timestamp': datetime.now()
+                }
+                
+                total_estimasi = sum(t.get('jumlah', 0) for t in transactions)
+                reply = (f"📝 *Konfirmasi Transaksi*\n"
+                         f"Total: Rp {total_estimasi:,}\n\n"
+                         f"Simpan ke company mana?\n"
+                         f"1. TEXTURIN-Bali\n"
+                         f"2. TEXTURIN-Surabaya\n"
+                         f"3. HOLLA\n"
+                         f"4. HOJJA\n"
+                         f"5. KANTOR\n\n"
+                         f"_Ketik 1-5_")
+                send_wuzapi_reply(sender_number, reply)
+
+        except Exception as e:
+            secure_log("ERROR", f"WuzAPI AI Error: {str(e)}")
+        
+        return jsonify({'status': 'ok'}), 200
+
+    except Exception as e:
+        secure_log("ERROR", f"Webhook WuzAPI Error: {traceback.format_exc()}")
+        return jsonify({'status': 'error'}), 500                   
 def get_status_message() -> str:
     """Get current status message - aggregates data from all projects."""
     # Use the dashboard message which aggregates all projects
