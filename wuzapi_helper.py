@@ -100,3 +100,65 @@ def download_wuzapi_media(media_url: str) -> Optional[str]:
     except Exception as e:
         secure_log("ERROR", f"WuzAPI Media Except: {str(e)}")
         return None
+
+
+def download_wuzapi_image(message_id: str, chat_jid: str) -> Optional[str]:
+    """Download image from WuzAPI using message ID and chat JID.
+    
+    WuzAPI provides /chat/downloadimage endpoint to download media.
+    Returns the local file path of the downloaded image, or None if failed.
+    """
+    import tempfile
+    import base64
+    
+    if not WUZAPI_DOMAIN or not WUZAPI_TOKEN:
+        secure_log("ERROR", "WuzAPI params missing for image download")
+        return None
+    
+    try:
+        session = get_wuzapi_session()
+        
+        # WuzAPI download image endpoint
+        url = f"{WUZAPI_DOMAIN}/chat/downloadimage"
+        payload = {
+            "MessageID": message_id,
+            "JID": chat_jid
+        }
+        
+        response = session.post(url, json=payload, timeout=60)
+        
+        if response.status_code == 200:
+            result = response.json()
+            
+            # WuzAPI returns base64 encoded image data
+            if result.get('success') and result.get('data'):
+                image_data = result['data']
+                
+                # Check if it's base64 encoded
+                if isinstance(image_data, str):
+                    try:
+                        # Decode base64
+                        img_bytes = base64.b64decode(image_data)
+                        
+                        # Save to temp file
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
+                            tmp.write(img_bytes)
+                            secure_log("INFO", f"WuzAPI image downloaded: {tmp.name}")
+                            return tmp.name
+                    except Exception as e:
+                        secure_log("ERROR", f"WuzAPI base64 decode failed: {str(e)}")
+                        return None
+                        
+            # Alternative: check if direct bytes or URL
+            elif result.get('url'):
+                return download_wuzapi_media(result['url'])
+            
+            secure_log("DEBUG", f"WuzAPI image response: {str(result)[:200]}")
+            return None
+        else:
+            secure_log("ERROR", f"WuzAPI Download Image failed: {response.status_code} - {response.text[:100]}")
+            return None
+            
+    except Exception as e:
+        secure_log("ERROR", f"WuzAPI Download Image Except: {type(e).__name__}: {str(e)}")
+        return None

@@ -42,7 +42,8 @@ from sheets_helper import (
 )
 from wuzapi_helper import (
     send_wuzapi_reply,
-    download_wuzapi_media
+    download_wuzapi_media,
+    download_wuzapi_image
 )
 from security import (
     sanitize_input,
@@ -348,10 +349,14 @@ def webhook_wuzapi():
         # Get message content
         msg_type = info.get('Type', '')
         push_name = info.get('PushName', 'User')
+        message_id = info.get('ID', '')
+        chat_jid = info.get('Chat', '')
         
         # Get the actual message text
         message_obj = event.get('Message', {})
         text = ''
+        input_type = 'text'
+        media_path = None
         
         if msg_type == 'text':
             # Text message - check various fields
@@ -360,29 +365,44 @@ def webhook_wuzapi():
                    message_obj.get('extendedTextMessage', {}).get('text', '') or \
                    message_obj.get('ExtendedTextMessage', {}).get('Text', '')
         elif msg_type == 'media':
-            # Media with caption
+            # Media with caption - try to download image
             caption = message_obj.get('imageMessage', {}).get('caption', '') or \
-                     message_obj.get('ImageMessage', {}).get('Caption', '')
+                     message_obj.get('ImageMessage', {}).get('Caption', '') or \
+                     message_obj.get('caption', '')
             text = caption
+            input_type = 'image'
+            
+            # Try to download the image from WuzAPI
+            if message_id and chat_jid:
+                secure_log("INFO", f"WuzAPI downloading image: msg={message_id}, chat={chat_jid}")
+                media_path = download_wuzapi_image(message_id, chat_jid)
+                
+                if media_path:
+                    secure_log("INFO", f"WuzAPI image downloaded to: {media_path}")
+                else:
+                    secure_log("WARNING", "WuzAPI image download failed, using caption only")
         
-        if not text:
+        # For text messages without any text, skip
+        if not text and input_type == 'text':
             secure_log("DEBUG", f"WuzAPI: No text in message. Type={msg_type}, Msg={json.dumps(message_obj)[:200]}")
             return jsonify({'status': 'no_text'}), 200
         
-        secure_log("INFO", f"WuzAPI message from {sender_number}: {text[:50]}")
+        secure_log("INFO", f"WuzAPI message from {sender_number}: {text[:50] if text else '[image]'}")
         
-        # Process the message
-        return process_wuzapi_message(sender_number, push_name, text)
+        # Process the message (with image if available)
+        return process_wuzapi_message(sender_number, push_name, text, input_type, media_path)
         
     except Exception as e:
         secure_log("ERROR", f"Webhook WuzAPI Error: {traceback.format_exc()}")
         return jsonify({'status': 'error'}), 500
 
 
-def process_wuzapi_message(sender_number: str, sender_name: str, text: str):
+def process_wuzapi_message(sender_number: str, sender_name: str, text: str, 
+                           input_type: str = 'text', media_path: str = None):
     """Process a WuzAPI message and return response.
     
     This mirrors the Telegram command handling for consistency.
+    Supports both text and image input types.
     """
     try:
         # Rate Limit
@@ -518,7 +538,6 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str):
             return jsonify({'status': 'ok'}), 200
         
 
-
         # Check for prompt injection
         is_injection, _ = detect_prompt_injection(text)
         if is_injection:
@@ -527,35 +546,62 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str):
 
         # AI Extraction for transactions
         try:
+            # Determine media URL for AI processing
+            # If we have a local media_path, read it as base64 for AI
+            media_url = None
+            if media_path and input_type == 'image':
+                import base64
+                try:
+                    with open(media_path, 'rb') as f:
+                        img_data = base64.b64encode(f.read()).decode('utf-8')
+                        media_url = f"data:image/jpeg;base64,{img_data}"
+                    secure_log("INFO", f"WuzAPI: Prepared image for AI processing")
+                except Exception as e:
+                    secure_log("ERROR", f"WuzAPI: Failed to read image: {str(e)}")
+            
             transactions = extract_financial_data(
-                input_data=text, 
-                input_type='text',
+                input_data=text or '', 
+                input_type=input_type,
                 sender_name=sender_name,
-                media_url=None
+                media_url=media_url,
+                caption=text if input_type == 'image' else None
             )
             
             if not transactions:
                 # No transactions detected - could be a question or invalid input
-                pass
+                if input_type == 'image':
+                    send_wuzapi_reply(sender_number, 
+                        "❓ Tidak ada transaksi terdeteksi dari gambar.\n\n"
+                        "Tips:\n"
+                        "• Pastikan struk/nota terlihat jelas\n"
+                        "• Tambahkan caption seperti: 'Beli material projek X'")
             else:
                 # Save to pending
+                source = "WuzAPI-Image" if input_type == 'image' else "WuzAPI"
                 _pending_transactions[sender_number] = {
                     'transactions': transactions,
                     'sender_name': sender_name,
-                    'source': "WuzAPI",
+                    'source': source,
                     'timestamp': datetime.now()
                 }
                 
+                # Format transaction preview
+                tx_lines = []
+                for t in transactions:
+                    emoji = "💰" if t.get('tipe') == 'Pemasukan' else "💸"
+                    tx_lines.append(f"{emoji} {t.get('keterangan', '-')}: Rp {t.get('jumlah', 0):,}".replace(',', '.'))
+                tx_preview = '\n'.join(tx_lines)
+                
                 total_estimasi = sum(t.get('jumlah', 0) for t in transactions)
-                reply = (f"📝 Konfirmasi Transaksi\n"
+                reply = (f"📝 Transaksi Terdeteksi:\n{tx_preview}\n\n"
                          f"Total: Rp {total_estimasi:,}\n\n"
-                         f"Simpan ke company mana?\n"
+                         f"🏢 Simpan ke company mana?\n"
                          f"1. TEXTURIN-Bali\n"
                          f"2. TEXTURIN-Surabaya\n"
                          f"3. HOLLA\n"
                          f"4. HOJJA\n"
                          f"5. KANTOR\n\n"
-                         f"Ketik 1-5")
+                         f"Ketik 1-5 atau /cancel untuk batal")
                 send_wuzapi_reply(sender_number, reply)
 
         except Exception as e:
