@@ -262,7 +262,7 @@ def validate_category(category: str) -> str:
 def validate_media_url(url: str) -> Tuple[bool, Optional[str]]:
     """
     Validate media URL before downloading.
-    Only allows trusted domains.
+    Only allows trusted domains and data URIs.
     
     Args:
         url: URL to validate
@@ -272,6 +272,10 @@ def validate_media_url(url: str) -> Tuple[bool, Optional[str]]:
     """
     if not url:
         return False, "URL is empty"
+    
+    # Allow data URIs (base64 embedded images) - these are safe as they're inline data
+    if url.startswith('data:image/'):
+        return True, None
     
     # Allowed domains for media
     ALLOWED_DOMAINS = [
@@ -299,7 +303,6 @@ def validate_media_url(url: str) -> Tuple[bool, Optional[str]]:
         r"%2e%2e",  # Encoded path traversal
         r"<script",  # XSS
         r"javascript:",
-        r"data:",
     ]
     
     for pattern in suspicious_url_patterns:
