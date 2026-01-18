@@ -264,7 +264,8 @@ def webhook_wuzapi():
     try:
         # WuzAPI sends data in specific format
         # Check if this is a message event
-        data = request.get_json()
+        # Use force=True because WuzAPI may not send Content-Type: application/json header
+        data = request.get_json(force=True, silent=True)
         
         # Structure check: WuzAPI sends 'data' object
         # Example: {"data": {"message": "...", "pushName": "...", "key": {"remoteJid": "..."}}}
