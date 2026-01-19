@@ -280,30 +280,32 @@ def build_selection_prompt(transactions: list, mention: str = "") -> str:
     tx_lines = []
     for t in transactions:
         emoji = "💰" if t.get('tipe') == 'Pemasukan' else "💸"
-        tx_lines.append(f"{emoji} {t.get('keterangan', '-')}: Rp {t.get('jumlah', 0):,}".replace(',', '.'))
+        tx_lines.append(f"   {emoji} {t.get('keterangan', '-')}: Rp {t.get('jumlah', 0):,}".replace(',', '.'))
     tx_preview = '\n'.join(tx_lines)
     
     total = sum(t.get('jumlah', 0) for t in transactions)
     
-    return f"""{mention}📝 Transaksi Terdeteksi:
+    return f"""{mention}📋 Transaksi Terdeteksi:
 {tx_preview}
 
-Total: Rp {total:,}
+📊 Total: Rp {total:,}
 
-💼 Simpan ke mana?
+━━━━━━━━━━━━━━━━━━
+❓ Simpan ke company mana?
 
 📁 Dompet Holla:
-   1. HOLLA
-   2. HOJJA
+   1️⃣ HOLLA
+   2️⃣ HOJJA
 
 📁 Dompet Texturin Sby:
-   3. TEXTURIN-Surabaya
+   3️⃣ TEXTURIN-Surabaya
 
 📁 Dompet Evan:
-   4. TEXTURIN-Bali
-   5. KANTOR
+   4️⃣ TEXTURIN-Bali
+   5️⃣ KANTOR
 
-Ketik 1-5 atau /cancel""".replace(',', '.')
+━━━━━━━━━━━━━━━━━━
+💡 Ketik angka 1-5 atau /cancel""".replace(',', '.')
 
 
 # ===================== REVISION HELPERS =====================
@@ -454,30 +456,39 @@ def format_success_reply(transactions: list, company_sheet: str) -> str:
 
 def format_success_reply_new(transactions: list, dompet_sheet: str, company: str, mention: str = "") -> str:
     """Format success reply message with dompet and company info."""
-    lines = [f"{mention}✅ *Transaksi Tercatat!*\n"]
+    lines = [f"{mention}✅ Transaksi Tercatat!\n"]
     
     total = 0
     nama_projek_set = set()
     
+    # Transaction details
+    lines.append("📊 Detail:")
     for t in transactions:
         amount = t.get('jumlah', 0)
         total += amount
         tipe_icon = "💰" if t.get('tipe') == 'Pemasukan' else "💸"
-        lines.append(f"{tipe_icon} {t.get('keterangan', '-')}: Rp {amount:,}".replace(',', '.'))
-        lines.append(f"   📁 {t.get('kategori', 'Lain-lain')}")
+        lines.append(f"   {tipe_icon} {t.get('keterangan', '-')}: Rp {amount:,}".replace(',', '.'))
+        lines.append(f"      📁 {t.get('kategori', 'Lain-lain')}")
         
         if t.get('nama_projek'):
             nama_projek_set.add(t['nama_projek'])
     
-    lines.append(f"\n*Total: Rp {total:,}*".replace(',', '.'))
+    lines.append(f"\n📊 Total: Rp {total:,}".replace(',', '.'))
+    lines.append("")
+    lines.append("━━━━━━━━━━━━━━━━━━")
     
-    # Show dompet and company
-    lines.append(f"💼 *Dompet:* {dompet_sheet}")
-    lines.append(f"🏢 *Company:* {company}")
+    # Location info
+    lines.append("📍 Disimpan ke:")
+    lines.append(f"   💼 Dompet: {dompet_sheet}")
+    lines.append(f"   🏢 Company: {company}")
     
     if nama_projek_set:
         projek_str = ', '.join(nama_projek_set)
-        lines.append(f"📋 *Nama Projek:* {projek_str}")
+        lines.append(f"   📋 Projek: {projek_str}")
+    
+    # Timestamp
+    now = datetime.now().strftime("%d %b %Y, %H:%M")
+    lines.append(f"\n⏱️ Waktu: {now}")
     
     return '\n'.join(lines)
 
@@ -745,20 +756,38 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     
                     if success:
                         invalidate_dashboard_cache()
-                        reply = (f"✅ Jumlah Direvisi!\n\n"
-                                f"💸 {original_tx['keterangan']}\n"
-                                f"   Rp {old_amount:,} → Rp {new_amount:,}\n\n"
-                                f"💼 {original_tx['dompet']}").replace(',', '.')
+                        now = datetime.now().strftime("%d %b %Y, %H:%M")
+                        diff = new_amount - old_amount
+                        diff_str = f"+Rp {diff:,}" if diff > 0 else f"-Rp {abs(diff):,}"
+                        
+                        reply = (
+                            f"✅ Revisi Berhasil!\n\n"
+                            f"📊 {original_tx['keterangan']}\n"
+                            f"━━━━━━━━━━━━━━━━━━\n"
+                            f"   Sebelum: Rp {old_amount:,}\n"
+                            f"   Sesudah: Rp {new_amount:,}\n"
+                            f"   Selisih: {diff_str}\n"
+                            f"━━━━━━━━━━━━━━━━━━\n\n"
+                            f"📍 {original_tx['dompet']}\n"
+                            f"⏱️ {now}"
+                        ).replace(',', '.')
                         send_wuzapi_reply(sender_number, reply)
                         return jsonify({'status': 'revised'}), 200
                     else:
-                        send_wuzapi_reply(sender_number, "❌ Gagal update transaksi.")
+                        send_wuzapi_reply(sender_number, 
+                            "❌ Gagal update transaksi.\n\n"
+                            "Kemungkinan penyebab:\n"
+                            "• Transaksi sudah dihapus\n"
+                            "• Koneksi ke spreadsheet gagal\n\n"
+                            "Coba lagi atau hubungi admin.")
                         return jsonify({'status': 'revision_error'}), 200
                 else:
                     send_wuzapi_reply(sender_number, 
-                        "❓ Jumlah tidak valid.\n"
-                        "Gunakan format: `/revisi [jumlah]`\n"
-                        "Contoh: `/revisi 150000`")
+                        "❓ Jumlah tidak valid.\n\n"
+                        "Gunakan format:\n"
+                        "• /revisi 150000\n"
+                        "• /revisi 1.5jt\n"
+                        "• /revisi 500rb")
                     return jsonify({'status': 'invalid_revision'}), 200
         
 
@@ -990,6 +1019,12 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         # AI Extraction for transactions
         transactions = []
         try:
+            # === UX: Processing indicator ===
+            if input_type == 'image':
+                send_wuzapi_reply(sender_number, "⏳ Membaca struk...")
+            elif text and len(text) > 20:
+                send_wuzapi_reply(sender_number, "🤖 Menganalisis...")
+            
             # media_url is now passed directly from webhook (already a data URL)
             transactions = extract_financial_data(
                 input_data=text or '', 
@@ -1036,18 +1071,24 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     'pending_type': 'needs_project'
                 }
                 
-                # Build friendly ask message
-                tx = transactions[0]
+                # Build friendly ask message with all transactions
+                total = sum(t.get('jumlah', 0) for t in transactions)
+                items_str = "\n".join([
+                    f"   💸 {t.get('keterangan', 'Item')}: Rp {t.get('jumlah', 0):,}".replace(',', '.')
+                    for t in transactions
+                ])
+                
                 ask_msg = (
-                    f"📋 *Transaksi Terdeteksi:*\n"
-                    f"💸 {tx.get('keterangan', 'Transaksi')}: Rp {tx.get('jumlah', 0):,}\n\n"
-                    f"❓ *Untuk projek apa ini?*\n\n"
+                    f"📋 Transaksi Terdeteksi:\n"
+                    f"{items_str}\n\n"
+                    f"📊 Total: Rp {total:,}\n\n"
+                    f"❓ Untuk projek apa ini?\n\n"
                     f"Balas dengan nama projek, contoh:\n"
-                    f"• `Purana Ubud`\n"
-                    f"• `Villa Sunset Bali`\n"
-                    f"• `Operasional Kantor`\n\n"
+                    f"• Purana Ubud\n"
+                    f"• Villa Sunset Bali\n"
+                    f"• Operasional Kantor\n\n"
                     f"Atau ketik /cancel untuk batal"
-                ).replace(',', '.').replace('*', '')
+                ).replace(',', '.')
                 
                 send_wuzapi_reply(sender_number, ask_msg)
                 return jsonify({'status': 'asking_project'}), 200
