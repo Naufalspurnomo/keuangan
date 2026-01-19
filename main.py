@@ -1022,8 +1022,10 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     # WuzAPI can return message ID in different structures
                     bot_msg_id = None
                     if sent_msg and isinstance(sent_msg, dict):
-                        # Try common structures: sent_msg['key']['id'] or sent_msg['ID'] or sent_msg['MessageID']
-                        bot_msg_id = (sent_msg.get('key', {}).get('id') or 
+                        # WuzAPI returns: {'data': {'Id': 'xxx'}} - this is the main format
+                        bot_msg_id = (sent_msg.get('data', {}).get('Id') or
+                                     sent_msg.get('data', {}).get('id') or
+                                     sent_msg.get('key', {}).get('id') or 
                                      sent_msg.get('Key', {}).get('ID') or
                                      sent_msg.get('ID') or
                                      sent_msg.get('id') or
