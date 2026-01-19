@@ -822,10 +822,13 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                         reply = format_success_reply_new(pending['transactions'], dompet, detected_company).replace('*', '')
                         reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
                         sent_msg = send_wuzapi_reply(sender_number, reply)
-                        if sent_msg and isinstance(sent_msg, dict) and sent_msg.get('key', {}).get('id'):
-                            bot_msg_id = sent_msg['key']['id']
-                            if tx_message_id:
-                                store_bot_message_ref(bot_msg_id, tx_message_id)
+                        bot_msg_id = None
+                        if sent_msg and isinstance(sent_msg, dict):
+                            bot_msg_id = (sent_msg.get('data', {}).get('Id') or
+                                         sent_msg.get('data', {}).get('id') or
+                                         sent_msg.get('key', {}).get('id'))
+                        if bot_msg_id and tx_message_id:
+                            store_bot_message_ref(bot_msg_id, tx_message_id)
                     else:
                         send_wuzapi_reply(sender_number, f"❌ Gagal: {result.get('company_error', 'Error')}")
                     return jsonify({'status': 'processed'}), 200
@@ -881,10 +884,18 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 
                 # Send reply and capture bot message ID for revision tracking
                 sent_msg = send_wuzapi_reply(sender_number, reply)
-                if sent_msg and isinstance(sent_msg, dict) and sent_msg.get('key', {}).get('id'):
-                    bot_msg_id = sent_msg['key']['id']
-                    if tx_message_id:
-                        store_bot_message_ref(bot_msg_id, tx_message_id)
+                secure_log("DEBUG", f"Selection flow - WuzAPI send response: {str(sent_msg)[:200]}")
+                
+                # WuzAPI returns: {'data': {'Id': 'xxx'}}
+                bot_msg_id = None
+                if sent_msg and isinstance(sent_msg, dict):
+                    bot_msg_id = (sent_msg.get('data', {}).get('Id') or
+                                 sent_msg.get('data', {}).get('id') or
+                                 sent_msg.get('key', {}).get('id'))
+                
+                if bot_msg_id and tx_message_id:
+                    store_bot_message_ref(bot_msg_id, tx_message_id)
+                    secure_log("INFO", f"Selection flow - Stored bot->tx ref: {bot_msg_id} -> {tx_message_id}")
             else:
                 send_wuzapi_reply(sender_number, f"❌ Gagal: {result.get('company_error', 'Error')}")
             return jsonify({'status': 'processed'}), 200
