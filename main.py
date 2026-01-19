@@ -315,7 +315,7 @@ _bot_message_refs = {}
 def parse_revision_amount(text: str) -> int:
     """
     Parse amount from revision text.
-    Supports: "revisi 150rb", "150000", "150rb", "1.5jt", etc.
+    Supports: "/revisi 150rb", "150000", "150rb", "1.5jt", "2 juta", etc.
     
     Returns:
         Amount in Rupiah, or 0 if not parseable
@@ -325,29 +325,35 @@ def parse_revision_amount(text: str) -> int:
     # Clean the text
     text = text.lower().strip()
     
-    # Remove common prefixes
-    for prefix in ['revisi', 'ubah', 'ganti', 'koreksi', 'edit']:
-        text = text.replace(prefix, '').strip()
+    # Remove /revisi or revisi prefix
+    text = re.sub(r'^[/]?(revisi|ubah|ganti|koreksi|edit)\s*', '', text).strip()
     
-    # Remove spaces and common separators
-    text = text.replace(' ', '').replace('.', '').replace(',', '')
-    
-    # Pattern: number + suffix (rb/ribu/k/jt/juta)
-    match = re.match(r'^(\d+(?:\.\d+)?)(rb|ribu|k|jt|juta)?$', text)
+    # Handle "2 juta", "500 rb", "1.5jt" - number followed by optional space and suffix
+    match = re.match(r'^([\d]+(?:[.,]\d+)?)\s*(rb|ribu|k|jt|juta)?$', text)
     if match:
-        num = float(match.group(1))
+        num_str = match.group(1)
         suffix = match.group(2) or ''
+        
+        # Replace comma with dot for decimal (Indonesian uses comma as decimal)
+        num_str = num_str.replace(',', '.')
+        
+        try:
+            num = float(num_str)
+        except ValueError:
+            return 0
         
         if suffix in ['rb', 'ribu', 'k']:
             return int(num * 1000)
         elif suffix in ['jt', 'juta']:
             return int(num * 1000000)
         else:
+            # No suffix - if it has decimal, it's probably already in full amount
             return int(num)
     
-    # Try direct number
+    # Try direct number (just digits after cleaning)
+    cleaned = text.replace('.', '').replace(',', '').replace(' ', '')
     try:
-        return int(text)
+        return int(cleaned)
     except ValueError:
         return 0
 
