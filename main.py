@@ -785,7 +785,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         if text.lower() in ['/status', '/laporan', '/cek']:
             invalidate_dashboard_cache()
             send_wuzapi_reply(sender_number, "⏳ Sedang mengambil data status...")
-            status_msg = get_status_message(sender_name).replace('*', '').replace('_', '')
+            status_msg = get_status_message().replace('*', '').replace('_', '')
             send_wuzapi_reply(sender_number, status_msg)
             return jsonify({'status': 'ok'}), 200
         
