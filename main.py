@@ -774,6 +774,60 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 send_wuzapi_reply(sender_number, "❌ Transaksi dibatalkan.")
                 return jsonify({'status': 'cancelled'}), 200
             
+            # ===== SMART MODIFIER: Detect commands to modify pending transactions =====
+            text_lower = text.lower().strip()
+            
+            # Patterns for removal commands: "tidak usah X", "hapus X", "cancel X", "jangan X"
+            remove_patterns = [
+                r'^(?:tidak\s*usah|hapus|cancel|jangan|skip|lewati|buang)\s+(.+)$',
+                r'^(.+)\s+(?:tidak\s*usah|hapus|jangan|skip)$',
+            ]
+            
+            for pattern in remove_patterns:
+                match = re.match(pattern, text_lower)
+                if match:
+                    remove_keyword = match.group(1).strip()
+                    original_count = len(pending['transactions'])
+                    
+                    # Filter out transactions that match the keyword
+                    pending['transactions'] = [
+                        t for t in pending['transactions']
+                        if remove_keyword not in t.get('keterangan', '').lower()
+                    ]
+                    
+                    removed_count = original_count - len(pending['transactions'])
+                    
+                    if removed_count > 0:
+                        if len(pending['transactions']) == 0:
+                            # All transactions removed
+                            _pending_transactions.pop(sender_number, None)
+                            send_wuzapi_reply(sender_number, "❌ Semua transaksi dihapus. Transaksi dibatalkan.")
+                            return jsonify({'status': 'cancelled'}), 200
+                        else:
+                            # Show remaining transactions
+                            remaining = pending['transactions']
+                            total = sum(t.get('jumlah', 0) for t in remaining)
+                            items = "\n".join([f"💸 {t.get('keterangan', 'Item')}: Rp {t.get('jumlah', 0):,}".replace(',', '.') for t in remaining])
+                            
+                            msg = (f"✅ Dihapus: {remove_keyword}\n\n"
+                                   f"📋 Transaksi tersisa:\n{items}\n\n"
+                                   f"Total: Rp {total:,}\n\n").replace(',', '.')
+                            
+                            # Continue with appropriate prompt based on pending_type
+                            if pending_type == 'needs_project':
+                                msg += "❓ Untuk projek apa ini?\nBalas dengan nama projek atau /cancel"
+                            else:
+                                msg += "Ketik 1-5 untuk pilih company atau /cancel"
+                            
+                            send_wuzapi_reply(sender_number, msg)
+                            return jsonify({'status': 'item_removed'}), 200
+                    else:
+                        # No match found
+                        send_wuzapi_reply(sender_number, 
+                            f"❓ Tidak menemukan '{remove_keyword}' dalam transaksi pending.\n\n"
+                            f"Ketik /cancel untuk batal semua, atau lanjutkan dengan input yang diminta.")
+                        return jsonify({'status': 'no_match'}), 200
+            
             # ===== HANDLE PROJECT NAME INPUT =====
             if pending_type == 'needs_project':
                 project_name = sanitize_input(text.strip())[:100]
