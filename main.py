@@ -753,6 +753,78 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         
         # Check for pending transaction - selection handler
         if sender_number in _pending_transactions:
+            pending = _pending_transactions[sender_number]
+            pending_type = pending.get('pending_type', 'selection')
+            
+            # Handle cancel for all pending types
+            if text.lower() == '/cancel':
+                _pending_transactions.pop(sender_number, None)
+                send_wuzapi_reply(sender_number, "❌ Transaksi dibatalkan.")
+                return jsonify({'status': 'cancelled'}), 200
+            
+            # ===== HANDLE PROJECT NAME INPUT =====
+            if pending_type == 'needs_project':
+                project_name = sanitize_input(text.strip())[:100]
+                
+                if not project_name or len(project_name) < 2:
+                    send_wuzapi_reply(sender_number, 
+                        "❌ Nama projek tidak valid.\n\n"
+                        "Ketik nama projek dengan jelas, contoh:\n"
+                        "• Purana Ubud\n"
+                        "• Villa Sunset Bali\n\n"
+                        "Atau ketik /cancel untuk batal")
+                    return jsonify({'status': 'invalid_project'}), 200
+                
+                # Update transactions with project name
+                for t in pending['transactions']:
+                    t['nama_projek'] = project_name
+                    t.pop('needs_project', None)
+                
+                # Now check if company is detected
+                detected_company = None
+                for t in pending['transactions']:
+                    if t.get('company'):
+                        detected_company = t['company']
+                        break
+                
+                if detected_company:
+                    # Has company, auto-save
+                    _pending_transactions.pop(sender_number)
+                    dompet = get_dompet_for_company(detected_company)
+                    tx_message_id = pending.get('message_id', '')
+                    
+                    for t in pending['transactions']:
+                        t['message_id'] = tx_message_id
+                    
+                    result = append_transactions(
+                        pending['transactions'],
+                        pending['sender_name'],
+                        pending['source'],
+                        dompet_sheet=dompet,
+                        company=detected_company
+                    )
+                    
+                    if result['success']:
+                        update_user_activity(sender_number, 'wuzapi', pending['sender_name'])
+                        invalidate_dashboard_cache()
+                        reply = format_success_reply_new(pending['transactions'], dompet, detected_company).replace('*', '')
+                        reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
+                        sent_msg = send_wuzapi_reply(sender_number, reply)
+                        if sent_msg and isinstance(sent_msg, dict) and sent_msg.get('key', {}).get('id'):
+                            bot_msg_id = sent_msg['key']['id']
+                            if tx_message_id:
+                                store_bot_message_ref(bot_msg_id, tx_message_id)
+                    else:
+                        send_wuzapi_reply(sender_number, f"❌ Gagal: {result.get('company_error', 'Error')}")
+                    return jsonify({'status': 'processed'}), 200
+                else:
+                    # No company, continue to selection
+                    pending['pending_type'] = 'selection'
+                    reply = build_selection_prompt(pending['transactions']).replace('*', '')
+                    send_wuzapi_reply(sender_number, reply)
+                    return jsonify({'status': 'asking_company'}), 200
+            
+            # ===== HANDLE COMPANY SELECTION =====
             is_valid, selection, error_msg = parse_selection(text)
             
             if error_msg == "cancel":
@@ -873,16 +945,55 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             else:
                 source = "WhatsApp Image" if input_type == 'image' else "WhatsApp"
             
+            # Check if any transaction needs project name
+            needs_project = any(t.get('needs_project') for t in transactions)
+            
+            if needs_project:
+                # Store as pending and ask user for project name
+                _pending_transactions[sender_number] = {
+                    'transactions': transactions,
+                    'sender_name': sender_name,
+                    'source': source,
+                    'timestamp': datetime.now(),
+                    'message_id': message_id,
+                    'pending_type': 'needs_project'
+                }
+                
+                # Build friendly ask message
+                tx = transactions[0]
+                ask_msg = (
+                    f"📋 *Transaksi Terdeteksi:*\n"
+                    f"💸 {tx.get('keterangan', 'Transaksi')}: Rp {tx.get('jumlah', 0):,}\n\n"
+                    f"❓ *Untuk projek apa ini?*\n\n"
+                    f"Balas dengan nama projek, contoh:\n"
+                    f"• `Purana Ubud`\n"
+                    f"• `Villa Sunset Bali`\n"
+                    f"• `Operasional Kantor`\n\n"
+                    f"Atau ketik /cancel untuk batal"
+                ).replace(',', '.').replace('*', '')
+                
+                send_wuzapi_reply(sender_number, ask_msg)
+                return jsonify({'status': 'asking_project'}), 200
+            
             # Check if AI detected company from input
             detected_company = None
+            detected_dompet = None
             for t in transactions:
                 if t.get('company'):
                     detected_company = t['company']
+                # For wallet updates, AI extracts which dompet was mentioned
+                if t.get('detected_dompet'):
+                    detected_dompet = t['detected_dompet']
+                if detected_company:
                     break
             
             if detected_company:
                 # Auto-save: Company detected, find dompet and save directly
-                dompet = get_dompet_for_company(detected_company)
+                # For wallet updates (UMUM), use detected_dompet if available
+                if detected_company == "UMUM" and detected_dompet:
+                    dompet = detected_dompet
+                else:
+                    dompet = get_dompet_for_company(detected_company)
                 
                 result = append_transactions(
                     transactions, 

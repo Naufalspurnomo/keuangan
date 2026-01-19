@@ -52,8 +52,24 @@ WALLET_UPDATE_REGEX = re.compile(
     re.IGNORECASE
 )
 
+# Patterns to detect which dompet user mentioned
+DOMPET_PATTERNS = [
+    (re.compile(r"\b(dompet\s*holla|holla)\b", re.IGNORECASE), "Dompet Holla"),
+    (re.compile(r"\b(dompet\s*texturin\s*sby|texturin\s*sby|texturin\s*surabaya)\b", re.IGNORECASE), "Dompet Texturin Sby"),
+    (re.compile(r"\b(dompet\s*evan|evan)\b", re.IGNORECASE), "Dompet Evan"),
+]
+
 def _is_wallet_update_context(clean_text: str) -> bool:
     return bool(WALLET_UPDATE_REGEX.search(clean_text or ""))
+
+def _extract_dompet_from_text(clean_text: str) -> str:
+    """Extract which dompet user mentioned in wallet update text."""
+    if not clean_text:
+        return ""
+    for pattern, dompet_name in DOMPET_PATTERNS:
+        if pattern.search(clean_text):
+            return dompet_name
+    return ""
 
 
 def extract_from_text(text: str, sender_name: str) -> List[Dict]:
@@ -122,20 +138,24 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                 continue
 
             # ---- ENFORCE RULES ----
-            # 1) Wallet update => force Saldo Umum
+            # 1) Wallet update => force Saldo Umum + extract dompet from text
             if wallet_update:
                 sanitized["nama_projek"] = "Saldo Umum"
-                sanitized["company"] = "UMUM"  # sesuai rule kamu
+                sanitized["company"] = "UMUM"
+                # Extract which dompet user mentioned
+                detected_dompet = _extract_dompet_from_text(clean_text)
+                if detected_dompet:
+                    sanitized["detected_dompet"] = detected_dompet
+                    secure_log("INFO", f"Wallet update detected for: {detected_dompet}")
             else:
                 proj = sanitize_input(str(sanitized.get("nama_projek", "") or "")).strip()
                 if not proj:
-                    # HARD FAIL: project wajib
-                    raise ValueError(
-                        "Nama projek WAJIB.\n"
-                        "Contoh: 'Beli semen 300rb untuk Purana Ubud'\n"
-                        "Jika transaksi isi saldo/dompet, tulis: 'isi saldo 500rb dompet evan'"
-                    )
-                sanitized["nama_projek"] = proj[:100]
+                    # Mark as needing project name - let main.py ask user
+                    sanitized["needs_project"] = True
+                    sanitized["nama_projek"] = ""
+                    secure_log("INFO", "Transaction missing project name - will ask user")
+                else:
+                    sanitized["nama_projek"] = proj[:100]
 
             # 2) company sanitize (boleh None, nanti kamu map di layer pemilihan dompet/company)
             if sanitized.get("company") is not None:
@@ -323,10 +343,10 @@ CRITICAL LOGIC RULES:
      -> SET "tipe": "Pemasukan" (unless context says otherwise)
    - ELSE: "nama_projek" IS MANDATORY from input.
 
-2. PROJECT NAME IS MANDATORY (If not Saldo Umum):
-   - **PRIORITY 1:** User Caption.
-   - **PRIORITY 2:** OCR Context.
-   - **FALLBACK:** Use "General Project".
+2. PROJECT NAME EXTRACTION:
+   - **PRIORITY 1:** User Caption (look for "projek", "untuk", "project").
+   - **PRIORITY 2:** OCR Context clues.
+   - **FALLBACK:** Return null (system will ask user).
 
 3. COMPANY EXTRACTION (If not User explicitly mentions company):
    - IF user mentions "Dompet Evan" AND NOT "Saldo Umum" context: Output "company": "KANTOR" (Default).
