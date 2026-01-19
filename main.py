@@ -578,11 +578,31 @@ def webhook_wuzapi():
                    message_obj.get('ExtendedTextMessage', {}).get('Text', '')
             
             # Extract quoted message ID (for revision feature)
-            quoted_context = message_obj.get('extendedTextMessage', {}).get('contextInfo', {}) or \
-                            message_obj.get('ExtendedTextMessage', {}).get('ContextInfo', {})
-            quoted_msg_id = quoted_context.get('stanzaId', '') or \
-                           quoted_context.get('StanzaId', '')
-            # NOTE: quoted_msg_id will be empty string if not a reply
+            # WuzAPI sends contextInfo in various formats depending on version
+            quoted_msg_id = ''
+            
+            # Try extendedTextMessage format (most common for replies)
+            ext_text = message_obj.get('extendedTextMessage', {}) or message_obj.get('ExtendedTextMessage', {})
+            if ext_text:
+                context_info = ext_text.get('contextInfo', {}) or ext_text.get('ContextInfo', {})
+                quoted_msg_id = context_info.get('stanzaId', '') or context_info.get('StanzaId', '') or context_info.get('quotedMessageId', '')
+                secure_log("DEBUG", f"WuzAPI ExtText contextInfo: {json.dumps(context_info)[:200]}")
+            
+            # Also check top-level contextInfo (some WuzAPI versions)
+            if not quoted_msg_id:
+                top_context = message_obj.get('contextInfo', {}) or message_obj.get('ContextInfo', {})
+                if top_context:
+                    quoted_msg_id = top_context.get('stanzaId', '') or top_context.get('StanzaId', '') or top_context.get('quotedMessageId', '')
+                    secure_log("DEBUG", f"WuzAPI Top contextInfo: {json.dumps(top_context)[:200]}")
+            
+            # Check event-level context (another variant)
+            if not quoted_msg_id:
+                event_context = event.get('ContextInfo', {}) or event.get('contextInfo', {})
+                if event_context:
+                    quoted_msg_id = event_context.get('stanzaId', '') or event_context.get('StanzaId', '')
+                    secure_log("DEBUG", f"WuzAPI Event contextInfo: {json.dumps(event_context)[:200]}")
+            
+            secure_log("DEBUG", f"WuzAPI quoted_msg_id resolved: '{quoted_msg_id}', message_obj keys: {list(message_obj.keys())}")
             
         elif msg_type == 'media':
             # Media with caption
@@ -591,6 +611,7 @@ def webhook_wuzapi():
                      message_obj.get('caption', '')
             text = caption
             input_type = 'image'
+            quoted_msg_id = ''  # Initialize for media messages
             
             # Use base64 image directly from event_data if available
             if base64_image:
@@ -615,17 +636,16 @@ def webhook_wuzapi():
                     else:
                         secure_log("WARNING", "WuzAPI image download failed, using caption only")
                         input_type = 'text'  # Fall back to text-only processing
+        else:
+            # Unknown message type
+            quoted_msg_id = ''
         
         # For text messages without any text, skip
         if not text and input_type == 'text':
             secure_log("DEBUG", f"WuzAPI: No text in message. Type={msg_type}, Msg={json.dumps(message_obj)[:200]}")
             return jsonify({'status': 'no_text'}), 200
         
-        secure_log("INFO", f"WuzAPI message from {sender_number}: {text[:50] if text else '[image]'}, has_media={media_url is not None}, quoted={quoted_msg_id}")
-        
-        # Initialize variable if not text type
-        if 'quoted_msg_id' not in locals():
-            quoted_msg_id = None
+        secure_log("INFO", f"WuzAPI message from {sender_number}: {text[:50] if text else '[image]'}, has_media={media_url is not None}, quoted={quoted_msg_id}, msg_id={message_id}")
 
         # Determine if it's a group chat
         is_group = '@g.us' in chat_jid
