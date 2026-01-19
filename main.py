@@ -1017,7 +1017,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     
                     # Send reply and capture bot message ID for revision tracking
                     sent_msg = send_wuzapi_reply(sender_number, reply)
-                    secure_log("DEBUG", f"WuzAPI send response: {json.dumps(sent_msg) if sent_msg else 'None'}[:200]")
+                    secure_log("DEBUG", f"WuzAPI send response type: {type(sent_msg)}, content: {str(sent_msg)[:300]}")
                     
                     # WuzAPI can return message ID in different structures
                     bot_msg_id = None
@@ -1027,7 +1027,9 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                                      sent_msg.get('Key', {}).get('ID') or
                                      sent_msg.get('ID') or
                                      sent_msg.get('id') or
-                                     sent_msg.get('MessageID'))
+                                     sent_msg.get('MessageID') or
+                                     sent_msg.get('Info', {}).get('ID'))
+                        secure_log("DEBUG", f"Extracted bot_msg_id: {bot_msg_id}")
                     
                     if bot_msg_id and message_id:
                         store_bot_message_ref(bot_msg_id, message_id)
