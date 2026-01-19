@@ -166,7 +166,8 @@ STRICT JSON OUTPUT FORMAT:
       "keterangan": "String (Short description)",
       "jumlah": Integer (Positive number in IDR),
       "tipe": "Pengeluaran" or "Pemasukan",
-      "nama_projek": "String (Project Name)"
+      "nama_projek": "String (Project Name - REQUIRED)",
+      "company": "String (Company name if mentioned, else null)"
     }}
   ]
 }}
@@ -177,6 +178,15 @@ ALLOWED CATEGORIES & KEYWORDS:
 - Bahan Alat: semen, pasir, kayu, cat, besi, keramik, paku, gerinda, meteran, bor, gergaji
 - Gaji: upah, tukang, honor, fee, lembur, mandor, kuli, pekerja, borongan, karyawan
 - Lain-lain: transport, bensin, makan, parkir, toll, ongkir, biaya lain
+
+COMPANY NAMES (CASE-INSENSITIVE MATCHING):
+- "HOLLA" or "holla" or "Holla" -> "HOLLA" (belongs to Dompet Holla)
+- "HOJJA" or "hojja" or "Hojja" -> "HOJJA" (belongs to Dompet Holla)
+- "TEXTURIN-Surabaya" or "texturin sby" or "texturin surabaya" -> "TEXTURIN-Surabaya"
+- "TEXTURIN-Bali" or "texturin bali" -> "TEXTURIN-Bali"
+- "KANTOR" or "kantor" -> "KANTOR"
+
+If user mentions any company name, extract it to the "company" field. If not mentioned, set to null.
 
 MANDATORY NORMALIZATION RULES:
 1. CURRENCY:
@@ -217,6 +227,10 @@ CRITICAL LOGIC RULES:
 3. ONE TRANSACTION PER RECEIPT:
    - Do not list individual items. Output ONE transaction with the GRAND TOTAL.
    - Description should be: "[Store Name] - [Items Summary]". Ex: "Mitra10 - Cat & Kuas".
+
+4. COMPANY EXTRACTION:
+   - If user explicitly mentions HOLLA, HOJJA, KANTOR, TEXTURIN-Bali, or TEXTURIN-Surabaya, extract it.
+   - If no company mentioned, set "company": null.
 
 CONTEXT:
 - Today: {current_date}
@@ -408,6 +422,9 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                 # Preserve nama_projek field from AI response
                 if 'nama_projek' in t:
                     sanitized['nama_projek'] = sanitize_input(str(t['nama_projek']))[:100]
+                # Preserve company field from AI response (for auto-save)
+                if t.get('company'):
+                    sanitized['company'] = sanitize_input(str(t['company']))[:50]
                 validated_transactions.append(sanitized)
             else:
                 secure_log("WARNING", f"Invalid transaction skipped: {error}")

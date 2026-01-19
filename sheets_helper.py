@@ -33,31 +33,62 @@ SCOPES = [
     'https://www.googleapis.com/auth/drive'
 ]
 
-# Sheet configuration - Company sheets (5 main company sheets)
-COMPANY_SHEETS = [
-    "TEXTURIN-Bali",
-    "TEXTURIN-Surabaya",
-    "HOLLA",
-    "HOJJA",
-    "KANTOR"
+# Sheet configuration - Dompet sheets (3 main dompet sheets)
+DOMPET_SHEETS = [
+    "Dompet Holla",
+    "Dompet Texturin Sby",
+    "Dompet Evan"
 ]
 
-# Fund Sources (Wallets) Mapping
-FUND_SOURCES = {
+# Dompet -> Companies mapping
+DOMPET_COMPANIES = {
     "Dompet Holla": ["HOLLA", "HOJJA"],
     "Dompet Texturin Sby": ["TEXTURIN-Surabaya"],
     "Dompet Evan": ["TEXTURIN-Bali", "KANTOR"]
 }
 
-def get_default_fund_source(company_name: str) -> str:
-    """Get the default fund source (wallet) for a given company."""
-    for wallet, companies in FUND_SOURCES.items():
-        if company_name in companies:
-            return wallet
-    return "Dompet Lainnya"  # Fallback
+# Flat selection options for 1-5 display
+SELECTION_OPTIONS = [
+    {"idx": 1, "dompet": "Dompet Holla", "company": "HOLLA"},
+    {"idx": 2, "dompet": "Dompet Holla", "company": "HOJJA"},
+    {"idx": 3, "dompet": "Dompet Texturin Sby", "company": "TEXTURIN-Surabaya"},
+    {"idx": 4, "dompet": "Dompet Evan", "company": "TEXTURIN-Bali"},
+    {"idx": 5, "dompet": "Dompet Evan", "company": "KANTOR"},
+]
 
-# Column order: No, Tanggal, Keterangan, Jumlah, Tipe, Oleh, Source, Kategori, Nama Projek, Sumber Dana
-SHEET_HEADERS = ['No', 'Tanggal', 'Keterangan', 'Jumlah', 'Tipe', 'Oleh', 'Source', 'Kategori', 'Nama Projek', 'Sumber Dana']
+# Legacy alias for backward compatibility
+COMPANY_SHEETS = DOMPET_SHEETS
+FUND_SOURCES = DOMPET_COMPANIES
+
+def get_dompet_for_company(company_name: str) -> str:
+    """Get the dompet (wallet) for a given company."""
+    for dompet, companies in DOMPET_COMPANIES.items():
+        if company_name in companies:
+            return dompet
+    return "Dompet Holla"  # Fallback
+
+def get_selection_by_idx(idx: int) -> Optional[Dict]:
+    """Get selection option by 1-based index."""
+    for opt in SELECTION_OPTIONS:
+        if opt["idx"] == idx:
+            return opt
+    return None
+
+# Column order: No, Tanggal, Company, Keterangan, Jumlah, Tipe, Oleh, Source, Kategori, Nama Projek, MessageID
+SHEET_HEADERS = ['No', 'Tanggal', 'Company', 'Keterangan', 'Jumlah', 'Tipe', 'Oleh', 'Source', 'Kategori', 'Nama Projek', 'MessageID']
+
+# Column indices (1-based for gspread)
+COL_NO = 1
+COL_TANGGAL = 2
+COL_COMPANY = 3
+COL_KETERANGAN = 4
+COL_JUMLAH = 5
+COL_TIPE = 6
+COL_OLEH = 7
+COL_SOURCE = 8
+COL_KATEGORI = 9
+COL_NAMA_PROJEK = 10
+COL_MESSAGE_ID = 11
 
 # Dashboard configuration
 DASHBOARD_SHEET_NAME = "Dashboard"
@@ -133,11 +164,11 @@ def get_company_sheets() -> List[str]:
     return COMPANY_SHEETS.copy()
 
 
-def get_company_sheet(company_name: str):
-    """Get a specific company sheet by name (NO AUTO-CREATE).
+def get_dompet_sheet(dompet_name: str):
+    """Get a specific dompet sheet by name.
     
     Args:
-        company_name: Name of the company sheet (e.g., 'TEXTURIN-Bali')
+        dompet_name: Name of the dompet sheet (e.g., 'Dompet Holla')
         
     Returns:
         gspread.Worksheet object
@@ -145,39 +176,45 @@ def get_company_sheet(company_name: str):
     Raises:
         ValueError: If sheet not found
     """
-    if company_name not in COMPANY_SHEETS:
-        available_str = ', '.join(COMPANY_SHEETS)
+    if dompet_name not in DOMPET_SHEETS:
+        available_str = ', '.join(DOMPET_SHEETS)
         raise ValueError(
-            f"Company '{company_name}' tidak valid.\n"
+            f"Dompet '{dompet_name}' tidak valid.\n"
             f"Pilih dari: {available_str}"
         )
     
     spreadsheet = get_spreadsheet()
     
     try:
-        sheet = spreadsheet.worksheet(company_name)
-        secure_log("INFO", f"Using company sheet: {company_name}")
+        sheet = spreadsheet.worksheet(dompet_name)
+        secure_log("INFO", f"Using dompet sheet: {dompet_name}")
         return sheet
     except gspread.WorksheetNotFound:
         raise ValueError(
-            f"Sheet '{company_name}' tidak ditemukan di spreadsheet.\n"
+            f"Sheet '{dompet_name}' tidak ditemukan di spreadsheet.\n"
             f"Hubungi admin untuk membuat sheet."
         )
 
 
+def get_company_sheet(company_name: str):
+    """DEPRECATED: Use get_dompet_sheet instead.
+    Kept for backward compatibility - maps company to dompet."""
+    dompet = get_dompet_for_company(company_name)
+    return get_dompet_sheet(dompet)
+
+
+def get_available_dompets() -> List[str]:
+    """Get list of available dompet sheets."""
+    return DOMPET_SHEETS.copy()
+
+
 def get_available_projects() -> List[str]:
-    """Get list of available company sheets.
-    
-    This is now a simple wrapper around COMPANY_SHEETS for backward compatibility.
-    
-    Returns:
-        List of company sheet names
-    """
-    return COMPANY_SHEETS.copy()
+    """DEPRECATED: Use get_available_dompets instead."""
+    return DOMPET_SHEETS.copy()
 
 
 def get_project_sheet(company_name: str):
-    """Alias for get_company_sheet for backward compatibility."""
+    """DEPRECATED: Alias for get_company_sheet for backward compatibility."""
     return get_company_sheet(company_name)
 
 
@@ -187,16 +224,20 @@ def get_all_categories() -> List[str]:
 
 
 def append_transaction(transaction: Dict, sender_name: str, source: str = "Text", 
-                       company_sheet: str = None, nama_projek: str = None) -> bool:
+                       dompet_sheet: str = None, company: str = None, 
+                       nama_projek: str = None,
+                       company_sheet: str = None) -> bool:
     """
-    Append a single transaction to a company sheet.
+    Append a single transaction to a dompet sheet.
     
     Args:
         transaction: Transaction dict with tanggal, kategori, keterangan, jumlah, tipe
         sender_name: Name of the person recording
         source: Input source (Text/Image/Voice)
-        company_sheet: Target company sheet name (e.g., 'TEXTURIN-Bali')
-        nama_projek: Project name within the company (e.g., 'Purana Ubud')
+        dompet_sheet: Target dompet sheet name (e.g., 'Dompet Holla')
+        company: Company name (e.g., 'HOLLA', 'HOJJA', 'UMUM')
+        nama_projek: Project name (REQUIRED) - use 'Saldo Umum' for wallet updates
+        company_sheet: DEPRECATED - for backward compatibility, maps to dompet_sheet
     
     Transaction dict should have:
     - tanggal: YYYY-MM-DD
@@ -209,17 +250,31 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
         True if successful, False otherwise
         
     Raises:
-        ValueError: If company_sheet not specified or not found
+        ValueError: If dompet_sheet not specified or not found
     """
     try:
-        # Company sheet is required
-        if not company_sheet:
+        # Handle backward compatibility: company_sheet -> dompet_sheet
+        if company_sheet and not dompet_sheet:
+            # Old code passed company_sheet, try to find corresponding dompet
+            dompet_sheet = get_dompet_for_company(company_sheet)
+            if not company:
+                company = company_sheet
+        
+        # Dompet sheet is required
+        if not dompet_sheet:
             raise ValueError(
-                "Company sheet harus dipilih.\n"
-                f"Pilih dari: {', '.join(COMPANY_SHEETS)}"
+                "Dompet harus dipilih.\n"
+                f"Pilih dari: {', '.join(DOMPET_SHEETS)}"
             )
         
-        sheet = get_company_sheet(company_sheet)
+        # Validate dompet exists
+        if dompet_sheet not in DOMPET_SHEETS:
+            raise ValueError(
+                f"Dompet '{dompet_sheet}' tidak valid.\n"
+                f"Pilih dari: {', '.join(DOMPET_SHEETS)}"
+            )
+        
+        sheet = get_dompet_sheet(dompet_sheet)
         
         # Validate and sanitize category
         kategori = validate_category(transaction.get('kategori', 'Lain-lain'))
@@ -241,36 +296,44 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
         # Sanitize sender name
         safe_sender = sanitize_input(sender_name)[:50]
         
-        # Sanitize nama_projek
-        safe_nama_projek = sanitize_input(str(nama_projek or ''))[:100]
+        # Sanitize company
+        safe_company = sanitize_input(str(company or 'UMUM'))[:50]
+        
+        # Sanitize nama_projek (REQUIRED - default to Saldo Umum if empty)
+        safe_nama_projek = sanitize_input(str(nama_projek or 'Saldo Umum'))[:100]
+        
+        # Get message_id from transaction if provided
+        message_id = transaction.get('message_id', '')
         
         # Calculate No (Auto-increment)
         try:
             existing_rows = len(sheet.col_values(2))
             next_no = existing_rows
+            row_number = existing_rows + 1  # Row number where this will be inserted
         except Exception:
             next_no = 1
+            row_number = 2  # After header
 
-        # Determine fund source (wallet)
-        fund_source = get_default_fund_source(company_sheet)
-
-        # Row order: No, Tanggal, Keterangan, Jumlah, Tipe, Oleh, Source, Kategori, Nama Projek, Sumber Dana
+        # Row order: No, Tanggal, Company, Keterangan, Jumlah, Tipe, Oleh, Source, Kategori, Nama Projek, MessageID
         row = [
             next_no,  # A: Auto-generated Number
             transaction.get('tanggal', datetime.now().strftime('%Y-%m-%d')),  # B: Tanggal
-            keterangan,  # C: Keterangan (description)
-            jumlah,  # D: Jumlah (amount)
-            tipe,  # E: Tipe (Pengeluaran/Pemasukan)
-            safe_sender,  # F: Oleh (recorded by)
-            source,  # G: Source (Text/Image/Voice)
-            kategori,  # H: Kategori
-            safe_nama_projek,  # I: Nama Projek
-            fund_source  # J: Sumber Dana (New)
+            safe_company,  # C: Company
+            keterangan,  # D: Keterangan (description)
+            jumlah,  # E: Jumlah (amount)
+            tipe,  # F: Tipe (Pengeluaran/Pemasukan)
+            safe_sender,  # G: Oleh (recorded by)
+            source,  # H: Source (Text/Image/Voice)
+            kategori,  # I: Kategori
+            safe_nama_projek,  # J: Nama Projek
+            message_id,  # K: MessageID (for revision tracking)
         ]
         
         sheet.append_row(row, value_input_option='USER_ENTERED')
-        secure_log("INFO", f"Transaction added to {company_sheet}: {kategori} - {jumlah} - {safe_nama_projek}")
-        return True
+        secure_log("INFO", f"Transaction added to {dompet_sheet}/{safe_company}: {kategori} - {jumlah} - {safe_nama_projek}")
+        
+        # Return row number for revision tracking
+        return row_number
         
     except ValueError as e:
         secure_log("ERROR", f"Transaction error: {str(e)}")
@@ -280,15 +343,91 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
         return False
 
 
+def find_transaction_by_message_id(message_id: str) -> Optional[Dict]:
+    """
+    Find a transaction by its MessageID across all dompet sheets.
+    
+    Args:
+        message_id: The message ID to search for
+        
+    Returns:
+        Dict with dompet, row, amount, keterangan, user_id if found, None otherwise
+    """
+    if not message_id:
+        return None
+    
+    try:
+        for dompet in DOMPET_SHEETS:
+            try:
+                sheet = get_dompet_sheet(dompet)
+                
+                # Get MessageID column (column K)
+                message_ids = sheet.col_values(COL_MESSAGE_ID)
+                
+                # Search for the message_id
+                for row_idx, mid in enumerate(message_ids):
+                    if mid == message_id:
+                        row_number = row_idx + 1  # 1-based row number
+                        
+                        # Get the row data
+                        row_data = sheet.row_values(row_number)
+                        
+                        return {
+                            'dompet': dompet,
+                            'row': row_number,
+                            'amount': int(row_data[COL_JUMLAH - 1]) if row_data[COL_JUMLAH - 1] else 0,
+                            'keterangan': row_data[COL_KETERANGAN - 1] if len(row_data) > COL_KETERANGAN - 1 else '',
+                            'user_id': row_data[COL_OLEH - 1] if len(row_data) > COL_OLEH - 1 else '',
+                        }
+                        
+            except Exception as e:
+                secure_log("WARNING", f"Error searching {dompet}: {type(e).__name__}")
+                continue
+        
+        return None
+        
+    except Exception as e:
+        secure_log("ERROR", f"Find transaction error: {type(e).__name__}")
+        return None
+
+
+def update_transaction_amount(dompet_sheet: str, row: int, new_amount: int) -> bool:
+    """
+    Update the Jumlah (amount) column for a specific transaction.
+    
+    Args:
+        dompet_sheet: Name of the dompet sheet
+        row: Row number (1-based)
+        new_amount: New amount value
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        sheet = get_dompet_sheet(dompet_sheet)
+        
+        # Update the Jumlah column (column E, index 5)
+        sheet.update_cell(row, COL_JUMLAH, new_amount)
+        
+        secure_log("INFO", f"Transaction updated: {dompet_sheet} row {row} -> {new_amount}")
+        return True
+        
+    except Exception as e:
+        secure_log("ERROR", f"Update transaction error: {type(e).__name__}")
+        return False
+
 def append_transactions(transactions: List[Dict], sender_name: str, source: str = "Text",
+                        dompet_sheet: str = None, company: str = None,
                         company_sheet: str = None) -> Dict:
-    """Append multiple transactions to a company sheet.
+    """Append multiple transactions to a dompet sheet.
     
     Args:
         transactions: List of transaction dicts (each may have 'nama_projek')
         sender_name: Name of the person recording
         source: Input source (Text/Image/Voice)
-        company_sheet: Target company sheet name (REQUIRED)
+        dompet_sheet: Target dompet sheet name (e.g., 'Dompet Holla')
+        company: Company name (e.g., 'HOLLA', 'UMUM')
+        company_sheet: DEPRECATED - for backward compatibility
         
     Returns:
         Dict with success status, rows_added count, and errors
@@ -297,24 +436,32 @@ def append_transactions(transactions: List[Dict], sender_name: str, source: str 
     errors = []
     company_error = None
     
-    if not company_sheet:
+    # Backward compatibility
+    if company_sheet and not dompet_sheet:
+        dompet_sheet = get_dompet_for_company(company_sheet)
+        if not company:
+            company = company_sheet
+    
+    if not dompet_sheet:
         return {
             'success': False,
             'rows_added': 0,
             'total_transactions': len(transactions),
-            'errors': ['company_sheet_required'],
-            'company_error': 'Company sheet belum dipilih'
+            'errors': ['dompet_sheet_required'],
+            'company_error': 'Dompet belum dipilih'
         }
     
     for t in transactions:
         try:
             nama_projek = t.get('nama_projek', '')
             if append_transaction(t, sender_name, source, 
-                                  company_sheet=company_sheet, nama_projek=nama_projek):
+                                  dompet_sheet=dompet_sheet, 
+                                  company=company,
+                                  nama_projek=nama_projek):
                 rows_added += 1
         except ValueError as e:
             company_error = str(e)
-            errors.append("company_not_found")
+            errors.append("dompet_not_found")
             break
         except Exception:
             errors.append("transaction_failed")
