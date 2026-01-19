@@ -180,13 +180,16 @@ ALLOWED CATEGORIES & KEYWORDS:
 - Lain-lain: transport, bensin, makan, parkir, toll, ongkir, biaya lain
 
 COMPANY NAMES (CASE-INSENSITIVE MATCHING):
-- "HOLLA" or "holla" or "Holla" -> "HOLLA" (belongs to Dompet Holla)
-- "HOJJA" or "hojja" or "Hojja" -> "HOJJA" (belongs to Dompet Holla)
-- "TEXTURIN-Surabaya" or "texturin sby" or "texturin surabaya" -> "TEXTURIN-Surabaya"
+- "HOLLA" or "holla" -> "HOLLA"
+- "HOJJA" or "hojja" -> "HOJJA"
+- "TEXTURIN-Surabaya" or "texturin sby" -> "TEXTURIN-Surabaya"
 - "TEXTURIN-Bali" or "texturin bali" -> "TEXTURIN-Bali"
 - "KANTOR" or "kantor" -> "KANTOR"
 
-If user mentions any company name, extract it to the "company" field. If not mentioned, set to null.
+# LOGIC FOR WALLET NAMES -> DEFAULT COMPANY
+- "Dompet Holla" -> "HOLLA"
+- "Dompet Evan" -> "KANTOR"
+- "Dompet Texturin" -> "TEXTURIN-Surabaya"
 
 MANDATORY NORMALIZATION RULES:
 1. CURRENCY:
@@ -194,43 +197,36 @@ MANDATORY NORMALIZATION RULES:
    - If input is in RM/MYR: Multiply by 3500. Round to nearest integer.
    - If input is in USD: Multiply by 16000. Round to nearest integer.
    - If input is in SGD: Multiply by 12000. Round to nearest integer.
-   - "100 RM" -> 350000
 
 2. NUMBERS:
-   - "300rb", "300 rb", "300k" -> 300000
-   - "1.2jt", "1,2jt" -> 1200000
-   - "1.500" usually means 1500 unless context implies 1.5 million. Check magnitude.
+   - "300rb", "300k" -> 300000
+   - "1.2jt" -> 1200000
 
 3. DATES:
    - "Kemarin" = Today - 1 day
-   - "Minggu lalu" = Today - 7 days
-   - Format dd/mm/yyyy or dd-mm-yyyy.
-   - If date is ambiguous (e.g. 05/04), assume dd/mm (5th April).
+   - Format dd/mm/yyyy.
 
 4. TRANSACTION TYPE:
-   - "Pemasukan": DP, Transfer Masuk, Terima, Down Payment.
+   - "Pemasukan": DP, Transfer Masuk, Terima, Tambah Saldo, Isi Dompet, Deposit.
    - "Pengeluaran": Beli, Bayar, Lunas, Struk, Nota.
 
 CRITICAL LOGIC RULES:
-1. PROJECT NAME IS MANDATORY:
-   - YOU MUST FILL 'nama_projek'. DO NOT LEAVE EMPTY.
-   - **PRIORITY 1:** User Caption. If user says "for Taman", use "Taman Prestasi".
-   - **PRIORITY 2:** OCR Context. If receipt says "Proyek A", use "Proyek A".
-   - **PRIORITY 3:** INFERENCE. If items are "semen, cat", and user often mentions "Taman", infer "Taman Prestasi".
-   - **FALLBACK:** If absolutely unknown, use "General Project".
+1. SPECIAL RULE: "SALDO UMUM" (Wallet Updates)
+   - IF user says "isi saldo", "tambah dompet", "deposit", "transfer ke dompet", "update saldo":
+     -> SET "nama_projek": "Saldo Umum"
+     -> SET "company": "UMUM" (Ignore default company rules)
+     -> SET "tipe": "Pemasukan" (unless context says otherwise)
+   - ELSE: "nama_projek" IS MANDATORY from input.
 
-2. RECEIPT TOTAL MATCHING:
-   - Ignore SUBTOTAL, TAX, CASH, CHANGE.
-   - Look for: "GRAND TOTAL", "TOTAL DUE", "NET TOTAL".
-   - Pick the largest logical amount that represents the full payment.
+2. PROJECT NAME IS MANDATORY (If not Saldo Umum):
+   - **PRIORITY 1:** User Caption.
+   - **PRIORITY 2:** OCR Context.
+   - **FALLBACK:** Use "General Project".
 
-3. ONE TRANSACTION PER RECEIPT:
-   - Do not list individual items. Output ONE transaction with the GRAND TOTAL.
-   - Description should be: "[Store Name] - [Items Summary]". Ex: "Mitra10 - Cat & Kuas".
-
-4. COMPANY EXTRACTION:
-   - If user explicitly mentions HOLLA, HOJJA, KANTOR, TEXTURIN-Bali, or TEXTURIN-Surabaya, extract it.
-   - If no company mentioned, set "company": null.
+3. COMPANY EXTRACTION (If not User explicitly mentions company):
+   - IF user mentions "Dompet Evan" AND NOT "Saldo Umum" context: Output "company": "KANTOR" (Default).
+   - IF user mentions "Dompet Holla" AND NOT "Saldo Umum" context: Output "company": "HOLLA" (Default).
+   - IF user explicitly mentions company (e.g., TEXTURIN-Bali), use that.
 
 CONTEXT:
 - Today: {current_date}

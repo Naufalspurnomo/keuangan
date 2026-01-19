@@ -42,9 +42,9 @@ DOMPET_SHEETS = [
 
 # Dompet -> Companies mapping
 DOMPET_COMPANIES = {
-    "Dompet Holla": ["HOLLA", "HOJJA"],
-    "Dompet Texturin Sby": ["TEXTURIN-Surabaya"],
-    "Dompet Evan": ["TEXTURIN-Bali", "KANTOR"]
+    "Dompet Holla": ["HOLLA", "HOJJA", "Dompet Holla", "UMUM"],
+    "Dompet Texturin Sby": ["TEXTURIN-Surabaya", "Dompet Texturin Sby", "UMUM"],
+    "Dompet Evan": ["TEXTURIN-Bali", "KANTOR", "Dompet Evan", "UMUM"]
 }
 
 # Flat selection options for 1-5 display
@@ -297,7 +297,12 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
         safe_sender = sanitize_input(sender_name)[:50]
         
         # Sanitize company
-        safe_company = sanitize_input(str(company or 'UMUM'))[:50]
+        # LOGIC: If company is actually a Dompet Name (e.g. "Dompet Evan") or "UMUM", store as "UMUM"
+        original_company = str(company or 'UMUM')
+        if original_company in DOMPET_SHEETS or original_company == "UMUM":
+             safe_company = "UMUM"
+        else:
+             safe_company = sanitize_input(original_company)[:50]
         
         # Sanitize nama_projek (REQUIRED - default to Saldo Umum if empty)
         safe_nama_projek = sanitize_input(str(nama_projek or 'Saldo Umum'))[:100]
