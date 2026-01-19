@@ -27,52 +27,81 @@ def get_wuzapi_session():
         })
     return _wuzapi_session
 
+def _normalize_base(domain: str) -> str:
+    """Normalize WuzAPI domain - remove trailing /api if present."""
+    if not domain:
+        return ""
+    base = domain.strip().rstrip("/")
+    # Many users accidentally set domain to .../api (which is swagger docs)
+    if base.lower().endswith("/api"):
+        base = base[:-4]
+    return base
+
+
+def _is_group_jid(to: str) -> bool:
+    """Check if recipient is a WhatsApp group."""
+    return isinstance(to, str) and ("@g.us" in to)
+
+
 def send_wuzapi_reply(to: str, body: str) -> Optional[Dict]:
     """Send WhatsApp message via WuzAPI.
     
-    WuzAPI uses /chat/send/text endpoint with token in header.
-    Phone format: country code + number (no + prefix)
+    Standard endpoint: POST /chat/send/text with Token header.
+    Payload: {"Phone":"62812xxxx","Body":"..."} for private
+             {"JID":"xxx@g.us","Body":"..."} for groups
     """
     try:
         if not WUZAPI_DOMAIN or not WUZAPI_TOKEN:
             secure_log("ERROR", "WuzAPI params missing")
             return None
 
-        # WuzAPI uses phone number without @ suffix for sending
-        # Format: country code + number (e.g. 6281212042709)
-        phone = to.split('@')[0].split(':')[0] if '@' in to else to
-        
-        # Try multiple endpoint formats since WuzAPI versions differ
-        endpoints = [
-            f"{WUZAPI_DOMAIN}/chat/send/text",  # Standard WuzAPI format
-            f"{WUZAPI_DOMAIN}/send/text",        # Alternative format
-            f"{WUZAPI_DOMAIN}/message/text",     # Another variant
-        ]
-        
-        # Standard WuzAPI payload
-        payload = {
-            "Phone": phone,
-            "Body": body
-        }
-        
+        base = _normalize_base(WUZAPI_DOMAIN)
+        is_group = _is_group_jid(to)
+
+        # Normalize recipient
+        phone = to
+        if isinstance(to, str) and ("@" in to) and not is_group:
+            phone = to.split("@")[0].split(":")[0]
+
         session = get_wuzapi_session()
-        
+
+        # Build payload variants (different WuzAPI builds use different field names)
+        payload_variants = []
+        if is_group:
+            payload_variants.append({"JID": to, "Body": body})
+            payload_variants.append({"JID": to, "Message": body})
+            payload_variants.append({"Phone": to, "Body": body})
+        else:
+            payload_variants.append({"Phone": phone, "Body": body})
+            payload_variants.append({"Phone": phone, "Message": body})
+
+        # Endpoints to try (different WuzAPI versions)
+        endpoints = [
+            f"{base}/chat/send/text",
+            f"{base}/message/send/text",
+            f"{base}/send/text",
+        ]
+
+        last_err = None
         for url in endpoints:
-            try:
-                response = session.post(url, json=payload, timeout=10)
-                
-                if response.status_code in [200, 201]:
-                    secure_log("INFO", f"WuzAPI Send OK via {url.split('/')[-1]}")
-                    return response.json()
-                elif response.status_code == 404:
-                    continue  # Try next endpoint
-                else:
-                    secure_log("ERROR", f"WuzAPI Send {response.status_code}: {response.text[:100]}")
-            except Exception as e:
-                secure_log("ERROR", f"WuzAPI endpoint {url} failed: {str(e)}")
-                continue
-        
-        secure_log("ERROR", "WuzAPI: All send endpoints failed")
+            for payload in payload_variants:
+                try:
+                    resp = session.post(url, json=payload, timeout=15)
+                    if resp.status_code in (200, 201):
+                        secure_log("INFO", f"WuzAPI Send OK via {url.split('/')[-1]}")
+                        return resp.json()
+                    
+                    if resp.status_code == 404:
+                        last_err = f"404 on {url}"
+                        continue
+                    
+                    # 400/401/500
+                    last_err = f"{resp.status_code}: {resp.text[:200]}"
+                except Exception as e:
+                    last_err = f"{type(e).__name__}: {str(e)[:200]}"
+                    continue
+
+        secure_log("ERROR", f"WuzAPI: All send endpoints failed: {last_err}")
         return None
         
     except Exception as e:

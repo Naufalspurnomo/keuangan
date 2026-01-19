@@ -20,6 +20,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from typing import List, Dict, Optional
 
+
 # Load environment variables
 load_dotenv()
 
@@ -44,6 +45,109 @@ GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 # Initialize Groq client
 from groq import Groq
 groq_client = Groq(api_key=GROQ_API_KEY)
+
+WALLET_UPDATE_REGEX = re.compile(
+    r"\b(isi saldo|tambah dompet|deposit|topup|top up|transfer ke dompet|update saldo|isi dompet)\b",
+    re.IGNORECASE
+)
+
+def _is_wallet_update_context(clean_text: str) -> bool:
+    return bool(WALLET_UPDATE_REGEX.search(clean_text or ""))
+
+
+def extract_from_text(text: str, sender_name: str) -> List[Dict]:
+    try:
+        clean_text = sanitize_input(text)
+        if not clean_text:
+            return []
+
+        # injection check (receipt URL sekarang aman karena pattern URL sudah dihapus)
+        is_injection, _ = detect_prompt_injection(clean_text)
+        if is_injection:
+            secure_log("WARNING", "Prompt injection blocked in extract_from_text")
+            raise SecurityError("Input tidak valid. Mohon gunakan format yang benar.")
+
+        wallet_update = _is_wallet_update_context(clean_text)
+
+        if len(clean_text) > MAX_INPUT_LENGTH:
+            clean_text = clean_text[:MAX_INPUT_LENGTH]
+
+        secure_log("INFO", f"Extracting from text: {len(clean_text)} chars")
+
+        wrapped_input = get_safe_ai_prompt_wrapper(clean_text)
+        system_prompt = get_extraction_prompt(sender_name)
+
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": wrapped_input}
+            ],
+            temperature=0.0,
+            max_tokens=1024,
+            response_format={"type": "json_object"}
+        )
+
+        response_text = response.choices[0].message.content.strip()
+
+        try:
+            result_json = json.loads(response_text)
+        except json.JSONDecodeError:
+            if response_text.startswith("```"):
+                lines = response_text.split("\n")
+                response_text = "\n".join(lines[1:-1])
+            result_json = json.loads(response_text)
+
+        if isinstance(result_json, dict):
+            transactions = result_json.get("transactions", [])
+            if not transactions and result_json:
+                transactions = [result_json]
+        elif isinstance(result_json, list):
+            transactions = result_json
+        else:
+            transactions = []
+
+        if not isinstance(transactions, list):
+            transactions = [transactions]
+
+        if len(transactions) > MAX_TRANSACTIONS_PER_MESSAGE:
+            transactions = transactions[:MAX_TRANSACTIONS_PER_MESSAGE]
+
+        validated_transactions = []
+        for t in transactions:
+            is_valid, error, sanitized = validate_transaction_data(t)
+            if not is_valid:
+                secure_log("WARNING", f"Invalid transaction skipped: {error}")
+                continue
+
+            # ---- ENFORCE RULES ----
+            # 1) Wallet update => force Saldo Umum
+            if wallet_update:
+                sanitized["nama_projek"] = "Saldo Umum"
+                sanitized["company"] = "UMUM"  # sesuai rule kamu
+            else:
+                proj = sanitize_input(str(sanitized.get("nama_projek", "") or "")).strip()
+                if not proj:
+                    # HARD FAIL: project wajib
+                    raise ValueError(
+                        "Nama projek WAJIB.\n"
+                        "Contoh: 'Beli semen 300rb untuk Purana Ubud'\n"
+                        "Jika transaksi isi saldo/dompet, tulis: 'isi saldo 500rb dompet evan'"
+                    )
+                sanitized["nama_projek"] = proj[:100]
+
+            # 2) company sanitize (boleh None, nanti kamu map di layer pemilihan dompet/company)
+            if sanitized.get("company") is not None:
+                sanitized["company"] = sanitize_input(str(sanitized["company"]))[:50]
+
+            validated_transactions.append(sanitized)
+
+        secure_log("INFO", f"Extracted {len(validated_transactions)} valid transactions")
+        return validated_transactions
+
+    except json.JSONDecodeError:
+        secure_log("ERROR", "JSON parse error")
+        raise ValueError("Gagal memproses respons AI")
 
 # ===================== OCR CONFIGURATION =====================
 # Set USE_EASYOCR=True in .env to use local EasyOCR (requires 2GB RAM)
@@ -331,110 +435,6 @@ def transcribe_audio(audio_path: str) -> str:
         
     except Exception as e:
         secure_log("ERROR", f"Transcription failed: {type(e).__name__}")
-        raise
-
-
-def extract_from_text(text: str, sender_name: str) -> List[Dict]:
-    """
-    Extract financial data from text using Groq (Llama 3.3).
-    SECURED: Input is sanitized and checked for injection.
-    
-    Args:
-        text: User input text
-        sender_name: Name of the sender
-    """
-    try:
-        # 1. Sanitize input
-        clean_text = sanitize_input(text)
-        
-        if not clean_text:
-            return []
-        
-        # 2. Check for prompt injection
-        is_injection, reason = detect_prompt_injection(clean_text)
-        if is_injection:
-            secure_log("WARNING", f"Prompt injection blocked in extract_from_text")
-            raise SecurityError("Input tidak valid. Mohon gunakan format yang benar.")
-        
-        # 3. Limit input length
-        if len(clean_text) > MAX_INPUT_LENGTH:
-            clean_text = clean_text[:MAX_INPUT_LENGTH]
-        
-        secure_log("INFO", f"Extracting from text: {len(clean_text)} chars")
-        
-        # 4. Wrap input for safety
-        wrapped_input = get_safe_ai_prompt_wrapper(clean_text)
-        
-        # 5. Get secure system prompt
-        system_prompt = get_extraction_prompt(sender_name)
-        
-        # 6. Call AI
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": wrapped_input}
-            ],
-            temperature=0.0,  # Strict temperature for logical extraction
-            max_tokens=1024,
-            response_format={"type": "json_object"}  # Force JSON Object
-        )
-        
-        response_text = response.choices[0].message.content.strip()
-        
-        # 8. Parse JSON
-        try:
-            result_json = json.loads(response_text)
-        except json.JSONDecodeError:
-            # Fallback cleanup for edge cases
-            if response_text.startswith('```'):
-                 lines = response_text.split('\n')
-                 response_text = '\n'.join(lines[1:-1])
-            result_json = json.loads(response_text)
-            
-        # Extract transactions list from object
-        transactions = []
-        if isinstance(result_json, dict):
-            if 'transactions' in result_json:
-                transactions = result_json['transactions']
-            else:
-                # Maybe returned single object or other key
-                transactions = [result_json]
-        elif isinstance(result_json, list):
-            transactions = result_json
-            
-        if not isinstance(transactions, list):
-            transactions = [transactions]
-        
-        # 9. Limit number of transactions
-        if len(transactions) > MAX_TRANSACTIONS_PER_MESSAGE:
-            transactions = transactions[:MAX_TRANSACTIONS_PER_MESSAGE]
-        
-        # 10. Validate and sanitize each transaction (preserve 'nama_projek' field)
-        validated_transactions = []
-        for t in transactions:
-            is_valid, error, sanitized = validate_transaction_data(t)
-            if is_valid:
-                # Preserve nama_projek field from AI response
-                if 'nama_projek' in t:
-                    sanitized['nama_projek'] = sanitize_input(str(t['nama_projek']))[:100]
-                # Preserve company field from AI response (for auto-save)
-                if t.get('company'):
-                    sanitized['company'] = sanitize_input(str(t['company']))[:50]
-                validated_transactions.append(sanitized)
-            else:
-                secure_log("WARNING", f"Invalid transaction skipped: {error}")
-        
-        secure_log("INFO", f"Extracted {len(validated_transactions)} valid transactions")
-        return validated_transactions
-        
-    except json.JSONDecodeError as e:
-        secure_log("ERROR", f"JSON parse error")
-        raise ValueError("Gagal memproses respons AI")
-    except SecurityError:
-        raise
-    except Exception as e:
-        secure_log("ERROR", f"Extraction failed: {type(e).__name__}")
         raise
 
 

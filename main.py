@@ -666,6 +666,16 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         # Sanitize
         text = sanitize_input(text or '')
         
+        # GUARD: Check for "revisi" without reply
+        if text.lower().startswith('revisi') or text.lower().startswith('/revisi'):
+            if not quoted_msg_id:
+                send_wuzapi_reply(sender_number, 
+                    "⚠️ *Gagal Revisi*\n\n"
+                    "Untuk merevisi, Anda harus **me-reply** (balas) pesan konfirmasi bot.\n\n"
+                    "1. Reply pesan '✅ Transaksi Tercatat!'\n"
+                    "2. Ketik `/revisi [jumlah baru]`")
+                return jsonify({'status': 'revision_no_quote'}), 200
+        
         # ============ REVISION HANDLER ============
         # Check if user is replying to a bot confirmation message
         if quoted_msg_id and text:
@@ -808,173 +818,8 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
              # But usually WuzAPI is 1-on-1. If group support needed later, checks go here.
              pass
 
-        # Extract transactions using AI
-        transactions = []
-        try:
-            transactions = extract_financial_data(text, input_type, sender_name, media_url)
-        except Exception as e:
-            secure_log("ERROR", f"Extract failed: {type(e).__name__}")
-            send_wuzapi_reply(sender_number, "❌ Gagal memproses data. Coba lagi.")
-            return jsonify({'status': 'extraction_error'}), 200
-
-        if not transactions:
-            send_wuzapi_reply(sender_number, 
-                "❓ Tidak ada transaksi terdeteksi.\n\n"
-                "Tips:\n"
-                "• Pastikan struk/nota terlihat jelas\n"
-                "• Tambahkan caption seperti: 'Beli material projek X'")
-            return jsonify({'status': 'no_transactions'}), 200
-             
-            for t in transactions:
-                t['message_id'] = message_id
-
-        # Determine Source String
-        if is_group:
-            source = "WhatsApp Group Image" if input_type == 'image' else "WhatsApp Group"
-        else:
-            source = "WhatsApp Image" if input_type == 'image' else "WhatsApp"
-        
-        # Check if AI detected company from input
-        detected_company = None
-        for t in transactions:
-            if t.get('company'):
-                detected_company = t['company']
-                break
-        
-        if detected_company:
-            # Auto-save: Company detected, find dompet and save directly
-            dompet = get_dompet_for_company(detected_company)
-            
-            result = append_transactions(
-                transactions, 
-                sender_name, 
-                source,
-                dompet_sheet=dompet,
-                company=detected_company
-            )
-            
-            if result['success']:
-                update_user_activity(sender_number, 'wuzapi', sender_name)
-                invalidate_dashboard_cache()
-                reply = format_success_reply_new(transactions, dompet, detected_company).replace('*', '')
-                reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
-                
-                # Send reply and capture bot message ID for revision tracking
-                sent_msg = send_wuzapi_reply(sender_number, reply)
-                if sent_msg and isinstance(sent_msg, dict) and sent_msg.get('key', {}).get('id'):
-                    bot_msg_id = sent_msg['key']['id']
-                    if message_id:
-                        store_bot_message_ref(bot_msg_id, message_id)
-            else:
-                send_wuzapi_reply(sender_number, f"❌ Gagal: {result.get('company_error', 'Error')}")
-        else:
-            # No company detected - ask for selection
-            _pending_transactions[sender_number] = {
-                'transactions': transactions,
-                'sender_name': sender_name,
-                'source': source,
-                'timestamp': datetime.now(),
-                'message_id': message_id  # Store for later
-            }
-            
-            # Use the new selection prompt format
-            reply = build_selection_prompt(transactions).replace('*', '')
-            send_wuzapi_reply(sender_number, reply)
-
-        
-        # /status - Full dashboard like Telegram
-        if text.lower() == '/status':
-            invalidate_dashboard_cache()  # Force fresh data from Google Sheets
-            reply = get_status_message().replace('*', '').replace('_', '')
-            send_wuzapi_reply(sender_number, reply)
-            return jsonify({'status': 'ok'}), 200
-        
-        # /saldo
-        if text.lower() == '/saldo':
-            reply = get_wallet_balances().replace('*', '').replace('_', '')
-            send_wuzapi_reply(sender_number, reply)
-            return jsonify({'status': 'ok'}), 200
-        
-        # /kategori
-        if text.lower() == '/kategori':
-            reply = f"📁 Kategori Tersedia:\n\n{CATEGORIES_DISPLAY}"
-            send_wuzapi_reply(sender_number, reply)
-            return jsonify({'status': 'ok'}), 200
-        
-        # /company or /project
-        if text.lower() in ['/company', '/project']:
-            company_list = '\n'.join(f"  {i+1}. {c}" for i, c in enumerate(COMPANY_SHEETS))
-            reply = f"🏢 Company Sheets:\n\n{company_list}\n\nKirim transaksi, lalu pilih nomor company."
-            send_wuzapi_reply(sender_number, reply)
-            return jsonify({'status': 'ok'}), 200
-        
-        # /list - Show recent transactions
-        if text.lower() == '/list':
-            from sheets_helper import get_all_data
-            data = get_all_data(days=7)
-            if data:
-                lines = ["📋 Transaksi Terakhir (7 hari):\n"]
-                by_company = {}
-                for d in data[-20:]:
-                    company = d.get('company_sheet', 'Unknown')
-                    if company not in by_company:
-                        by_company[company] = []
-                    by_company[company].append(d)
-                
-                for company, items in by_company.items():
-                    lines.append(f"\n{company}:")
-                    for item in items[-5:]:
-                        emoji = "💸" if item['tipe'] == 'Pengeluaran' else "💰"
-                        nama = item.get('nama_projek', '')
-                        nama_str = f" ({nama})" if nama else ""
-                        lines.append(f"  {emoji} {item['keterangan'][:25]}{nama_str} - Rp {item['jumlah']:,}".replace(',', '.'))
-                
-                reply = '\n'.join(lines)
-            else:
-                reply = "📋 Tidak ada transaksi dalam 7 hari terakhir."
-            send_wuzapi_reply(sender_number, reply)
-            return jsonify({'status': 'ok'}), 200
-        
-        # /laporan or /laporan30
-        if text.lower().startswith('/laporan'):
-            days = 30 if '30' in text else 7
-            report = generate_report(days=days)
-            reply = format_report_message(report).replace('*', '').replace('_', '')
-            send_wuzapi_reply(sender_number, reply)
-            return jsonify({'status': 'ok'}), 200
-        
-        # /tanya [question]
-        if text.lower().startswith('/tanya'):
-            question = text[6:].strip()
-            if not question:
-                send_wuzapi_reply(sender_number, 
-                    "❓ Format: /tanya [pertanyaan]\n\n"
-                    "Contoh:\n"
-                    "• /tanya total pengeluaran bulan ini\n"
-                    "• /tanya kategori terbesar")
-                return jsonify({'status': 'ok'}), 200
-            
-            # Check for injection
-            is_injection, _ = detect_prompt_injection(question)
-            if is_injection:
-                send_wuzapi_reply(sender_number, "❌ Pertanyaan tidak valid.")
-                return jsonify({'status': 'blocked'}), 200
-            
-            # Get data context and query AI
-            data_context = format_data_for_ai(days=30)
-            answer = query_data(question, data_context)
-            reply = f"💡 Jawaban:\n\n{answer}"
-            send_wuzapi_reply(sender_number, reply)
-            return jsonify({'status': 'ok'}), 200
-        
-
-        # Check for prompt injection
-        is_injection, _ = detect_prompt_injection(text)
-        if is_injection:
-            send_wuzapi_reply(sender_number, "❌ Input tidak valid.")
-            return jsonify({'status': 'blocked'}), 200
-
         # AI Extraction for transactions
+        transactions = []
         try:
             # media_url is now passed directly from webhook (already a data URL)
             transactions = extract_financial_data(
@@ -993,49 +838,71 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                         "Tips:\n"
                         "• Pastikan struk/nota terlihat jelas\n"
                         "• Tambahkan caption seperti: 'Beli material projek X'")
+                    return jsonify({'status': 'no_transactions'}), 200
+                
+                # If text and not transactions, maybe just text chat? Return OK.
+                return jsonify({'status': 'no_transactions_text'}), 200
+
+            # Inject message_id into transactions
+            for t in transactions:
+                t['message_id'] = message_id
+
+            # Determine Source String
+            if is_group:
+                source = "WhatsApp Group Image" if input_type == 'image' else "WhatsApp Group"
             else:
-                source = "WuzAPI-Image" if input_type == 'image' else "WuzAPI"
+                source = "WhatsApp Image" if input_type == 'image' else "WhatsApp"
+            
+            # Check if AI detected company from input
+            detected_company = None
+            for t in transactions:
+                if t.get('company'):
+                    detected_company = t['company']
+                    break
+            
+            if detected_company:
+                # Auto-save: Company detected, find dompet and save directly
+                dompet = get_dompet_for_company(detected_company)
                 
-                # Check if AI detected company from input
-                detected_company = None
-                for t in transactions:
-                    if t.get('company'):
-                        detected_company = t['company']
-                        break
+                result = append_transactions(
+                    transactions, 
+                    sender_name, 
+                    source,
+                    dompet_sheet=dompet,
+                    company=detected_company
+                )
                 
-                if detected_company:
-                    # Auto-save: Company detected, find dompet and save directly
-                    dompet = get_dompet_for_company(detected_company)
+                if result['success']:
+                    update_user_activity(sender_number, 'wuzapi', sender_name)
+                    invalidate_dashboard_cache()
+                    reply = format_success_reply_new(transactions, dompet, detected_company).replace('*', '')
+                    reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
                     
-                    result = append_transactions(
-                        transactions, 
-                        sender_name, 
-                        source,
-                        dompet_sheet=dompet,
-                        company=detected_company
-                    )
-                    
-                    if result['success']:
-                        update_user_activity(sender_number, 'wuzapi', sender_name)
-                        invalidate_dashboard_cache()
-                        reply = format_success_reply_new(transactions, dompet, detected_company).replace('*', '')
-                        send_wuzapi_reply(sender_number, reply)
-                    else:
-                        send_wuzapi_reply(sender_number, f"❌ Gagal: {result.get('company_error', 'Error')}")
+                    # Send reply and capture bot message ID for revision tracking
+                    sent_msg = send_wuzapi_reply(sender_number, reply)
+                    if sent_msg and isinstance(sent_msg, dict) and sent_msg.get('key', {}).get('id'):
+                        bot_msg_id = sent_msg['key']['id']
+                        if message_id:
+                            store_bot_message_ref(bot_msg_id, message_id)
                 else:
-                    # No company detected - ask for selection
-                    _pending_transactions[sender_number] = {
-                        'transactions': transactions,
-                        'sender_name': sender_name,
-                        'source': source,
-                        'timestamp': datetime.now()
-                    }
-                    
-                    reply = build_selection_prompt(transactions).replace('*', '')
-                    send_wuzapi_reply(sender_number, reply)
+                    send_wuzapi_reply(sender_number, f"❌ Gagal: {result.get('company_error', 'Error')}")
+            else:
+                # No company detected - ask for selection
+                _pending_transactions[sender_number] = {
+                    'transactions': transactions,
+                    'sender_name': sender_name,
+                    'source': source,
+                    'timestamp': datetime.now(),
+                    'message_id': message_id
+                }
+                
+                # Use the new selection prompt format
+                reply = build_selection_prompt(transactions).replace('*', '')
+                send_wuzapi_reply(sender_number, reply)
 
         except Exception as e:
             secure_log("ERROR", f"WuzAPI AI Error: {str(e)}")
+            send_wuzapi_reply(sender_number, "❌ Terjadi kesalahan sistem.")
         
         return jsonify({'status': 'ok'}), 200
         

@@ -135,64 +135,63 @@ DANGEROUS_CHARS = ['\x00', '\x1a', '\x7f']  # Null, substitute, delete
 # ===================== FUNCTIONS =====================
 
 def sanitize_input(text: str) -> str:
-    """
-    Sanitize user input by removing dangerous characters and limiting length.
-    
-    Args:
-        text: Raw user input
-        
-    Returns:
-        Sanitized text safe for processing
-    """
     if not text:
         return ""
-    
-    # Remove null bytes and control characters
+
+    # Remove dangerous chars
     for char in DANGEROUS_CHARS:
-        text = text.replace(char, '')
-    
-    # Remove non-printable characters except newlines and tabs
-    text = ''.join(
-        char for char in text 
-        if char.isprintable() or char in '\n\r\t'
-    )
-    
+        text = text.replace(char, "")
+
+    # Normalize newlines
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    # Keep printable + \n \t
+    text = "".join(c for c in text if c.isprintable() or c in "\n\t")
+
     # Limit length
     if len(text) > MAX_INPUT_LENGTH:
         text = text[:MAX_INPUT_LENGTH]
-    
-    # Normalize whitespace
-    text = ' '.join(text.split())
-    
-    return text.strip()
+
+    # Normalize each line (keep structure)
+    lines = []
+    for line in text.split("\n"):
+        line = re.sub(r"[ \t]+", " ", line).strip()
+        lines.append(line)
+
+    # Remove excessive blank lines
+    cleaned = []
+    blank = 0
+    for ln in lines:
+        if ln == "":
+            blank += 1
+            if blank <= 1:
+                cleaned.append("")
+        else:
+            blank = 0
+            cleaned.append(ln)
+
+    return "\n".join(cleaned).strip()
 
 
+# 2) INJECTION: jangan blok URL receipt; cukup blok pola override/jailbreak
+#    (hapus r"http(s)?://" dari pattern kamu)
 def detect_prompt_injection(text: str) -> Tuple[bool, Optional[str]]:
-    """
-    Detect if text contains prompt injection attempts.
-    
-    Args:
-        text: User input to check
-        
-    Returns:
-        Tuple of (is_injection, matched_pattern_description)
-    """
     if not text:
         return False, None
-    
-    text_lower = text.lower()
-    
-    # Check against compiled patterns
+
+    t = text.lower()
+
     for pattern in COMPILED_INJECTION_PATTERNS:
-        if pattern.search(text_lower):
-            # Don't reveal exact pattern matched (security through obscurity)
+        if pattern.search(t):
             return True, "suspicious_pattern_detected"
-    
-    # Check for excessive special characters (potential encoding attacks)
-    special_char_ratio = sum(1 for c in text if not c.isalnum() and c not in ' .,;:!?-+/()') / max(len(text), 1)
-    if special_char_ratio > 0.3:
+
+    # special char ratio: anggap newline/tab itu normal
+    allowed = set(" .,;:!?-+/()[]{}'\"@#&%=_\n\t")
+    special = sum(1 for c in text if (not c.isalnum()) and (c not in allowed))
+    ratio = special / max(len(text), 1)
+    if ratio > 0.35:
         return True, "excessive_special_characters"
-    
+
     return False, None
 
 
@@ -380,60 +379,56 @@ def mask_sensitive_data(text: str) -> str:
     
     return result
 
-
 def validate_transaction_data(transaction: Dict) -> Tuple[bool, Optional[str], Dict]:
-    """
-    Validate and sanitize transaction data before saving.
-    
-    Args:
-        transaction: Transaction dict from AI
-        
-    Returns:
-        Tuple of (is_valid, error_message, sanitized_transaction)
-    """
     if not isinstance(transaction, dict):
         return False, "Invalid transaction format", {}
-    
+
     sanitized = {}
-    
-    # Validate tanggal
-    tanggal = transaction.get('tanggal', '')
+
+    # tanggal
+    tanggal = transaction.get("tanggal", "")
     try:
         if tanggal:
-            # Validate date format
-            datetime.strptime(tanggal, '%Y-%m-%d')
-            sanitized['tanggal'] = tanggal
+            datetime.strptime(tanggal, "%Y-%m-%d")
+            sanitized["tanggal"] = tanggal
         else:
-            sanitized['tanggal'] = datetime.now().strftime('%Y-%m-%d')
+            sanitized["tanggal"] = datetime.now().strftime("%Y-%m-%d")
     except ValueError:
-        sanitized['tanggal'] = datetime.now().strftime('%Y-%m-%d')
-    
-    # Validate kategori
-    kategori = transaction.get('kategori', 'Lainnya')
-    sanitized['kategori'] = validate_category(kategori)
-    
-    # Sanitize keterangan
-    keterangan = transaction.get('keterangan', '')
-    sanitized['keterangan'] = sanitize_input(str(keterangan))[:200]  # Max 200 chars
-    
-    # Validate jumlah
-    jumlah = transaction.get('jumlah', 0)
+        sanitized["tanggal"] = datetime.now().strftime("%Y-%m-%d")
+
+    # kategori
+    kategori = transaction.get("kategori", "Lain-lain")
+    sanitized["kategori"] = validate_category(kategori)
+
+    # keterangan
+    sanitized["keterangan"] = sanitize_input(str(transaction.get("keterangan", "")))[:200]
+
+    # jumlah
+    jumlah = transaction.get("jumlah", 0)
     try:
-        jumlah = abs(int(float(str(jumlah).replace('.', '').replace(',', ''))))
-        if jumlah > 999999999999:  # Max ~1 trillion
+        jumlah = abs(int(float(str(jumlah).replace(".", "").replace(",", ""))))
+        if jumlah > 999999999999:
             jumlah = 999999999999
-        sanitized['jumlah'] = jumlah
+        sanitized["jumlah"] = jumlah
     except (ValueError, TypeError):
         return False, "Invalid amount", {}
-    
-    # Validate tipe
-    tipe = transaction.get('tipe', 'Pengeluaran')
-    if tipe not in ['Pemasukan', 'Pengeluaran']:
-        tipe = 'Pengeluaran'
-    sanitized['tipe'] = tipe
-    
-    return True, None, sanitized
 
+    # tipe
+    tipe = transaction.get("tipe", "Pengeluaran")
+    if tipe not in ["Pemasukan", "Pengeluaran"]:
+        tipe = "Pengeluaran"
+    sanitized["tipe"] = tipe
+
+    # OPTIONAL fields (tetap disanitasi)
+    if "company" in transaction:
+        c = transaction.get("company")
+        sanitized["company"] = None if c is None else sanitize_input(str(c))[:50]
+
+    if "nama_projek" in transaction:
+        p = transaction.get("nama_projek")
+        sanitized["nama_projek"] = "" if p is None else sanitize_input(str(p))[:100]
+
+    return True, None, sanitized
 
 def get_safe_ai_prompt_wrapper(user_input: str) -> str:
     """

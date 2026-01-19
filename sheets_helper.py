@@ -304,8 +304,14 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
         else:
              safe_company = sanitize_input(original_company)[:50]
         
-        # Sanitize nama_projek (REQUIRED - default to Saldo Umum if empty)
-        safe_nama_projek = sanitize_input(str(nama_projek or 'Saldo Umum'))[:100]
+        # REQUIRE nama_projek (no silent default)
+        raw_nama_projek = str(nama_projek or "").strip()
+        if not raw_nama_projek:
+            raise ValueError(
+                "Nama projek wajib diisi.\n"
+                "Jika ini transaksi dompet (isi saldo/deposit), pakai nama_projek = 'Saldo Umum'."
+            )
+        safe_nama_projek = sanitize_input(raw_nama_projek)[:100]
         
         # Get message_id from transaction if provided
         message_id = transaction.get('message_id', '')
@@ -335,6 +341,7 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
         ]
         
         sheet.append_row(row, value_input_option='USER_ENTERED')
+        invalidate_dashboard_cache()  # Force fresh data after write
         secure_log("INFO", f"Transaction added to {dompet_sheet}/{safe_company}: {kategori} - {jumlah} - {safe_nama_projek}")
         
         # Return row number for revision tracking
