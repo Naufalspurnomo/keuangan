@@ -1017,10 +1017,21 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     
                     # Send reply and capture bot message ID for revision tracking
                     sent_msg = send_wuzapi_reply(sender_number, reply)
-                    if sent_msg and isinstance(sent_msg, dict) and sent_msg.get('key', {}).get('id'):
-                        bot_msg_id = sent_msg['key']['id']
-                        if message_id:
-                            store_bot_message_ref(bot_msg_id, message_id)
+                    secure_log("DEBUG", f"WuzAPI send response: {json.dumps(sent_msg) if sent_msg else 'None'}[:200]")
+                    
+                    # WuzAPI can return message ID in different structures
+                    bot_msg_id = None
+                    if sent_msg and isinstance(sent_msg, dict):
+                        # Try common structures: sent_msg['key']['id'] or sent_msg['ID'] or sent_msg['MessageID']
+                        bot_msg_id = (sent_msg.get('key', {}).get('id') or 
+                                     sent_msg.get('Key', {}).get('ID') or
+                                     sent_msg.get('ID') or
+                                     sent_msg.get('id') or
+                                     sent_msg.get('MessageID'))
+                    
+                    if bot_msg_id and message_id:
+                        store_bot_message_ref(bot_msg_id, message_id)
+                        secure_log("INFO", f"Stored bot->tx ref: {bot_msg_id} -> {message_id}")
                 else:
                     send_wuzapi_reply(sender_number, f"❌ Gagal: {result.get('company_error', 'Error')}")
             else:
