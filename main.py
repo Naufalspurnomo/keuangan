@@ -590,21 +590,22 @@ def webhook_wuzapi():
             ext_text = message_obj.get('extendedTextMessage', {}) or message_obj.get('ExtendedTextMessage', {})
             if ext_text:
                 context_info = ext_text.get('contextInfo', {}) or ext_text.get('ContextInfo', {})
-                quoted_msg_id = context_info.get('stanzaId', '') or context_info.get('StanzaId', '') or context_info.get('quotedMessageId', '')
+                # WuzAPI sends 'stanzaID' (uppercase ID), not 'stanzaId'
+                quoted_msg_id = context_info.get('stanzaID', '') or context_info.get('stanzaId', '') or context_info.get('StanzaId', '') or context_info.get('quotedMessageId', '')
                 secure_log("DEBUG", f"WuzAPI ExtText contextInfo: {json.dumps(context_info)[:200]}")
             
             # Also check top-level contextInfo (some WuzAPI versions)
             if not quoted_msg_id:
                 top_context = message_obj.get('contextInfo', {}) or message_obj.get('ContextInfo', {})
                 if top_context:
-                    quoted_msg_id = top_context.get('stanzaId', '') or top_context.get('StanzaId', '') or top_context.get('quotedMessageId', '')
+                    quoted_msg_id = top_context.get('stanzaID', '') or top_context.get('stanzaId', '') or top_context.get('StanzaId', '') or top_context.get('quotedMessageId', '')
                     secure_log("DEBUG", f"WuzAPI Top contextInfo: {json.dumps(top_context)[:200]}")
             
             # Check event-level context (another variant)
             if not quoted_msg_id:
                 event_context = event.get('ContextInfo', {}) or event.get('contextInfo', {})
                 if event_context:
-                    quoted_msg_id = event_context.get('stanzaId', '') or event_context.get('StanzaId', '')
+                    quoted_msg_id = event_context.get('stanzaID', '') or event_context.get('stanzaId', '') or event_context.get('StanzaId', '')
                     secure_log("DEBUG", f"WuzAPI Event contextInfo: {json.dumps(event_context)[:200]}")
             
             secure_log("DEBUG", f"WuzAPI quoted_msg_id resolved: '{quoted_msg_id}', message_obj keys: {list(message_obj.keys())}")
