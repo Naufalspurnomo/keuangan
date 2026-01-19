@@ -475,15 +475,16 @@ def append_transactions(transactions: List[Dict], sender_name: str, source: str 
     }
 
 
-def get_all_data(days: int = None) -> List[Dict]:
+def get_all_data(days: int = 30) -> List[Dict]:
     """
-    Get all transaction data from ALL company sheets.
+    Get all transaction data from ALL dompet sheets.
+    Adjusted for new Wallet structure (Company in col 3).
     
     Args:
         days: Optional, only get data from last N days
         
     Returns:
-        List of transaction dicts with company_sheet and nama_projek
+        List of transaction dicts with company and nama_projek
     """
     try:
         spreadsheet = get_spreadsheet()
@@ -494,26 +495,29 @@ def get_all_data(days: int = None) -> List[Dict]:
         if days:
             cutoff_date = datetime.now() - timedelta(days=days)
         
-        for company in COMPANY_SHEETS:
+        # Iterate over Physical Wallets (Dompet Sheets)
+        for dompet in DOMPET_SHEETS:
             try:
-                sheet = spreadsheet.worksheet(company)
+                sheet = spreadsheet.worksheet(dompet)
                 all_values = sheet.get_all_values()
                 
                 if len(all_values) < 2:
                     continue
                 
                 for row in all_values[1:]:  # Skip header
-                    if len(row) < 5:
+                    if len(row) < 6: # Minimal columns (No, Tgl, Comp, Ket, Jml, Tipe)
                         continue
                     
                     try:
-                        # Column indices: No(0), Tanggal(1), Keterangan(2), Jumlah(3), Tipe(4), 
-                        #                 Oleh(5), Source(6), Kategori(7), Nama Projek(8)
+                        # NEW Column indices (0-based from row list): 
+                        # 0:No, 1:Tanggal, 2:Company, 3:Keterangan, 4:Jumlah, 5:Tipe, 
+                        # 6:Oleh, 7:Source, 8:Kategori, 9:Nama Projek
+                        
                         date_str = row[1] if len(row) > 1 else ''
                         if not date_str:
                             continue
                         
-                        # Parse date - try multiple formats
+                        # Parse date
                         row_date = None
                         for fmt in ['%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y']:
                             try:
@@ -525,41 +529,46 @@ def get_all_data(days: int = None) -> List[Dict]:
                         if not row_date:
                             continue
                         
-                        # Only filter out past transactions older than cutoff
-                        # Future-dated transactions are always included
+                        # Filter date
                         if cutoff_date and row_date < cutoff_date and row_date < datetime.now():
                             continue
                         
-                        # Parse amount
-                        amount_str = str(row[3]).replace(',', '').replace('Rp', '').replace('IDR', '').strip()
+                        # Parse amount (Col 4)
+                        amount_str = str(row[4]).replace(',', '').replace('Rp', '').replace('IDR', '').strip()
                         amount = int(float(amount_str)) if amount_str else 0
                         
-                        # Get type
-                        tipe_raw = row[4] if len(row) > 4 else 'Pengeluaran'
+                        # Parse type (Col 5)
+                        tipe_raw = row[5] if len(row) > 5 else 'Pengeluaran'
                         tipe = 'Pengeluaran' if 'pengeluaran' in tipe_raw.lower() else 'Pemasukan' if 'pemasukan' in tipe_raw.lower() else tipe_raw
                         
-                        # Get sumber_dana with fallback for old data
-                        sumber_dana = row[9] if len(row) > 9 else ''
-                        if not sumber_dana:
-                             sumber_dana = get_default_fund_source(company)
+                        # Parse Company (Col 2)
+                        company = row[2].strip() if len(row) > 2 else 'Unknown'
+                        if not company: company = 'Unknown'
+                        
+                        # Parse Params
+                        keterangan = row[3] if len(row) > 3 else ''
+                        oleh = row[6] if len(row) > 6 else ''
+                        source = row[7] if len(row) > 7 else ''
+                        kategori = row[8] if len(row) > 8 else 'Lain-lain'
+                        nama_projek = row[9] if len(row) > 9 else ''
 
                         data.append({
                             'tanggal': date_str,
-                            'keterangan': row[2] if len(row) > 2 else '',
+                            'keterangan': keterangan,
                             'jumlah': amount,
                             'tipe': tipe,
-                            'oleh': row[5] if len(row) > 5 else '',
-                            'source': row[6] if len(row) > 6 else '',
-                            'kategori': row[7] if len(row) > 7 else 'Lain-lain',
-                            'nama_projek': row[8] if len(row) > 8 else '',
-                            'sumber_dana': sumber_dana,
-                            'company_sheet': company
+                            'oleh': oleh,
+                            'source': source,
+                            'kategori': kategori,
+                            'nama_projek': nama_projek,
+                            'sumber_dana': dompet,      # The physical sheet
+                            'company_sheet': company    # The logical company
                         })
                     except Exception:
                         continue
                         
             except Exception as e:
-                secure_log("WARNING", f"Could not read company {company}: {type(e).__name__}")
+                secure_log("WARNING", f"Could not read dompet {dompet}: {type(e).__name__}")
                 continue
         
         return data
@@ -589,6 +598,14 @@ def get_summary(days: int = 30) -> Dict:
         if d.get('tipe') == 'Pengeluaran':
             oleh = d.get('oleh', 'Unknown')
             by_oleh[oleh] = by_oleh.get(oleh, 0) + d['jumlah']
+            
+    # Group by project (Nama Projek)
+    by_projek = {}
+    for d in data:
+        if d.get('tipe') == 'Pengeluaran':
+            proj = d.get('nama_projek', '').strip()
+            if proj:
+                by_projek[proj] = by_projek.get(proj, 0) + d['jumlah']
     
     return {
         'period_days': days,
@@ -597,7 +614,8 @@ def get_summary(days: int = 30) -> Dict:
         'saldo': total_pemasukan - total_pengeluaran,
         'transaction_count': len(data),
         'by_kategori': by_kategori,
-        'by_oleh': by_oleh
+        'by_oleh': by_oleh,
+        'by_projek': by_projek
     }
 
 
@@ -731,6 +749,59 @@ def format_data_for_ai(days: int = 30) -> str:
     return '\n'.join(lines)
 
 
+def format_dashboard_message() -> str:
+    """
+    Format dashboard data as a chat message.
+    Used for enhanced /status command.
+    Shows breakdowns by Wallet (Dompet) and Company.
+    """
+    data = get_dashboard_summary()
+    
+    # Overall profit/loss indicator
+    if data['balance'] > 0:
+        status = "🟢 PROFIT"
+    elif data['balance'] < 0:
+        status = "🔴 RUGI"
+    else:
+        status = "⚪ IMPAS"
+    
+    lines = [
+        f"📊 *DASHBOARD KEUANGAN* {status}",
+        "",
+        f"💼 Total Company: {data['company_count']}",
+        f"📝 Total Transaksi: {data['total_transactions']}",
+        "",
+        f"💰 Total Pemasukan: Rp {data['total_income']:,}".replace(',', '.'),
+        f"💸 Total Pengeluaran: Rp {data['total_expense']:,}".replace(',', '.'),
+        f"📈 *Profit/Loss Global: Rp {data['balance']:,}*".replace(',', '.'),
+        ""
+    ]
+    
+    # 1. SALDO DOMPET (Physical Wallets)
+    if data['dompet_summary']:
+        lines.append("*💰 SALDO DOMPET*")
+        for dompet, info in data['dompet_summary'].items():
+            bal = info['bal']
+            icon = "🟢" if bal >= 0 else "🔴"
+            lines.append(f"{icon} {dompet}: Rp {bal:,}".replace(',', '.'))
+        lines.append("")
+        
+    # 2. PERFORMA COMPANY (Profit/Loss per Company)
+    if data['company_summary']:
+        lines.append("*🏢 PERFORMA COMPANY*")
+        sorted_companies = sorted(data['company_summary'].items(), key=lambda x: x[0])
+        for comp, info in sorted_companies:
+            pl = info['bal']
+            status_icon = "📈" if pl > 0 else "📉" if pl < 0 else "➖"
+            lines.append(f"{status_icon} *{comp}*: Rp {pl:,}".replace(',', '.'))
+            # Optional: Show detail line? Maybe too long
+            # lines.append(f"   (Inc: {info['inc']:,} | Exp: {info['exp']:,})".replace(',', '.'))
+    
+    lines.append("\n_Ketik /laporan untuk detail per projek_")
+    
+    return '\n'.join(lines)
+
+
 def generate_report(days: int = 7) -> Dict:
     """Generate spending report."""
     summary = get_summary(days)
@@ -766,6 +837,12 @@ def format_report_message(report: Dict) -> str:
         lines.append("*Per Kategori:*")
         for kat, amount in sorted(s['by_kategori'].items(), key=lambda x: -x[1])[:5]:
             lines.append(f"  • {kat}: Rp {amount:,}".replace(',', '.'))
+            
+    if s.get('by_projek'):
+        lines.append("")
+        lines.append("*Top 5 Projek (Pengeluaran):*")
+        for proj, amount in sorted(s['by_projek'].items(), key=lambda x: -x[1])[:5]:
+            lines.append(f"  • {proj}: Rp {amount:,}".replace(',', '.'))
     
     return '\n'.join(lines)
 
@@ -851,110 +928,105 @@ def invalidate_dashboard_cache():
 
 def get_dashboard_summary() -> Dict:
     """
-    Get financial summary across all projects.
-    Uses caching (5 mins) to optimize performance.
+    Get cached dashboard data or calculate new summary.
+    Aggregates data by Wallet (Dompet) and Company.
     """
     global _dashboard_cache, _dashboard_last_update
     
     current_time = time.time()
     
-    # Check cache validity
-    if _dashboard_cache and (current_time - _dashboard_last_update < DASHBOARD_CACHE_TTL):
-        secure_log("INFO", "Serving dashboard summary from CACHE")
+    # Return cache if valid
+    if _dashboard_cache and (current_time - _dashboard_last_update) < DASHBOARD_CACHE_TTL:
+        secure_log("INFO", "Using cached dashboard")
         return _dashboard_cache
-
-    secure_log("INFO", "Fetching fresh dashboard summary...")
+    
+    secure_log("INFO", "Calculating fresh dashboard summary...")
     
     try:
-        projects = get_available_projects()
-        spreadsheet = get_spreadsheet()
-        
-        total_expense = 0
+        # Aggregators
         total_income = 0
+        total_expense = 0
         total_transactions = 0
-        project_data = []
-        category_totals = {cat: 0 for cat in ALLOWED_CATEGORIES}
         
-        for proj in projects:
+        # Breakdown
+        dompet_summary = {}     # {dompet_name: {'inc': 0, 'exp': 0, 'bal': 0}}
+        company_summary = {}    # {company_name: {'inc': 0, 'exp': 0, 'bal': 0, 'count': 0}}
+        companies_found = set()
+        
+        for dompet in DOMPET_SHEETS:
             try:
-                sheet = spreadsheet.worksheet(proj)
+                # Initialize dompet stats
+                dompet_summary[dompet] = {'inc': 0, 'exp': 0, 'bal': 0}
+                
+                sheet = get_dompet_sheet(dompet)
                 all_values = sheet.get_all_values()
                 
                 if len(all_values) < 2:
                     continue
                 
-                proj_expense = 0
-                proj_income = 0
-                proj_count = 0
-                
-                secure_log("DEBUG", f"Processing {proj} - Total rows: {len(all_values)}")
-                
-                # Check column headers
-                if len(all_values) > 0:
-                     secure_log("DEBUG", f"Header: {all_values[0]}")
-
-                for i, row in enumerate(all_values[1:]):  # Skip header
-                    if len(row) < 4:  # Minimal columns
+                for row in all_values[1:]:  # Skip header
+                    if len(row) < 6:  # Minimal columns
                         continue
                     
                     try:
-                        # Column indices: No(0), Tanggal(1), Keterangan(2), Jumlah(3), Tipe(4), Oleh(5), Source(6), Kategori(7)
-                        # Amount format: '1,500,000.00' where comma=thousands, period=decimal
-                        raw_amount = str(row[3])
-                        # Remove thousands separators (commas), keep decimal point
+                        # Parse Fields (0-indexed)
+                        # COL_COMPANY=3 -> idx 2
+                        # COL_JUMLAH=5 -> idx 4
+                        # COL_TIPE=6 -> idx 5
+                        
+                        company = row[2].strip()
+                        if not company: company = "Unknown"
+                        
+                        raw_amount = str(row[4])
                         amount_clean = raw_amount.replace(',', '').replace('Rp', '').replace('IDR', '').strip()
                         if not amount_clean:
                             continue
                         
-                        # Parse as float first (handles decimals), then convert to int
                         amount = int(float(amount_clean))
+                        tipe = row[5].strip().lower()
                         
-                        # Robust Type Parsing
-                        raw_tipe = row[4] if len(row) > 4 else 'Pengeluaran'
-                        tipe = raw_tipe.lower().strip()
+                        companies_found.add(company)
+                        if company not in company_summary:
+                            company_summary[company] = {'inc': 0, 'exp': 0, 'bal': 0, 'count': 0}
                         
-                        kategori = row[7] if len(row) > 7 else ALLOWED_CATEGORIES[0]
-
-                        # Type detection: check for full keywords
-                        if 'pengeluaran' in tipe or 'expense' in tipe or 'keluar' in tipe:
-                            proj_expense += amount
-                            total_expense += amount
-                            if kategori in category_totals:
-                                category_totals[kategori] += amount
-                        elif 'pemasukan' in tipe or 'income' in tipe or 'masuk' in tipe:
-                            proj_income += amount
-                            total_income += amount
+                        is_expense = 'keluar' in tipe or 'withdraw' in tipe
+                        is_income = 'masuk' in tipe or 'deposit' in tipe
                         
-                        proj_count += 1
                         total_transactions += 1
+                        company_summary[company]['count'] += 1
+                        
+                        if is_expense:
+                            total_expense += amount
+                            dompet_summary[dompet]['exp'] += amount
+                            company_summary[company]['exp'] += amount
+                        elif is_income:
+                            total_income += amount
+                            dompet_summary[dompet]['inc'] += amount
+                            company_summary[company]['inc'] += amount
+                            
                     except (ValueError, IndexError):
-                        # Silently skip invalid rows
                         continue
                 
-                secure_log("INFO", f"Project {proj} summary: {proj_count} tx, Exp={proj_expense}, Inc={proj_income}")
-
-                
-                project_data.append({
-                    'name': proj,
-                    'expense': proj_expense,
-                    'income': proj_income,
-                    'balance': proj_income - proj_expense,
-                    'count': proj_count
-                })
+                # Calc balances
+                dompet_summary[dompet]['bal'] = dompet_summary[dompet]['inc'] - dompet_summary[dompet]['exp']
                 
             except Exception as e:
-                secure_log("ERROR", f"Error processing {proj}: {str(e)}")
+                secure_log("ERROR", f"Error processing {dompet}: {str(e)}")
                 continue
+        
+        # Calc company balances
+        for c in company_summary:
+            company_summary[c]['bal'] = company_summary[c]['inc'] - company_summary[c]['exp']
         
         # Update Cache
         _dashboard_cache = {
-            'total_expense': total_expense,
             'total_income': total_income,
+            'total_expense': total_expense,
             'balance': total_income - total_expense,
             'total_transactions': total_transactions,
-            'project_count': len(projects),
-            'projects': project_data,
-            'by_category': category_totals
+            'company_count': len(companies_found),
+            'dompet_summary': dompet_summary,
+            'company_summary': company_summary
         }
         _dashboard_last_update = current_time
         
@@ -965,63 +1037,13 @@ def get_dashboard_summary() -> Dict:
         secure_log("ERROR", f"Dashboard summary failed: {type(e).__name__}")
         return {
             'total_income': 0, 'total_expense': 0, 'balance': 0,
-            'total_transactions': 0, 'project_count': 0,
-            'projects': [],
-            'by_category': {}
+            'total_transactions': 0, 'company_count': 0,
+            'dompet_summary': {},
+            'company_summary': {}
         }
 
 
-def format_dashboard_message() -> str:
-    """
-    Format dashboard data as a chat message.
-    Used for enhanced /status command.
-    Shows profit/loss per company instead of budget.
-    """
-    data = get_dashboard_summary()
-    
-    # Overall profit/loss indicator
-    if data['balance'] > 0:
-        status = "🟢 PROFIT"
-    elif data['balance'] < 0:
-        status = "🔴 RUGI"
-    else:
-        status = "⚪ IMPAS"
-    
-    lines = [
-        f"📊 *DASHBOARD KEUANGAN* {status}",
-        "",
-        f"💼 Total Company: {data['project_count']}",
-        f"📝 Total Transaksi: {data['total_transactions']}",
-        "",
-        f"💰 Total Pemasukan: Rp {data['total_income']:,}".replace(',', '.'),
-        f"💸 Total Pengeluaran: Rp {data['total_expense']:,}".replace(',', '.'),
-        f"📈 *Profit/Loss: Rp {data['balance']:,}*".replace(',', '.'),
-    ]
-    
-    # Per Company Profit/Loss
-    if data['projects']:
-        lines.append("")
-        lines.append("*Per Company:*")
-        sorted_projects = sorted(data['projects'], key=lambda x: x['balance'], reverse=True)
-        for p in sorted_projects:
-            if p['balance'] >= 0:
-                indicator = "✅" if p['balance'] > 0 else "⚪"
-            else:
-                indicator = "⚠️"
-            lines.append(f"  {indicator} {p['name']}")
-            lines.append(f"      💰 In: Rp {p['income']:,} | 💸 Out: Rp {p['expense']:,}".replace(',', '.'))
-            lines.append(f"      📊 P/L: Rp {p['balance']:,}".replace(',', '.'))
-    
-    # Category breakdown
-    if data['by_category']:
-        lines.append("")
-        lines.append("*Per Kategori:*")
-        sorted_cats = sorted(data['by_category'].items(), key=lambda x: x[1], reverse=True)
-        for cat, amount in sorted_cats:
-            if amount > 0:
-                lines.append(f"  • {cat}: Rp {amount:,}".replace(',', '.'))
-    
-    return '\n'.join(lines)
+
 
 
 
