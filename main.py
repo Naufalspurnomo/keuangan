@@ -570,6 +570,11 @@ def webhook_wuzapi():
         input_type = 'text'
         media_url = None  # Changed from media_path to media_url
         
+        # DEBUG: Log full message object structure to find quote info
+        secure_log("DEBUG", f"WuzAPI message_obj keys: {list(message_obj.keys())}")
+        secure_log("DEBUG", f"WuzAPI message_obj full: {json.dumps(message_obj)[:500]}")
+        media_url = None  # Changed from media_path to media_url
+        
         if msg_type == 'text':
             # Text message - check various fields
             text = message_obj.get('conversation', '') or \
