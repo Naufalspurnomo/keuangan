@@ -500,20 +500,21 @@ def webhook_wuzapi():
         secure_log("DEBUG", f"WuzAPI Form: instance={instance_name}, userID={user_id_param}")
         
         if not json_data_raw:
-            # Fallback: try JSON body (for manual testing)
-            data = request.get_json(force=True, silent=True)
-            if data and 'data' in data:
-                # Manual test format
-                msg_data = data['data']
-                remote_jid = msg_data.get('key', {}).get('remoteJid', '')
-                sender_number = remote_jid.split('@')[0] if remote_jid else ''
-                sender_name = msg_data.get('pushName', 'User')
-                raw_msg = msg_data.get('message', {})
-                text = raw_msg.get('conversation', '')
-                
-                if text:
-                    secure_log("INFO", f"WuzAPI message from {sender_number}")
-                    return process_wuzapi_message(sender_number, sender_name, text)
+            # Fallback block disabled to prevent double-processing / duplicates
+            # data = request.get_json(force=True, silent=True)
+            # if data and 'data' in data:
+            #     # Manual test format
+            #     msg_data = data['data']
+            #     remote_jid = msg_data.get('key', {}).get('remoteJid', '')
+            #     sender_number = remote_jid.split('@')[0] if remote_jid else ''
+            #     sender_name = msg_data.get('pushName', 'User')
+            #     raw_msg = msg_data.get('message', {})
+            #     text = raw_msg.get('conversation', '')
+            #     
+            #     if text:
+            #         secure_log("INFO", f"WuzAPI message from {sender_number}")
+            #         return process_wuzapi_message(sender_number, sender_name, text)
+            secure_log("WARNING", "WuzAPI: No 'data' parameter found in POST request")
             return jsonify({'status': 'no_data'}), 200
         
         # Parse the URL-encoded JSON data
@@ -626,8 +627,11 @@ def webhook_wuzapi():
         if 'quoted_msg_id' not in locals():
             quoted_msg_id = None
 
+        # Determine if it's a group chat
+        is_group = '@g.us' in chat_jid
+        
         # Process the message (with image URL and message IDs)
-        return process_wuzapi_message(sender_number, push_name, text, input_type, media_url, quoted_msg_id, message_id)
+        return process_wuzapi_message(sender_number, push_name, text, input_type, media_url, quoted_msg_id, message_id, is_group)
         
     except Exception as e:
         secure_log("ERROR", f"Webhook WuzAPI Error: {traceback.format_exc()}")
@@ -636,7 +640,8 @@ def webhook_wuzapi():
 
 def process_wuzapi_message(sender_number: str, sender_name: str, text: str, 
                            input_type: str = 'text', media_url: str = None,
-                           quoted_msg_id: str = None, message_id: str = None):
+                           quoted_msg_id: str = None, message_id: str = None,
+                           is_group: bool = False):
     """Process a WuzAPI message and return response.
     
     This mirrors the Telegram command handling for consistency.
@@ -650,6 +655,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         media_url: Base64 data URL for images (data:image/jpeg;base64,...)
         quoted_msg_id: ID of quoted/replied message (for revision)
         message_id: ID of the current message (from WuzAPI)
+        is_group: Boolean indicating if it's a group chat
     """
     try:
         # Rate Limit
@@ -819,12 +825,14 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 "• Tambahkan caption seperti: 'Beli material projek X'")
             return jsonify({'status': 'no_transactions'}), 200
              
-        # Inject message_id into transactions
-        if message_id:
             for t in transactions:
                 t['message_id'] = message_id
 
-        source = "WuzAPI-Image" if input_type == 'image' else "WuzAPI"
+        # Determine Source String
+        if is_group:
+            source = "WhatsApp Group Image" if input_type == 'image' else "WhatsApp Group"
+        else:
+            source = "WhatsApp Image" if input_type == 'image' else "WhatsApp"
         
         # Check if AI detected company from input
         detected_company = None
@@ -1460,7 +1468,16 @@ def webhook_telegram():
         
         # Extract data with AI
         try:
-            source = {"text": "Text", "image": "Image", "audio": "Voice"}[input_type]
+            # Determine Source String
+            is_group = message['chat']['type'] in ['group', 'supergroup']
+            base_source = "Telegram Group" if is_group else "Telegram"
+            
+            if input_type == 'image':
+                source = f"{base_source} Image"
+            elif input_type == 'audio':
+                source = f"{base_source} Voice"
+            else:
+                source = base_source
             
             transactions = extract_financial_data(
                 input_data=text or '',
