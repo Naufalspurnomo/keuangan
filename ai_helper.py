@@ -13,6 +13,7 @@ SECURITY: All inputs are sanitized before AI processing.
 """
 
 import os
+import re
 import json
 import tempfile
 import requests
