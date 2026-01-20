@@ -716,10 +716,18 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         
         # GROUP CHAT FILTER: Only respond if triggered or command
         # Triggers: +catat, +bot, +input, /catat, or any / command
+        # EXCEPTION: If user has pending transaction, allow through (they're replying to bot)
+        has_pending = sender_number in _pending_transactions
+        
+        # Debug logging for group chat
         if is_group:
+            secure_log("DEBUG", f"Group msg from {sender_number}: has_pending={has_pending}, text='{text[:30]}...'")
+        
+        if is_group and not has_pending:
             should_respond, cleaned_text = should_respond_in_group(text, is_group)
             if not should_respond:
                 # No trigger - silently ignore this group message
+                secure_log("DEBUG", f"Group msg IGNORED (no trigger, no pending)")
                 return jsonify({'status': 'ignored_group'}), 200
             # Use cleaned text (trigger prefix removed)
             text = cleaned_text if cleaned_text else text
