@@ -151,6 +151,9 @@ def get_telegram_api_url():
 # Now managed by services.state_manager
 from services import state_manager as _state
 
+# Re-export for backward compatibility - these point to the state_manager's internal dicts
+_pending_transactions = _state._pending_transactions
+
 
 # ===================== GROUP & SELECTION HELPERS =====================
 # Now imported from utils.parsers and utils.formatters
