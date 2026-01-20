@@ -674,7 +674,8 @@ def webhook_wuzapi():
         is_group = '@g.us' in chat_jid
         
         # Process the message (with image URL and message IDs)
-        return process_wuzapi_message(sender_number, push_name, text, input_type, media_url, quoted_msg_id, message_id, is_group)
+        # Pass chat_jid so group messages get replies in the group, not personal chat
+        return process_wuzapi_message(sender_number, push_name, text, input_type, media_url, quoted_msg_id, message_id, is_group, chat_jid)
         
     except Exception as e:
         secure_log("ERROR", f"Webhook WuzAPI Error: {traceback.format_exc()}")
@@ -684,7 +685,7 @@ def webhook_wuzapi():
 def process_wuzapi_message(sender_number: str, sender_name: str, text: str, 
                            input_type: str = 'text', media_url: str = None,
                            quoted_msg_id: str = None, message_id: str = None,
-                           is_group: bool = False):
+                           is_group: bool = False, chat_jid: str = None):
     """Process a WuzAPI message and return response.
     
     This mirrors the Telegram command handling for consistency.
@@ -699,8 +700,12 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         quoted_msg_id: ID of quoted/replied message (for revision)
         message_id: ID of the current message (from WuzAPI)
         is_group: Boolean indicating if it's a group chat
+        chat_jid: The chat JID (group ID for groups, personal for DM)
     """
     try:
+        # Determine reply destination: for groups, reply to group; for personal, reply to sender
+        reply_to = chat_jid if (is_group and chat_jid) else sender_number
+        
         # Rate Limit
         allowed, wait_time = rate_limit_check(sender_number)
         if not allowed:
@@ -712,7 +717,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         # GUARD: Check for "revisi" without reply
         if text.lower().startswith('revisi') or text.lower().startswith('/revisi'):
             if not quoted_msg_id:
-                send_wuzapi_reply(sender_number, 
+                send_wuzapi_reply(reply_to, 
                     "⚠️ *Gagal Revisi*\n\n"
                     "Untuk merevisi, Anda harus **me-reply** (balas) pesan konfirmasi bot.\n\n"
                     "1. Reply pesan '✅ Transaksi Tercatat!'\n"
@@ -734,7 +739,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             if original_tx:
                 # Check directly if text starts with /revisi
                 if not text.lower().startswith('/revisi'):
-                    send_wuzapi_reply(sender_number, 
+                    send_wuzapi_reply(reply_to, 
                         "⚠️ Format Salah.\n\n"
                         "Untuk merevisi, balas pesan ini dengan format:\n"
                         "`/revisi [jumlah]`\n\n"
@@ -771,10 +776,10 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                             f"📍 {original_tx['dompet']}\n"
                             f"⏱️ {now}"
                         ).replace(',', '.')
-                        send_wuzapi_reply(sender_number, reply)
+                        send_wuzapi_reply(reply_to, reply)
                         return jsonify({'status': 'revised'}), 200
                     else:
-                        send_wuzapi_reply(sender_number, 
+                        send_wuzapi_reply(reply_to, 
                             "❌ Gagal update transaksi.\n\n"
                             "Kemungkinan penyebab:\n"
                             "• Transaksi sudah dihapus\n"
@@ -782,7 +787,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                             "Coba lagi atau hubungi admin.")
                         return jsonify({'status': 'revision_error'}), 200
                 else:
-                    send_wuzapi_reply(sender_number, 
+                    send_wuzapi_reply(reply_to, 
                         "❓ Jumlah tidak valid.\n\n"
                         "Gunakan format:\n"
                         "• /revisi 150000\n"
@@ -800,7 +805,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             # Handle cancel for all pending types
             if text.lower() == '/cancel':
                 _pending_transactions.pop(sender_number, None)
-                send_wuzapi_reply(sender_number, "❌ Transaksi dibatalkan.")
+                send_wuzapi_reply(reply_to, "❌ Transaksi dibatalkan.")
                 return jsonify({'status': 'cancelled'}), 200
             
             # ===== SMART MODIFIER: Detect commands to modify pending transactions =====
@@ -830,7 +835,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                         if len(pending['transactions']) == 0:
                             # All transactions removed
                             _pending_transactions.pop(sender_number, None)
-                            send_wuzapi_reply(sender_number, "❌ Semua transaksi dihapus. Transaksi dibatalkan.")
+                            send_wuzapi_reply(reply_to, "❌ Semua transaksi dihapus. Transaksi dibatalkan.")
                             return jsonify({'status': 'cancelled'}), 200
                         else:
                             # Show remaining transactions
@@ -848,11 +853,11 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                             else:
                                 msg += "Ketik 1-5 untuk pilih company atau /cancel"
                             
-                            send_wuzapi_reply(sender_number, msg)
+                            send_wuzapi_reply(reply_to, msg)
                             return jsonify({'status': 'item_removed'}), 200
                     else:
                         # No match found
-                        send_wuzapi_reply(sender_number, 
+                        send_wuzapi_reply(reply_to, 
                             f"❓ Tidak menemukan '{remove_keyword}' dalam transaksi pending.\n\n"
                             f"Ketik /cancel untuk batal semua, atau lanjutkan dengan input yang diminta.")
                         return jsonify({'status': 'no_match'}), 200
@@ -862,7 +867,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 project_name = sanitize_input(text.strip())[:100]
                 
                 if not project_name or len(project_name) < 2:
-                    send_wuzapi_reply(sender_number, 
+                    send_wuzapi_reply(reply_to, 
                         "❌ Nama projek tidak valid.\n\n"
                         "Ketik nama projek dengan jelas, contoh:\n"
                         "• Purana Ubud\n"
@@ -904,7 +909,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                         invalidate_dashboard_cache()
                         reply = format_success_reply_new(pending['transactions'], dompet, detected_company).replace('*', '')
                         reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
-                        sent_msg = send_wuzapi_reply(sender_number, reply)
+                        sent_msg = send_wuzapi_reply(reply_to, reply)
                         bot_msg_id = None
                         if sent_msg and isinstance(sent_msg, dict):
                             bot_msg_id = (sent_msg.get('data', {}).get('Id') or
@@ -913,13 +918,13 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                         if bot_msg_id and tx_message_id:
                             store_bot_message_ref(bot_msg_id, tx_message_id)
                     else:
-                        send_wuzapi_reply(sender_number, f"❌ Gagal: {result.get('company_error', 'Error')}")
+                        send_wuzapi_reply(reply_to, f"❌ Gagal: {result.get('company_error', 'Error')}")
                     return jsonify({'status': 'processed'}), 200
                 else:
                     # No company, continue to selection
                     pending['pending_type'] = 'selection'
                     reply = build_selection_prompt(pending['transactions']).replace('*', '')
-                    send_wuzapi_reply(sender_number, reply)
+                    send_wuzapi_reply(reply_to, reply)
                     return jsonify({'status': 'asking_company'}), 200
             
             # ===== HANDLE COMPANY SELECTION =====
@@ -927,12 +932,12 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             
             if error_msg == "cancel":
                 _pending_transactions.pop(sender_number, None)
-                send_wuzapi_reply(sender_number, "❌ Transaksi dibatalkan.")
+                send_wuzapi_reply(reply_to, "❌ Transaksi dibatalkan.")
                 return jsonify({'status': 'cancelled'}), 200
             
             if not is_valid:
                 # Send error feedback
-                send_wuzapi_reply(sender_number, f"❌ {error_msg}")
+                send_wuzapi_reply(reply_to, f"❌ {error_msg}")
                 return jsonify({'status': 'invalid_selection'}), 200
             
             # Valid selection 1-5
@@ -940,7 +945,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             option = get_selection_by_idx(selection)
             
             if not option:
-                send_wuzapi_reply(sender_number, "❌ Pilihan tidak valid.")
+                send_wuzapi_reply(reply_to, "❌ Pilihan tidak valid.")
                 return jsonify({'status': 'error'}), 200
             
             dompet_sheet = option['dompet']
@@ -966,7 +971,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
                 
                 # Send reply and capture bot message ID for revision tracking
-                sent_msg = send_wuzapi_reply(sender_number, reply)
+                sent_msg = send_wuzapi_reply(reply_to, reply)
                 secure_log("DEBUG", f"Selection flow - WuzAPI send response: {str(sent_msg)[:200]}")
                 
                 # WuzAPI returns: {'data': {'Id': 'xxx'}}
@@ -980,27 +985,27 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     store_bot_message_ref(bot_msg_id, tx_message_id)
                     secure_log("INFO", f"Selection flow - Stored bot->tx ref: {bot_msg_id} -> {tx_message_id}")
             else:
-                send_wuzapi_reply(sender_number, f"❌ Gagal: {result.get('company_error', 'Error')}")
+                send_wuzapi_reply(reply_to, f"❌ Gagal: {result.get('company_error', 'Error')}")
             return jsonify({'status': 'processed'}), 200
         
         # /start
         if text.lower() == '/start':
             reply = START_MESSAGE.replace('*', '').replace('_', '')
-            send_wuzapi_reply(sender_number, reply)
+            send_wuzapi_reply(reply_to, reply)
             return jsonify({'status': 'ok'}), 200
         
         # /help
         if text.lower() == '/help':
             reply = HELP_MESSAGE.replace('*', '').replace('_', '')
-            send_wuzapi_reply(sender_number, reply)
+            send_wuzapi_reply(reply_to, reply)
             return jsonify({'status': 'ok'}), 200
         
         # /status or /laporan
         if text.lower() in ['/status', '/laporan', '/cek']:
             invalidate_dashboard_cache()
-            send_wuzapi_reply(sender_number, "⏳ Sedang mengambil data status...")
+            send_wuzapi_reply(reply_to, "⏳ Sedang mengambil data status...")
             status_msg = get_status_message().replace('*', '').replace('_', '')
-            send_wuzapi_reply(sender_number, status_msg)
+            send_wuzapi_reply(reply_to, status_msg)
             return jsonify({'status': 'ok'}), 200
         
         # /export
@@ -1021,9 +1026,9 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         try:
             # === UX: Processing indicator ===
             if input_type == 'image':
-                send_wuzapi_reply(sender_number, "⏳ Membaca struk...")
+                send_wuzapi_reply(reply_to, "⏳ Membaca struk...")
             elif text and len(text) > 20:
-                send_wuzapi_reply(sender_number, "🤖 Menganalisis...")
+                send_wuzapi_reply(reply_to, "🤖 Menganalisis...")
             
             # media_url is now passed directly from webhook (already a data URL)
             transactions = extract_financial_data(
@@ -1037,7 +1042,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             if not transactions:
                 # No transactions detected - could be a question or invalid input
                 if input_type == 'image':
-                    send_wuzapi_reply(sender_number, 
+                    send_wuzapi_reply(reply_to, 
                         "❓ Tidak ada transaksi terdeteksi dari gambar.\n\n"
                         "Tips:\n"
                         "• Pastikan struk/nota terlihat jelas\n"
@@ -1090,7 +1095,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     f"Atau ketik /cancel untuk batal"
                 ).replace(',', '.')
                 
-                send_wuzapi_reply(sender_number, ask_msg)
+                send_wuzapi_reply(reply_to, ask_msg)
                 return jsonify({'status': 'asking_project'}), 200
             
             # Check if AI detected company from input
@@ -1128,7 +1133,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
                     
                     # Send reply and capture bot message ID for revision tracking
-                    sent_msg = send_wuzapi_reply(sender_number, reply)
+                    sent_msg = send_wuzapi_reply(reply_to, reply)
                     secure_log("DEBUG", f"WuzAPI send response type: {type(sent_msg)}, content: {str(sent_msg)[:300]}")
                     
                     # WuzAPI can return message ID in different structures
@@ -1149,7 +1154,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                         store_bot_message_ref(bot_msg_id, message_id)
                         secure_log("INFO", f"Stored bot->tx ref: {bot_msg_id} -> {message_id}")
                 else:
-                    send_wuzapi_reply(sender_number, f"❌ Gagal: {result.get('company_error', 'Error')}")
+                    send_wuzapi_reply(reply_to, f"❌ Gagal: {result.get('company_error', 'Error')}")
             else:
                 # No company detected - ask for selection
                 _pending_transactions[sender_number] = {
@@ -1162,11 +1167,11 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 
                 # Use the new selection prompt format
                 reply = build_selection_prompt(transactions).replace('*', '')
-                send_wuzapi_reply(sender_number, reply)
+                send_wuzapi_reply(reply_to, reply)
 
         except Exception as e:
             secure_log("ERROR", f"WuzAPI AI Error: {str(e)}")
-            send_wuzapi_reply(sender_number, "❌ Terjadi kesalahan sistem.")
+            send_wuzapi_reply(reply_to, "❌ Terjadi kesalahan sistem.")
         
         return jsonify({'status': 'ok'}), 200
         
