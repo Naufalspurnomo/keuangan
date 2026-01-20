@@ -351,8 +351,9 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
         secure_log("ERROR", f"Transaction error: {str(e)}")
         raise
     except Exception as e:
-        secure_log("ERROR", f"Failed to add transaction: {type(e).__name__}")
-        return False
+        # Re-raise generic exceptions so they can be caught by the caller with details
+        secure_log("ERROR", f"Failed to add transaction: {type(e).__name__} - {str(e)}")
+        raise
 
 
 def find_transaction_by_message_id(message_id: str) -> Optional[Dict]:
@@ -466,6 +467,7 @@ def append_transactions(transactions: List[Dict], sender_name: str, source: str 
     for t in transactions:
         try:
             nama_projek = t.get('nama_projek', '')
+            # append_transaction now returns row number (truthy) or raises Exception
             if append_transaction(t, sender_name, source, 
                                   dompet_sheet=dompet_sheet, 
                                   company=company,
@@ -475,9 +477,11 @@ def append_transactions(transactions: List[Dict], sender_name: str, source: str 
             company_error = str(e)
             errors.append("dompet_not_found")
             break
-        except Exception:
+        except Exception as e:
+            # Capture generic errors (API issues, etc)
+            company_error = f"{type(e).__name__}: {str(e)}"
             errors.append("transaction_failed")
-    
+            break    
     return {
         'success': rows_added > 0,
         'rows_added': rows_added,
