@@ -714,6 +714,17 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         # Sanitize
         text = sanitize_input(text or '')
         
+        # GROUP CHAT FILTER: Only respond if triggered or command
+        # Triggers: +catat, +bot, +input, /catat, or any / command
+        if is_group:
+            should_respond, cleaned_text = should_respond_in_group(text, is_group)
+            if not should_respond:
+                # No trigger - silently ignore this group message
+                return jsonify({'status': 'ignored_group'}), 200
+            # Use cleaned text (trigger prefix removed)
+            text = cleaned_text if cleaned_text else text
+        
+        
         # GUARD: Check for "revisi" without reply
         if text.lower().startswith('revisi') or text.lower().startswith('/revisi'):
             if not quoted_msg_id:
@@ -1010,16 +1021,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         
         # /export
         if text.lower() == '/export':
-             # ... (existing export logic) ...
              pass 
-
-        # Group chat handling
-        if not should_respond_in_group(text, input_type == 'text'):
-             # Logic to ignore group messages unless triggered
-             # For now we assume verify at webhook level or here
-             # If it's a group but no trigger, we might return early?
-             # But usually WuzAPI is 1-on-1. If group support needed later, checks go here.
-             pass
 
         # AI Extraction for transactions
         transactions = []
