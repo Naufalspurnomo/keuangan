@@ -21,6 +21,7 @@ WORKFLOW:
 import os
 import traceback
 import requests
+import re
 from datetime import datetime
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
@@ -64,6 +65,38 @@ from reminder import (
     get_weekly_summary,
 )
 from pdf_report import generate_pdf_from_input, parse_month_input, validate_period_data
+
+# Import from new modular services
+from services.state_manager import (
+    pending_key,
+    pending_is_expired,
+    get_pending_transactions,
+    set_pending_transaction,
+    clear_pending_transaction,
+    has_pending_transaction,
+    is_message_duplicate,
+    store_bot_message_ref,
+    get_original_message_id,
+)
+
+from utils.parsers import (
+    parse_selection,
+    parse_revision_amount,
+    should_respond_in_group,
+    GROUP_TRIGGERS,
+    PENDING_TTL_SECONDS,
+)
+
+from utils.formatters import (
+    format_success_reply,
+    format_success_reply_new,
+    format_mention,
+    build_selection_prompt,
+    START_MESSAGE,
+    HELP_MESSAGE,
+    CATEGORIES_DISPLAY,
+    SELECTION_DISPLAY,
+)
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -114,172 +147,13 @@ def get_telegram_api_url():
     return _TELEGRAM_API_URL
 
 
-# Pending transactions waiting for company selection
-# Format: {pkey: {'transactions': [...], 'sender_name': str, 'source': str, 'created_at': datetime, 'chat_jid': str}}
-# pkey = chat_jid:sender_number (to isolate per chat per user)
-_pending_transactions = {}
+# Legacy: Keep reference to _pending_transactions for backward compatibility
+# Now managed by services.state_manager
+from services import state_manager as _state
 
-# TTL for pending transactions (15 minutes)
-PENDING_TTL_SECONDS = 15 * 60
-
-# Message ID dedup cache to prevent double processing (multi-worker safe)
-# Format: {message_id: timestamp}
-_processed_messages = {}
-DEDUP_TTL_SECONDS = 5 * 60  # 5 minutes dedup window
-
-import re  # For regex patterns in smart modifier
-import threading
-_dedup_lock = threading.Lock()
-
-def pending_key(sender_number: str, chat_jid: str) -> str:
-    """Generate unique key for pending transactions per chat per user."""
-    # For DM, chat_jid might be same as sender, that's fine
-    return f"{chat_jid or sender_number}:{sender_number}"
-
-def pending_is_expired(pending: dict) -> bool:
-    """Check if pending transaction has expired (TTL exceeded)."""
-    created = pending.get("created_at")
-    if created is None:
-        return False
-    return (datetime.now() - created).total_seconds() > PENDING_TTL_SECONDS
-
-def is_message_duplicate(message_id: str) -> bool:
-    """Check if message was already processed (dedup). Returns True if duplicate."""
-    if not message_id:
-        return False
-    
-    now = datetime.now()
-    with _dedup_lock:
-        # Cleanup old entries (older than TTL)
-        expired_keys = [k for k, v in _processed_messages.items() 
-                       if (now - v).total_seconds() > DEDUP_TTL_SECONDS]
-        for k in expired_keys:
-            _processed_messages.pop(k, None)
-        
-        # Check if already processed
-        if message_id in _processed_messages:
-            return True
-        
-        # Mark as processed
-        _processed_messages[message_id] = now
-        return False
-
-
-# ===================== START MESSAGE =====================
-
-# Build categories list for display
-CATEGORIES_DISPLAY = '\n'.join(f"  • {cat}" for cat in ALLOWED_CATEGORIES)
-
-# Build dompet & company selection display
-SELECTION_DISPLAY = """  📁 Dompet Holla:
-     1. HOLLA
-     2. HOJJA
-  📁 Dompet Texturin Sby:
-     3. TEXTURIN-Surabaya
-  📁 Dompet Evan:
-     4. TEXTURIN-Bali
-     5. KANTOR"""
-
-# Group chat triggers
-GROUP_TRIGGERS = ["+catat", "+bot", "+input", "/catat"]
-
-START_MESSAGE = f"""👋 *Selamat datang di Bot Keuangan!*
-
-Bot ini mencatat pengeluaran & pemasukan ke Google Sheets.
-
-━━━━━━━━━━━━━━━━━━━━━
-📝 *CARA PAKAI*
-━━━━━━━━━━━━━━━━━━━━━
-
-*Private Chat:* Langsung kirim transaksi
-*Group Chat:* Awali dengan `+catat`
-
-*Contoh:*
-• `+catat Beli cat 500rb projek Purana`
-• `+catat Isi dompet holla 10jt`
-• 📷 Foto struk dengan caption `+catat`
-
-Setelah transaksi terdeteksi, pilih nomor (1-5).
-
-*3 Dompet & 5 Company:*
-{SELECTION_DISPLAY}
-
-*4 Kategori (Auto-detect):*
-{CATEGORIES_DISPLAY}
-
-━━━━━━━━━━━━━━━━━━━━━
-⚙️ *PERINTAH*
-━━━━━━━━━━━━━━━━━━━━━
-📊 `/status` - Dashboard keuangan
-💰 `/saldo` - Saldo per dompet
-📋 `/list` - Transaksi 7 hari terakhir
-📈 `/laporan` - Laporan 7 hari
-🗂️ `/dompet` - Daftar dompet
-❓ `/help` - Panduan lengkap
-
-🔒 Bot hanya MENAMBAH data, tidak bisa hapus.
-"""
-
-
-HELP_MESSAGE = f"""📖 *PANDUAN BOT KEUANGAN*
-
-*Input Transaksi:*
-1. Private: Langsung kirim
-2. Group: Awali dengan `+catat`
-3. Pilih nomor dompet & company (1-5)
-
-*Contoh Input:*
-• `+catat Beli material 500rb projek X`
-• `+catat Bayar gaji 2jt`
-• `+catat Isi dompet evan 10jt`
-
-*3 Dompet & 5 Company:*
-{SELECTION_DISPLAY}
-
-*Kategori (Auto-detect):*
-{', '.join(ALLOWED_CATEGORIES)}
-
-━━━━━━━━━━━━━━━━━━━━━
-*PERINTAH:*
-━━━━━━━━━━━━━━━━━━━━━
-📊 `/status` - Dashboard semua dompet
-💰 `/saldo` - Saldo per dompet
-📋 `/list` - Transaksi terakhir
-📈 `/laporan` - Laporan 7 hari
-📈 `/laporan30` - Laporan 30 hari
-🗂️ `/dompet` - Daftar dompet
-🗂️ `/kategori` - Daftar kategori
-🤖 `/tanya [x]` - Tanya AI
-📄 `/exportpdf` - Export PDF
-
-_Koreksi data langsung di Google Sheets._"""
 
 # ===================== GROUP & SELECTION HELPERS =====================
-
-def should_respond_in_group(message: str, is_group: bool) -> tuple:
-    """
-    Check if bot should respond to this message in group chat.
-    
-    Returns:
-        (should_respond: bool, cleaned_message: str)
-    """
-    if not is_group:
-        return True, message  # Private chat always responds
-    
-    message_lower = message.lower().strip()
-    
-    # Check for group triggers
-    for trigger in GROUP_TRIGGERS:
-        if message_lower.startswith(trigger.lower()):
-            # Remove trigger and return cleaned message
-            cleaned = message[len(trigger):].strip()
-            return True, cleaned
-    
-    # Check for commands (always work in groups)
-    if message_lower.startswith('/'):
-        return True, message
-    
-    return False, ""  # Group chat without trigger - ignore
+# Now imported from utils.parsers and utils.formatters
 
 
 def parse_selection(text: str) -> tuple:

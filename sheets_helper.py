@@ -19,81 +19,27 @@ from security import (
     mask_sensitive_data,
 )
 
-# Google Sheets configuration
-SPREADSHEET_ID = os.getenv('GOOGLE_SHEETS_ID')
-CREDENTIALS_FILE = os.getenv('CREDENTIALS_FILE', 'credentials.json')
+# Import configuration from centralized config module
+from config.wallets import (
+    DOMPET_SHEETS,
+    DOMPET_COMPANIES,
+    SELECTION_OPTIONS,
+    get_dompet_for_company,
+    get_selection_by_idx,
+    get_available_dompets,
+    # Legacy aliases
+    COMPANY_SHEETS,
+    FUND_SOURCES,
+)
 
-# Budget configuration
-DEFAULT_BUDGET = int(os.getenv('DEFAULT_PROJECT_BUDGET', '10000000'))
-BUDGET_WARNING_PERCENT = 80
-
-# Scopes
-SCOPES = [
-    'https://www.googleapis.com/auth/spreadsheets',
-    'https://www.googleapis.com/auth/drive'
-]
-
-# Sheet configuration - Dompet sheets (3 main dompet sheets)
-DOMPET_SHEETS = [
-    "Dompet Holla",
-    "Dompet Texturin Sby",
-    "Dompet Evan"
-]
-
-# Dompet -> Companies mapping
-DOMPET_COMPANIES = {
-    "Dompet Holla": ["HOLLA", "HOJJA", "Dompet Holla", "UMUM"],
-    "Dompet Texturin Sby": ["TEXTURIN-Surabaya", "Dompet Texturin Sby", "UMUM"],
-    "Dompet Evan": ["TEXTURIN-Bali", "KANTOR", "Dompet Evan", "UMUM"]
-}
-
-# Flat selection options for 1-5 display
-SELECTION_OPTIONS = [
-    {"idx": 1, "dompet": "Dompet Holla", "company": "HOLLA"},
-    {"idx": 2, "dompet": "Dompet Holla", "company": "HOJJA"},
-    {"idx": 3, "dompet": "Dompet Texturin Sby", "company": "TEXTURIN-Surabaya"},
-    {"idx": 4, "dompet": "Dompet Evan", "company": "TEXTURIN-Bali"},
-    {"idx": 5, "dompet": "Dompet Evan", "company": "KANTOR"},
-]
-
-# Legacy alias for backward compatibility
-COMPANY_SHEETS = DOMPET_SHEETS
-FUND_SOURCES = DOMPET_COMPANIES
-
-def get_dompet_for_company(company_name: str) -> str:
-    """Get the dompet (wallet) for a given company."""
-    for dompet, companies in DOMPET_COMPANIES.items():
-        if company_name in companies:
-            return dompet
-    return "Dompet Holla"  # Fallback
-
-def get_selection_by_idx(idx: int) -> Optional[Dict]:
-    """Get selection option by 1-based index."""
-    for opt in SELECTION_OPTIONS:
-        if opt["idx"] == idx:
-            return opt
-    return None
-
-# Column order: No, Tanggal, Company, Keterangan, Jumlah, Tipe, Oleh, Source, Kategori, Nama Projek, MessageID
-SHEET_HEADERS = ['No', 'Tanggal', 'Company', 'Keterangan', 'Jumlah', 'Tipe', 'Oleh', 'Source', 'Kategori', 'Nama Projek', 'MessageID']
-
-# Column indices (1-based for gspread)
-COL_NO = 1
-COL_TANGGAL = 2
-COL_COMPANY = 3
-COL_KETERANGAN = 4
-COL_JUMLAH = 5
-COL_TIPE = 6
-COL_OLEH = 7
-COL_SOURCE = 8
-COL_KATEGORI = 9
-COL_NAMA_PROJEK = 10
-COL_MESSAGE_ID = 11
-
-# Dashboard configuration
-DASHBOARD_SHEET_NAME = "Dashboard"
-META_SHEET_NAME = "Meta_Projek"
-SYSTEM_SHEETS = {'Config', 'Template', 'Settings', 'Master', DASHBOARD_SHEET_NAME, META_SHEET_NAME, 'Data_Agregat'}
+from config.constants import (
+    SHEET_HEADERS,
+    COL_NO, COL_TANGGAL, COL_COMPANY, COL_KETERANGAN, COL_JUMLAH,
+    COL_TIPE, COL_OLEH, COL_SOURCE, COL_KATEGORI, COL_NAMA_PROJEK, COL_MESSAGE_ID,
+    DASHBOARD_SHEET_NAME, META_SHEET_NAME, SYSTEM_SHEETS,
+    DEFAULT_BUDGET, BUDGET_WARNING_PERCENT,
+    SPREADSHEET_ID, CREDENTIALS_FILE, SCOPES,
+)
 
 # Global instances
 _client = None
@@ -201,11 +147,6 @@ def get_company_sheet(company_name: str):
     Kept for backward compatibility - maps company to dompet."""
     dompet = get_dompet_for_company(company_name)
     return get_dompet_sheet(dompet)
-
-
-def get_available_dompets() -> List[str]:
-    """Get list of available dompet sheets."""
-    return DOMPET_SHEETS.copy()
 
 
 def get_available_projects() -> List[str]:
