@@ -967,6 +967,72 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             send_wuzapi_reply(reply_to, status_msg)
             return jsonify({'status': 'ok'}), 200
         
+        # /saldo - Wallet balances
+        if text.lower() == '/saldo':
+            reply = get_wallet_balances().replace('*', '').replace('_', '')
+            send_wuzapi_reply(reply_to, reply)
+            return jsonify({'status': 'ok'}), 200
+        
+        # /kategori - List categories
+        if text.lower() == '/kategori':
+            reply = "📁 Kategori:\n" + '\n'.join(f"• {cat}" for cat in ALLOWED_CATEGORIES)
+            send_wuzapi_reply(reply_to, reply)
+            return jsonify({'status': 'ok'}), 200
+        
+        # /dompet - List dompet & company
+        if text.lower() in ['/dompet', '/company']:
+            reply = """🗂️ Dompet & Company:
+
+📁 Dompet Holla
+  1. HOLLA
+  2. HOJJA
+
+📁 Dompet Texturin Sby
+  3. TEXTURIN-Surabaya
+
+📁 Dompet Evan  
+  4. TEXTURIN-Bali
+  5. KANTOR
+
+Kirim transaksi, lalu pilih nomor (1-5)."""
+            send_wuzapi_reply(reply_to, reply)
+            return jsonify({'status': 'ok'}), 200
+        
+        # /list - Recent transactions
+        if text.lower() == '/list':
+            from sheets_helper import get_all_data
+            data = get_all_data(days=7)
+            if data:
+                lines = ["📋 Transaksi Terakhir (7 hari):\n"]
+                for item in data[-10:]:  # Last 10
+                    emoji = "💸" if item['tipe'] == 'Pengeluaran' else "💰"
+                    nama = item.get('nama_projek', '')
+                    nama_str = f" ({nama})" if nama else ""
+                    lines.append(f"{emoji} {item['keterangan'][:20]}{nama_str} - Rp {item['jumlah']:,}".replace(',', '.'))
+                reply = '\n'.join(lines)
+            else:
+                reply = "📋 Tidak ada transaksi dalam 7 hari terakhir."
+            send_wuzapi_reply(reply_to, reply)
+            return jsonify({'status': 'ok'}), 200
+        
+        # /tanya [question] - AI Query
+        if text.lower().startswith('/tanya'):
+            question = text[6:].strip()
+            if not question:
+                send_wuzapi_reply(reply_to, 
+                    "❓ Format: /tanya [pertanyaan]\n\n"
+                    "Contoh:\n"
+                    "• /tanya total pengeluaran bulan ini\n"
+                    "• /tanya kategori terbesar")
+            else:
+                send_wuzapi_reply(reply_to, "🤔 Menganalisis...")
+                try:
+                    answer = query_data(question)
+                    send_wuzapi_reply(reply_to, answer.replace('*', '').replace('_', ''))
+                except Exception as e:
+                    send_wuzapi_reply(reply_to, f"❌ Gagal: {str(e)}")
+            return jsonify({'status': 'ok'}), 200
+        
         # /export
         if text.lower() == '/export':
              pass 
@@ -1332,10 +1398,22 @@ def webhook_telegram():
                 send_telegram_reply(chat_id, reply)
                 return jsonify({'ok': True}), 200
             
-            # /company - List available company sheets
-            if text.lower() in ['/company', '/project']:
-                company_list = '\n'.join(f"  {i+1}. {c}" for i, c in enumerate(COMPANY_SHEETS))
-                reply = f"🏢 *Company Sheets:*\n\n{company_list}\n\n_Kirim transaksi, lalu pilih nomor company._"
+            # /company, /project, /dompet - List available dompet & company sheets
+            if text.lower() in ['/company', '/project', '/dompet']:
+                reply = f"""🗂️ *Dompet & Company:*
+
+📁 *Dompet Holla*
+  1️⃣ HOLLA
+  2️⃣ HOJJA
+
+📁 *Dompet Texturin Sby*
+  3️⃣ TEXTURIN-Surabaya
+
+📁 *Dompet Evan*  
+  4️⃣ TEXTURIN-Bali
+  5️⃣ KANTOR
+
+_Kirim transaksi, lalu pilih nomor (1-5)._"""
                 send_telegram_reply(chat_id, reply)
                 return jsonify({'ok': True}), 200
             
@@ -1853,6 +1931,25 @@ def webhook_fonnte():
         # kategori
         if message.lower() in ['kategori', '/kategori']:
             reply = "📁 Kategori:\n" + '\n'.join(f"• {cat}" for cat in ALLOWED_CATEGORIES)
+            send_whatsapp_reply(sender_number, reply)
+            return jsonify({'success': True}), 200
+        
+        # /dompet - List available dompet & company sheets
+        if message.lower() in ['dompet', '/dompet', 'company', '/company']:
+            reply = """🗂️ Dompet & Company:
+
+📁 Dompet Holla
+  1. HOLLA
+  2. HOJJA
+
+📁 Dompet Texturin Sby
+  3. TEXTURIN-Surabaya
+
+📁 Dompet Evan  
+  4. TEXTURIN-Bali
+  5. KANTOR
+
+Kirim transaksi, lalu pilih nomor (1-5)."""
             send_whatsapp_reply(sender_number, reply)
             return jsonify({'success': True}), 200
         
