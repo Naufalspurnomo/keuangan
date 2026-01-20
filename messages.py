@@ -137,7 +137,7 @@ class fmt:
     
     @staticmethod
     def tx_icon(tipe: str) -> str:
-        """Get transaction icon: 🟢 for income, 🔴 for expense."""
+        """Get transaction icon: 🟢 for income,🔴 for expense."""
         return "🟢" if tipe == "Pemasukan" else "🔴"
     
     @staticmethod
