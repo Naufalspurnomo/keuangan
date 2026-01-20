@@ -325,7 +325,7 @@ def build_selection_prompt(transactions: list, mention: str = "") -> str:
     """Build the selection prompt message with dompet/company options."""
     tx_lines = []
     for t in transactions:
-        emoji = "�" if t.get('tipe') == 'Pemasukan' else "�"
+        emoji = "💰" if t.get('tipe') == 'Pemasukan' else "💸"
         tx_lines.append(f"   {emoji} {t.get('keterangan', '-')}: Rp {t.get('jumlah', 0):,}".replace(',', '.'))
     tx_preview = '\n'.join(tx_lines)
     
@@ -503,7 +503,7 @@ def format_success_reply_new(transactions: list, dompet_sheet: str, company: str
     for t in transactions:
         amount = t.get('jumlah', 0)
         total += amount
-        tipe_icon = "�" if t.get('tipe') == 'Pemasukan' else "�"
+        tipe_icon = "💰" if t.get('tipe') == 'Pemasukan' else "💸"
         lines.append(f"{tipe_icon} {t.get('keterangan', '-')}: Rp {amount:,}".replace(',', '.'))
         
         if t.get('nama_projek'):
@@ -512,7 +512,7 @@ def format_success_reply_new(transactions: list, dompet_sheet: str, company: str
     lines.append(f"\n📊 Total: Rp {total:,}".replace(',', '.'))
     
     # Location info (compact)
-    lines.append(f"� {dompet_sheet} → {company}")
+    lines.append(f"📍 {dompet_sheet} → {company}")
     
     if nama_projek_set:
         projek_str = ', '.join(nama_projek_set)
@@ -1154,7 +1154,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 # Build friendly ask message with all transactions
                 total = sum(t.get('jumlah', 0) for t in transactions)
                 items_str = "\n".join([
-                    f"   {'🟢' if t.get('tipe') == 'Pemasukan' else '�'} {t.get('keterangan', 'Item')}: Rp {t.get('jumlah', 0):,}".replace(',', '.')
+                    f"   {'🟢' if t.get('tipe') == 'Pemasukan' else '🔴'} {t.get('keterangan', 'Item')}: Rp {t.get('jumlah', 0):,}".replace(',', '.')
                     for t in transactions
                 ])
                 
