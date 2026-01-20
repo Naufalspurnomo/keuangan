@@ -64,6 +64,7 @@ from reminder import (
     get_weekly_summary,
 )
 from pdf_report import generate_pdf_from_input, parse_month_input, validate_period_data
+from messages import MSG, fmt, get_start_message, get_help_message, strip_markdown, for_whatsapp
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -143,6 +144,22 @@ def pending_is_expired(pending: dict) -> bool:
         return False
     return (datetime.now() - created).total_seconds() > PENDING_TTL_SECONDS
 
+def cleanup_pending_transactions():
+    """Remove expired pending transactions (Periodic cleanup)."""
+    try:
+        keys_to_remove = []
+        for pkey, pending in _pending_transactions.items():
+            if pending_is_expired(pending):
+                keys_to_remove.append(pkey)
+        
+        for pkey in keys_to_remove:
+            _pending_transactions.pop(pkey, None)
+            
+        if keys_to_remove:
+            secure_log("INFO", f"Cleaned up {len(keys_to_remove)} expired pending sessions")
+    except Exception as e:
+        secure_log("ERROR", f"Cleanup pending error: {e}")
+
 def is_message_duplicate(message_id: str) -> bool:
     """Check if message was already processed (dedup). Returns True if duplicate."""
     if not message_id:
@@ -167,92 +184,12 @@ def is_message_duplicate(message_id: str) -> bool:
 
 # ===================== START MESSAGE =====================
 
-# Build categories list for display
-CATEGORIES_DISPLAY = '\n'.join(f"  • {cat}" for cat in ALLOWED_CATEGORIES)
-
-# Build dompet & company selection display
-SELECTION_DISPLAY = """  📁 Dompet Holla:
-     1. HOLLA
-     2. HOJJA
-  📁 Dompet Texturin Sby:
-     3. TEXTURIN-Surabaya
-  📁 Dompet Evan:
-     4. TEXTURIN-Bali
-     5. KANTOR"""
-
 # Group chat triggers
 GROUP_TRIGGERS = ["+catat", "+bot", "+input", "/catat"]
 
-START_MESSAGE = f"""👋 *Selamat datang di Bot Keuangan!*
 
-Bot ini mencatat pengeluaran & pemasukan ke Google Sheets.
+# ===================== GROUP FILTER HELPERS =====================
 
-━━━━━━━━━━━━━━━━━━━━━
-📝 *CARA PAKAI*
-━━━━━━━━━━━━━━━━━━━━━
-
-*Private Chat:* Langsung kirim transaksi
-*Group Chat:* Awali dengan `+catat`
-
-*Contoh:*
-• `+catat Beli cat 500rb projek Purana`
-• `+catat Isi dompet holla 10jt`
-• 📷 Foto struk dengan caption `+catat`
-
-Setelah transaksi terdeteksi, pilih nomor (1-5).
-
-*3 Dompet & 5 Company:*
-{SELECTION_DISPLAY}
-
-*4 Kategori (Auto-detect):*
-{CATEGORIES_DISPLAY}
-
-━━━━━━━━━━━━━━━━━━━━━
-⚙️ *PERINTAH*
-━━━━━━━━━━━━━━━━━━━━━
-📊 `/status` - Dashboard keuangan
-💰 `/saldo` - Saldo per dompet
-📋 `/list` - Transaksi 7 hari terakhir
-📈 `/laporan` - Laporan 7 hari
-🗂️ `/dompet` - Daftar dompet
-❓ `/help` - Panduan lengkap
-
-🔒 Bot hanya MENAMBAH data, tidak bisa hapus.
-"""
-
-
-HELP_MESSAGE = f"""📖 *PANDUAN BOT KEUANGAN*
-
-*Input Transaksi:*
-1. Private: Langsung kirim
-2. Group: Awali dengan `+catat`
-3. Pilih nomor dompet & company (1-5)
-
-*Contoh Input:*
-• `+catat Beli material 500rb projek X`
-• `+catat Bayar gaji 2jt`
-• `+catat Isi dompet evan 10jt`
-
-*3 Dompet & 5 Company:*
-{SELECTION_DISPLAY}
-
-*Kategori (Auto-detect):*
-{', '.join(ALLOWED_CATEGORIES)}
-
-━━━━━━━━━━━━━━━━━━━━━
-*PERINTAH:*
-━━━━━━━━━━━━━━━━━━━━━
-📊 `/status` - Dashboard semua dompet
-💰 `/saldo` - Saldo per dompet
-📋 `/list` - Transaksi terakhir
-📈 `/laporan` - Laporan 7 hari
-📈 `/laporan30` - Laporan 30 hari
-🗂️ `/dompet` - Daftar dompet
-🗂️ `/kategori` - Daftar kategori
-🤖 `/tanya [x]` - Tanya AI
-📄 `/exportpdf` - Export PDF
-
-_Koreksi data langsung di Google Sheets._"""
 
 # ===================== GROUP & SELECTION HELPERS =====================
 
@@ -294,10 +231,17 @@ def parse_selection(text: str) -> tuple:
     # Check for cancel
     if text.lower() in ['/cancel', 'batal', 'cancel']:
         return False, 0, "cancel"
+        
+    # Robust parsing: strip non-digits (handles "1.", "1)", "(1)", " 1 ")
+    # Only if NOT a command (already handled above) and NOT too long
+    if not text.startswith('/') and len(text) < 10:
+        clean_text = re.sub(r'[^0-9]', '', text)
+        if clean_text:
+             text = clean_text
     
     # Check for multi-selection (not allowed)
     if ',' in text or ' ' in text.strip():
-        return False, 0, "Pilih satu saja. Ketik angka 1-5."
+        return False, 0, MSG.ERROR_SELECTION_SINGLE
     
     # Try to parse as number
     try:
@@ -305,9 +249,9 @@ def parse_selection(text: str) -> tuple:
         if 1 <= num <= 5:
             return True, num, ""
         else:
-            return False, 0, "Pilihan tidak tersedia. Ketik angka 1-5."
+            return False, 0, MSG.ERROR_SELECTION_RANGE
     except ValueError:
-        return False, 0, "Balas dengan angka 1-5 untuk memilih."
+        return False, 0, MSG.ERROR_INVALID_SELECTION
 
 
 def format_mention(sender_name: str, is_group: bool = False) -> str:
@@ -321,29 +265,7 @@ def format_mention(sender_name: str, is_group: bool = False) -> str:
     return ""
 
 
-def build_selection_prompt(transactions: list, mention: str = "") -> str:
-    """Build the selection prompt message with dompet/company options."""
-    tx_lines = []
-    for t in transactions:
-        emoji = "�" if t.get('tipe') == 'Pemasukan' else "�"
-        tx_lines.append(f"   {emoji} {t.get('keterangan', '-')}: Rp {t.get('jumlah', 0):,}".replace(',', '.'))
-    tx_preview = '\n'.join(tx_lines)
-    
-    total = sum(t.get('jumlah', 0) for t in transactions)
-    
-    item_count = len(transactions)
-    return f"""{mention}📋 Transaksi ({item_count} item)
-{tx_preview}
-📊 Total: Rp {total:,}
 
-❓ Simpan ke company mana? (1-5)
-
-📁 Dompet Holla: 1️⃣ HOLLA | 2️⃣ HOJJA
-📁 Texturin Sby: 3️⃣ TEXTURIN-Surabaya
-📁 Dompet Evan: 4️⃣ TEXTURIN-Bali | 5️⃣ KANTOR
-
-⏳ Batas waktu: 15 menit
-💡 Salah pilih? /cancel lalu kirim ulang""".replace(',', '.')
 
 
 # ===================== REVISION HELPERS =====================
@@ -351,6 +273,7 @@ def build_selection_prompt(transactions: list, mention: str = "") -> str:
 # Store bot's confirmation message IDs -> original message ID mapping
 # Format: {bot_msg_id: original_tx_msg_id}
 _bot_message_refs = {}
+
 
 def parse_revision_amount(text: str) -> int:
     """
@@ -367,6 +290,8 @@ def parse_revision_amount(text: str) -> int:
     
     # Remove /revisi or revisi prefix
     text = re.sub(r'^[/]?(revisi|ubah|ganti|koreksi|edit)\s*', '', text).strip()
+    # Remove currency prefix (rp, idr)
+    text = re.sub(r'^(rp|idr|rp\.|idr\.)\s*', '', text).strip()
     
     # Handle "2 juta", "500 rb", "1.5jt" - number followed by optional space and suffix
     match = re.match(r'^([\d]+(?:[.,]\d+)?)\s*(rb|ribu|k|jt|juta)?$', text)
@@ -492,41 +417,7 @@ def format_success_reply(transactions: list, company_sheet: str) -> str:
     return '\n'.join(lines)
 
 
-def format_success_reply_new(transactions: list, dompet_sheet: str, company: str, mention: str = "") -> str:
-    """Format success reply message with dompet and company info."""
-    lines = [f"{mention}✅ Transaksi Tercatat!\n"]
-    
-    total = 0
-    nama_projek_set = set()
-    
-    # Transaction details (compact)
-    for t in transactions:
-        amount = t.get('jumlah', 0)
-        total += amount
-        tipe_icon = "�" if t.get('tipe') == 'Pemasukan' else "�"
-        lines.append(f"{tipe_icon} {t.get('keterangan', '-')}: Rp {amount:,}".replace(',', '.'))
-        
-        if t.get('nama_projek'):
-            nama_projek_set.add(t['nama_projek'])
-    
-    lines.append(f"\n📊 Total: Rp {total:,}".replace(',', '.'))
-    
-    # Location info (compact)
-    lines.append(f"� {dompet_sheet} → {company}")
-    
-    if nama_projek_set:
-        projek_str = ', '.join(nama_projek_set)
-        lines.append(f"📋 Projek: {projek_str}")
-    
-    # Timestamp
-    now = datetime.now().strftime("%d %b %Y, %H:%M")
-    lines.append(f"⏱️ {now}")
-    
-    # Next steps
-    lines.append("\n💡 Ralat jumlah: reply /revisi 150rb")
-    lines.append("📊 Cek ringkas: /status | /saldo")
-    
-    return '\n'.join(lines)
+
 
 # ===================== WUZAPI HANDLERS =====================
 
@@ -711,6 +602,9 @@ def webhook_wuzapi():
             secure_log("DEBUG", f"WuzAPI: Duplicate message_id={message_id}, skipping")
             return jsonify({'status': 'duplicate'}), 200
 
+        # CLEANUP: Periodically clean expired sessions
+        cleanup_pending_transactions()
+
         # Determine if it's a group chat
         is_group = '@g.us' in chat_jid
         
@@ -747,6 +641,9 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         # Determine reply destination: for groups, reply to group; for personal, reply to sender
         reply_to = chat_jid if (is_group and chat_jid) else sender_number
         
+        # Format mention for group chat responses
+        mention = format_mention(sender_name, is_group)
+        
         # Rate Limit
         allowed, wait_time = rate_limit_check(sender_number)
         if not allowed:
@@ -776,9 +673,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             text_lower = text.strip().lower()
             # Check if input looks like a pending reply (1-5, project name, etc)
             if text_lower in ['1','2','3','4','5'] or (len(text) > 1 and len(text) < 50 and not text.startswith('/')):
-                send_wuzapi_reply(reply_to, 
-                    "⌛ Sesi sebelumnya sudah kedaluwarsa (lebih dari 15 menit).\n"
-                    "Kirim transaksi lagi ya.")
+                send_wuzapi_reply(reply_to, MSG.SESSION_EXPIRED)
                 return jsonify({'status': 'expired_session'}), 200
         
         # Debug logging for group chat
@@ -798,11 +693,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         # GUARD: Check for "revisi" without reply
         if text.lower().startswith('revisi') or text.lower().startswith('/revisi'):
             if not quoted_msg_id:
-                send_wuzapi_reply(reply_to, 
-                    "⚠️ *Gagal Revisi*\n\n"
-                    "Untuk merevisi, Anda harus **me-reply** (balas) pesan konfirmasi bot.\n\n"
-                    "1. Reply pesan '✅ Transaksi Tercatat!'\n"
-                    "2. Ketik `/revisi [jumlah baru]`")
+                send_wuzapi_reply(reply_to, MSG.REVISION_NO_QUOTE)
                 return jsonify({'status': 'revision_no_quote'}), 200
         
         # ============ REVISION HANDLER ============
@@ -820,11 +711,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             if original_tx:
                 # Check directly if text starts with /revisi
                 if not text.lower().startswith('/revisi'):
-                    send_wuzapi_reply(reply_to, 
-                        "⚠️ Format Salah.\n\n"
-                        "Untuk merevisi, balas pesan ini dengan format:\n"
-                        "`/revisi [jumlah]`\n\n"
-                        "Contoh: `/revisi 150000`")
+                    send_wuzapi_reply(reply_to, MSG.REVISION_INVALID_FORMAT)
                     return jsonify({'status': 'invalid_format'}), 200
 
                 # Parse the new amount
@@ -846,34 +733,19 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                         diff = new_amount - old_amount
                         diff_str = f"+Rp {diff:,}" if diff > 0 else f"-Rp {abs(diff):,}"
                         
-                        reply = (
-                            f"✅ Revisi Berhasil!\n\n"
-                            f"📊 {original_tx['keterangan']}\n"
-                            f"━━━━━━━━━━━━━━━━━━\n"
-                            f"   Sebelum: Rp {old_amount:,}\n"
-                            f"   Sesudah: Rp {new_amount:,}\n"
-                            f"   Selisih: {diff_str}\n"
-                            f"━━━━━━━━━━━━━━━━━━\n\n"
-                            f"📍 {original_tx['dompet']}\n"
-                            f"⏱️ {now}"
-                        ).replace(',', '.')
+                        reply = fmt.revision_success(
+                            original_tx['keterangan'],
+                            old_amount,
+                            new_amount,
+                            original_tx['dompet']
+                        )
                         send_wuzapi_reply(reply_to, reply)
                         return jsonify({'status': 'revised'}), 200
                     else:
-                        send_wuzapi_reply(reply_to, 
-                            "❌ Gagal update transaksi.\n\n"
-                            "Kemungkinan penyebab:\n"
-                            "• Transaksi sudah dihapus\n"
-                            "• Koneksi ke spreadsheet gagal\n\n"
-                            "Coba lagi atau hubungi admin.")
+                        send_wuzapi_reply(reply_to, MSG.REVISION_FAILED)
                         return jsonify({'status': 'revision_error'}), 200
                 else:
-                    send_wuzapi_reply(reply_to, 
-                        "❓ Jumlah tidak valid.\n\n"
-                        "Gunakan format:\n"
-                        "• /revisi 150000\n"
-                        "• /revisi 1.5jt\n"
-                        "• /revisi 500rb")
+                    send_wuzapi_reply(reply_to, MSG.REVISION_INVALID_AMOUNT)
                     return jsonify({'status': 'invalid_revision'}), 200
         
 
@@ -887,7 +759,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             # Handle cancel for all pending types
             if text.lower() == '/cancel':
                 _pending_transactions.pop(pkey, None)
-                send_wuzapi_reply(reply_to, "❌ Transaksi dibatalkan.")
+                send_wuzapi_reply(reply_to, MSG.CANCELLED)
                 return jsonify({'status': 'cancelled'}), 200
             
             # ===== SMART MODIFIER: Detect commands to modify pending transactions =====
@@ -917,31 +789,20 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                         if len(pending['transactions']) == 0:
                             # All transactions removed
                             _pending_transactions.pop(pkey, None)
-                            send_wuzapi_reply(reply_to, "❌ Semua transaksi dihapus. Transaksi dibatalkan.")
+                            send_wuzapi_reply(reply_to, MSG.ALL_REMOVED)
                             return jsonify({'status': 'cancelled'}), 200
                         else:
                             # Show remaining transactions
-                            remaining = pending['transactions']
-                            total = sum(t.get('jumlah', 0) for t in remaining)
-                            items = "\n".join([f"💸 {t.get('keterangan', 'Item')}: Rp {t.get('jumlah', 0):,}".replace(',', '.') for t in remaining])
-                            
-                            msg = (f"✅ Dihapus: {remove_keyword}\n\n"
-                                   f"📋 Transaksi tersisa:\n{items}\n\n"
-                                   f"Total: Rp {total:,}\n\n").replace(',', '.')
-                            
-                            # Continue with appropriate prompt based on pending_type
-                            if pending_type == 'needs_project':
-                                msg += "❓ Untuk projek apa ini?\nBalas dengan nama projek atau /cancel"
-                            else:
-                                msg += "Ketik 1-5 untuk pilih company atau /cancel"
-                            
+                            msg = fmt.item_removed(
+                                remove_keyword, 
+                                pending['transactions'],
+                                pending_type
+                            )
                             send_wuzapi_reply(reply_to, msg)
                             return jsonify({'status': 'item_removed'}), 200
                     else:
                         # No match found
-                        send_wuzapi_reply(reply_to, 
-                            f"❓ Tidak menemukan '{remove_keyword}' dalam transaksi pending.\n\n"
-                            f"Ketik /cancel untuk batal semua, atau lanjutkan dengan input yang diminta.")
+                        send_wuzapi_reply(reply_to, fmt.item_not_found(remove_keyword))
                         return jsonify({'status': 'no_match'}), 200
             
             # ===== HANDLE PROJECT NAME INPUT =====
@@ -949,12 +810,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 project_name = sanitize_input(text.strip())[:100]
                 
                 if not project_name or len(project_name) < 2:
-                    send_wuzapi_reply(reply_to, 
-                        "❌ Nama projek tidak valid.\n\n"
-                        "Ketik nama projek dengan jelas, contoh:\n"
-                        "• Purana Ubud\n"
-                        "• Villa Sunset Bali\n\n"
-                        "Atau ketik /cancel untuk batal")
+                    send_wuzapi_reply(reply_to, MSG.ERROR_PROJECT_INVALID)
                     return jsonify({'status': 'invalid_project'}), 200
                 
                 # Update transactions with project name
@@ -989,8 +845,8 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     if result['success']:
                         update_user_activity(sender_number, 'wuzapi', pending['sender_name'])
                         invalidate_dashboard_cache()
-                        reply = format_success_reply_new(pending['transactions'], dompet, detected_company).replace('*', '')
-                        reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
+                        reply = fmt.success(pending['transactions'], dompet, detected_company, mention).replace('*', '')
+                        # Tip added by speech layer already
                         sent_msg = send_wuzapi_reply(reply_to, reply)
                         bot_msg_id = None
                         if sent_msg and isinstance(sent_msg, dict):
@@ -1005,7 +861,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 else:
                     # No company, continue to selection
                     pending['pending_type'] = 'selection'
-                    reply = build_selection_prompt(pending['transactions']).replace('*', '')
+                    reply = fmt.prompt_company(pending['transactions'], mention).replace('*', '')
                     send_wuzapi_reply(reply_to, reply)
                     return jsonify({'status': 'asking_company'}), 200
             
@@ -1014,12 +870,12 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             
             if error_msg == "cancel":
                 _pending_transactions.pop(pkey, None)
-                send_wuzapi_reply(reply_to, "❌ Transaksi dibatalkan.")
+                send_wuzapi_reply(reply_to, MSG.CANCELLED)
                 return jsonify({'status': 'cancelled'}), 200
             
             if not is_valid:
-                # Send error feedback
-                send_wuzapi_reply(reply_to, f"❌ {error_msg}")
+                # Send error feedback (error_msg already has emoji from MSG.*)
+                send_wuzapi_reply(reply_to, error_msg)
                 return jsonify({'status': 'invalid_selection'}), 200
             
             # Valid selection 1-5
@@ -1027,7 +883,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             option = get_selection_by_idx(selection)
             
             if not option:
-                send_wuzapi_reply(reply_to, "❌ Pilihan tidak valid.")
+                send_wuzapi_reply(reply_to, MSG.ERROR_INVALID_OPTION)
                 return jsonify({'status': 'error'}), 200
             
             dompet_sheet = option['dompet']
@@ -1049,8 +905,8 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             if result['success']:
                 update_user_activity(sender_number, 'wuzapi', pending['sender_name'])
                 invalidate_dashboard_cache()
-                reply = format_success_reply_new(pending['transactions'], dompet_sheet, company).replace('*', '')
-                reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
+                reply = fmt.success(pending['transactions'], dompet_sheet, company, mention).replace('*', '')
+                # Tip added by speech layer already
                 
                 # Send reply and capture bot message ID for revision tracking
                 sent_msg = send_wuzapi_reply(reply_to, reply)
@@ -1067,25 +923,23 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     store_bot_message_ref(bot_msg_id, tx_message_id)
                     secure_log("INFO", f"Selection flow - Stored bot->tx ref: {bot_msg_id} -> {tx_message_id}")
             else:
-                send_wuzapi_reply(reply_to, f"❌ Gagal: {result.get('company_error', 'Error')}")
+                send_wuzapi_reply(reply_to, fmt.error_save(result.get('company_error', 'Error')))
             return jsonify({'status': 'processed'}), 200
         
         # /start
         if text.lower() == '/start':
-            reply = START_MESSAGE.replace('*', '').replace('_', '')
-            send_wuzapi_reply(reply_to, reply)
+            send_wuzapi_reply(reply_to, for_whatsapp(get_start_message()))
             return jsonify({'status': 'ok'}), 200
         
         # /help
         if text.lower() == '/help':
-            reply = HELP_MESSAGE.replace('*', '').replace('_', '')
-            send_wuzapi_reply(reply_to, reply)
+            send_wuzapi_reply(reply_to, for_whatsapp(get_help_message()))
             return jsonify({'status': 'ok'}), 200
         
         # /status or /laporan
         if text.lower() in ['/status', '/laporan', '/cek']:
             invalidate_dashboard_cache()
-            send_wuzapi_reply(reply_to, "⏳ Sedang mengambil data status...")
+            send_wuzapi_reply(reply_to, MSG.LOADING_STATUS)
             status_msg = get_status_message().replace('*', '').replace('_', '')
             send_wuzapi_reply(reply_to, status_msg)
             return jsonify({'status': 'ok'}), 200
@@ -1099,10 +953,10 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         try:
             # === UX: Processing indicator (shorter for groups) ===
             if input_type == 'image':
-                send_wuzapi_reply(reply_to, "🔍 Scan..." if is_group else "🔍 Memindai struk...")
+                send_wuzapi_reply(reply_to, MSG.LOADING_SCAN if is_group else MSG.LOADING_SCAN_FULL)
             elif text and len(text) > 20 and not is_group:
                 # Only show for private chat (reduce group spam)
-                send_wuzapi_reply(reply_to, "🔍 Menganalisis...")
+                send_wuzapi_reply(reply_to, MSG.LOADING_ANALYZE)
             
             # media_url is now passed directly from webhook (already a data URL)
             transactions = extract_financial_data(
@@ -1116,11 +970,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             if not transactions:
                 # No transactions detected - could be a question or invalid input
                 if input_type == 'image':
-                    send_wuzapi_reply(reply_to, 
-                        "❓ Tidak ada transaksi terdeteksi dari gambar.\n\n"
-                        "Tips:\n"
-                        "• Pastikan struk/nota terlihat jelas\n"
-                        "• Tambahkan caption seperti: 'Beli material projek X'")
+                    send_wuzapi_reply(reply_to, MSG.ERROR_NO_IMAGE_TX)
                     return jsonify({'status': 'no_transactions'}), 200
                 
                 # If text and not transactions, maybe just text chat? Return OK.
@@ -1151,26 +1001,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     'chat_jid': chat_jid
                 }
                 
-                # Build friendly ask message with all transactions
-                total = sum(t.get('jumlah', 0) for t in transactions)
-                items_str = "\n".join([
-                    f"   {'🟢' if t.get('tipe') == 'Pemasukan' else '�'} {t.get('keterangan', 'Item')}: Rp {t.get('jumlah', 0):,}".replace(',', '.')
-                    for t in transactions
-                ])
-                
-                item_count = len(transactions)
-                ask_msg = (
-                    f"📋 Transaksi terdeteksi ({item_count} item)\n"
-                    f"{items_str}\n"
-                    f"📊 Total: Rp {total:,}\n\n"
-                    f"❓ Perlu nama projek (biar laporan per projek rapi)\n"
-                    f"Balas: nama projek saja\n"
-                    f"Contoh: Purana Ubud / Villa Sunset\n\n"
-                    f"⏳ Batas waktu: 15 menit\n"
-                    f"Ketik /cancel untuk batal"
-                ).replace(',', '.')
-                
-                send_wuzapi_reply(reply_to, ask_msg)
+                send_wuzapi_reply(reply_to, fmt.prompt_project(transactions))
                 return jsonify({'status': 'asking_project'}), 200
             
             # Check if AI detected company from input
@@ -1229,7 +1060,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                         store_bot_message_ref(bot_msg_id, message_id)
                         secure_log("INFO", f"Stored bot->tx ref: {bot_msg_id} -> {message_id}")
                 else:
-                    send_wuzapi_reply(reply_to, f"❌ Gagal: {result.get('company_error', 'Error')}")
+                    send_wuzapi_reply(reply_to, fmt.error_save(result.get('company_error', 'Error')))
             else:
                 # No company detected - ask for selection
                 _pending_transactions[pkey] = {
@@ -1413,8 +1244,8 @@ def webhook_telegram():
                 if result['success']:
                     update_user_activity(user_id, 'telegram', pending['sender_name'])
                     invalidate_dashboard_cache()
-                    reply = format_success_reply_new(pending['transactions'], dompet_sheet, company)
-                    reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
+                    reply = strip_markdown(fmt.success(pending['transactions'], dompet_sheet, company))
+                    # reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat" # Tip inside fmt.success
                     
                     # Send reply and capture bot message ID for revision tracking
                     sent_msg = send_telegram_reply(chat_id, reply)
@@ -1423,17 +1254,17 @@ def webhook_telegram():
                         if tx_message_id:
                             store_bot_message_ref(bot_msg_id, tx_message_id)
                 else:
-                    send_telegram_reply(chat_id, f"❌ Gagal menyimpan: {result.get('company_error', 'Error')}")
+                    send_telegram_reply(chat_id, strip_markdown(fmt.error_save(result.get('company_error', 'Error'))))
                 return jsonify({'ok': True}), 200
             
             # /start
             if text.lower() == '/start':
-                send_telegram_reply(chat_id, START_MESSAGE)
+                send_telegram_reply(chat_id, strip_markdown(get_start_message()))
                 return jsonify({'ok': True}), 200
             
             # /help
             if text.lower() == '/help':
-                send_telegram_reply(chat_id, HELP_MESSAGE)
+                send_telegram_reply(chat_id, strip_markdown(get_help_message()))
                 return jsonify({'ok': True}), 200
             
             # /status
@@ -1451,8 +1282,9 @@ def webhook_telegram():
             
             # /kategori
             if text.lower() == '/kategori':
-                reply = f"📁 *Kategori Tersedia:*\n\n{CATEGORIES_DISPLAY}"
-                send_telegram_reply(chat_id, reply)
+                cats_str = "\n".join(f"- {c}" for c in ALLOWED_CATEGORIES)
+                reply = f"📁 *Kategori Tersedia:*\n\n{cats_str}"
+                send_telegram_reply(chat_id, strip_markdown(reply))
                 return jsonify({'ok': True}), 200
             
             # /company - List available company sheets
@@ -1741,8 +1573,8 @@ def webhook_telegram():
             if result['success']:
                 update_user_activity(user_id, 'telegram', sender_name)
                 invalidate_dashboard_cache()
-                reply = format_success_reply_new(transactions, dompet, detected_company)
-                reply += "\n\n💡 Reply pesan ini untuk revisi"
+                reply = strip_markdown(fmt.success(transactions, dompet, detected_company))
+                # reply += "\n\n💡 Reply pesan ini untuk revisi" # Already in fmt.success
                 
                 # Send reply and capture bot message ID for revision tracking
                 sent_msg = send_telegram_reply(chat_id, reply)
@@ -1751,18 +1583,18 @@ def webhook_telegram():
                     if message_id:
                         store_bot_message_ref(bot_msg_id, message_id)
             else:
-                send_telegram_reply(chat_id, f"❌ Gagal: {result.get('company_error', 'Error')}")
+                send_telegram_reply(chat_id, strip_markdown(fmt.error_save(result.get('company_error', 'Error'))))
         else:
             # No company detected - ask for selection
             _pending_transactions[user_id] = {
                 'transactions': transactions,
                 'sender_name': sender_name,
                 'source': source,
-                'timestamp': datetime.now(),
+                'created_at': datetime.now(), # UPDATE: timestamp -> created_at for cleanup
                 'message_id': message_id  # Store for later
             }
             
-            reply = build_selection_prompt(transactions)
+            reply = strip_markdown(fmt.prompt_company(transactions))
             send_telegram_reply(chat_id, reply)
         
         return jsonify({'ok': True}), 200
@@ -1828,23 +1660,31 @@ def webhook_fonnte():
         # === COMPANY SELECTION (numbers 1-5) ===
         if user_id in _pending_transactions and message in ['1', '2', '3', '4', '5']:
             pending = _pending_transactions.pop(user_id)
-            company_idx = int(message) - 1
-            company_sheet = COMPANY_SHEETS[company_idx]
+            selection = int(message)
+            option = get_selection_by_idx(selection)
             
-            result = append_transactions(
-                pending['transactions'],
-                pending['sender_name'],
-                pending['source'],
-                company_sheet=company_sheet
-            )
-            
-            if result['success']:
-                update_user_activity(user_id, 'whatsapp', pending['sender_name'])
-                invalidate_dashboard_cache()  # Reset cache
-                reply = format_success_reply(pending['transactions'], company_sheet).replace('*', '')
-                send_whatsapp_reply(sender_number, reply)
+            if option:
+                dompet = option['dompet']
+                company = option['company']
+                
+                result = append_transactions(
+                    pending['transactions'],
+                    pending['sender_name'],
+                    pending['source'],
+                    dompet_sheet=dompet,
+                    company=company
+                )
+                
+                if result['success']:
+                    update_user_activity(user_id, 'whatsapp', pending['sender_name'])
+                    invalidate_dashboard_cache()  # Reset cache
+                    reply = strip_markdown(fmt.success(pending['transactions'], dompet, company))
+                    send_whatsapp_reply(sender_number, reply)
+                else:
+                    send_whatsapp_reply(sender_number, strip_markdown(fmt.error_save(result.get('company_error', 'Error'))))
             else:
-                send_whatsapp_reply(sender_number, f"❌ Gagal: {result.get('company_error', 'Error')}")
+                 send_whatsapp_reply(sender_number, "❌ Pilihan tidak valid.")
+
             return jsonify({'success': True}), 200
         
         # Cancel pending
@@ -1857,12 +1697,12 @@ def webhook_fonnte():
         
         # start
         if message.lower() in ['start', 'mulai', 'hi', 'halo', '/start']:
-            send_whatsapp_reply(sender_number, START_MESSAGE.replace('*', ''))
+            send_whatsapp_reply(sender_number, strip_markdown(get_start_message()))
             return jsonify({'success': True}), 200
         
         # help
         if message.lower() in ['help', 'bantuan', '/help']:
-            send_whatsapp_reply(sender_number, HELP_MESSAGE.replace('*', ''))
+            send_whatsapp_reply(sender_number, strip_markdown(get_help_message()))
             return jsonify({'success': True}), 200
         
         # status
@@ -2023,27 +1863,10 @@ def webhook_fonnte():
             'transactions': transactions,
             'sender_name': sender_name,
             'source': source,
-            'timestamp': datetime.now()
+            'created_at': datetime.now()
         }
         
-        # Format preview
-        preview_lines = []
-        total = 0
-        for t in transactions:
-            amt = t.get('jumlah', 0)
-            total += amt
-            preview_lines.append(f"• {t.get('keterangan', '-')}: Rp {amt:,}".replace(',', '.'))
-        
-        company_options = '\n'.join(f"  {i+1}. {c}" for i, c in enumerate(COMPANY_SHEETS))
-        
-        reply = (
-            "📝 Transaksi Terdeteksi:\n" +
-            '\n'.join(preview_lines) +
-            f"\n\nTotal: Rp {total:,}\n\n".replace(',', '.') +
-            "🏢 Simpan ke company mana?\n\n" +
-            company_options +
-            "\n\nBalas dengan nomor 1-5, atau ketik batal"
-        )
+        reply = strip_markdown(fmt.prompt_company(transactions))
         
         send_whatsapp_reply(sender_number, reply)
         return jsonify({'success': True}), 200
