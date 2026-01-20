@@ -959,12 +959,22 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             send_wuzapi_reply(reply_to, reply)
             return jsonify({'status': 'ok'}), 200
         
-        # /status or /laporan
-        if text.lower() in ['/status', '/laporan', '/cek']:
+        # /status - Dashboard ringkas
+        if text.lower() in ['/status', '/cek']:
             invalidate_dashboard_cache()
             send_wuzapi_reply(reply_to, "⏳ Sedang mengambil data status...")
             status_msg = get_status_message().replace('*', '').replace('_', '')
             send_wuzapi_reply(reply_to, status_msg)
+            return jsonify({'status': 'ok'}), 200
+        
+        # /laporan - Laporan detail 7 hari
+        if text.lower().startswith('/laporan'):
+            # Check for /laporan30
+            days = 30 if '30' in text else 7
+            send_wuzapi_reply(reply_to, f"⏳ Membuat laporan {days} hari...")
+            report = generate_report(days=days)
+            reply = format_report_message(report).replace('*', '').replace('_', '')
+            send_wuzapi_reply(reply_to, reply)
             return jsonify({'status': 'ok'}), 200
         
         # /saldo - Wallet balances
@@ -1033,9 +1043,63 @@ Kirim transaksi, lalu pilih nomor (1-5)."""
                     send_wuzapi_reply(reply_to, f"❌ Gagal: {str(e)}")
             return jsonify({'status': 'ok'}), 200
         
-        # /export
-        if text.lower() == '/export':
-             pass 
+        # /exportpdf - Export monthly PDF report
+        if text.lower().startswith('/exportpdf') or text.lower().startswith('/export'):
+            # Extract month argument
+            if text.lower().startswith('/exportpdf'):
+                month_arg = text[10:].strip()
+            else:
+                month_arg = text[7:].strip()
+            
+            if not month_arg:
+                now = datetime.now()
+                month_arg = f"{now.year}-{now.month:02d}"
+            
+            try:
+                # Step 1: Parse and validate period
+                year, month = parse_month_input(month_arg)
+                
+                # Step 2: Check if data exists
+                has_data, tx_count, period_name = validate_period_data(year, month)
+                
+                if not has_data:
+                    send_wuzapi_reply(reply_to, 
+                        f"❌ Tidak ada transaksi untuk {period_name}\n\n"
+                        f"PDF tidak dibuat karena tidak ada data.\n\n"
+                        f"💡 Tips:\n"
+                        f"• Cek periode yang benar\n"
+                        f"• Gunakan /status untuk lihat data tersedia")
+                    return jsonify({'status': 'ok'}), 200
+                
+                # Step 3: Notify and generate
+                send_wuzapi_reply(reply_to, 
+                    f"✅ Ditemukan {tx_count} transaksi untuk {period_name}\n"
+                    f"📊 Generating PDF...")
+                
+                # Step 4: Generate PDF
+                pdf_path = generate_pdf_from_input(month_arg)
+                
+                file_size = os.path.getsize(pdf_path) / 1024  # KB
+                
+                reply = (
+                    f"📊 Laporan Keuangan Bulanan\n"
+                    f"📅 Periode: {period_name}\n"
+                    f"📝 Total: {tx_count} transaksi\n"
+                    f"📦 Ukuran: {file_size:.1f} KB\n\n"
+                    f"✅ PDF berhasil dibuat!\n\n"
+                    f"⚠️ Untuk download PDF, gunakan Telegram bot atau minta admin kirimkan file."
+                )
+                send_wuzapi_reply(reply_to, reply)
+                
+            except ValueError as e:
+                send_wuzapi_reply(reply_to, f"❌ {str(e)}\n\nFormat: /exportpdf 2026-01 atau /exportpdf januari 2026")
+            except ImportError:
+                send_wuzapi_reply(reply_to, "❌ PDF generator belum terinstall.")
+            except Exception as e:
+                secure_log("ERROR", f"PDF export failed (WuzAPI): {type(e).__name__}")
+                send_wuzapi_reply(reply_to, "❌ Gagal generate PDF.")
+            
+            return jsonify({'status': 'ok'}), 200 
 
         # AI Extraction for transactions
         transactions = []

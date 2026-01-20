@@ -946,8 +946,9 @@ def get_dashboard_summary() -> Dict:
                         if company not in company_summary:
                             company_summary[company] = {'inc': 0, 'exp': 0, 'bal': 0, 'count': 0}
                         
-                        is_expense = 'keluar' in tipe or 'withdraw' in tipe
-                        is_income = 'masuk' in tipe or 'deposit' in tipe
+                        # Fix: Include 'pengeluaran'/'pemasukan' keywords
+                        is_expense = 'pengeluaran' in tipe or 'keluar' in tipe or 'withdraw' in tipe
+                        is_income = 'pemasukan' in tipe or 'masuk' in tipe or 'deposit' in tipe
                         
                         total_transactions += 1
                         company_summary[company]['count'] += 1
