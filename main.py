@@ -4,7 +4,7 @@ main.py - Financial Recording Bot
 Features:
 - SIMPLIFIED WORKFLOW: No mandatory project selection
 - Multi-channel (WhatsApp + Telegram)
-- Fixed 8 Categories (auto-detected by AI)
+- Fixed 4 Categories (auto-detected by AI)
 - Pemasukan & Pengeluaran
 - Query AI (/tanya)
 - Budget Alerts
@@ -115,8 +115,54 @@ def get_telegram_api_url():
 
 
 # Pending transactions waiting for company selection
-# Format: {user_id: {'transactions': [...], 'sender_name': str, 'source': str, 'timestamp': datetime}}
+# Format: {pkey: {'transactions': [...], 'sender_name': str, 'source': str, 'created_at': datetime, 'chat_jid': str}}
+# pkey = chat_jid:sender_number (to isolate per chat per user)
 _pending_transactions = {}
+
+# TTL for pending transactions (15 minutes)
+PENDING_TTL_SECONDS = 15 * 60
+
+# Message ID dedup cache to prevent double processing (multi-worker safe)
+# Format: {message_id: timestamp}
+_processed_messages = {}
+DEDUP_TTL_SECONDS = 5 * 60  # 5 minutes dedup window
+
+import re  # For regex patterns in smart modifier
+import threading
+_dedup_lock = threading.Lock()
+
+def pending_key(sender_number: str, chat_jid: str) -> str:
+    """Generate unique key for pending transactions per chat per user."""
+    # For DM, chat_jid might be same as sender, that's fine
+    return f"{chat_jid or sender_number}:{sender_number}"
+
+def pending_is_expired(pending: dict) -> bool:
+    """Check if pending transaction has expired (TTL exceeded)."""
+    created = pending.get("created_at")
+    if created is None:
+        return False
+    return (datetime.now() - created).total_seconds() > PENDING_TTL_SECONDS
+
+def is_message_duplicate(message_id: str) -> bool:
+    """Check if message was already processed (dedup). Returns True if duplicate."""
+    if not message_id:
+        return False
+    
+    now = datetime.now()
+    with _dedup_lock:
+        # Cleanup old entries (older than TTL)
+        expired_keys = [k for k, v in _processed_messages.items() 
+                       if (now - v).total_seconds() > DEDUP_TTL_SECONDS]
+        for k in expired_keys:
+            _processed_messages.pop(k, None)
+        
+        # Check if already processed
+        if message_id in _processed_messages:
+            return True
+        
+        # Mark as processed
+        _processed_messages[message_id] = now
+        return False
 
 
 # ===================== START MESSAGE =====================
@@ -279,33 +325,25 @@ def build_selection_prompt(transactions: list, mention: str = "") -> str:
     """Build the selection prompt message with dompet/company options."""
     tx_lines = []
     for t in transactions:
-        emoji = "💰" if t.get('tipe') == 'Pemasukan' else "💸"
+        emoji = "�" if t.get('tipe') == 'Pemasukan' else "�"
         tx_lines.append(f"   {emoji} {t.get('keterangan', '-')}: Rp {t.get('jumlah', 0):,}".replace(',', '.'))
     tx_preview = '\n'.join(tx_lines)
     
     total = sum(t.get('jumlah', 0) for t in transactions)
     
-    return f"""{mention}📋 Transaksi Terdeteksi:
+    item_count = len(transactions)
+    return f"""{mention}📋 Transaksi ({item_count} item)
 {tx_preview}
-
 📊 Total: Rp {total:,}
 
-━━━━━━━━━━━━━━━━━━
-❓ Simpan ke company mana?
+❓ Simpan ke company mana? (1-5)
 
-📁 Dompet Holla:
-   1️⃣ HOLLA
-   2️⃣ HOJJA
+📁 Dompet Holla: 1️⃣ HOLLA | 2️⃣ HOJJA
+📁 Texturin Sby: 3️⃣ TEXTURIN-Surabaya
+📁 Dompet Evan: 4️⃣ TEXTURIN-Bali | 5️⃣ KANTOR
 
-📁 Dompet Texturin Sby:
-   3️⃣ TEXTURIN-Surabaya
-
-📁 Dompet Evan:
-   4️⃣ TEXTURIN-Bali
-   5️⃣ KANTOR
-
-━━━━━━━━━━━━━━━━━━
-💡 Ketik angka 1-5 atau /cancel""".replace(',', '.')
+⏳ Batas waktu: 15 menit
+💡 Salah pilih? /cancel lalu kirim ulang""".replace(',', '.')
 
 
 # ===================== REVISION HELPERS =====================
@@ -461,34 +499,32 @@ def format_success_reply_new(transactions: list, dompet_sheet: str, company: str
     total = 0
     nama_projek_set = set()
     
-    # Transaction details
-    lines.append("📊 Detail:")
+    # Transaction details (compact)
     for t in transactions:
         amount = t.get('jumlah', 0)
         total += amount
-        tipe_icon = "💰" if t.get('tipe') == 'Pemasukan' else "💸"
-        lines.append(f"   {tipe_icon} {t.get('keterangan', '-')}: Rp {amount:,}".replace(',', '.'))
-        lines.append(f"      📁 {t.get('kategori', 'Lain-lain')}")
+        tipe_icon = "�" if t.get('tipe') == 'Pemasukan' else "�"
+        lines.append(f"{tipe_icon} {t.get('keterangan', '-')}: Rp {amount:,}".replace(',', '.'))
         
         if t.get('nama_projek'):
             nama_projek_set.add(t['nama_projek'])
     
     lines.append(f"\n📊 Total: Rp {total:,}".replace(',', '.'))
-    lines.append("")
-    lines.append("━━━━━━━━━━━━━━━━━━")
     
-    # Location info
-    lines.append("📍 Disimpan ke:")
-    lines.append(f"   💼 Dompet: {dompet_sheet}")
-    lines.append(f"   🏢 Company: {company}")
+    # Location info (compact)
+    lines.append(f"� {dompet_sheet} → {company}")
     
     if nama_projek_set:
         projek_str = ', '.join(nama_projek_set)
-        lines.append(f"   📋 Projek: {projek_str}")
+        lines.append(f"📋 Projek: {projek_str}")
     
     # Timestamp
     now = datetime.now().strftime("%d %b %Y, %H:%M")
-    lines.append(f"\n⏱️ Waktu: {now}")
+    lines.append(f"⏱️ {now}")
+    
+    # Next steps
+    lines.append("\n💡 Ralat jumlah: reply /revisi 150rb")
+    lines.append("📊 Cek ringkas: /status | /saldo")
     
     return '\n'.join(lines)
 
@@ -670,6 +706,11 @@ def webhook_wuzapi():
         
         secure_log("INFO", f"WuzAPI message from {sender_number}: {text[:50] if text else '[image]'}, has_media={media_url is not None}, quoted={quoted_msg_id}, msg_id={message_id}")
 
+        # DEDUP: Skip if message already processed (multi-worker safe)
+        if is_message_duplicate(message_id):
+            secure_log("DEBUG", f"WuzAPI: Duplicate message_id={message_id}, skipping")
+            return jsonify({'status': 'duplicate'}), 200
+
         # Determine if it's a group chat
         is_group = '@g.us' in chat_jid
         
@@ -716,12 +757,33 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         
         # GROUP CHAT FILTER: Only respond if triggered or command
         # Triggers: +catat, +bot, +input, /catat, or any / command
-        # EXCEPTION: If user has pending transaction, allow through (they're replying to bot)
-        has_pending = sender_number in _pending_transactions
+        # EXCEPTION: If user has pending transaction IN THIS CHAT, allow through
+        pkey = pending_key(sender_number, chat_jid)
+        pending_data = _pending_transactions.get(pkey)
+        
+        # Check if pending exists and not expired
+        pending_was_expired = False
+        if pending_data and pending_is_expired(pending_data):
+            _pending_transactions.pop(pkey, None)
+            pending_data = None
+            pending_was_expired = True
+            secure_log("DEBUG", f"Pending expired for {pkey}")
+        
+        has_pending = pending_data is not None
+        
+        # If user seems to be replying to expired session (selection-like input but no pending)
+        if pending_was_expired:
+            text_lower = text.strip().lower()
+            # Check if input looks like a pending reply (1-5, project name, etc)
+            if text_lower in ['1','2','3','4','5'] or (len(text) > 1 and len(text) < 50 and not text.startswith('/')):
+                send_wuzapi_reply(reply_to, 
+                    "⌛ Sesi sebelumnya sudah kedaluwarsa (lebih dari 15 menit).\n"
+                    "Kirim transaksi lagi ya.")
+                return jsonify({'status': 'expired_session'}), 200
         
         # Debug logging for group chat
         if is_group:
-            secure_log("DEBUG", f"Group msg from {sender_number}: has_pending={has_pending}, text='{text[:30]}...'")
+            secure_log("DEBUG", f"Group msg from {sender_number}: pkey={pkey}, has_pending={has_pending}, text='{text[:30]}...'")
         
         if is_group and not has_pending:
             should_respond, cleaned_text = should_respond_in_group(text, is_group)
@@ -817,13 +879,14 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
 
         
         # Check for pending transaction - selection handler
-        if sender_number in _pending_transactions:
-            pending = _pending_transactions[sender_number]
+        # We already got pending_data and pkey from group filter above
+        if has_pending:
+            pending = pending_data  # Already retrieved above
             pending_type = pending.get('pending_type', 'selection')
             
             # Handle cancel for all pending types
             if text.lower() == '/cancel':
-                _pending_transactions.pop(sender_number, None)
+                _pending_transactions.pop(pkey, None)
                 send_wuzapi_reply(reply_to, "❌ Transaksi dibatalkan.")
                 return jsonify({'status': 'cancelled'}), 200
             
@@ -853,7 +916,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     if removed_count > 0:
                         if len(pending['transactions']) == 0:
                             # All transactions removed
-                            _pending_transactions.pop(sender_number, None)
+                            _pending_transactions.pop(pkey, None)
                             send_wuzapi_reply(reply_to, "❌ Semua transaksi dihapus. Transaksi dibatalkan.")
                             return jsonify({'status': 'cancelled'}), 200
                         else:
@@ -908,7 +971,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 
                 if detected_company:
                     # Has company, auto-save
-                    _pending_transactions.pop(sender_number)
+                    _pending_transactions.pop(pkey, None)
                     dompet = get_dompet_for_company(detected_company)
                     tx_message_id = pending.get('message_id', '')
                     
@@ -950,7 +1013,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             is_valid, selection, error_msg = parse_selection(text)
             
             if error_msg == "cancel":
-                _pending_transactions.pop(sender_number, None)
+                _pending_transactions.pop(pkey, None)
                 send_wuzapi_reply(reply_to, "❌ Transaksi dibatalkan.")
                 return jsonify({'status': 'cancelled'}), 200
             
@@ -960,7 +1023,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 return jsonify({'status': 'invalid_selection'}), 200
             
             # Valid selection 1-5
-            pending = _pending_transactions.pop(sender_number)
+            pending = _pending_transactions.pop(pkey)
             option = get_selection_by_idx(selection)
             
             if not option:
@@ -1034,11 +1097,12 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         # AI Extraction for transactions
         transactions = []
         try:
-            # === UX: Processing indicator ===
+            # === UX: Processing indicator (shorter for groups) ===
             if input_type == 'image':
-                send_wuzapi_reply(reply_to, "⏳ Membaca struk...")
-            elif text and len(text) > 20:
-                send_wuzapi_reply(reply_to, "🤖 Menganalisis...")
+                send_wuzapi_reply(reply_to, "🔍 Scan..." if is_group else "🔍 Memindai struk...")
+            elif text and len(text) > 20 and not is_group:
+                # Only show for private chat (reduce group spam)
+                send_wuzapi_reply(reply_to, "🔍 Menganalisis...")
             
             # media_url is now passed directly from webhook (already a data URL)
             transactions = extract_financial_data(
@@ -1077,32 +1141,33 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             
             if needs_project:
                 # Store as pending and ask user for project name
-                _pending_transactions[sender_number] = {
+                _pending_transactions[pkey] = {
                     'transactions': transactions,
                     'sender_name': sender_name,
                     'source': source,
-                    'timestamp': datetime.now(),
+                    'created_at': datetime.now(),
                     'message_id': message_id,
-                    'pending_type': 'needs_project'
+                    'pending_type': 'needs_project',
+                    'chat_jid': chat_jid
                 }
                 
                 # Build friendly ask message with all transactions
                 total = sum(t.get('jumlah', 0) for t in transactions)
                 items_str = "\n".join([
-                    f"   💸 {t.get('keterangan', 'Item')}: Rp {t.get('jumlah', 0):,}".replace(',', '.')
+                    f"   {'🟢' if t.get('tipe') == 'Pemasukan' else '�'} {t.get('keterangan', 'Item')}: Rp {t.get('jumlah', 0):,}".replace(',', '.')
                     for t in transactions
                 ])
                 
+                item_count = len(transactions)
                 ask_msg = (
-                    f"📋 Transaksi Terdeteksi:\n"
-                    f"{items_str}\n\n"
+                    f"📋 Transaksi terdeteksi ({item_count} item)\n"
+                    f"{items_str}\n"
                     f"📊 Total: Rp {total:,}\n\n"
-                    f"❓ Untuk projek apa ini?\n\n"
-                    f"Balas dengan nama projek, contoh:\n"
-                    f"• Purana Ubud\n"
-                    f"• Villa Sunset Bali\n"
-                    f"• Operasional Kantor\n\n"
-                    f"Atau ketik /cancel untuk batal"
+                    f"❓ Perlu nama projek (biar laporan per projek rapi)\n"
+                    f"Balas: nama projek saja\n"
+                    f"Contoh: Purana Ubud / Villa Sunset\n\n"
+                    f"⏳ Batas waktu: 15 menit\n"
+                    f"Ketik /cancel untuk batal"
                 ).replace(',', '.')
                 
                 send_wuzapi_reply(reply_to, ask_msg)
@@ -1167,12 +1232,13 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     send_wuzapi_reply(reply_to, f"❌ Gagal: {result.get('company_error', 'Error')}")
             else:
                 # No company detected - ask for selection
-                _pending_transactions[sender_number] = {
+                _pending_transactions[pkey] = {
                     'transactions': transactions,
                     'sender_name': sender_name,
                     'source': source,
-                    'timestamp': datetime.now(),
-                    'message_id': message_id
+                    'created_at': datetime.now(),
+                    'message_id': message_id,
+                    'chat_jid': chat_jid
                 }
                 
                 # Use the new selection prompt format
