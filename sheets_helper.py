@@ -673,7 +673,7 @@ def format_data_for_ai(days: int = 30) -> str:
         lines.append("<PER_NAMA_PROJEK>")
         for projek, info in sorted(by_projek.items(), key=lambda x: -(x[1]['expense'] + x[1]['income'])):
             profit_loss = info['income'] - info['expense']
-            status = "UNTUNG" if profit_loss > 0 else "RUGI" if profit_loss < 0 else "IMPAS"
+            status = "UNTUNG" if profit_loss > 0 else "RUGI" if profit_loss < 0 else "NETRAL"
             lines.append(f"  - {projek} ({info['company']}): Pemasukan={info['income']:,} | Pengeluaran={info['expense']:,} | P/L={profit_loss:,} ({status})".replace(',', '.'))
         lines.append("</PER_NAMA_PROJEK>")
         lines.append("")
@@ -720,7 +720,7 @@ def format_dashboard_message() -> str:
     elif data['balance'] < 0:
         status = "🔴 RUGI"
     else:
-        status = "⚪ IMPAS"
+        status = "⚪ NETRAL"
     
     lines = [
         f"📊 *DASHBOARD KEUANGAN* {status}",
