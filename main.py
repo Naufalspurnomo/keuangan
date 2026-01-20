@@ -343,7 +343,7 @@ def get_original_message_id(bot_msg_id: str) -> str:
 
 # ===================== HELPERS =====================
 
-def send_telegram_reply(chat_id: int, message: str, parse_mode: str = 'Markdown'):
+def send_telegram_reply(chat_id: int, message: str, parse_mode: str = None):
     """Send Telegram reply securely."""
     try:
         api_url = get_telegram_api_url()
@@ -353,68 +353,22 @@ def send_telegram_reply(chat_id: int, message: str, parse_mode: str = 'Markdown'
         # Use existing session (fast) or create new (slow first time)
         session = get_telegram_session()
         
+        payload = {
+            'chat_id': chat_id,
+            'text': message
+        }
+        if parse_mode:
+            payload['parse_mode'] = parse_mode
+            
         response = session.post(
             f"{api_url}/sendMessage",
-            json={
-                'chat_id': chat_id,
-                'text': message,
-                'parse_mode': parse_mode
-            },
+            json=payload,
             timeout=10
         )
         return response.json()
     except Exception as e:
         secure_log("ERROR", f"Telegram send failed: {type(e).__name__}")
         return None
-
-
-def send_whatsapp_reply(phone_number: str, message: str):
-    """Send WhatsApp reply via Fonnte."""
-    try:
-        response = requests.post(
-            'https://api.fonnte.com/send',
-            headers={'Authorization': FONNTE_TOKEN},
-            data={'target': phone_number, 'message': message},
-            timeout=10
-        )
-        return response.json()
-    except Exception as e:
-        secure_log("ERROR", f"Fonnte send failed: {type(e).__name__}")
-        return None
-
-
-def format_success_reply(transactions: list, company_sheet: str) -> str:
-    """Format success reply message with company and project info."""
-    lines = ["✅ *Transaksi Tercatat!*\n"]
-    
-    total = 0
-    nama_projek_set = set()
-    
-    for t in transactions:
-        amount = t.get('jumlah', 0)
-        total += amount
-        tipe_icon = "💰" if t.get('tipe') == 'Pemasukan' else "💸"
-        lines.append(f"{tipe_icon} {t.get('keterangan', '-')}: Rp {amount:,}".replace(',', '.'))
-        lines.append(f"   📁 {t.get('kategori', 'Lain-lain')}")
-        
-        # Track nama projek
-        if t.get('nama_projek'):
-            nama_projek_set.add(t['nama_projek'])
-    
-    lines.append(f"\n*Total: Rp {total:,}*".replace(',', '.'))
-    
-    # Show company and project info
-    lines.append(f"🏢 *Company:* {company_sheet}")
-    if nama_projek_set:
-        projek_str = ', '.join(nama_projek_set)
-        lines.append(f"📋 *Nama Projek:* {projek_str}")
-    
-    # Check budget
-    alert = check_budget_alert()
-    if alert.get('message'):
-        lines.append(f"\n{alert['message']}")
-    
-    return '\n'.join(lines)
 
 
 
@@ -1035,8 +989,8 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 if result['success']:
                     update_user_activity(sender_number, 'wuzapi', sender_name)
                     invalidate_dashboard_cache()
-                    reply = format_success_reply_new(transactions, dompet, detected_company).replace('*', '')
-                    reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
+                    reply = fmt.success(transactions, dompet, detected_company, mention).replace('*', '')
+                    # Tip added by speech layer already
                     
                     # Send reply and capture bot message ID for revision tracking
                     sent_msg = send_wuzapi_reply(reply_to, reply)
@@ -1073,7 +1027,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 }
                 
                 # Use the new selection prompt format
-                reply = build_selection_prompt(transactions).replace('*', '')
+                reply = fmt.prompt_company(transactions, mention).replace('*', '')
                 send_wuzapi_reply(reply_to, reply)
 
         except Exception as e:
@@ -1606,274 +1560,8 @@ def webhook_telegram():
 
 # ===================== WHATSAPP HANDLERS =====================
 
-@app.route('/webhook', methods=['GET', 'POST'])
-def webhook_fonnte():
-    """Webhook endpoint for Fonnte WhatsApp - SECURED."""
-    # Handle GET request (Fonnte verification)
-    if request.method == 'GET':
-        return jsonify({'status': 'ok', 'message': 'Webhook ready'}), 200
-    
-    # Handle POST request (actual messages)
-    try:
-        if request.is_json:
-            payload = request.get_json()
-        else:
-            payload = request.form.to_dict()
-        
-        if not payload:
-            return jsonify({'success': False}), 400
-        
-        sender_number = payload.get('sender', '')
-        sender_name = payload.get('name', 'User')
-        message = payload.get('message', '').strip()
-        media_url = payload.get('url', '')
-        msg_type = payload.get('type', 'text').lower()
-        
-        # Conditional debug logging (only if FLASK_DEBUG=1)
-        if DEBUG:
-            import json as _json
-            try:
-                with open('fonnte_debug.log', 'a', encoding='utf-8') as f:
-                    f.write(f"\n=== {datetime.now()} ===\n")
-                    f.write(_json.dumps(payload, ensure_ascii=False, indent=2))
-                    f.write(f"\n--- Extracted: type={msg_type}, url={media_url}, msg_len={len(message)} ---\n")
-            except Exception:
-                pass  # Silent fail for debug logging
-        
-        if not sender_number:
-            return jsonify({'success': True}), 200
-        
-        user_id = sender_number
-        
-        # Rate limiting
-        allowed, wait_time = rate_limit_check(user_id)
-        if not allowed:
-            send_whatsapp_reply(sender_number, f"⏳ Tunggu {wait_time} detik.")
-            return jsonify({'success': True}), 200
-        
-        # Sanitize message
-        message = sanitize_input(message)
-        sender_name = sanitize_input(sender_name)[:50]
-        
-        secure_log("INFO", f"WhatsApp message from user")
-        
-        # === COMPANY SELECTION (numbers 1-5) ===
-        if user_id in _pending_transactions and message in ['1', '2', '3', '4', '5']:
-            pending = _pending_transactions.pop(user_id)
-            selection = int(message)
-            option = get_selection_by_idx(selection)
-            
-            if option:
-                dompet = option['dompet']
-                company = option['company']
-                
-                result = append_transactions(
-                    pending['transactions'],
-                    pending['sender_name'],
-                    pending['source'],
-                    dompet_sheet=dompet,
-                    company=company
-                )
-                
-                if result['success']:
-                    update_user_activity(user_id, 'whatsapp', pending['sender_name'])
-                    invalidate_dashboard_cache()  # Reset cache
-                    reply = strip_markdown(fmt.success(pending['transactions'], dompet, company))
-                    send_whatsapp_reply(sender_number, reply)
-                else:
-                    send_whatsapp_reply(sender_number, strip_markdown(fmt.error_save(result.get('company_error', 'Error'))))
-            else:
-                 send_whatsapp_reply(sender_number, "❌ Pilihan tidak valid.")
-
-            return jsonify({'success': True}), 200
-        
-        # Cancel pending
-        if user_id in _pending_transactions and message.lower() in ['batal', 'cancel']:
-            _pending_transactions.pop(user_id, None)
-            send_whatsapp_reply(sender_number, "❌ Transaksi dibatalkan.")
-            return jsonify({'success': True}), 200
-        
-        # === COMMANDS (support both with and without slash) ===
-        
-        # start
-        if message.lower() in ['start', 'mulai', 'hi', 'halo', '/start']:
-            send_whatsapp_reply(sender_number, strip_markdown(get_start_message()))
-            return jsonify({'success': True}), 200
-        
-        # help
-        if message.lower() in ['help', 'bantuan', '/help']:
-            send_whatsapp_reply(sender_number, strip_markdown(get_help_message()))
-            return jsonify({'success': True}), 200
-        
-        # status
-        if message.lower() in ['status', '/status']:
-            invalidate_dashboard_cache()  # Force fresh data from Google Sheets
-            reply = get_status_message().replace('*', '')
-            send_whatsapp_reply(sender_number, reply)
-            return jsonify({'success': True}), 200
-        
-        # saldo
-        if message.lower() in ['saldo', '/saldo']:
-            reply = get_wallet_balances().replace('*', '')
-            send_whatsapp_reply(sender_number, reply)
-            return jsonify({'success': True}), 200
-        
-        # company
-        if message.lower() in ['company', 'project', '/company', '/project']:
-            company_list = '\n'.join(f"  {i+1}. {c}" for i, c in enumerate(COMPANY_SHEETS))
-            reply = f"🏢 Company Sheets:\n\n{company_list}\n\nKirim transaksi, lalu pilih nomor."
-            send_whatsapp_reply(sender_number, reply)
-            return jsonify({'success': True}), 200
-        
-        # laporan
-        if message.lower().startswith('laporan') or message.lower().startswith('/laporan'):
-            days = 30 if '30' in message else 7
-            report = generate_report(days=days)
-            reply = format_report_message(report).replace('*', '')
-            send_whatsapp_reply(sender_number, reply)
-            return jsonify({'success': True}), 200
-        
-        # tanya
-        if message.lower().startswith('tanya ') or message.lower().startswith('/tanya '):
-            # Remove prefix
-            if message.lower().startswith('/tanya '):
-                question = message[7:].strip()
-            else:
-                question = message[6:].strip()
-            
-            # Check injection
-            is_injection, _ = detect_prompt_injection(question)
-            if is_injection:
-                send_whatsapp_reply(sender_number, "❌ Pertanyaan tidak valid.")
-                return jsonify({'success': True}), 200
-            
-            data_context = format_data_for_ai(days=30)
-            answer = query_data(question, data_context)
-            reply = f"💡 {answer}"
-            send_whatsapp_reply(sender_number, reply)
-            return jsonify({'success': True}), 200
-        
-        # exportpdf
-        if message.lower().startswith('exportpdf') or message.lower().startswith('/exportpdf'):
-            # Extract month argument
-            if message.lower().startswith('/exportpdf'):
-                month_arg = message[10:].strip()
-            else:
-                month_arg = message[9:].strip()
-            
-            if not month_arg:
-                now = datetime.now()
-                month_arg = f"{now.year}-{now.month:02d}"
-            
-            try:
-                # Step 1: Parse and validate period (year/month range)
-                year, month = parse_month_input(month_arg)
-                
-                # Step 2: Check if data exists for this period
-                has_data, tx_count, period_name = validate_period_data(year, month)
-                
-                if not has_data:
-                    send_whatsapp_reply(sender_number, 
-                        f"❌ Tidak ada transaksi untuk {period_name}\n\n"
-                        f"PDF tidak dibuat karena tidak ada data.\n\n"
-                        f"💡 Tips:\n"
-                        f"• Cek periode yang benar\n"
-                        f"• Gunakan 'status' untuk lihat data tersedia")
-                    return jsonify({'success': True}), 200
-                
-                # Step 3: Notify user about data found and generating
-                send_whatsapp_reply(sender_number, 
-                    f"✅ Ditemukan {tx_count} transaksi untuk {period_name}\n"
-                    f"📊 Generating PDF...")
-                
-                # Step 4: Generate PDF
-                pdf_path = generate_pdf_from_input(month_arg)
-                
-                # Note: Fonnte has limited file sending capability
-                # We'll notify user that PDF is generated and provide info
-                file_size = os.path.getsize(pdf_path) / 1024  # KB
-                
-                reply = (
-                    f"📊 Laporan Keuangan Bulanan\n"
-                    f"📅 Periode: {period_name}\n"
-                    f"📝 Total: {tx_count} transaksi\n"
-                    f"📦 Ukuran: {file_size:.1f} KB\n\n"
-                    f"✅ PDF berhasil dibuat!\n\n"
-                    f"⚠️ Untuk download PDF, gunakan Telegram bot atau hubungi admin."
-                )
-                send_whatsapp_reply(sender_number, reply)
-                
-            except ValueError as e:
-                send_whatsapp_reply(sender_number, f"❌ {str(e)}\n\nFormat: exportpdf 2026-01 atau exportpdf januari 2026")
-            except ImportError:
-                send_whatsapp_reply(sender_number, "❌ PDF generator belum terinstall.")
-            except Exception as e:
-                secure_log("ERROR", f"PDF export failed (WA): {type(e).__name__}")
-                send_whatsapp_reply(sender_number, f"❌ Gagal generate PDF.")
-            
-            return jsonify({'success': True}), 200
-        
-        # kategori
-        if message.lower() in ['kategori', '/kategori']:
-            reply = "📁 Kategori:\n" + '\n'.join(f"• {cat}" for cat in ALLOWED_CATEGORIES)
-            send_whatsapp_reply(sender_number, reply)
-            return jsonify({'success': True}), 200
-        
-        # Check injection for regular messages
-        is_injection, _ = detect_prompt_injection(message)
-        if is_injection:
-            send_whatsapp_reply(sender_number, "❌ Input tidak valid.")
-            return jsonify({'success': True}), 200
-        
-        # === TRANSACTION ===
-        
-        # Determine input type
-        if msg_type in ['image'] or (media_url and 'image' in media_url.lower()):
-            input_type = 'image'
-        elif msg_type in ['audio', 'ptt', 'voice']:
-            input_type = 'audio'
-        else:
-            input_type = 'text'
-        
-        # Process
-        try:
-            source = {"text": "Text", "image": "Image", "audio": "Voice"}[input_type]
-            
-            transactions = extract_financial_data(
-                input_data=message,
-                input_type=input_type,
-                sender_name=sender_name,
-                media_url=media_url if input_type != 'text' else None,
-                caption=message if input_type == 'image' else None
-            )
-        except SecurityError as e:
-            send_whatsapp_reply(sender_number, f"❌ {str(e)}")
-            return jsonify({'success': True}), 200
-        except Exception as e:
-            secure_log("ERROR", f"Extract failed: {type(e).__name__}")
-            send_whatsapp_reply(sender_number, "❌ Gagal memproses.")
-            return jsonify({'success': True}), 200
-        
-        if not transactions:
-            send_whatsapp_reply(sender_number, "❓ Transaksi tidak terdeteksi. Contoh: Beli semen 300rb")
-            return jsonify({'success': True}), 200
-        
-        # Store pending and ask for company selection
-        _pending_transactions[user_id] = {
-            'transactions': transactions,
-            'sender_name': sender_name,
-            'source': source,
-            'created_at': datetime.now()
-        }
-        
-        reply = strip_markdown(fmt.prompt_company(transactions))
-        
-        send_whatsapp_reply(sender_number, reply)
-        return jsonify({'success': True}), 200
-    
-    except Exception as e:
-        secure_log("ERROR", f"Fonnte webhook error: {type(e).__name__}")
-        return jsonify({'success': False}), 500
+# ===================== WHATSAPP HANDLERS =====================
+# Fonnte support removed as per user request (WuzAPI is primary)
 
 
 # ===================== OTHER ENDPOINTS =====================
@@ -1925,7 +1613,6 @@ if __name__ == '__main__':
     except Exception as e:
         print("[ERR] Sheets error")
     
-    print(f"\nFonnte: {'[OK]' if FONNTE_TOKEN else '[X]'}")
     print(f"Telegram: {'[OK]' if TELEGRAM_BOT_TOKEN else '[X]'}")
     
     print("\nCommands:")
