@@ -52,6 +52,13 @@ WALLET_UPDATE_REGEX = re.compile(
     re.IGNORECASE
 )
 
+# Patterns that indicate wallet/dompet balance update (not a regular project transaction)
+# These patterns mean "updating wallet balance" not "expense for a project"
+DOMPET_UPDATE_REGEX = re.compile(
+    r"\b(pemasukan|pengeluaran|saldo|terima|masuk|keluar)\s+(dompet\s*(?:holla|evan|texturin)|ke\s*dompet)",
+    re.IGNORECASE
+)
+
 # Patterns to detect which dompet user mentioned
 DOMPET_PATTERNS = [
     (re.compile(r"\b(dompet\s*holla|holla)\b", re.IGNORECASE), "Dompet Holla"),
@@ -59,8 +66,13 @@ DOMPET_PATTERNS = [
     (re.compile(r"\b(dompet\s*evan|evan)\b", re.IGNORECASE), "Dompet Evan"),
 ]
 
+
 def _is_wallet_update_context(clean_text: str) -> bool:
-    return bool(WALLET_UPDATE_REGEX.search(clean_text or ""))
+    """Check if input is about updating wallet balance (not a project transaction)."""
+    if not clean_text:
+        return False
+    # Check both patterns
+    return bool(WALLET_UPDATE_REGEX.search(clean_text) or DOMPET_UPDATE_REGEX.search(clean_text))
 
 def _extract_dompet_from_text(clean_text: str) -> str:
     """Extract which dompet user mentioned in wallet update text."""
