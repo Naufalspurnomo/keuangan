@@ -23,6 +23,17 @@ class UserErrors:
     SELECTION_SINGLE_ONLY = "Pilih satu saja. Ketik angka 1-5."
     SELECTION_OUT_OF_RANGE = "Pilihan tidak tersedia. Ketik angka 1-5."
     
+    # Wallet detection errors
+    WALLET_NOT_DETECTED = (
+        "❓ Dompet tidak terdeteksi.\n\n"
+        "Mohon pilih dompet yang sesuai (1-5):"
+    )
+    AMBIGUOUS_WALLET = (
+        "⚠️ Keyword ambigu.\n\n"
+        "Keyword '{keyword}' bisa merujuk ke beberapa dompet/company.\n"
+        "Pilih yang benar (1-5):"
+    )
+    
     # Revision errors
     REVISION_NO_QUOTE = (
         "⚠️ *Gagal Revisi*\n\n"

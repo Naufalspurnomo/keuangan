@@ -19,9 +19,9 @@ DOMPET_SHEETS = [
 
 # Dompet -> Companies mapping
 DOMPET_COMPANIES = {
-    "Dompet Holla": ["HOLLA", "HOJJA", "Dompet Holla", "UMUM"],
-    "Dompet Texturin Sby": ["TEXTURIN-Surabaya", "Dompet Texturin Sby", "UMUM"],
-    "Dompet Evan": ["TEXTURIN-Bali", "KANTOR", "Dompet Evan", "UMUM"]
+    "Dompet Holla": ["HOLLA", "HOJJA", "Dompet Holla"],
+    "Dompet Texturin Sby": ["TEXTURIN-Surabaya", "Dompet Texturin Sby"],
+    "Dompet Evan": ["TEXTURIN-Bali", "KANTOR", "Dompet Evan"]
 }
 
 # Flat selection options for 1-5 display

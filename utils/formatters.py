@@ -75,6 +75,11 @@ HELP_MESSAGE = f"""📖 *PANDUAN BOT KEUANGAN*
 2. Group: Awali dengan `+catat`
 3. Pilih nomor dompet & company (1-5)
 
+💡 *Tips:*
+- Sebutkan nama dompet agar lebih akurat (misal: "Isi dompet evan 2jt")
+- Jika bot tidak yakin, bot akan minta pilihan 1-5
+- Reply transaksi dengan `/revisi [jumlah]` jika salah nominal
+
 *Contoh Input:*
 • `+catat Beli material 500rb projek X`
 • `+catat Bayar gaji 2jt`

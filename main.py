@@ -1047,14 +1047,24 @@ Kirim transaksi, lalu pilih nomor (1-5)."""
                 if detected_company:
                     break
             
+            # Determine dompet (wallet sheet)
+            dompet = None
             if detected_company:
-                # Auto-save: Company detected, find dompet and save directly
-                # For wallet updates (UMUM), use detected_dompet if available
-                if detected_company == "UMUM" and detected_dompet:
-                    dompet = detected_dompet
+                # Auto-save: Company detected
+                
+                # SPECIAL LOGIC: "UMUM" (Wallet Update)
+                # If "UMUM" AND detected_dompet is valid -> Use it (Auto-save)
+                # If "UMUM" AND detected_dompet NOT found -> Ask User (Ambiguous)
+                if detected_company == "UMUM":
+                     if detected_dompet:
+                         dompet = detected_dompet
+                     else:
+                         dompet = None # Force selection
                 else:
                     dompet = get_dompet_for_company(detected_company)
-                
+            
+            # Auto-save if BOTH company and dompet are valid
+            if detected_company and dompet:
                 result = append_transactions(
                     transactions, 
                     sender_name, 
@@ -1592,15 +1602,30 @@ _Kirim transaksi, lalu pilih nomor (1-5)._"""
         
         # Check if AI detected company from input
         detected_company = None
+        detected_dompet = None
         for t in transactions:
             if t.get('company'):
                 detected_company = t['company']
+            # For wallet updates, AI extracts which dompet was mentioned
+            if t.get('detected_dompet'):
+                detected_dompet = t['detected_dompet']
+            if detected_company:
                 break
         
+        # Determine dompet (wallet sheet)
+        dompet = None
         if detected_company:
-            # Auto-save: Company detected, find dompet and save directly
-            dompet = get_dompet_for_company(detected_company)
-            
+            # Auto-save: Company detected
+            if detected_company == "UMUM":
+                 if detected_dompet:
+                     dompet = detected_dompet
+                 else:
+                     dompet = None # Force selection
+            else:
+                dompet = get_dompet_for_company(detected_company)
+        
+        # Auto-save if BOTH company and dompet are valid
+        if detected_company and dompet:
             result = append_transactions(
                 transactions, 
                 sender_name, 

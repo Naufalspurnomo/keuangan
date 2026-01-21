@@ -74,14 +74,78 @@ def _is_wallet_update_context(clean_text: str) -> bool:
     # Check both patterns
     return bool(WALLET_UPDATE_REGEX.search(clean_text) or DOMPET_UPDATE_REGEX.search(clean_text))
 
+def detect_wallet_from_text(text: str) -> Optional[str]:
+    """
+    Detect wallet name from user input using comprehensive keyword matching.
+    Returns transaction-ready wallet name (e.g., 'Dompet Evan') or None.
+    """
+    if not text:
+        return None
+        
+    text_lower = text.lower()
+    
+    # Define wallet patterns with priority (more specific first)
+    # These map to the 'company' field value expected by the system
+    wallet_patterns = {
+        "Dompet Holla": [
+            r'\bdompet\s+holla\b',
+            r'\bsaldo\s+holla\b',
+            r'\bwallet\s+holla\b',
+            r'\bisi\s+holla\b',
+            r'\bholla\b'  # Last priority (standalone) check context later if needed
+        ],
+        "Dompet Texturin Sby": [
+            r'\bdompet\s+texturin\s*(surabaya|sby)?\b',
+            r'\btexturin\s+surabaya\b',
+            r'\btexturin\s+sby\b',
+            r'\bsaldo\s+texturin\b',
+            r'\bsaldo\s+texturin\b',
+            r'\btexturin\b'  # Handled by context check below
+        ],
+        "Dompet Evan": [
+            r'\bdompet\s+evan\b',
+            r'\bsaldo\s+evan\b',
+            r'\bwallet\s+evan\b',
+            r'\bisi\s+evan\b',
+            r'\bisi\s+evan\b',
+            r'\bevan\b'  # Handled by context check below
+        ]
+    }
+    
+    # Check for wallet operation context first
+    # This helps distinguish "Bayar Evan" (Person) from "Isi Evan" (Wallet)
+    wallet_operations = [
+        'tambah', 'tarik', 'isi', 'cek',
+        'transfer', 'pindah', 'top', 'withdraw', 'deposit',
+        'saldo', 'wallet', 'dompet'
+    ]
+    
+    has_wallet_context = any(op in text_lower for op in wallet_operations)
+    
+    # Match patterns
+    for wallet_name, patterns in wallet_patterns.items():
+        for pattern in patterns:
+            if re.search(pattern, text_lower):
+                # AMBIGUITY HANDLING
+                
+                # "evan" / "holla" / "texturin" standalone -> Require wallet context
+                # This prevents "Bayar Evan" from becoming a wallet transaction
+                if any(k in pattern for k in [r'\bholla\b', r'\bevan\b', r'texturin']):
+                    if not has_wallet_context:
+                        continue
+                        
+                # "Texturin-Bali" is explicitly a COMPANY, never a wallet
+                if "texturin" in pattern and "bali" in text_lower:
+                    continue
+                    
+                return wallet_name
+    
+    return None
+
 def _extract_dompet_from_text(clean_text: str) -> str:
-    """Extract which dompet user mentioned in wallet update text."""
-    if not clean_text:
-        return ""
-    for pattern, dompet_name in DOMPET_PATTERNS:
-        if pattern.search(clean_text):
-            return dompet_name
-    return ""
+    """Legacy wrapper for backward compatibility, prefers new robust detection."""
+    result = detect_wallet_from_text(clean_text)
+    return result if result else ""
 
 
 def extract_from_text(text: str, sender_name: str) -> List[Dict]:
@@ -143,6 +207,12 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
             transactions = transactions[:MAX_TRANSACTIONS_PER_MESSAGE]
 
         validated_transactions = []
+        
+        # Run Regex Fallback for Wallet Detection
+        # This covers cases where AI might miss the specific wallet name
+        # or returns generic "UMUM" without detecting the dompet.
+        regex_wallet = detect_wallet_from_text(clean_text)
+
         for t in transactions:
             is_valid, error, sanitized = validate_transaction_data(t)
             if not is_valid:
@@ -172,6 +242,17 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
             # 2) company sanitize (boleh None, nanti kamu map di layer pemilihan dompet/company)
             if sanitized.get("company") is not None:
                 sanitized["company"] = sanitize_input(str(sanitized["company"]))[:50]
+
+            # 3. Check for Wallet/Dompet Override
+            # If regex found a wallet OR AI detected a wallet
+            detected = sanitized.get('detected_dompet')
+            
+            if regex_wallet:
+                 # Regex takes precedence if AI missed it or matches "UMUM"
+                if not sanitized.get('company') or sanitized.get('company') == "UMUM" or not detected:
+                    sanitized['company'] = regex_wallet
+                    sanitized['detected_dompet'] = regex_wallet
+                    secure_log("INFO", f"Regex fallback applied: {regex_wallet}")
 
             validated_transactions.append(sanitized)
 
@@ -281,6 +362,39 @@ def ocr_image(image_path: str) -> str:
         raise
 
 
+# ===================== PROMPT & PATTERNS =====================
+
+WALLET_DETECTION_RULES = """
+**WALLET KEYWORDS (case-insensitive):**
+
+1. Dompet Holla:
+   - "dompet holla", "holla", "saldo holla", "wallet holla"
+
+2. Dompet Texturin Sby:
+   - "dompet texturin", "texturin surabaya", "texturin sby", "saldo texturin"
+   - "texturin" (ONLY if context is wallet operation like "isi saldo", "transfer ke")
+
+3. Dompet Evan:
+   - "dompet evan", "evan", "saldo evan", "wallet evan"
+   - "evan" (ONLY if context is wallet operation)
+
+**WALLET OPERATION INDICATORS:**
+- tambah saldo, tarik saldo, isi saldo/dompet, cek saldo
+- transfer ke/dari, pindah saldo, top up, withdraw
+
+**DECISION LOGIC:**
+IF (wallet keyword detected) AND (wallet operation indicator present):
+  → company = "Dompet [Name]"
+  → detected_dompet = "Dompet [Name]"
+ELSE IF (person/company name without wallet context):
+  → company = "UMUM" or specific company name (e.g., "Bayar evan" -> UMUM/Gaji)
+
+**AMBIGUITY HANDLING:**
+- "texturin" alone -> Check context. If "Beli cat di texturin", likely Company. If "Isi texturin", likely Wallet.
+- "texturin-bali" -> ALWAYS company "TEXTURIN-Bali"
+- "texturin-surabaya" -> ALWAYS company "TEXTURIN-Surabaya"
+"""
+
 def get_extraction_prompt(sender_name: str) -> str:
     """
     Generate the SECURE system prompt for financial data extraction.
@@ -292,9 +406,15 @@ def get_extraction_prompt(sender_name: str) -> str:
     current_date = datetime.now().strftime('%Y-%m-%d')
     categories_str = ', '.join(ALLOWED_CATEGORIES)
     
-    return f"""You are a Financial Data Extractor. Extract financial transaction details from the provided text or OCR input.
+    return f"""You are a financial transaction extractor for Indonesian language.
 
-STRICT JSON OUTPUT FORMAT:
+**GOAL:**
+Extract financial transaction details from natural language text/chat.
+Output MUST be a JSON array of objects.
+
+{WALLET_DETECTION_RULES}
+
+**FIELDS:**
 {{
   "transactions": [
     {{
