@@ -556,13 +556,21 @@ def get_summary(days: int = 30) -> Dict:
             oleh = d.get('oleh', 'Unknown')
             by_oleh[oleh] = by_oleh.get(oleh, 0) + d['jumlah']
             
-    # Group by project (Nama Projek)
+    # Group by project (Nama Projek) - NOW includes income AND expense for P/L
     by_projek = {}
     for d in data:
-        if d.get('tipe') == 'Pengeluaran':
-            proj = d.get('nama_projek', '').strip()
-            if proj:
-                by_projek[proj] = by_projek.get(proj, 0) + d['jumlah']
+        proj = d.get('nama_projek', '').strip()
+        if proj:
+            if proj not in by_projek:
+                by_projek[proj] = {'income': 0, 'expense': 0, 'profit_loss': 0}
+            if d.get('tipe') == 'Pemasukan':
+                by_projek[proj]['income'] += d['jumlah']
+            elif d.get('tipe') == 'Pengeluaran':
+                by_projek[proj]['expense'] += d['jumlah']
+    
+    # Calculate profit/loss for each project
+    for proj in by_projek:
+        by_projek[proj]['profit_loss'] = by_projek[proj]['income'] - by_projek[proj]['expense']
     
     return {
         'period_days': days,
@@ -797,9 +805,18 @@ def format_report_message(report: Dict) -> str:
             
     if s.get('by_projek'):
         lines.append("")
-        lines.append("*Top 5 Projek (Pengeluaran):*")
-        for proj, amount in sorted(s['by_projek'].items(), key=lambda x: -x[1])[:5]:
-            lines.append(f"  • {proj}: Rp {amount:,}".replace(',', '.'))
+        lines.append("*Top 5 Projek (Laba/Rugi):*")
+        # Sort by absolute profit/loss value (most significant first)
+        sorted_projek = sorted(
+            s['by_projek'].items(), 
+            key=lambda x: abs(x[1]['profit_loss']), 
+            reverse=True
+        )[:5]
+        for proj, info in sorted_projek:
+            pl = info['profit_loss']
+            icon = "📈" if pl > 0 else "📉" if pl < 0 else "➖"
+            status_text = "UNTUNG" if pl > 0 else "RUGI" if pl < 0 else "NETRAL"
+            lines.append(f"  {icon} {proj}: Rp {pl:,} ({status_text})".replace(',', '.'))
     
     return '\n'.join(lines)
 
