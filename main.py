@@ -1165,6 +1165,7 @@ def webhook_telegram():
         input_type = 'text'
         media_url = None
         caption = None
+        is_group = False  # Telegram handler treats all chats as private
         
         # === HANDLE TEXT MESSAGES ===
         if 'text' in message:
