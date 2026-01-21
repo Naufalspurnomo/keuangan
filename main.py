@@ -893,7 +893,9 @@ Kirim transaksi, lalu pilih nomor (1-5)."""
             else:
                 send_wuzapi_reply(reply_to, "🤔 Menganalisis...")
                 try:
-                    answer = query_data(question)
+                    # Get data context for AI query
+                    data_context = format_data_for_ai(days=30)
+                    answer = query_data(question, data_context)
                     send_wuzapi_reply(reply_to, answer.replace('*', '').replace('_', ''))
                 except Exception as e:
                     send_wuzapi_reply(reply_to, f"❌ Gagal: {str(e)}")
