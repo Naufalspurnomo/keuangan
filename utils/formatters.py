@@ -10,7 +10,7 @@ Contains:
 """
 
 from datetime import datetime
-from security import ALLOWED_CATEGORIES
+from security import ALLOWED_CATEGORIES, now_wib
 from sheets_helper import check_budget_alert
 
 # Build categories list for display
@@ -200,7 +200,7 @@ def format_success_reply_new(transactions: list, dompet_sheet: str, company: str
         lines.append(f"📋 Projek: {projek_str}")
     
     # Timestamp
-    now = datetime.now().strftime("%d %b %Y, %H:%M")
+    now = now_wib().strftime("%d %b %Y, %H:%M")
     lines.append(f"⏱️ {now}")
     
     # Next steps

@@ -16,8 +16,22 @@ import re
 import time
 import hashlib
 from typing import Optional, Tuple, Dict, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
+
+
+# ===================== TIMEZONE CONFIGURATION =====================
+# WIB = UTC+7 (Western Indonesia Time / Asia/Jakarta)
+WIB = timezone(timedelta(hours=7))
+
+def now_wib() -> datetime:
+    """Get current datetime in WIB (UTC+7) timezone."""
+    return datetime.now(WIB)
+
+def today_wib_str() -> str:
+    """Get today's date in WIB as YYYY-MM-DD string."""
+    return now_wib().strftime('%Y-%m-%d')
+
 
 
 # ===================== FIXED CATEGORIES =====================

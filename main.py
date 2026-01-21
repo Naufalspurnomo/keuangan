@@ -57,6 +57,7 @@ from security import (
     SecurityError,
     RateLimitError,
     ALLOWED_CATEGORIES,
+    now_wib,
 )
 
 from pdf_report import generate_pdf_from_input, parse_month_input, validate_period_data
@@ -255,7 +256,7 @@ def format_success_reply_new(transactions: list, dompet_sheet: str, company: str
         lines.append(f"📋 Projek: {projek_str}")
     
     # Timestamp
-    now = datetime.now().strftime("%d %b %Y, %H:%M")
+    now = now_wib().strftime("%d %b %Y, %H:%M")
     lines.append(f"⏱️ {now}")
     
     # Next steps
@@ -571,7 +572,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     
                     if success:
                         invalidate_dashboard_cache()
-                        now = datetime.now().strftime("%d %b %Y, %H:%M")
+                        now = now_wib().strftime("%d %b %Y, %H:%M")
                         diff = new_amount - old_amount
                         diff_str = f"+Rp {diff:,}" if diff > 0 else f"-Rp {abs(diff):,}"
                         
