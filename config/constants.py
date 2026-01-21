@@ -34,8 +34,7 @@ COL_MESSAGE_ID = 11
 
 # Dashboard configuration
 DASHBOARD_SHEET_NAME = "Dashboard"
-META_SHEET_NAME = "Meta_Projek"
-SYSTEM_SHEETS = {'Config', 'Template', 'Settings', 'Master', DASHBOARD_SHEET_NAME, META_SHEET_NAME, 'Data_Agregat'}
+SYSTEM_SHEETS = {'Config', 'Template', 'Settings', 'Master', DASHBOARD_SHEET_NAME, 'Data_Agregat'}
 
 # Budget configuration
 DEFAULT_BUDGET = int(os.getenv('DEFAULT_PROJECT_BUDGET', '10000000'))
@@ -128,6 +127,11 @@ class Commands:
     # Cancel/revision - ONLY slash for safety
     CANCEL = ['/cancel', 'batal', 'cancel']
     REVISION_PREFIXES = ['/revisi']  # Slash only for revision
+    
+    # Link command
+    LINK_SLASH = ['/link']
+    LINK_PRIVATE = ['link']
+    LINK = LINK_SLASH + LINK_PRIVATE
 
 
 # ===================== GROUP TRIGGERS =====================

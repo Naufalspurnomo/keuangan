@@ -96,7 +96,7 @@ from utils.formatters import (
 )
 
 # Import centralized config
-from config.constants import Commands, Timeouts, GROUP_TRIGGERS
+from config.constants import Commands, Timeouts, GROUP_TRIGGERS, SPREADSHEET_ID
 from config.errors import UserErrors
 
 # Initialize Flask app
@@ -800,6 +800,12 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         if is_command_match(text, Commands.HELP, is_group):
             reply = HELP_MESSAGE.replace('*', '').replace('_', '')
             send_wuzapi_reply(reply_to, reply)
+            return jsonify({'status': 'ok'}), 200
+            
+        # /link
+        if is_command_match(text, Commands.LINK, is_group):
+            link = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
+            send_wuzapi_reply(reply_to, f"🔗 Link Spreadsheet:\n{link}")
             return jsonify({'status': 'ok'}), 200
         
         # /status

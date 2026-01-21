@@ -61,6 +61,7 @@ Setelah transaksi terdeteksi, pilih nomor (1-5).
 📋 `/list` - Transaksi 7 hari terakhir
 📈 `/laporan` - Laporan 7 hari
 🗂️ `/dompet` - Daftar dompet
+🔗 `/link` - Link Google Sheets
 ❓ `/help` - Panduan lengkap
 
 🔒 Bot hanya MENAMBAH data, tidak bisa hapus.
@@ -96,6 +97,7 @@ HELP_MESSAGE = f"""📖 *PANDUAN BOT KEUANGAN*
 🗂️ `/dompet` - Daftar dompet
 🗂️ `/kategori` - Daftar kategori
 🤖 `/tanya [x]` - Tanya AI
+🔗 `/link` - Link spreadsheet
 📄 `/exportpdf` - Export PDF
 
 _Koreksi data langsung di Google Sheets._"""
