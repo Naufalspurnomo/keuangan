@@ -59,7 +59,7 @@ INJECTION_PATTERNS = [
     r"\.env",
     r"environment\s*variable",
     r"groq.?api.?key",
-    r"fonnte.?token",
+
     r"telegram.?token",
     r"google.?sheet.?id",
     r"spreadsheet.?id",
@@ -107,7 +107,7 @@ COMPILED_INJECTION_PATTERNS = [
 
 SENSITIVE_PATTERNS = [
     (r"gsk_[a-zA-Z0-9]{20,}", "[GROQ_KEY_HIDDEN]"),
-    (r"[a-zA-Z0-9]{30,}#[a-zA-Z0-9]+", "[FONNTE_TOKEN_HIDDEN]"),
+
     (r"\d{9,}:[a-zA-Z0-9_-]{35}", "[TELEGRAM_TOKEN_HIDDEN]"),
     (r"[a-zA-Z0-9_-]{40,}", "[LONG_TOKEN_HIDDEN]"),
     (r"\"refresh_token\":\s*\"[^\"]+\"", "\"refresh_token\": \"[HIDDEN]\""),
@@ -280,8 +280,7 @@ def validate_media_url(url: str) -> Tuple[bool, Optional[str]]:
     ALLOWED_DOMAINS = [
         "api.telegram.org",
         "file.telegram.org",
-        "api.fonnte.com",
-        "s3.fonnte.com",
+
     ]
     
     # Parse URL

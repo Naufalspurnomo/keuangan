@@ -44,6 +44,7 @@
             body {
                 background: white !important;
                 -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
             }
 
             .no-print {
@@ -88,7 +89,7 @@
 
             subgraph Webhook["🌐 Webhook Endpoints"]
             B1["/telegram POST"]
-            B2["/webhook Fonnte POST"]
+            B2["/webhook_wuzapi POST"]
             end
 
             A1 --> B1
@@ -200,37 +201,17 @@
         </div>
     </section>
 
-    <section class="mb-16 break-before">
-        <h2 class="text-2xl font-bold mb-6 text-slate-900 border-l-4 border-blue-600 pl-4">3. Smart Reminder & AI
-            Pipeline</h2>
-        <div class="mermaid">
-            flowchart TD
-            subgraph AI["🧠 AI Processing"]
-            A[Input Text/OCR] --> B[System Prompt]
-            B --> C[Groq Llama 3.3]
-            C --> D[JSON Extraction]
-            D --> E[Correction Logic]
-            E --> F[Strict Type Validation]
-            end
 
-            subgraph Scheduler["⏰ Reminder Scheduler"]
-            G[Start Loop] --> H{Check Activity}
-            H -->|Inactive > 3 Days| I[Send Reminder]
-            H -->|Active| J[Sleep 6h]
-            I --> J
-            end
-        </div>
-    </section>
 
     <section class="mb-16">
-        <h2 class="text-2xl font-bold mb-6 text-slate-900 border-l-4 border-blue-600 pl-4">4. File Structure</h2>
+        <h2 class="text-2xl font-bold mb-6 text-slate-900 border-l-4 border-blue-600 pl-4">3. File Structure</h2>
         <div class="bg-slate-50 p-6 rounded-xl border border-slate-200 font-mono text-sm leading-relaxed">
             e:\Keuangan\<br>
             ├── main.py # Bot webhook, commands, Flask app<br>
             ├── ai_helper.py # AI extraction, OCR, Whisper<br>
             ├── sheets_helper.py # Google Sheets operations<br>
             ├── security.py # Input sanitization, injection detection<br>
-            ├── reminder.py # Smart reminder scheduler<br>
+
             ├── user_state.py # Simplified user state<br>
             ├── .env # API keys (NEVER commit!)<br>
             ├── credentials.json # Google OAuth credentials<br>

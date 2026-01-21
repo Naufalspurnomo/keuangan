@@ -24,4 +24,8 @@ from .parsers import (
     should_respond_in_group,
     pending_key,
     pending_is_expired,
+    # New helpers for group-aware command matching
+    is_command_match,
+    is_prefix_match,
 )
+

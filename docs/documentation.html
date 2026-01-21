@@ -96,6 +96,7 @@
         .text-gradient {
             background: linear-gradient(135deg, #0f172a 0%, #0ea5e9 100%);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
         }
 
@@ -628,8 +629,7 @@
                 <h2 class="text-3xl md:text-5xl font-bold text-white mb-6">Keamanan Tingkat Enterprise</h2>
                 <p class="text-slate-400 text-lg max-w-2xl mx-auto mb-12">
                     Dilengkapi dengan <span class="text-white font-semibold">Prompt Injection Shield</span> untuk
-                    memblokir manipulasi AI, dan sistem <span class="text-white font-semibold">Smart Reminder</span>
-                    untuk menjaga kedisiplinan pencatatan Anda.
+                    memblokir manipulasi AI.
                 </p>
 
                 <div class="grid md:grid-cols-3 gap-6 text-left">
@@ -639,13 +639,9 @@
                         <p class="text-slate-400 text-sm">Enkripsi end-to-end memastikan data transaksi Anda aman dari
                             akses tidak sah.</p>
                     </div>
-                    <div class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 backdrop-blur-sm">
-                        <i data-lucide="bell" class="w-8 h-8 text-amber-400 mb-4"></i>
-                        <h3 class="text-white font-bold mb-2">Smart Reminder</h3>
-                        <p class="text-slate-400 text-sm">Notifikasi otomatis via WhatsApp jika Anda lupa input data
-                            selama 3 hari.</p>
-                    </div>
-                    <div class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 backdrop-blur-sm">
+
+                    <div
+                        class="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 backdrop-blur-sm md:col-span-2 md:w-1/2 md:mx-auto">
                         <i data-lucide="alert-triangle" class="w-8 h-8 text-rose-400 mb-4"></i>
                         <h3 class="text-white font-bold mb-2">Budget Alert</h3>
                         <p class="text-slate-400 text-sm">Peringatan dini saat pengeluaran mendekati limit budget

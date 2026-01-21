@@ -14,11 +14,12 @@ import threading
 from datetime import datetime
 from typing import Dict, Optional, Any
 
-# TTL for pending transactions (15 minutes)
-PENDING_TTL_SECONDS = 15 * 60
+from config.constants import Timeouts
 
-# Dedup window (5 minutes)
-DEDUP_TTL_SECONDS = 5 * 60
+# Use centralized timeouts
+PENDING_TTL_SECONDS = Timeouts.PENDING_TRANSACTION
+DEDUP_TTL_SECONDS = Timeouts.DEDUP_WINDOW
+MAX_BOT_REFS = Timeouts.BOT_REFS_MAX
 
 # Thread lock for dedup operations
 _dedup_lock = threading.Lock()
@@ -98,8 +99,7 @@ def is_message_duplicate(message_id: str) -> bool:
 # Format: {bot_msg_id: original_tx_msg_id}
 _bot_message_refs: Dict[str, str] = {}
 
-# Maximum refs to keep in cache
-MAX_BOT_REFS = 1000
+# MAX_BOT_REFS imported from config.constants.Timeouts
 
 
 def store_bot_message_ref(bot_msg_id: str, original_tx_msg_id: str) -> None:

@@ -12,11 +12,10 @@ Contains:
 import re
 from datetime import datetime
 
-# TTL for pending transactions (15 minutes)
-PENDING_TTL_SECONDS = 15 * 60
+from config.constants import Timeouts, GROUP_TRIGGERS
 
-# Group chat triggers
-GROUP_TRIGGERS = ["+catat", "+bot", "+input", "/catat"]
+# Use centralized timeouts
+PENDING_TTL_SECONDS = Timeouts.PENDING_TRANSACTION
 
 
 def pending_key(sender_number: str, chat_jid: str) -> str:
@@ -37,6 +36,10 @@ def should_respond_in_group(message: str, is_group: bool) -> tuple:
     """
     Check if bot should respond to this message in group chat.
     
+    In group chats, ONLY respond to:
+    1. Messages starting with "/" (slash commands)
+    2. Messages with GROUP_TRIGGERS prefix (+catat, +bot, etc.)
+    
     Returns:
         (should_respond: bool, cleaned_message: str)
     """
@@ -45,18 +48,72 @@ def should_respond_in_group(message: str, is_group: bool) -> tuple:
     
     message_lower = message.lower().strip()
     
-    # Check for group triggers
+    # Check for group triggers (+catat, +bot, +input, /catat)
     for trigger in GROUP_TRIGGERS:
         if message_lower.startswith(trigger.lower()):
             # Remove trigger and return cleaned message
             cleaned = message[len(trigger):].strip()
             return True, cleaned
     
-    # Check for commands (always work in groups)
+    # ONLY respond to "/" commands in groups (avoid spam from casual chat)
     if message_lower.startswith('/'):
         return True, message
     
-    return False, ""  # Group chat without trigger - ignore
+    return False, ""  # Group chat without trigger or slash - ignore
+
+
+def is_command_match(text: str, command_list: list, is_group: bool = False) -> bool:
+    """
+    Check if text matches any command in the list, respecting group chat rules.
+    
+    Args:
+        text: The message text (lowercase)
+        command_list: List of command aliases (e.g., Commands.STATUS)
+        is_group: If True, only match slash commands
+        
+    Returns:
+        True if text matches a valid command for the context
+    """
+    text = text.lower().strip()
+    
+    if is_group:
+        # In groups, only match commands starting with "/"
+        for cmd in command_list:
+            if cmd.startswith('/') and text == cmd:
+                return True
+        return False
+    else:
+        # In private chat, match any alias
+        return text in command_list
+
+
+def is_prefix_match(text: str, prefix_list: list, is_group: bool = False) -> bool:
+    """
+    Check if text starts with any prefix in the list, respecting group chat rules.
+    
+    Args:
+        text: The message text (lowercase)
+        prefix_list: List of prefixes (e.g., Commands.TANYA_PREFIXES)
+        is_group: If True, only match slash prefixes
+        
+    Returns:
+        True if text starts with a valid prefix for the context
+    """
+    text = text.lower().strip()
+    
+    if is_group:
+        # In groups, only match prefixes starting with "/"
+        for prefix in prefix_list:
+            if prefix.startswith('/') and text.startswith(prefix):
+                return True
+        return False
+    else:
+        # In private chat, match any prefix
+        for prefix in prefix_list:
+            if text.startswith(prefix):
+                return True
+        return False
+
 
 
 def parse_selection(text: str) -> tuple:
