@@ -99,6 +99,7 @@ from utils.formatters import (
 # Import centralized config
 from config.constants import Commands, Timeouts, GROUP_TRIGGERS, SPREADSHEET_ID
 from config.errors import UserErrors
+from config.allowlist import is_sender_allowed
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -353,6 +354,16 @@ def webhook_wuzapi():
         push_name = info.get('PushName', 'User')
         message_id = info.get('ID', '')
         chat_jid = info.get('Chat', '')
+        is_group = '@g.us' in chat_jid
+
+        if not is_sender_allowed([sender_number]):
+            reply_target = chat_jid if (is_group and chat_jid) else sender_number
+            send_wuzapi_reply(
+                reply_target,
+                "❌ Anda tidak diizinkan menggunakan bot ini. "
+                "Hubungi admin untuk akses."
+            )
+            return jsonify({'status': 'forbidden'}), 200
         
         # Get the actual message text
         message_obj = event.get('Message', {})
@@ -448,9 +459,6 @@ def webhook_wuzapi():
             secure_log("DEBUG", f"WuzAPI: Duplicate message_id={message_id}, skipping")
             return jsonify({'status': 'duplicate'}), 200
 
-        # Determine if it's a group chat
-        is_group = '@g.us' in chat_jid
-        
         # Process the message (with image URL and message IDs)
         # Pass chat_jid so group messages get replies in the group, not personal chat
         return process_wuzapi_message(sender_number, push_name, text, input_type, media_url, quoted_msg_id, message_id, is_group, chat_jid)
@@ -1148,8 +1156,17 @@ def webhook_telegram():
         message = update['message']
         message_id = message.get('message_id', 0)
         chat_id = message['chat']['id']
-        user_id = str(chat_id)
+        user_id = str(message['from'].get('id', chat_id))
         sender_name = message['from'].get('first_name', 'User')
+        username = message['from'].get('username')
+
+        if not is_sender_allowed([user_id, str(chat_id), username]):
+            send_telegram_reply(
+                chat_id,
+                "❌ Anda tidak diizinkan menggunakan bot ini. "
+                "Hubungi admin untuk akses."
+            )
+            return jsonify({'ok': True}), 200
         
         # Deduplication
         cache_key = f"{chat_id}_{message_id}"
@@ -1327,17 +1344,11 @@ def webhook_telegram():
                 reply = f"📁 *Kategori Tersedia:*\n\n{CATEGORIES_DISPLAY}"
                 send_telegram_reply(chat_id, reply)
                 return jsonify({'ok': True}), 200
-
-            # /link
-            if is_command_match(text, Commands.LINK, is_group):
-                reply = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
-                send_telegram_reply(chat_id, f"🔗 *Link Google Sheets:*\n{reply}")
-                return jsonify({'ok': True}), 200
             
             # /company, /project, /dompet - List available dompet & company sheets
             if is_command_match(text, Commands.DOMPET, is_group):
                 reply = f"""🗂️ *Dompet & Company:*
-            
+
 📁 *Dompet Holja*
   1️⃣ HOLLA
   2️⃣ HOJJA
@@ -1728,4 +1739,3 @@ if __name__ == '__main__':
     print("=" * 50)
     
     app.run(host='0.0.0.0', port=5000, debug=DEBUG, use_reloader=False)
-
