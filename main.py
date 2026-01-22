@@ -843,7 +843,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         if is_command_match(text, Commands.DOMPET, is_group):
             reply = """🗂️ Dompet & Company:
 
-📁 Dompet Holla
+📁 Dompet Holja
   1. HOLLA
   2. HOJJA
 
@@ -1327,12 +1327,18 @@ def webhook_telegram():
                 reply = f"📁 *Kategori Tersedia:*\n\n{CATEGORIES_DISPLAY}"
                 send_telegram_reply(chat_id, reply)
                 return jsonify({'ok': True}), 200
+
+            # /link
+            if is_command_match(text, Commands.LINK, is_group):
+                reply = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
+                send_telegram_reply(chat_id, f"🔗 *Link Google Sheets:*\n{reply}")
+                return jsonify({'ok': True}), 200
             
             # /company, /project, /dompet - List available dompet & company sheets
             if is_command_match(text, Commands.DOMPET, is_group):
                 reply = f"""🗂️ *Dompet & Company:*
-
-📁 *Dompet Holla*
+            
+📁 *Dompet Holja*
   1️⃣ HOLLA
   2️⃣ HOJJA
 

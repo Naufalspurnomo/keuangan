@@ -61,7 +61,7 @@ DOMPET_UPDATE_REGEX = re.compile(
 
 # Patterns to detect which dompet user mentioned
 DOMPET_PATTERNS = [
-    (re.compile(r"\b(dompet\s*holla|holla)\b", re.IGNORECASE), "Dompet Holla"),
+    (re.compile(r"\b(dompet\s*holja|holja)\b", re.IGNORECASE), "Dompet Holja"),
     (re.compile(r"\b(dompet\s*texturin\s*sby|texturin\s*sby|texturin\s*surabaya)\b", re.IGNORECASE), "Dompet Texturin Sby"),
     (re.compile(r"\b(dompet\s*evan|evan)\b", re.IGNORECASE), "Dompet Evan"),
 ]
@@ -87,12 +87,12 @@ def detect_wallet_from_text(text: str) -> Optional[str]:
     # Define wallet patterns with priority (more specific first)
     # These map to the 'company' field value expected by the system
     wallet_patterns = {
-        "Dompet Holla": [
-            r'\bdompet\s+holla\b',
-            r'\bsaldo\s+holla\b',
-            r'\bwallet\s+holla\b',
-            r'\bisi\s+holla\b',
-            r'\bholla\b'  # Last priority (standalone) check context later if needed
+        "Dompet Holja": [
+            r'\bdompet\s+holja\b',
+            r'\bsaldo\s+holja\b',
+            r'\bwallet\s+holja\b',
+            r'\bisi\s+holja\b',
+            r'\bholja\b'  # Last priority (standalone) check context later if needed
         ],
         "Dompet Texturin Sby": [
             r'\bdompet\s+texturin\s*(surabaya|sby)?\b',
@@ -130,7 +130,7 @@ def detect_wallet_from_text(text: str) -> Optional[str]:
                 
                 # "evan" / "holla" / "texturin" standalone -> Require wallet context
                 # This prevents "Bayar Evan" from becoming a wallet transaction
-                if any(k in pattern for k in [r'\bholla\b', r'\bevan\b', r'texturin']):
+                if any(k in pattern for k in [r'\bholja\b', r'\bevan\b', r'texturin']):
                     if not has_wallet_context:
                         continue
                         
@@ -367,8 +367,8 @@ def ocr_image(image_path: str) -> str:
 WALLET_DETECTION_RULES = """
 **WALLET KEYWORDS (case-insensitive):**
 
-1. Dompet Holla:
-   - "dompet holla", "holla", "saldo holla", "wallet holla"
+1. Dompet Holja:
+   - "dompet holja", "holja", "saldo holja", "wallet holja"
 
 2. Dompet Texturin Sby:
    - "dompet texturin", "texturin surabaya", "texturin sby", "saldo texturin"
@@ -444,7 +444,7 @@ COMPANY NAMES (CASE-INSENSITIVE MATCHING):
 - "KANTOR" or "kantor" -> "KANTOR"
 
 # LOGIC FOR WALLET NAMES -> DEFAULT COMPANY
-- "Dompet Holla" -> "HOLLA"
+- "Dompet Holja" -> "HOLLA"
 - "Dompet Evan" -> "KANTOR"
 - "Dompet Texturin" -> "TEXTURIN-Surabaya"
 
@@ -482,7 +482,7 @@ CRITICAL LOGIC RULES:
 
 3. COMPANY EXTRACTION (If not User explicitly mentions company):
    - IF user mentions "Dompet Evan" AND NOT "Saldo Umum" context: Output "company": "KANTOR" (Default).
-   - IF user mentions "Dompet Holla" AND NOT "Saldo Umum" context: Output "company": "HOLLA" (Default).
+   - IF user mentions "Dompet Holja" AND NOT "Saldo Umum" context: Output "company": "HOLLA" (Default).
    - IF user explicitly mentions company (e.g., TEXTURIN-Bali), use that.
 
 CONTEXT:
