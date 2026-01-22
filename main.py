@@ -43,6 +43,7 @@ from sheets_helper import (
     DOMPET_SHEETS, DOMPET_COMPANIES, SELECTION_OPTIONS,
     get_selection_by_idx, get_dompet_for_company,
     find_transaction_by_message_id, update_transaction_amount,
+    normalize_project_display_name,
 )
 from wuzapi_helper import (
     send_wuzapi_reply,
@@ -212,7 +213,9 @@ def format_success_reply(transactions: list, company_sheet: str) -> str:
         
         # Track nama projek
         if t.get('nama_projek'):
-            nama_projek_set.add(t['nama_projek'])
+            display_name = normalize_project_display_name(t['nama_projek'])
+            if display_name:
+                nama_projek_set.add(display_name)
     
     lines.append(f"\n*Total: Rp {total:,}*".replace(',', '.'))
     
@@ -245,7 +248,9 @@ def format_success_reply_new(transactions: list, dompet_sheet: str, company: str
         lines.append(f"{tipe_icon} {t.get('keterangan', '-')}: Rp {amount:,}".replace(',', '.'))
         
         if t.get('nama_projek'):
-            nama_projek_set.add(t['nama_projek'])
+            display_name = normalize_project_display_name(t['nama_projek'])
+            if display_name:
+                nama_projek_set.add(display_name)
     
     lines.append(f"\n📊 Total: Rp {total:,}".replace(',', '.'))
     

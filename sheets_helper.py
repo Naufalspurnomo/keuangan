@@ -164,6 +164,38 @@ def get_all_categories() -> List[str]:
     return ALLOWED_CATEGORIES.copy()
 
 
+def _normalize_project_key(name: str) -> str:
+    return " ".join(name.split()).casefold()
+
+
+def _titlecase_preserve_acronyms(name: str) -> str:
+    parts = name.split()
+    output = []
+    for part in parts:
+        if part.isupper() and len(part) <= 3:
+            output.append(part)
+        else:
+            output.append(part.capitalize())
+    return " ".join(output)
+
+
+def normalize_project_display_name(name: str) -> str:
+    cleaned = " ".join(name.split())
+    if not cleaned:
+        return ""
+    if cleaned.isupper() or cleaned.islower():
+        return _titlecase_preserve_acronyms(cleaned)
+    return cleaned
+
+
+def _prefer_display_name(current: str, candidate: str) -> str:
+    if not current:
+        return candidate
+    if current == current.lower() and candidate != candidate.lower():
+        return candidate
+    return current
+
+
 def append_transaction(transaction: Dict, sender_name: str, source: str = "Text", 
                        dompet_sheet: str = None, company: str = None, 
                        nama_projek: str = None,
@@ -253,6 +285,7 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
                 "Jika ini transaksi dompet (isi saldo/deposit), pakai nama_projek = 'Saldo Umum'."
             )
         safe_nama_projek = sanitize_input(raw_nama_projek)[:100]
+        safe_nama_projek = normalize_project_display_name(safe_nama_projek)
         
         # Get message_id from transaction if provided
         message_id = transaction.get('message_id', '')
@@ -561,16 +594,30 @@ def get_summary(days: int = 30) -> Dict:
     for d in data:
         proj = d.get('nama_projek', '').strip()
         if proj:
-            if proj not in by_projek:
-                by_projek[proj] = {'income': 0, 'expense': 0, 'profit_loss': 0}
+            proj_key = _normalize_project_key(proj)
+            display_name = normalize_project_display_name(proj)
+            if proj_key not in by_projek:
+                by_projek[proj_key] = {
+                    'name': display_name,
+                    'income': 0,
+                    'expense': 0,
+                    'profit_loss': 0
+                }
+            else:
+                by_projek[proj_key]['name'] = _prefer_display_name(
+                    by_projek[proj_key]['name'],
+                    display_name
+                )
             if d.get('tipe') == 'Pemasukan':
-                by_projek[proj]['income'] += d['jumlah']
+                by_projek[proj_key]['income'] += d['jumlah']
             elif d.get('tipe') == 'Pengeluaran':
-                by_projek[proj]['expense'] += d['jumlah']
+                by_projek[proj_key]['expense'] += d['jumlah']
     
     # Calculate profit/loss for each project
-    for proj in by_projek:
-        by_projek[proj]['profit_loss'] = by_projek[proj]['income'] - by_projek[proj]['expense']
+    for proj_key in by_projek:
+        by_projek[proj_key]['profit_loss'] = (
+            by_projek[proj_key]['income'] - by_projek[proj_key]['expense']
+        )
     
     return {
         'period_days': days,
@@ -666,24 +713,15 @@ def format_data_for_ai(days: int = 30) -> str:
         lines.append("")
     
     # Group by nama_projek - include BOTH income and expense (case-insensitive)
-    def _normalize_project_name(name: str) -> str:
-        return " ".join(name.split()).casefold()
-
-    def _prefer_display_name(current: str, candidate: str) -> str:
-        if not current:
-            return candidate
-        if current == current.lower() and candidate != candidate.lower():
-            return candidate
-        return current
-
     by_projek = {}
     for d in data:
         projek = d.get('nama_projek', '').strip()
         if projek:
-            projek_key = _normalize_project_name(projek)
+            projek_key = _normalize_project_key(projek)
+            display_name = normalize_project_display_name(projek)
             if projek_key not in by_projek:
                 by_projek[projek_key] = {
-                    'name': projek,
+                    'name': display_name,
                     'income': 0,
                     'expense': 0,
                     'company': d.get('company_sheet', '')
@@ -691,7 +729,7 @@ def format_data_for_ai(days: int = 30) -> str:
             else:
                 by_projek[projek_key]['name'] = _prefer_display_name(
                     by_projek[projek_key]['name'],
-                    projek
+                    display_name
                 )
             if d.get('tipe') == 'Pengeluaran':
                 by_projek[projek_key]['expense'] += d['jumlah']
@@ -833,11 +871,11 @@ def format_report_message(report: Dict) -> str:
             key=lambda x: abs(x[1]['profit_loss']), 
             reverse=True
         )[:5]
-        for proj, info in sorted_projek:
+        for _, info in sorted_projek:
             pl = info['profit_loss']
             icon = "📈" if pl > 0 else "📉" if pl < 0 else "➖"
             status_text = "UNTUNG" if pl > 0 else "RUGI" if pl < 0 else "NETRAL"
-            lines.append(f"  {icon} {proj}: Rp {pl:,} ({status_text})".replace(',', '.'))
+            lines.append(f"  {icon} {info['name']}: Rp {pl:,} ({status_text})".replace(',', '.'))
     
     return '\n'.join(lines)
 
