@@ -851,7 +851,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         if is_command_match(text, Commands.DOMPET, is_group):
             reply = """🗂️ Dompet & Company:
 
-📁 Dompet Holla
+📁 Dompet Holja
   1. HOLLA
   2. HOJJA
 
@@ -1349,7 +1349,7 @@ def webhook_telegram():
             if is_command_match(text, Commands.DOMPET, is_group):
                 reply = f"""🗂️ *Dompet & Company:*
 
-📁 *Dompet Holla*
+📁 *Dompet Holja*
   1️⃣ HOLLA
   2️⃣ HOJJA
 
