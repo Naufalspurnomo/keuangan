@@ -39,6 +39,7 @@ from security import (
     MAX_INPUT_LENGTH,
     MAX_TRANSACTIONS_PER_MESSAGE,
 )
+from config.wallets import DOMPET_SHEETS
 
 # Groq Configuration
 GROQ_API_KEY = os.getenv('GROQ_API_KEY')
@@ -55,13 +56,13 @@ WALLET_UPDATE_REGEX = re.compile(
 # Patterns that indicate wallet/dompet balance update (not a regular project transaction)
 # These patterns mean "updating wallet balance" not "expense for a project"
 DOMPET_UPDATE_REGEX = re.compile(
-    r"\b(pemasukan|pengeluaran|saldo|terima|masuk|keluar)\s+(dompet\s*(?:holla|evan|texturin)|ke\s*dompet)",
+    r"\b(pemasukan|pengeluaran|saldo|terima|masuk|keluar)\s+(dompet\s*(?:holja|evan|texturin)|ke\s*dompet)",
     re.IGNORECASE
 )
 
 # Patterns to detect which dompet user mentioned
 DOMPET_PATTERNS = [
-    (re.compile(r"\b(dompet\s*holla|holla)\b", re.IGNORECASE), "Dompet Holla"),
+    (re.compile(r"\b(dompet\s*holja|holja)\b", re.IGNORECASE), "Dompet Holja"),
     (re.compile(r"\b(dompet\s*texturin\s*sby|texturin\s*sby|texturin\s*surabaya)\b", re.IGNORECASE), "Dompet Texturin Sby"),
     (re.compile(r"\b(dompet\s*evan|evan)\b", re.IGNORECASE), "Dompet Evan"),
 ]
@@ -87,12 +88,12 @@ def detect_wallet_from_text(text: str) -> Optional[str]:
     # Define wallet patterns with priority (more specific first)
     # These map to the 'company' field value expected by the system
     wallet_patterns = {
-        "Dompet Holla": [
-            r'\bdompet\s+holla\b',
-            r'\bsaldo\s+holla\b',
-            r'\bwallet\s+holla\b',
-            r'\bisi\s+holla\b',
-            r'\bholla\b'  # Last priority (standalone) check context later if needed
+        "Dompet Holja": [
+            r'\bdompet\s+holja\b',
+            r'\bsaldo\s+holja\b',
+            r'\bwallet\s+holja\b',
+            r'\bisi\s+holja\b',
+            r'\bholja\b'  # Last priority (standalone) check context later if needed
         ],
         "Dompet Texturin Sby": [
             r'\bdompet\s+texturin\s*(surabaya|sby)?\b',
@@ -128,9 +129,9 @@ def detect_wallet_from_text(text: str) -> Optional[str]:
             if re.search(pattern, text_lower):
                 # AMBIGUITY HANDLING
                 
-                # "evan" / "holla" / "texturin" standalone -> Require wallet context
+                # "evan" / "holja" / "texturin" standalone -> Require wallet context
                 # This prevents "Bayar Evan" from becoming a wallet transaction
-                if any(k in pattern for k in [r'\bholla\b', r'\bevan\b', r'texturin']):
+                if any(k in pattern for k in [r'\bholja\b', r'\bevan\b', r'texturin']):
                     if not has_wallet_context:
                         continue
                         
@@ -242,15 +243,20 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
             # 2) company sanitize (boleh None, nanti kamu map di layer pemilihan dompet/company)
             if sanitized.get("company") is not None:
                 sanitized["company"] = sanitize_input(str(sanitized["company"]))[:50]
+            if not wallet_update:
+                if sanitized.get("company") == "UMUM":
+                    sanitized["company"] = None
+                elif sanitized.get("company") in DOMPET_SHEETS:
+                    sanitized["detected_dompet"] = sanitized["company"]
+                    sanitized["company"] = None
 
             # 3. Check for Wallet/Dompet Override
             # If regex found a wallet OR AI detected a wallet
             detected = sanitized.get('detected_dompet')
             
             if regex_wallet:
-                 # Regex takes precedence if AI missed it or matches "UMUM"
-                if not sanitized.get('company') or sanitized.get('company') == "UMUM" or not detected:
-                    sanitized['company'] = regex_wallet
+                # Regex takes precedence if AI missed it or matches "UMUM"
+                if not detected:
                     sanitized['detected_dompet'] = regex_wallet
                     secure_log("INFO", f"Regex fallback applied: {regex_wallet}")
 
@@ -367,8 +373,8 @@ def ocr_image(image_path: str) -> str:
 WALLET_DETECTION_RULES = """
 **WALLET KEYWORDS (case-insensitive):**
 
-1. Dompet Holla:
-   - "dompet holla", "holla", "saldo holla", "wallet holla"
+1. Dompet Holja:
+   - "dompet holja", "holja", "saldo holja", "wallet holja"
 
 2. Dompet Texturin Sby:
    - "dompet texturin", "texturin surabaya", "texturin sby", "saldo texturin"
@@ -444,7 +450,7 @@ COMPANY NAMES (CASE-INSENSITIVE MATCHING):
 - "KANTOR" or "kantor" -> "KANTOR"
 
 # LOGIC FOR WALLET NAMES -> DEFAULT COMPANY
-- "Dompet Holla" -> "HOLLA"
+- "Dompet Holja" -> "HOLLA"
 - "Dompet Evan" -> "KANTOR"
 - "Dompet Texturin" -> "TEXTURIN-Surabaya"
 
@@ -482,7 +488,7 @@ CRITICAL LOGIC RULES:
 
 3. COMPANY EXTRACTION (If not User explicitly mentions company):
    - IF user mentions "Dompet Evan" AND NOT "Saldo Umum" context: Output "company": "KANTOR" (Default).
-   - IF user mentions "Dompet Holla" AND NOT "Saldo Umum" context: Output "company": "HOLLA" (Default).
+   - IF user mentions "Dompet Holja" AND NOT "Saldo Umum" context: Output "company": "HOLLA" (Default).
    - IF user explicitly mentions company (e.g., TEXTURIN-Bali), use that.
 
 CONTEXT:

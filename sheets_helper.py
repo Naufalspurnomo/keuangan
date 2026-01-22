@@ -114,7 +114,7 @@ def get_dompet_sheet(dompet_name: str):
     """Get a specific dompet sheet by name.
     
     Args:
-        dompet_name: Name of the dompet sheet (e.g., 'Dompet Holla')
+        dompet_name: Name of the dompet sheet (e.g., 'Dompet Holja')
         
     Returns:
         gspread.Worksheet object
@@ -175,7 +175,7 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
         transaction: Transaction dict with tanggal, kategori, keterangan, jumlah, tipe
         sender_name: Name of the person recording
         source: Input source (Text/Image/Voice)
-        dompet_sheet: Target dompet sheet name (e.g., 'Dompet Holla')
+        dompet_sheet: Target dompet sheet name (e.g., 'Dompet Holja')
         company: Company name (e.g., 'HOLLA', 'HOJJA', 'UMUM')
         nama_projek: Project name (REQUIRED) - use 'Saldo Umum' for wallet updates
         company_sheet: DEPRECATED - for backward compatibility, maps to dompet_sheet
@@ -379,7 +379,7 @@ def append_transactions(transactions: List[Dict], sender_name: str, source: str 
         transactions: List of transaction dicts (each may have 'nama_projek')
         sender_name: Name of the person recording
         source: Input source (Text/Image/Voice)
-        dompet_sheet: Target dompet sheet name (e.g., 'Dompet Holla')
+        dompet_sheet: Target dompet sheet name (e.g., 'Dompet Holja')
         company: Company name (e.g., 'HOLLA', 'UMUM')
         company_sheet: DEPRECATED - for backward compatibility
         

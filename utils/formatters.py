@@ -17,7 +17,7 @@ from sheets_helper import check_budget_alert
 CATEGORIES_DISPLAY = '\n'.join(f"  • {cat}" for cat in ALLOWED_CATEGORIES)
 
 # Build dompet & company selection display
-SELECTION_DISPLAY = """  📁 Dompet Holla:
+SELECTION_DISPLAY = """  📁 Dompet Holja:
      1. HOLLA
      2. HOJJA
   📁 Dompet Texturin Sby:
@@ -42,7 +42,7 @@ Bot ini mencatat pengeluaran & pemasukan ke Google Sheets.
 
 *Contoh:*
 • `+catat Beli cat 500rb projek Purana`
-• `+catat Isi dompet holla 10jt`
+• `+catat Isi dompet holja 10jt`
 • 📷 Foto struk dengan caption `+catat`
 
 Setelah transaksi terdeteksi, pilih nomor (1-5).
@@ -136,7 +136,7 @@ def build_selection_prompt(transactions: list, mention: str = "") -> str:
 
 ❓ Simpan ke company mana? (1-5)
 
-📁 Dompet Holla: 1️⃣ HOLLA | 2️⃣ HOJJA
+📁 Dompet Holja: 1️⃣ HOLLA | 2️⃣ HOJJA
 📁 Texturin Sby: 3️⃣ TEXTURIN-Surabaya
 📁 Dompet Evan: 4️⃣ TEXTURIN-Bali | 5️⃣ KANTOR
 
