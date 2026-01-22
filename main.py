@@ -47,6 +47,7 @@ from sheets_helper import (
 )
 from wuzapi_helper import (
     send_wuzapi_reply,
+    format_mention_body,
     download_wuzapi_media,
     download_wuzapi_image
 )
@@ -466,7 +467,8 @@ def webhook_wuzapi():
 
         # Process the message (with image URL and message IDs)
         # Pass chat_jid so group messages get replies in the group, not personal chat
-        return process_wuzapi_message(sender_number, push_name, text, input_type, media_url, quoted_msg_id, message_id, is_group, chat_jid)
+        # Pass sender_alt for proper @mention in group replies
+        return process_wuzapi_message(sender_number, push_name, text, input_type, media_url, quoted_msg_id, message_id, is_group, chat_jid, sender_alt)
         
     except Exception as e:
         secure_log("ERROR", f"Webhook WuzAPI Error: {traceback.format_exc()}")
@@ -476,7 +478,8 @@ def webhook_wuzapi():
 def process_wuzapi_message(sender_number: str, sender_name: str, text: str, 
                            input_type: str = 'text', media_url: str = None,
                            quoted_msg_id: str = None, message_id: str = None,
-                           is_group: bool = False, chat_jid: str = None):
+                           is_group: bool = False, chat_jid: str = None,
+                           sender_jid: str = None):
     """Process a WuzAPI message and return response.
     
     This mirrors the Telegram command handling for consistency.
@@ -492,10 +495,21 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         message_id: ID of the current message (from WuzAPI)
         is_group: Boolean indicating if it's a group chat
         chat_jid: The chat JID (group ID for groups, personal for DM)
+        sender_jid: Full sender JID for @mention (format: 628xxx@s.whatsapp.net)
     """
     try:
         # Determine reply destination: for groups, reply to group; for personal, reply to sender
         reply_to = chat_jid if (is_group and chat_jid) else sender_number
+        
+        # Helper function to send reply with @mention in groups
+        def send_reply_with_mention(body: str, with_mention: bool = True) -> dict:
+            """Send reply, adding @mention for groups if requested."""
+            if is_group and with_mention and sender_jid:
+                # Format body with @mention and send with MentionedJID
+                body_with_mention = format_mention_body(body, sender_name, sender_jid)
+                return send_wuzapi_reply(reply_to, body_with_mention, sender_jid)
+            else:
+                return send_wuzapi_reply(reply_to, body)
         
         # Rate Limit
         allowed, wait_time = rate_limit_check(sender_number)
@@ -600,10 +614,10 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                             f"📍 {original_tx['dompet']}\n"
                             f"⏱️ {now}"
                         ).replace(',', '.')
-                        send_wuzapi_reply(reply_to, reply)
+                        send_reply_with_mention(reply)
                         return jsonify({'status': 'revised'}), 200
                     else:
-                        send_wuzapi_reply(reply_to, UserErrors.REVISION_FAILED)
+                        send_reply_with_mention(UserErrors.REVISION_FAILED)
                         return jsonify({'status': 'revision_error'}), 200
                 else:
                     send_wuzapi_reply(reply_to, UserErrors.REVISION_INVALID_AMOUNT)
@@ -724,7 +738,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                         invalidate_dashboard_cache()
                         reply = format_success_reply_new(pending['transactions'], dompet, detected_company).replace('*', '')
                         reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
-                        sent_msg = send_wuzapi_reply(reply_to, reply)
+                        sent_msg = send_reply_with_mention(reply)
                         bot_msg_id = None
                         if sent_msg and isinstance(sent_msg, dict):
                             bot_msg_id = (sent_msg.get('data', {}).get('Id') or
@@ -733,7 +747,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                         if bot_msg_id and tx_message_id:
                             store_bot_message_ref(bot_msg_id, tx_message_id)
                     else:
-                        send_wuzapi_reply(reply_to, f"❌ Gagal: {result.get('company_error', 'Error')}")
+                        send_reply_with_mention(f"❌ Gagal: {result.get('company_error', 'Error')}")
                     return jsonify({'status': 'processed'}), 200
                 else:
                     # No company, continue to selection
@@ -785,8 +799,8 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 reply = format_success_reply_new(pending['transactions'], dompet_sheet, company).replace('*', '')
                 reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
                 
-                # Send reply and capture bot message ID for revision tracking
-                sent_msg = send_wuzapi_reply(reply_to, reply)
+                # Send reply with @mention and capture bot message ID for revision tracking
+                sent_msg = send_reply_with_mention(reply)
                 secure_log("DEBUG", f"Selection flow - WuzAPI send response: {str(sent_msg)[:200]}")
                 
                 # WuzAPI returns: {'data': {'Id': 'xxx'}}
@@ -1045,7 +1059,7 @@ Kirim transaksi, lalu pilih nomor (1-5)."""
                     f"Ketik /cancel untuk batal"
                 ).replace(',', '.')
                 
-                send_wuzapi_reply(reply_to, ask_msg)
+                send_reply_with_mention(ask_msg)
                 return jsonify({'status': 'asking_project'}), 200
             
             # Check if AI detected company from input
@@ -1092,8 +1106,8 @@ Kirim transaksi, lalu pilih nomor (1-5)."""
                     reply = format_success_reply_new(transactions, dompet, detected_company).replace('*', '')
                     reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
                     
-                    # Send reply and capture bot message ID for revision tracking
-                    sent_msg = send_wuzapi_reply(reply_to, reply)
+                    # Send reply with @mention and capture bot message ID for revision tracking
+                    sent_msg = send_reply_with_mention(reply)
                     secure_log("DEBUG", f"WuzAPI send response type: {type(sent_msg)}, content: {str(sent_msg)[:300]}")
                     
                     # WuzAPI can return message ID in different structures
@@ -1126,9 +1140,9 @@ Kirim transaksi, lalu pilih nomor (1-5)."""
                     'chat_jid': chat_jid
                 }
                 
-                # Use the new selection prompt format
+                # Use the new selection prompt format with @mention
                 reply = build_selection_prompt(transactions).replace('*', '')
-                send_wuzapi_reply(reply_to, reply)
+                send_reply_with_mention(reply)
 
         except Exception as e:
             secure_log("ERROR", f"WuzAPI AI Error: {str(e)}")

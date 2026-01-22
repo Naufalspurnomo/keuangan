@@ -43,12 +43,17 @@ def _is_group_jid(to: str) -> bool:
     return isinstance(to, str) and ("@g.us" in to)
 
 
-def send_wuzapi_reply(to: str, body: str) -> Optional[Dict]:
+def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[Dict]:
     """Send WhatsApp message via WuzAPI.
     
     Standard endpoint: POST /chat/send/text with Token header.
     Payload: {"Phone":"62812xxxx","Body":"..."} for private
              {"JID":"xxx@g.us","Body":"..."} for groups
+             
+    Args:
+        to: Recipient phone/JID
+        body: Message body
+        mention_jid: Optional JID to mention (for groups). Format: "628xxx@s.whatsapp.net"
     """
     try:
         if not WUZAPI_DOMAIN or not WUZAPI_TOKEN:
@@ -68,9 +73,17 @@ def send_wuzapi_reply(to: str, body: str) -> Optional[Dict]:
         # Build payload variants (different WuzAPI builds use different field names)
         payload_variants = []
         if is_group:
-            payload_variants.append({"JID": to, "Body": body})
-            payload_variants.append({"JID": to, "Message": body})
-            payload_variants.append({"Phone": to, "Body": body})
+            base_payload = {"JID": to, "Body": body}
+            
+            # Add mention if provided
+            if mention_jid:
+                # WuzAPI uses "MentionedJID" for mentions
+                # Message body should contain @{phone} for visual display
+                base_payload["MentionedJID"] = [mention_jid]
+            
+            payload_variants.append(base_payload)
+            payload_variants.append({**base_payload, "Message": body})
+            payload_variants.append({"Phone": to, "Body": body, "MentionedJID": [mention_jid] if mention_jid else []})
         else:
             payload_variants.append({"Phone": phone, "Body": body})
             payload_variants.append({"Phone": phone, "Message": body})
@@ -107,6 +120,27 @@ def send_wuzapi_reply(to: str, body: str) -> Optional[Dict]:
     except Exception as e:
         secure_log("ERROR", f"WuzAPI Send Except: {type(e).__name__}: {str(e)}")
         return None
+
+
+def format_mention_body(body: str, sender_name: str, sender_jid: str) -> str:
+    """Format message body with @mention at the beginning.
+    
+    Args:
+        body: Original message body
+        sender_name: Display name of the user to mention
+        sender_jid: JID of the user (e.g., "628xxx@s.whatsapp.net")
+    
+    Returns:
+        Message body with @mention prepended
+    """
+    if not sender_jid:
+        return body
+    
+    # Extract phone number from JID for display
+    phone = sender_jid.split("@")[0] if "@" in sender_jid else sender_jid
+    
+    # Format: @628xxx at the beginning, followed by message
+    return f"@{phone}\n{body}"
 
 def download_wuzapi_media(media_url: str) -> Optional[str]:
     """Download media from WuzAPI or direct URL."""
