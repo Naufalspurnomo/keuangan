@@ -127,20 +127,47 @@ def format_mention_body(body: str, sender_name: str, sender_jid: str) -> str:
     
     Args:
         body: Original message body
-        sender_name: Display name of the user to mention
-        sender_jid: JID of the user (e.g., "628xxx@s.whatsapp.net")
+        sender_name: Display name of the user to mention (e.g., "Naufalspurnomo")
+        sender_jid: JID of the user (e.g., "628xxx:72@s.whatsapp.net")
     
     Returns:
-        Message body with @mention prepended
+        Message body with @mention prepended using sender's display name
     """
     if not sender_jid:
         return body
     
-    # Extract phone number from JID for display
-    phone = sender_jid.split("@")[0] if "@" in sender_jid else sender_jid
+    # Use sender's display name for the visible @mention
+    # WhatsApp will still tag the correct user via MentionedJID
+    display_name = sender_name if sender_name else "User"
     
-    # Format: @628xxx at the beginning, followed by message
-    return f"@{phone}\n{body}"
+    # Format: @DisplayName at the beginning, followed by message
+    return f"@{display_name}\n{body}"
+
+
+def get_clean_jid(sender_jid: str) -> str:
+    """Clean the sender JID by removing device suffix for MentionedJID.
+    
+    WhatsApp multi-device adds :XX suffix (e.g., 628xxx:72@s.whatsapp.net)
+    which should be stripped for mentions to work correctly.
+    
+    Args:
+        sender_jid: Raw JID (e.g., "628xxx:72@s.whatsapp.net")
+    
+    Returns:
+        Clean JID (e.g., "628xxx@s.whatsapp.net")
+    """
+    if not sender_jid:
+        return ""
+    
+    # Split by @ first
+    if "@" in sender_jid:
+        phone_part, domain = sender_jid.split("@", 1)
+        # Remove :XX device suffix from phone part
+        if ":" in phone_part:
+            phone_part = phone_part.split(":")[0]
+        return f"{phone_part}@{domain}"
+    
+    return sender_jid
 
 def download_wuzapi_media(media_url: str) -> Optional[str]:
     """Download media from WuzAPI or direct URL."""

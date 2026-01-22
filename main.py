@@ -48,6 +48,7 @@ from sheets_helper import (
 from wuzapi_helper import (
     send_wuzapi_reply,
     format_mention_body,
+    get_clean_jid,
     download_wuzapi_media,
     download_wuzapi_image
 )
@@ -503,11 +504,17 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         
         # Helper function to send reply with @mention in groups
         def send_reply_with_mention(body: str, with_mention: bool = True) -> dict:
-            """Send reply, adding @mention for groups if requested."""
+            """Send reply, adding @mention for groups if requested.
+            
+            Uses sender's display name for visible @mention text.
+            Cleans JID to remove device suffix for proper WhatsApp tagging.
+            """
             if is_group and with_mention and sender_jid:
-                # Format body with @mention and send with MentionedJID
+                # Clean JID to remove :XX device suffix (e.g., 628xxx:72 -> 628xxx)
+                clean_jid = get_clean_jid(sender_jid)
+                # Format body with @DisplayName and send with clean MentionedJID
                 body_with_mention = format_mention_body(body, sender_name, sender_jid)
-                return send_wuzapi_reply(reply_to, body_with_mention, sender_jid)
+                return send_wuzapi_reply(reply_to, body_with_mention, clean_jid)
             else:
                 return send_wuzapi_reply(reply_to, body)
         
