@@ -665,24 +665,45 @@ def format_data_for_ai(days: int = 30) -> str:
         lines.append("</PER_KATEGORI>")
         lines.append("")
     
-    # Group by nama_projek - include BOTH income and expense
+    # Group by nama_projek - include BOTH income and expense (case-insensitive)
+    def _normalize_project_name(name: str) -> str:
+        return " ".join(name.split()).casefold()
+
+    def _prefer_display_name(current: str, candidate: str) -> str:
+        if not current:
+            return candidate
+        if current == current.lower() and candidate != candidate.lower():
+            return candidate
+        return current
+
     by_projek = {}
     for d in data:
         projek = d.get('nama_projek', '').strip()
         if projek:
-            if projek not in by_projek:
-                by_projek[projek] = {'income': 0, 'expense': 0, 'company': d.get('company_sheet', '')}
+            projek_key = _normalize_project_name(projek)
+            if projek_key not in by_projek:
+                by_projek[projek_key] = {
+                    'name': projek,
+                    'income': 0,
+                    'expense': 0,
+                    'company': d.get('company_sheet', '')
+                }
+            else:
+                by_projek[projek_key]['name'] = _prefer_display_name(
+                    by_projek[projek_key]['name'],
+                    projek
+                )
             if d.get('tipe') == 'Pengeluaran':
-                by_projek[projek]['expense'] += d['jumlah']
+                by_projek[projek_key]['expense'] += d['jumlah']
             elif d.get('tipe') == 'Pemasukan':
-                by_projek[projek]['income'] += d['jumlah']
+                by_projek[projek_key]['income'] += d['jumlah']
     
     if by_projek:
         lines.append("<PER_NAMA_PROJEK>")
-        for projek, info in sorted(by_projek.items(), key=lambda x: -(x[1]['expense'] + x[1]['income'])):
+        for _, info in sorted(by_projek.items(), key=lambda x: -(x[1]['expense'] + x[1]['income'])):
             profit_loss = info['income'] - info['expense']
             status = "UNTUNG" if profit_loss > 0 else "RUGI" if profit_loss < 0 else "NETRAL"
-            lines.append(f"  - {projek} ({info['company']}): Pemasukan={info['income']:,} | Pengeluaran={info['expense']:,} | P/L={profit_loss:,} ({status})".replace(',', '.'))
+            lines.append(f"  - {info['name']} ({info['company']}): Pemasukan={info['income']:,} | Pengeluaran={info['expense']:,} | P/L={profit_loss:,} ({status})".replace(',', '.'))
         lines.append("</PER_NAMA_PROJEK>")
         lines.append("")
     
