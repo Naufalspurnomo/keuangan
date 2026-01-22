@@ -128,7 +128,7 @@ def detect_wallet_from_text(text: str) -> Optional[str]:
             if re.search(pattern, text_lower):
                 # AMBIGUITY HANDLING
                 
-                # "evan" / "holla" / "texturin" standalone -> Require wallet context
+                # "evan" / "holja" / "texturin" standalone -> Require wallet context
                 # This prevents "Bayar Evan" from becoming a wallet transaction
                 if any(k in pattern for k in [r'\bholja\b', r'\bevan\b', r'texturin']):
                     if not has_wallet_context:
