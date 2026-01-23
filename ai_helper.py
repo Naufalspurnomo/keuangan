@@ -97,44 +97,7 @@ def extract_transfer_fee(text: str) -> int:
                 return amount
     return 0
 
-PROJECT_STOPWORDS = {
-    "biaya",
-    "bayar",
-    "beli",
-    "transfer",
-    "fee",
-    "gaji",
-    "ongkir",
-    "pajak",
-    "kas",
-    "uang",
-    "sewa",
-    "makan",
-    "tol",
-    "toll",
-    "parkir",
-    "bensin",
-    "bbm",
-    "admin",
-    "dp",
-    "pelunasan",
-    "lunas",
-    "cicil",
-    "cicilan",
-}
 
-
-def extract_project_from_description(description: str) -> str:
-    cleaned = sanitize_input(description or "")
-    tokens = [t for t in cleaned.replace("/", " ").split() if t]
-    for token in tokens:
-        token_clean = token.strip().strip(".,:-")
-        if len(token_clean) < 2:
-            continue
-        if token_clean.casefold() in PROJECT_STOPWORDS:
-            continue
-        return token_clean
-    return ""
 
 # Groq Configuration
 GROQ_API_KEY = os.getenv('GROQ_API_KEY')
@@ -359,7 +322,6 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
             validated_transactions.append(sanitized)
 
         if not wallet_update and validated_transactions:
-        if validated_transactions:
             inferred_project = next(
                 (t.get("nama_projek") for t in validated_transactions if t.get("nama_projek")),
                 ""
