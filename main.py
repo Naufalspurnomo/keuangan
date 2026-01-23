@@ -76,6 +76,9 @@ from services.state_manager import (
     is_message_duplicate,
     store_bot_message_ref,
     get_original_message_id,
+    store_pending_message_ref,
+    get_pending_key_from_message,
+    clear_pending_message_ref,
 )
 
 from utils.parsers import (
@@ -517,6 +520,33 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 return send_wuzapi_reply(reply_to, body_with_mention, clean_jid)
             else:
                 return send_wuzapi_reply(reply_to, body)
+
+        def extract_bot_msg_id(sent_msg: dict) -> str:
+            """Extract bot message ID from WuzAPI response payload."""
+            if not sent_msg or not isinstance(sent_msg, dict):
+                return None
+            return (sent_msg.get('data', {}).get('Id') or
+                    sent_msg.get('data', {}).get('id') or
+                    sent_msg.get('key', {}).get('id') or
+                    sent_msg.get('Key', {}).get('ID') or
+                    sent_msg.get('ID') or
+                    sent_msg.get('id') or
+                    sent_msg.get('MessageID') or
+                    sent_msg.get('Info', {}).get('ID'))
+
+        def record_pending_prompt(pkey: str, pending: dict, sent_msg: dict) -> None:
+            """Store mapping from bot prompt message to pending key for delegation."""
+            bot_msg_id = extract_bot_msg_id(sent_msg)
+            if not bot_msg_id:
+                return
+            store_pending_message_ref(bot_msg_id, pkey)
+            prompt_ids = pending.setdefault('prompt_message_ids', [])
+            prompt_ids.append(str(bot_msg_id))
+
+        def clear_pending_prompt_refs(pending: dict) -> None:
+            """Clear all stored prompt refs for a pending transaction."""
+            for msg_id in pending.get('prompt_message_ids', []):
+                clear_pending_message_ref(msg_id)
         
         # Rate Limit
         allowed, wait_time = rate_limit_check(sender_number)
@@ -529,16 +559,26 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         # GROUP CHAT FILTER: Only respond if triggered or command
         # Triggers: +catat, +bot, +input, /catat, or any / command
         # EXCEPTION: If user has pending transaction IN THIS CHAT, allow through
-        pkey = pending_key(sender_number, chat_jid)
-        pending_data = _pending_transactions.get(pkey)
+        sender_pkey = pending_key(sender_number, chat_jid)
+        pending_pkey = sender_pkey
+        if is_group and quoted_msg_id:
+            mapped_pkey = get_pending_key_from_message(quoted_msg_id)
+            if mapped_pkey:
+                pending_pkey = mapped_pkey
+
+        pending_data = _pending_transactions.get(pending_pkey)
         
         # Check if pending exists and not expired
         pending_was_expired = False
         if pending_data and pending_is_expired(pending_data):
-            _pending_transactions.pop(pkey, None)
+            clear_pending_prompt_refs(pending_data)
+            _pending_transactions.pop(pending_pkey, None)
             pending_data = None
             pending_was_expired = True
-            secure_log("DEBUG", f"Pending expired for {pkey}")
+            secure_log("DEBUG", f"Pending expired for {pending_pkey}")
+        elif is_group and quoted_msg_id and not pending_data:
+            # Clean up stale mapping if no pending found
+            clear_pending_message_ref(quoted_msg_id)
         
         has_pending = pending_data is not None
         
@@ -554,7 +594,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         
         # Debug logging for group chat
         if is_group:
-            secure_log("DEBUG", f"Group msg from {sender_number}: pkey={pkey}, has_pending={has_pending}, text='{text[:30]}...'")
+            secure_log("DEBUG", f"Group msg from {sender_number}: pkey={pending_pkey}, has_pending={has_pending}, text='{text[:30]}...'")
         
         if is_group and not has_pending:
             should_respond, cleaned_text = should_respond_in_group(text, is_group)
@@ -633,14 +673,23 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
 
         
         # Check for pending transaction - selection handler
-        # We already got pending_data and pkey from group filter above
+        # We already got pending_data and pending_pkey from group filter above
         if has_pending:
             pending = pending_data  # Already retrieved above
             pending_type = pending.get('pending_type', 'selection')
+            requires_reply = pending.get('requires_reply', False)
+
+            if is_group and requires_reply and not quoted_msg_id:
+                send_wuzapi_reply(
+                    reply_to,
+                    "↩️ Mohon *reply* pesan bot yang menanyakan projek/company agar tidak tertukar."
+                )
+                return jsonify({'status': 'reply_required'}), 200
             
             # Handle cancel for all pending types
             if is_command_match(text, Commands.CANCEL, is_group):
-                _pending_transactions.pop(pkey, None)
+                clear_pending_prompt_refs(pending)
+                _pending_transactions.pop(pending_pkey, None)
                 send_wuzapi_reply(reply_to, UserErrors.CANCELLED)
                 return jsonify({'status': 'cancelled'}), 200
             
@@ -670,7 +719,8 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     if removed_count > 0:
                         if len(pending['transactions']) == 0:
                             # All transactions removed
-                            _pending_transactions.pop(pkey, None)
+                            clear_pending_prompt_refs(pending)
+                            _pending_transactions.pop(pending_pkey, None)
                             send_wuzapi_reply(reply_to, UserErrors.ALL_REMOVED)
                             return jsonify({'status': 'cancelled'}), 200
                         else:
@@ -725,7 +775,8 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 
                 if detected_company:
                     # Has company, auto-save
-                    _pending_transactions.pop(pkey, None)
+                    clear_pending_prompt_refs(pending)
+                    _pending_transactions.pop(pending_pkey, None)
                     dompet = get_dompet_for_company(detected_company)
                     tx_message_id = pending.get('message_id', '')
                     
@@ -760,14 +811,18 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     # No company, continue to selection
                     pending['pending_type'] = 'selection'
                     reply = build_selection_prompt(pending['transactions']).replace('*', '')
-                    send_wuzapi_reply(reply_to, reply)
+                    if is_group:
+                        reply += "\n\n↩️ Reply pesan ini dengan angka 1-5"
+                    sent_msg = send_reply_with_mention(reply)
+                    record_pending_prompt(pending_pkey, pending, sent_msg)
                     return jsonify({'status': 'asking_company'}), 200
             
             # ===== HANDLE COMPANY SELECTION =====
             is_valid, selection, error_msg = parse_selection(text)
             
             if error_msg == "cancel":
-                _pending_transactions.pop(pkey, None)
+                clear_pending_prompt_refs(pending)
+                _pending_transactions.pop(pending_pkey, None)
                 send_wuzapi_reply(reply_to, UserErrors.CANCELLED)
                 return jsonify({'status': 'cancelled'}), 200
             
@@ -777,7 +832,8 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 return jsonify({'status': 'invalid_selection'}), 200
             
             # Valid selection 1-5
-            pending = _pending_transactions.pop(pkey)
+            pending = _pending_transactions.pop(pending_pkey)
+            clear_pending_prompt_refs(pending)
             option = get_selection_by_idx(selection)
             
             if not option:
@@ -1037,14 +1093,16 @@ Kirim transaksi, lalu pilih nomor (1-5)."""
             
             if needs_project:
                 # Store as pending and ask user for project name
-                _pending_transactions[pkey] = {
+                _pending_transactions[sender_pkey] = {
                     'transactions': transactions,
                     'sender_name': sender_name,
                     'source': source,
                     'created_at': datetime.now(),
                     'message_id': message_id,
                     'pending_type': 'needs_project',
-                    'chat_jid': chat_jid
+                    'chat_jid': chat_jid,
+                    'requires_reply': is_group,
+                    'prompt_message_ids': []
                 }
                 
                 # Build friendly ask message with all transactions
@@ -1060,14 +1118,15 @@ Kirim transaksi, lalu pilih nomor (1-5)."""
                     f"{items_str}\n"
                     f"📊 Total: Rp {total:,}\n\n"
                     f"❓ Perlu nama projek (biar laporan per projek rapi)\n"
-                    f"Balas: nama projek saja\n"
+                    f"{'Reply pesan ini dengan nama projek saja' if is_group else 'Balas: nama projek saja'}\n"
                     f"Contoh: Purana Ubud / Villa Sunset\n\n"
-                    f"👥 Siapa pun di grup boleh jawab\n"
+                    f"{'👥 Siapa pun di grup boleh jawab' if is_group else ''}\n"
                     f"⏳ Batas waktu: 15 menit\n"
                     f"Ketik /cancel untuk batal"
                 ).replace(',', '.')
                 
-                send_reply_with_mention(ask_msg)
+                sent_msg = send_reply_with_mention(ask_msg)
+                record_pending_prompt(sender_pkey, _pending_transactions[sender_pkey], sent_msg)
                 return jsonify({'status': 'asking_project'}), 200
             
             # Check if AI detected company from input
@@ -1139,18 +1198,23 @@ Kirim transaksi, lalu pilih nomor (1-5)."""
                     send_wuzapi_reply(reply_to, f"❌ Gagal: {result.get('company_error', 'Error')}")
             else:
                 # No company detected - ask for selection
-                _pending_transactions[pkey] = {
+                _pending_transactions[sender_pkey] = {
                     'transactions': transactions,
                     'sender_name': sender_name,
                     'source': source,
                     'created_at': datetime.now(),
                     'message_id': message_id,
-                    'chat_jid': chat_jid
+                    'chat_jid': chat_jid,
+                    'requires_reply': is_group,
+                    'prompt_message_ids': []
                 }
                 
                 # Use the new selection prompt format with @mention
                 reply = build_selection_prompt(transactions).replace('*', '')
-                send_reply_with_mention(reply)
+                if is_group:
+                    reply += "\n\n↩️ Reply pesan ini dengan angka 1-5"
+                sent_msg = send_reply_with_mention(reply)
+                record_pending_prompt(sender_pkey, _pending_transactions[sender_pkey], sent_msg)
 
         except Exception as e:
             secure_log("ERROR", f"WuzAPI AI Error: {str(e)}")
