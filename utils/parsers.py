@@ -19,9 +19,9 @@ PENDING_TTL_SECONDS = Timeouts.PENDING_TRANSACTION
 
 
 def pending_key(sender_number: str, chat_jid: str) -> str:
-    """Generate unique key for pending transactions per chat per user."""
+    """Generate unique key for pending transactions per chat."""
     # For DM, chat_jid might be same as sender, that's fine
-    return f"{chat_jid or sender_number}:{sender_number}"
+    return chat_jid or sender_number
 
 
 def pending_is_expired(pending: dict) -> bool:

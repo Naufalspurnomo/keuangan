@@ -1062,6 +1062,7 @@ Kirim transaksi, lalu pilih nomor (1-5)."""
                     f"❓ Perlu nama projek (biar laporan per projek rapi)\n"
                     f"Balas: nama projek saja\n"
                     f"Contoh: Purana Ubud / Villa Sunset\n\n"
+                    f"👥 Siapa pun di grup boleh jawab\n"
                     f"⏳ Batas waktu: 15 menit\n"
                     f"Ketik /cancel untuk batal"
                 ).replace(',', '.')
