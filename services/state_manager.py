@@ -26,13 +26,15 @@ _dedup_lock = threading.Lock()
 
 # ===================== PENDING TRANSACTIONS =====================
 # Format: {pkey: {'transactions': [...], 'sender_name': str, 'source': str, 'created_at': datetime, 'chat_jid': str}}
-# pkey = chat_jid (group) or sender_number (DM) to allow any member to reply in-group
+# pkey = chat_jid:sender_number (group) or sender_number (DM) to prevent overwrite
 _pending_transactions: Dict[str, Dict] = {}
 
 
 def pending_key(sender_number: str, chat_jid: str) -> str:
-    """Generate unique key for pending transactions per chat."""
-    return chat_jid or sender_number
+    """Generate unique key for pending transactions per chat/user."""
+    if chat_jid and sender_number:
+        return f"{chat_jid}:{sender_number}"
+    return sender_number
 
 
 def pending_is_expired(pending: dict) -> bool:
@@ -65,6 +67,29 @@ def clear_pending_transaction(pkey: str) -> None:
 def has_pending_transaction(pkey: str) -> bool:
     """Check if there's a non-expired pending transaction."""
     return get_pending_transactions(pkey) is not None
+
+
+# ===================== PENDING MESSAGE REFS =====================
+# Store bot prompt message IDs -> pending key mapping
+# Format: {bot_msg_id: pending_key}
+_pending_message_refs: Dict[str, str] = {}
+
+
+def store_pending_message_ref(bot_msg_id: str, pkey: str) -> None:
+    """Store reference from bot's prompt message ID to pending key."""
+    if not bot_msg_id or not pkey:
+        return
+    _pending_message_refs[str(bot_msg_id)] = str(pkey)
+
+
+def get_pending_key_from_message(bot_msg_id: str) -> str:
+    """Get pending key from bot's prompt message ID."""
+    return _pending_message_refs.get(str(bot_msg_id), '')
+
+
+def clear_pending_message_ref(bot_msg_id: str) -> None:
+    """Remove a pending message reference."""
+    _pending_message_refs.pop(str(bot_msg_id), None)
 
 
 # ===================== MESSAGE DEDUP =====================
@@ -127,6 +152,7 @@ def get_state_stats() -> Dict[str, Any]:
         'pending_count': len(_pending_transactions),
         'processed_count': len(_processed_messages),
         'bot_refs_count': len(_bot_message_refs),
+        'pending_message_refs_count': len(_pending_message_refs),
     }
 
 
