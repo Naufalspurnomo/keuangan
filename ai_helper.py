@@ -39,6 +39,63 @@ from security import (
     MAX_INPUT_LENGTH,
     MAX_TRANSACTIONS_PER_MESSAGE,
 )
+from utils.parsers import parse_revision_amount
+
+PROJECT_STOPWORDS = {
+    "biaya",
+    "bayar",
+    "beli",
+    "transfer",
+    "fee",
+    "gaji",
+    "ongkir",
+    "pajak",
+    "kas",
+    "uang",
+    "sewa",
+    "makan",
+    "tol",
+    "toll",
+    "parkir",
+    "bensin",
+    "bbm",
+    "admin",
+    "dp",
+    "pelunasan",
+    "lunas",
+    "cicil",
+    "cicilan",
+}
+
+
+def extract_project_from_description(description: str) -> str:
+    cleaned = sanitize_input(description or "")
+    tokens = [t for t in cleaned.replace("/", " ").split() if t]
+    for token in tokens:
+        token_clean = token.strip().strip(".,:-")
+        if len(token_clean) < 2:
+            continue
+        if token_clean.casefold() in PROJECT_STOPWORDS:
+            continue
+        return token_clean
+    return ""
+
+
+def extract_transfer_fee(text: str) -> int:
+    if not text:
+        return 0
+    patterns = [
+        r"biaya\s*transfer\s*([0-9][0-9\.,\s]*(?:rb|ribu|k|jt|juta)?)",
+        r"fee\s*transfer\s*([0-9][0-9\.,\s]*(?:rb|ribu|k|jt|juta)?)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            amount_text = match.group(1)
+            amount = parse_revision_amount(amount_text)
+            if amount > 0:
+                return amount
+    return 0
 
 PROJECT_STOPWORDS = {
     "biaya",
@@ -301,11 +358,29 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
 
             validated_transactions.append(sanitized)
 
+        if not wallet_update and validated_transactions:
         if validated_transactions:
             inferred_project = next(
                 (t.get("nama_projek") for t in validated_transactions if t.get("nama_projek")),
                 ""
             )
+            transfer_fee = extract_transfer_fee(clean_text)
+            has_transfer_fee = any(
+                "transfer" in (t.get("keterangan", "") or "").lower()
+                for t in validated_transactions
+            )
+            if transfer_fee and not has_transfer_fee:
+                fee_tx = {
+                    "keterangan": "Biaya transfer",
+                    "jumlah": transfer_fee,
+                    "tipe": "Pengeluaran",
+                    "kategori": "Lain-lain",
+                    "nama_projek": inferred_project or "",
+                }
+                is_valid, _, sanitized_fee = validate_transaction_data(fee_tx)
+                if is_valid:
+                    validated_transactions.append(sanitized_fee)
+            
             if inferred_project:
                 for t in validated_transactions:
                     if not t.get("nama_projek"):
