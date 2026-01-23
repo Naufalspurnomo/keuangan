@@ -26,13 +26,13 @@ _dedup_lock = threading.Lock()
 
 # ===================== PENDING TRANSACTIONS =====================
 # Format: {pkey: {'transactions': [...], 'sender_name': str, 'source': str, 'created_at': datetime, 'chat_jid': str}}
-# pkey = chat_jid:sender_number (to isolate per chat per user)
+# pkey = chat_jid (group) or sender_number (DM) to allow any member to reply in-group
 _pending_transactions: Dict[str, Dict] = {}
 
 
 def pending_key(sender_number: str, chat_jid: str) -> str:
-    """Generate unique key for pending transactions per chat per user."""
-    return f"{chat_jid or sender_number}:{sender_number}"
+    """Generate unique key for pending transactions per chat."""
+    return chat_jid or sender_number
 
 
 def pending_is_expired(pending: dict) -> bool:
