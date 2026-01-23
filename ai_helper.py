@@ -67,15 +67,45 @@ PROJECT_STOPWORDS = {
     "cicilan",
 }
 
+# Known company names - used to detect when AI incorrectly sets company as project
+# All lowercase for case-insensitive matching
+KNOWN_COMPANY_NAMES = {
+    "holla",
+    "hojja", 
+    "holja",
+    "texturin",
+    "texturin-bali",
+    "texturin bali",
+    "texturin-surabaya",
+    "texturin surabaya",
+    "texturin sby",
+    "kantor",
+    "umum",
+    # Wallet names that should NOT be project names
+    "dompet evan",
+    "dompet holja",
+    "dompet holla",
+    "dompet texturin",
+    "dompet texturin sby",
+}
+
 
 def extract_project_from_description(description: str) -> str:
+    """
+    Extract project name from description text.
+    Skips stopwords and known company names to find the actual project.
+    """
     cleaned = sanitize_input(description or "")
     tokens = [t for t in cleaned.replace("/", " ").split() if t]
     for token in tokens:
         token_clean = token.strip().strip(".,:-")
         if len(token_clean) < 2:
             continue
+        # Skip stopwords
         if token_clean.casefold() in PROJECT_STOPWORDS:
+            continue
+        # Skip known company names (don't return company as project)
+        if token_clean.casefold() in KNOWN_COMPANY_NAMES:
             continue
         return token_clean
     return ""
@@ -341,6 +371,29 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                     sanitized['company'] = regex_wallet
                     sanitized['detected_dompet'] = regex_wallet
                     secure_log("INFO", f"Regex fallback applied: {regex_wallet}")
+
+            # 4. DETERMINISTIC FALLBACK: Check if AI confused company with project
+            # If nama_projek matches a known company name, re-extract from description
+            current_project = (sanitized.get("nama_projek") or "").strip()
+            if current_project and current_project.lower() in KNOWN_COMPANY_NAMES:
+                secure_log("WARNING", f"AI returned company '{current_project}' as project name - attempting fix")
+                
+                # Try to extract real project from keterangan first
+                keterangan = sanitized.get("keterangan", "") or ""
+                real_project = extract_project_from_description(keterangan)
+                
+                # If not found in keterangan, try original input text
+                if not real_project:
+                    real_project = extract_project_from_description(clean_text)
+                
+                if real_project and real_project.lower() not in KNOWN_COMPANY_NAMES:
+                    sanitized["nama_projek"] = real_project[:100]
+                    secure_log("INFO", f"Fixed project name: '{current_project}' -> '{real_project}'")
+                else:
+                    # Could not find valid project, mark as needing user input
+                    sanitized["needs_project"] = True
+                    sanitized["nama_projek"] = ""
+                    secure_log("INFO", f"Could not determine project from company '{current_project}' - will ask user")
 
             validated_transactions.append(sanitized)
 
