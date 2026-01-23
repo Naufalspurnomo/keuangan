@@ -147,7 +147,13 @@ def parse_selection(text: str) -> tuple:
 def parse_revision_amount(text: str) -> int:
     """
     Parse amount from revision text.
-    Supports: "/revisi 150rb", "150000", "150rb", "1.5jt", "2 juta", etc.
+    Supports: "/revisi 150rb", "150000", "150rb", "1.5jt", "2 juta", "509,500", etc.
+    
+    Comma/dot handling:
+    - With suffix (jt, rb): comma = decimal (1,5jt = 1.500.000)
+    - Without suffix: 
+      - 3+ digits after separator = thousand separator (509,500 = 509500)
+      - 1-2 digits after separator = decimal (509,5 = 509.5 -> 510)
     
     Returns:
         Amount in Rupiah, or 0 if not parseable
@@ -158,29 +164,46 @@ def parse_revision_amount(text: str) -> int:
     # Remove /revisi or revisi prefix
     text = re.sub(r'^[/]?(revisi|ubah|ganti|koreksi|edit)\s*', '', text).strip()
     
-    # Handle "2 juta", "500 rb", "1.5jt" - number followed by optional space and suffix
-    match = re.match(r'^([\d]+(?:[.,]\d+)?)\s*(rb|ribu|k|jt|juta)?$', text)
+    # Handle "2 juta", "500 rb", "1.5jt", "500 perak" - number followed by optional space and suffix
+    match = re.match(r'^([\d]+(?:[.,]\d+)?)\s*(rb|ribu|k|jt|juta|perak)?$', text)
     if match:
         num_str = match.group(1)
         suffix = match.group(2) or ''
         
-        # Replace comma with dot for decimal (Indonesian uses comma as decimal)
-        num_str = num_str.replace(',', '.')
-        
-        try:
-            num = float(num_str)
-        except ValueError:
-            return 0
-        
-        if suffix in ['rb', 'ribu', 'k']:
-            return int(num * 1000)
-        elif suffix in ['jt', 'juta']:
-            return int(num * 1000000)
+        if suffix:
+            # Has suffix - comma/dot is ALWAYS decimal separator
+            num_str = num_str.replace(',', '.')
+            try:
+                num = float(num_str)
+            except ValueError:
+                return 0
+            
+            if suffix in ['rb', 'ribu', 'k']:
+                return int(num * 1000)
+            elif suffix in ['jt', 'juta']:
+                return int(num * 1000000)
+            elif suffix == 'perak':
+                # "perak" = no multiplier, just round to int
+                return int(round(num))
         else:
-            # No suffix - if it has decimal, it's probably already in full amount
-            return int(num)
+            # No suffix - check if separator is decimal or thousand
+            # Look for comma or dot with digits after
+            sep_match = re.search(r'[.,](\d+)$', num_str)
+            if sep_match:
+                digits_after = len(sep_match.group(1))
+                if digits_after >= 3:
+                    # 3+ digits = thousand separator (509,500 -> 509500)
+                    cleaned = num_str.replace('.', '').replace(',', '')
+                    return int(cleaned)
+                else:
+                    # 1-2 digits = decimal separator (509,5 -> 509.5 -> 510)
+                    num_str = num_str.replace(',', '.')
+                    return int(round(float(num_str)))
+            else:
+                # No separator, just parse as int
+                return int(num_str)
     
-    # Try direct number (just digits after cleaning)
+    # Try direct number (just digits after cleaning separators)
     cleaned = text.replace('.', '').replace(',', '').replace(' ', '')
     try:
         return int(cleaned)
