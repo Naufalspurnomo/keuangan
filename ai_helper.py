@@ -82,19 +82,42 @@ def extract_project_from_description(description: str) -> str:
 
 
 def extract_transfer_fee(text: str) -> int:
+    """
+    Extract transfer fee from text. Supports:
+    - "biaya transfer 2500" / "fee transfer 2.5rb"
+    - Bank receipt OCR: "Fee IDR 2,500.00" / "Fee: Rp 2.500"
+    """
     if not text:
         return 0
+    
     patterns = [
-        r"biaya\s*transfer\s*([0-9][0-9\.,\s]*(?:rb|ribu|k|jt|juta)?)",
-        r"fee\s*transfer\s*([0-9][0-9\.,\s]*(?:rb|ribu|k|jt|juta)?)",
+        # Indonesian text patterns
+        r"biaya\s*transfer\s*:?\s*(?:Rp\.?\s*)?([0-9][0-9\.,\s]*(?:rb|ribu|k|jt|juta)?)",
+        r"fee\s*transfer\s*:?\s*(?:Rp\.?\s*)?([0-9][0-9\.,\s]*(?:rb|ribu|k|jt|juta)?)",
+        # Bank receipt OCR patterns (e.g., "Fee IDR 2,500.00")
+        r"\bFee\s*:?\s*(?:IDR|Rp\.?)\s*([0-9][0-9\.,]*)",
+        # Generic "biaya" + amount on same/next line
+        r"biaya\s*(?:admin|transfer)?\s*:?\s*(?:IDR|Rp\.?)?\s*([0-9][0-9\.,]*)",
     ]
+    
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
-            amount_text = match.group(1)
-            amount = parse_revision_amount(amount_text)
-            if amount > 0:
-                return amount
+            amount_text = match.group(1).strip()
+            # Handle decimal format like "2,500.00" or "2.500,00"
+            # Remove trailing decimals (cents) for IDR
+            amount_text = re.sub(r'[.,]\d{2}$', '', amount_text)
+            # Clean up separators
+            amount_text = amount_text.replace(',', '').replace('.', '').replace(' ', '')
+            try:
+                amount = int(amount_text)
+                if 0 < amount <= 100000:  # Reasonable fee range
+                    return amount
+            except ValueError:
+                # Try parse_revision_amount as fallback
+                amount = parse_revision_amount(amount_text)
+                if 0 < amount <= 100000:
+                    return amount
     return 0
 
 
@@ -516,7 +539,7 @@ Output MUST be a JSON array of objects.
       "keterangan": "String (Short description)",
       "jumlah": Integer (Positive number in IDR),
       "tipe": "Pengeluaran" or "Pemasukan",
-      "nama_projek": "String (Project Name - REQUIRED)",
+      "nama_projek": "String (Project Name - REQUIRED, NOT company name)",
       "company": "String (Company name if mentioned, else null)"
     }}
   ]
@@ -527,7 +550,7 @@ ALLOWED CATEGORIES & KEYWORDS:
 - Operasi Kantor: listrik, air, internet, sewa, pulsa, admin, wifi, telepon, kebersihan
 - Bahan Alat: semen, pasir, kayu, cat, besi, keramik, paku, gerinda, meteran, bor, gergaji
 - Gaji: upah, tukang, honor, fee, lembur, mandor, kuli, pekerja, borongan, karyawan
-- Lain-lain: transport, bensin, makan, parkir, toll, ongkir, biaya lain
+- Lain-lain: transport, bensin, makan, parkir, toll, ongkir, biaya lain, biaya transfer
 
 COMPANY NAMES (CASE-INSENSITIVE MATCHING):
 - "HOLLA" or "holla" -> "HOLLA"
@@ -561,19 +584,38 @@ MANDATORY NORMALIZATION RULES:
    - "Pengeluaran": Beli, Bayar, Lunas, Struk, Nota.
 
 CRITICAL LOGIC RULES:
-1. SPECIAL RULE: "SALDO UMUM" (Wallet Updates)
+
+1. **PROJECT NAME vs COMPANY NAME - VERY IMPORTANT:**
+   - "nama_projek" = The PROJECT/JOB name (e.g., "Purana", "Avant", "Villa Ubud")
+   - "company" = The BUSINESS ENTITY (e.g., "TEXTURIN-Bali", "HOLLA", "KANTOR")
+   - These are DIFFERENT! Company is WHERE the expense is recorded. Project is WHAT job it's for.
+   - EXAMPLE: "purana bayar sugeng untuk Texturin Bali"
+     -> nama_projek: "Purana" (the project name from description)
+     -> company: "TEXTURIN-Bali" (the company mentioned)
+   - NEVER set nama_projek to match the company name unless explicitly stated.
+
+2. SPECIAL RULE: "SALDO UMUM" (Wallet Updates)
    - IF user says "isi saldo", "tambah dompet", "deposit", "transfer ke dompet", "update saldo":
      -> SET "nama_projek": "Saldo Umum"
      -> SET "company": "UMUM" (Ignore default company rules)
      -> SET "tipe": "Pemasukan" (unless context says otherwise)
    - ELSE: "nama_projek" IS MANDATORY from input.
 
-2. PROJECT NAME EXTRACTION:
-   - **PRIORITY 1:** User Caption (look for "projek", "untuk", "project").
-   - **PRIORITY 2:** OCR Context clues.
-   - **FALLBACK:** Return null (system will ask user).
+3. PROJECT NAME EXTRACTION PRIORITY:
+   - **PRIORITY 1:** First meaningful word in description/caption (e.g., "purana bayar..." -> "Purana")
+   - **PRIORITY 2:** Look for "projek", "untuk projek", "project" keywords
+   - **PRIORITY 3:** OCR Remarks field (e.g., "Purana tambahan dulu" -> "Purana")
+   - **FALLBACK:** Return null (system will ask user)
 
-3. COMPANY EXTRACTION (If not User explicitly mentions company):
+4. BANK TRANSFER FEE DETECTION:
+   - If OCR shows "Fee" or "Biaya" line with amount (e.g., "Fee IDR 2,500.00"), create SEPARATE transaction:
+     -> keterangan: "Biaya transfer"
+     -> jumlah: the fee amount
+     -> tipe: "Pengeluaran"
+     -> kategori: "Lain-lain"
+     -> nama_projek: same as main transaction
+
+5. COMPANY EXTRACTION (If not User explicitly mentions company):
    - IF user mentions "Dompet Evan" AND NOT "Saldo Umum" context: Output "company": "KANTOR" (Default).
    - IF user mentions "Dompet Holja" AND NOT "Saldo Umum" context: Output "company": "HOLLA" (Default).
    - IF user explicitly mentions company (e.g., TEXTURIN-Bali), use that.
