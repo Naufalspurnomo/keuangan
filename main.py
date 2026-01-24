@@ -651,12 +651,24 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         if is_group:
             secure_log("DEBUG", f"Group msg from {sender_number}: pkey={pending_pkey}, has_pending={has_pending}, text='{text[:30]}...'")
         
-        if is_group and not has_pending:
-            should_respond, cleaned_text = should_respond_in_group(text, is_group)
+        if is_group:
+            # Check visual buffer (counts as active session/media context)
+            has_visual = has_visual_buffer(sender_number, chat_jid)
+            
+            # Pass all context to Layer 0 Scoring
+            should_respond, cleaned_text = should_respond_in_group(
+                message=text, 
+                is_group=True,
+                has_media=media_url is not None,
+                has_pending=has_pending or has_visual,  # Pending OR Visual Buffer = Active Session
+                is_mentioned=False  # TODO: Implement explicit bot mention check if needed from WuzAPI
+            )
+            
             if not should_respond:
                 # No trigger - silently ignore this group message
-                secure_log("DEBUG", f"Group msg IGNORED (no trigger, no pending)")
+                secure_log("DEBUG", f"Group msg IGNORED (Score < 50, no pending, no trigger)")
                 return jsonify({'status': 'ignored_group'}), 200
+            
             # Use cleaned text (trigger prefix removed)
             text = cleaned_text if cleaned_text else text
         

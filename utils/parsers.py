@@ -33,13 +33,62 @@ def pending_is_expired(pending: dict) -> bool:
     return (datetime.now() - created).total_seconds() > PENDING_TTL_SECONDS
 
 
-def should_respond_in_group(message: str, is_group: bool) -> tuple:
+def calculate_financial_score(message: str, has_media: bool = False, is_mentioned: bool = False) -> int:
+    """
+    Calculate Financial Signal Score (0-100) per Grand Design Layer 0.
+    
+    Factors:
+    - Numeric Pattern (+40): 150rb, 1.5jt, 50.000
+    - Action Verb (+30): beli, bayar, transfer, terima, lunasin
+    - Media Attachment (+20): Evidence of transaction
+    - Bot Mention (+60): Explicit invocation
+    """
+    score = 0
+    message_lower = message.lower().strip()
+    
+    # Factor 5: Bot Mention (+60)
+    if is_mentioned:
+        score += 60
+        
+    # Factor 3: Media Attachment (+20)
+    if has_media:
+        score += 20
+        
+    # Factor 1: Numeric Pattern (+40)
+    # Check for amount patterns like 150rb, 1.5jt, or digits >= 1000
+    if re.search(r'\b\d+(?:[.,]\d+)*(?:rb|ribu|k|jt|juta)?\b', message_lower):
+        # Refine check: excludes simple dates (1-31) unless followed by currency suffix
+        if re.search(r'\b\d+(?:rb|ribu|k|jt|juta)\b', message_lower):
+             score += 40
+        elif re.search(r'\b\d{3,}\b', message_lower.replace('.', '').replace(',', '')):
+             # Only count pure numbers if >= 1000 (likely amount, not date/hour)
+             score += 40
+             
+    # Factor 2: Action Verb Pattern (+30)
+    action_verbs = [
+        'beli', 'bayar', 'transfer', 'kirim', 'terima', 'dp', 
+        'lunasin', 'kasih', 'isi', 'topup', 'top up', 'tarik'
+    ]
+    if any(verb in message_lower for verb in action_verbs):
+        score += 30
+        
+    # Grand Design Threshold Logic:
+    # < 50: SILENT (Ignore)
+    # 50-69: TENTATIVE (Process)
+    # >= 70: CONFIDENT (Process)
+    return score
+
+
+def should_respond_in_group(message: str, is_group: bool, has_media: bool = False, 
+                           has_pending: bool = False, is_mentioned: bool = False) -> tuple:
     """
     Check if bot should respond to this message in group chat.
+    Uses Grand Design Layer 0 "Financial Signal Scoring".
     
-    In group chats, ONLY respond to:
-    1. Messages starting with "/" (slash commands)
-    2. Messages with GROUP_TRIGGERS prefix (+catat, +bot, etc.)
+    Response Criteria:
+    1. Explicit Triggers (+catat, /command) -> ALWAYS RESPOND
+    2. Active Session (has_pending) -> ALWAYS RESPOND (context continuation)
+    3. Financial Score >= 50 -> RESPOND (Smart Detection)
     
     Returns:
         (should_respond: bool, cleaned_message: str)
@@ -49,18 +98,28 @@ def should_respond_in_group(message: str, is_group: bool) -> tuple:
     
     message_lower = message.lower().strip()
     
-    # Check for group triggers (+catat, +bot, +input, /catat)
+    # 1. Active Session Bonus (+50 equivalent) -> Always processing pending flow
+    if has_pending:
+        return True, message
+        
+    # 2. Explicit Group Triggers
     for trigger in GROUP_TRIGGERS:
         if message_lower.startswith(trigger.lower()):
-            # Remove trigger and return cleaned message
             cleaned = message[len(trigger):].strip()
             return True, cleaned
-    
-    # ONLY respond to "/" commands in groups (avoid spam from casual chat)
+            
+    # 3. Slash Commands
     if message_lower.startswith('/'):
         return True, message
+        
+    # 4. Smart Financial Scoring
+    score = calculate_financial_score(message, has_media, is_mentioned)
     
-    return False, ""  # Group chat without trigger or slash - ignore
+    # Threshold check
+    if score >= 50:
+        return True, message
+        
+    return False, ""  # Ignore low signal messages
 
 
 def is_command_match(text: str, command_list: list, is_group: bool = False) -> bool:
