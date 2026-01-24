@@ -343,6 +343,12 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                     secure_log("INFO", f"Wallet update detected for: {detected_dompet}")
             else:
                 proj = sanitize_input(str(sanitized.get("nama_projek", "") or "")).strip()
+                
+                # LAYER 3 VALIDATION: Check for action verbs / invalid names
+                if proj and not is_semantically_valid_project_name(proj):
+                    secure_log("WARNING", f"Project name '{proj}' invalid (Layer 3 semantic check) - unsetting")
+                    proj = ""
+                
                 if not proj:
                     keterangan = sanitized.get("keterangan", "")
                     inferred = extract_project_from_description(keterangan)
@@ -563,6 +569,50 @@ ELSE IF (person/company name without wallet context):
 - "texturin-bali" -> ALWAYS company "TEXTURIN-Bali"
 - "texturin-surabaya" -> ALWAYS company "TEXTURIN-Surabaya"
 """
+
+def is_semantically_valid_project_name(text: str) -> bool:
+    """
+    Check if text is semantically valid as a project name (Layer 3 Validation).
+    Prevents extracted names like "Revisi", "Update", "Beli", "Semen" from becoming project names.
+    """
+    if not text:
+        return False
+        
+    text_lower = text.lower().strip()
+    
+    # 1. Check length
+    if len(text) < 3: return False
+    
+    # 2. Check for action verbs (imperative starting words)
+    # These often get mistaken for project names (e.g., "Revisi" intent detected as project="Revisi")
+    action_verbs = {
+        'beli', 'bayar', 'transfer', 'kirim', 'terima', 'dp', 'lunasin', 
+        'isi', 'topup', 'ganti', 'revisi', 'ubah', 'koreksi', 'update', 
+        'cancel', 'batal', 'hapus', 'catat', 'input', 'simpan'
+    }
+    
+    # Check first word
+    words = text_lower.split()
+    if not words: return False
+    
+    first_word = words[0]
+    if first_word in action_verbs:
+         # Exception: "Update Status" is action, but is there a valid project starting with "Beli"?
+         # "Beli Tanah" -> Maybe. "Beli Semen" -> No.
+         # For safety, if it starts with explicit action verb, reject as project name
+         # (User should name project "Tanah Lot A", not "Beli Tanah")
+         return False
+         
+    # 3. Check for generic financial entities
+    financial_entities = {'dompet', 'saldo', 'kas', 'bank', 'uang', 'money', 'wallet', 'rekening', 'atm'}
+    if text_lower in financial_entities:
+        return False
+        
+    # 4. Check for company names being used as project
+    if text_lower in KNOWN_COMPANY_NAMES:
+        return False
+        
+    return True
 
 def get_extraction_prompt(sender_name: str) -> str:
     """
