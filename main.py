@@ -515,6 +515,9 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         # Determine reply destination: for groups, reply to group; for personal, reply to sender
         reply_to = chat_jid if (is_group and chat_jid) else sender_number
         
+        # Track if visual buffer was linked in this session
+        was_visual_link = False
+
         # Helper function to send reply with @mention in groups
         def send_reply_with_mention(body: str, with_mention: bool = True) -> dict:
             """Send reply, adding @mention for groups if requested.
@@ -582,6 +585,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 input_type = 'image'  # Now treat as image message
                 secure_log("INFO", f"Visual buffer: Linked buffered photo to text '{text[:30]}...'")
                 clear_visual_buffer(sender_number, chat_jid)
+                was_visual_link = True
         
         # ============ 7-LAYER ARCHITECTURE (if enabled) ============
         # Process through intelligent layer system first
@@ -662,7 +666,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 message=text, 
                 is_group=True,
                 has_media=media_url is not None,
-                has_pending=has_pending or has_visual,  # Pending OR Visual Buffer = Active Session
+                has_pending=has_pending or has_visual or was_visual_link,  # Pending OR Visual Buffer OR Linked = Active Session
                 is_mentioned=False  # TODO: Implement explicit bot mention check if needed from WuzAPI
             )
             

@@ -55,19 +55,18 @@ def calculate_financial_score(message: str, has_media: bool = False, is_mentione
         score += 20
         
     # Factor 1: Numeric Pattern (+40)
-    # Check for amount patterns like 150rb, 1.5jt, or digits >= 1000
-    if re.search(r'\b\d+(?:[.,]\d+)*(?:rb|ribu|k|jt|juta)?\b', message_lower):
-        # Refine check: excludes simple dates (1-31) unless followed by currency suffix
-        if re.search(r'\b\d+(?:rb|ribu|k|jt|juta)\b', message_lower):
-             score += 40
-        elif re.search(r'\b\d{3,}\b', message_lower.replace('.', '').replace(',', '')):
-             # Only count pure numbers if >= 1000 (likely amount, not date/hour)
-             score += 40
+    # Check for amount patterns like 150rb, 1.5jt, 50.000, 5 juta (allow space)
+    if re.search(r'\b\d+(?:[.,]\d+)*\s*(?:rb|ribu|k|jt|juta)\b', message_lower):
+         score += 40
+    elif re.search(r'\b\d{3,}\b', message_lower.replace('.', '').replace(',', '')):
+         # Only count pure numbers if >= 1000 (likely amount, not date/hour)
+         score += 40
              
     # Factor 2: Action Verb Pattern (+30)
     action_verbs = [
         'beli', 'bayar', 'transfer', 'kirim', 'terima', 'dp', 
-        'lunasin', 'kasih', 'isi', 'topup', 'top up', 'tarik'
+        'lunasin', 'kasih', 'isi', 'topup', 'top up', 'tarik',
+        'catat', 'simpan', 'input', 'masukin', 'tambah'
     ]
     if any(verb in message_lower for verb in action_verbs):
         score += 30
