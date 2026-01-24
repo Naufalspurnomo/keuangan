@@ -577,15 +577,26 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             return jsonify({'status': 'photo_buffered'}), 200
         
         # Case 2: Text without photo → Check if we have buffered photo to link
+        # Case 2: Text without photo → Check if we have buffered photo(s) to link
+        media_urls_from_buffer = []
+
         if input_type == 'text' and not media_url:
-            buffered = get_visual_buffer(sender_number, chat_jid)
-            if buffered:
-                # Link buffered photo to this text
-                media_url = buffered.get('media_url')
-                input_type = 'image'  # Now treat as image message
-                secure_log("INFO", f"Visual buffer: Linked buffered photo to text '{text[:30]}...'")
-                clear_visual_buffer(sender_number, chat_jid)
-                was_visual_link = True
+            buffered_items = get_visual_buffer(sender_number, chat_jid)
+            if buffered_items:
+                # Link buffered photos
+                # Handle both list (new) and dict (legacy safety)
+                if isinstance(buffered_items, list):
+                     media_urls_from_buffer = [item.get('media_url') for item in buffered_items]
+                else:
+                     # Fallback if somehow dict returned (should not happen with new state_manager)
+                     media_urls_from_buffer = [buffered_items.get('media_url')]
+                
+                if media_urls_from_buffer:
+                    media_url = media_urls_from_buffer[0] # Set primary for legacy compatibility
+                    input_type = 'image'  # Now treat as image message
+                    secure_log("INFO", f"Visual buffer: Linked {len(media_urls_from_buffer)} photo(s) to text '{text[:30]}...'")
+                    clear_visual_buffer(sender_number, chat_jid)
+                    was_visual_link = True
         
         # ============ 7-LAYER ARCHITECTURE (if enabled) ============
         # Process through intelligent layer system first
@@ -1223,12 +1234,14 @@ Kirim transaksi, lalu pilih nomor (1-5)."""
                 # Only show for private chat (reduce group spam)
                 send_wuzapi_reply(reply_to, "🔍 Menganalisis...")
             
-            # media_url is now passed directly from webhook (already a data URL)
+            # Prepare media urls (handle single or multi-image buffer)
+            final_media_list = media_urls_from_buffer if media_urls_from_buffer else ([media_url] if media_url else [])
+            
             transactions = extract_financial_data(
                 input_data=text or '', 
                 input_type=input_type,
                 sender_name=sender_name,
-                media_url=media_url,
+                media_urls=final_media_list,
                 caption=text if input_type == 'image' else None
             )
             

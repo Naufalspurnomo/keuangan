@@ -19,7 +19,7 @@ import tempfile
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 
 
 # Load environment variables
@@ -481,43 +481,53 @@ USE_EASYOCR = os.getenv('USE_EASYOCR', 'false').lower() == 'true'
 # ===================== GROQ VISION OCR (ACTIVE) =====================
 import base64
 
-def ocr_image(image_path: str) -> str:
+def ocr_image(image_source: Union[str, List[str]]) -> str:
     """
-    Extract text from image using Groq Vision (Llama 4 Scout).
-    
-    This is a lightweight alternative to EasyOCR that doesn't require
-    heavy ML models to be loaded in RAM. Uses Groq's free API tier.
+    Extract text from Single or Multiple images using Groq Vision.
+    Accepts local file path(s).
     """
     try:
-        secure_log("INFO", "Running OCR via Groq Vision...")
+        secure_log("INFO", "Running OCR via Groq Vision (Multi-Image Support)...")
         
-        # Read and encode image to base64
-        with open(image_path, 'rb') as img_file:
-            image_data = base64.b64encode(img_file.read()).decode('utf-8')
+        # Ensure list
+        paths = [image_source] if isinstance(image_source, str) else image_source
         
-        # Determine MIME type
-        ext = os.path.splitext(image_path)[1].lower()
-        mime_types = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp'}
-        mime_type = mime_types.get(ext, 'image/jpeg')
+        if not paths:
+            return ""
+
+        content_payload = [
+            {
+                "type": "text",
+                "text": "Extract ALL text from these images. specific per image. Output ONLY the extracted text, nothing else. "
+                        "If receipt, include all items, prices, totals, dates, and store names."
+            }
+        ]
         
-        # Call Groq Vision API with Llama 4 Scout
+        for path in paths:
+            # Read and encode image to base64
+            with open(path, 'rb') as img_file:
+                image_data = base64.b64encode(img_file.read()).decode('utf-8')
+            
+            # Determine MIME type
+            ext = os.path.splitext(path)[1].lower()
+            mime_types = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp'}
+            mime_type = mime_types.get(ext, 'image/jpeg')
+            
+            content_payload.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{mime_type};base64,{image_data}"
+                }
+            })
+        
+        # Call Groq Vision API
+        # Using llama-3.2-90b-vision-preview for robust multi-image support
         response = groq_client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",  # Groq's latest vision model
+            model="llama-3.2-90b-vision-preview", 
             messages=[
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Extract ALL text from this image. Output ONLY the extracted text, nothing else. If it's a receipt/struk, include all items, prices, totals, dates, and store names."
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime_type};base64,{image_data}"
-                            }
-                        }
-                    ]
+                    "content": content_payload
                 }
             ],
             temperature=0.0,
@@ -829,18 +839,18 @@ def transcribe_audio(audio_path: str) -> str:
         raise
 
 
-def extract_from_image(image_path: str, sender_name: str, caption: str = None) -> List[Dict]:
+def extract_from_image(image_paths: Union[str, List[str]], sender_name: str, caption: str = None) -> List[Dict]:
     """
-    Extract financial data from image: OCR -> Text -> Groq.
+    Extract financial data from Single or Multiple images: OCR -> Text -> Groq.
     SECURED: All text is sanitized.
     
     Args:
-        image_path: Path to image file
+        image_paths: Path or List of paths to image files
         sender_name: Name of the sender
         caption: Optional caption text
     """
     try:
-        ocr_text = ocr_image(image_path)
+        ocr_text = ocr_image(image_paths)
         
         if not ocr_text.strip():
             raise ValueError("Tidak ada teks ditemukan di gambar")
@@ -865,19 +875,20 @@ def extract_from_image(image_path: str, sender_name: str, caption: str = None) -
 
 
 def extract_financial_data(input_data: str, input_type: str, sender_name: str,
-                           media_url: str = None, caption: str = None) -> List[Dict]:
+                           media_urls: Union[str, List[str]] = None, caption: str = None) -> List[Dict]:
     """
     Main function to extract financial data from various input types.
+    Supports MULTIPLE images (List[str]).
     SECURED: All paths go through sanitization and validation.
     
     Args:
         input_data: Text content or file path
         input_type: 'text', 'audio', or 'image'
         sender_name: Name of the sender
-        media_url: URL to download media from (or data:image/... URI)
+        media_urls: Single URL or List of URLs to download media from
         caption: Optional caption for images
     """
-    temp_file = None
+    temp_files = []
     
     # Conditional debug logging (only if FLASK_DEBUG=1)
     DEBUG_MODE = os.getenv('FLASK_DEBUG', '0') == '1'
@@ -891,62 +902,75 @@ def extract_financial_data(input_data: str, input_type: str, sender_name: str,
             except Exception:
                 pass  # Silent fail for debug logging
     
-    _debug_log(f"input_type={input_type}, has_media_url={bool(media_url)}, media_url={media_url[:100] if media_url else 'None'}")
+    # Normalize media_urls to list
+    url_list = []
+    if media_urls:
+        if isinstance(media_urls, str):
+            url_list = [media_urls]
+        else:
+            url_list = media_urls
+
+    _debug_log(f"input_type={input_type}, url_count={len(url_list)}")
     
     try:
         if input_type == 'text':
             return extract_from_text(input_data, sender_name)
         
         elif input_type == 'audio':
-            if media_url:
-                _debug_log(f"Downloading audio from: {media_url[:100]}")
-                temp_file = download_media(media_url, '.ogg')
-                _debug_log(f"Downloaded to: {temp_file}")
-            else:
-                temp_file = input_data
+            # Audio usually single file
+            target_url = url_list[0] if url_list else None
             
-            transcribed_text = transcribe_audio(temp_file)
+            if target_url:
+                _debug_log(f"Downloading audio from: {target_url[:100]}")
+                audio_file = download_media(target_url, '.ogg')
+                temp_files.append(audio_file)
+                _debug_log(f"Downloaded to: {audio_file}")
+            else:
+                audio_file = input_data
+            
+            transcribed_text = transcribe_audio(audio_file)
             _debug_log(f"Transcribed: {transcribed_text[:100] if transcribed_text else 'EMPTY'}")
             return extract_from_text(transcribed_text, sender_name)
         
         elif input_type == 'image':
-            if media_url:
-                # Check if it's a data URI (base64 embedded image)
-                if media_url.startswith('data:image/'):
-                    _debug_log("Processing base64 data URI directly")
-                    # Extract base64 data and save to temp file
-                    try:
-                        # Parse data URI: data:image/jpeg;base64,XXXX
-                        if ';base64,' in media_url:
-                            header, b64_data = media_url.split(';base64,', 1)
-                            mime_type = header.replace('data:', '')
-                            
-                            # Determine extension from mime type
-                            ext_map = {'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp'}
-                            ext = ext_map.get(mime_type, '.jpg')
-                            
-                            # Decode and save to temp file
-                            img_bytes = base64.b64decode(b64_data)
-                            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
-                            temp_file.write(img_bytes)
-                            temp_file.close()
-                            temp_file = temp_file.name
-                            
-                            _debug_log(f"Base64 image saved to: {temp_file}")
-                        else:
-                            raise ValueError("Invalid data URI format")
-                    except Exception as e:
-                        _debug_log(f"Data URI parse error: {type(e).__name__}: {str(e)}")
-                        raise ValueError(f"Gagal memproses gambar: {str(e)}")
+            if url_list:
+                for idx, url in enumerate(url_list):
+                    # Check if it's a data URI (base64 embedded image)
+                    if url.startswith('data:image/'):
+                        _debug_log(f"Processing base64 data URI #{idx+1}")
+                        try:
+                            if ';base64,' in url:
+                                header, b64_data = url.split(';base64,', 1)
+                                mime_type = header.replace('data:', '')
+                                ext_map = {'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp'}
+                                ext = ext_map.get(mime_type, '.jpg')
+                                
+                                img_bytes = base64.b64decode(b64_data)
+                                t_file = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
+                                t_file.write(img_bytes)
+                                t_file.close()
+                                temp_files.append(t_file.name)
+                                _debug_log(f"Base64 image saved to: {t_file.name}")
+                            else:
+                                _debug_log("Invalid data URI format, skipping")
+                        except Exception as e:
+                            _debug_log(f"Data URI parse error: {str(e)}")
+                    else:
+                        # Regular HTTPS URL
+                        _debug_log(f"Downloading image #{idx+1} from: {url[:50]}...")
+                        dl_file = download_media(url)
+                        temp_files.append(dl_file)
+                        _debug_log(f"Downloaded to: {dl_file}")
+                
+                # Extract from ALL downloaded images
+                if temp_files:
+                    return extract_from_image(temp_files, sender_name, caption)
                 else:
-                    # Regular HTTPS URL - download it
-                    _debug_log(f"Downloading image from: {media_url[:100]}")
-                    temp_file = download_media(media_url)
-                    _debug_log(f"Downloaded to: {temp_file}")
-            else:
-                temp_file = input_data
+                    raise ValueError("Gagal mengunduh gambar")
             
-            return extract_from_image(temp_file, sender_name, caption)
+            else:
+                # Local file path input (legacy/testing)
+                return extract_from_image(input_data, sender_name, caption)
         
         else:
             raise ValueError(f"Tipe input tidak dikenal: {input_type}")
@@ -956,12 +980,13 @@ def extract_financial_data(input_data: str, input_type: str, sender_name: str,
         raise
     
     finally:
-        # Cleanup temp file
-        if temp_file and media_url and os.path.exists(temp_file):
-            try:
-                os.unlink(temp_file)
-            except:
-                pass
+        # Cleanup ALL temp files
+        for fpath in temp_files:
+            if fpath and os.path.exists(fpath):
+                try:
+                    os.unlink(fpath)
+                except:
+                    pass
 
 
 def query_data(question: str, data_context: str) -> str:

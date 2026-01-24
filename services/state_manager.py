@@ -29,10 +29,9 @@ _dedup_lock = threading.Lock()
 
 # ===================== VISUAL BUFFER (Grand Design Layer 2) =====================
 # Stores unprocessed photos for linking with later text commands
-# Format: {user_key: {'media_url': str, 'caption': str, 'message_id': str, 
-#                    'created_at': datetime, 'chat_jid': str}}
+# Format: {user_key: [ {'media_url': str, 'caption': str, ...}, ... ]}
 # user_key = "chat_jid:sender_number" for groups OR sender_number for DM
-_visual_buffer: Dict[str, Dict] = {}
+_visual_buffer: Dict[str, list] = {}
 
 
 def visual_buffer_key(sender_number: str, chat_jid: str) -> str:
@@ -44,42 +43,62 @@ def visual_buffer_key(sender_number: str, chat_jid: str) -> str:
 
 def store_visual_buffer(sender_number: str, chat_jid: str, media_url: str, 
                         message_id: str, caption: str = None) -> None:
-    """Store photo in visual buffer for later linking."""
+    """Store photo in visual buffer for later linking (Appends to list)."""
     key = visual_buffer_key(sender_number, chat_jid)
-    _visual_buffer[key] = {
+    
+    # Initialize list if not exists
+    if key not in _visual_buffer:
+        _visual_buffer[key] = []
+        
+    # Append new item
+    _visual_buffer[key].append({
         'media_url': media_url,
         'message_id': message_id,
         'caption': caption,
         'chat_jid': chat_jid,
         'sender_number': sender_number,
         'created_at': datetime.now()
-    }
+    })
 
 
-def get_visual_buffer(sender_number: str, chat_jid: str) -> Optional[Dict]:
-    """Get photo from visual buffer if exists and not expired."""
+def get_visual_buffer(sender_number: str, chat_jid: str) -> list:
+    """
+    Get ALL unexpired photos from visual buffer.
+    Returns list of dicts.
+    """
     key = visual_buffer_key(sender_number, chat_jid)
-    photo = _visual_buffer.get(key)
+    items = _visual_buffer.get(key, [])
     
-    if photo:
-        created = photo.get('created_at')
-        if created and (datetime.now() - created).total_seconds() > VISUAL_BUFFER_TTL_SECONDS:
-            # Expired
-            _visual_buffer.pop(key, None)
-            return None
-        return photo
-    return None
+    if not items:
+        return []
+        
+    # Filter expired items
+    valid_items = []
+    now = datetime.now()
+    
+    for item in items:
+        created = item.get('created_at')
+        if created and (now - created).total_seconds() <= VISUAL_BUFFER_TTL_SECONDS:
+            valid_items.append(item)
+            
+    # Update buffer with only valid items (cleanup)
+    if not valid_items:
+        _visual_buffer.pop(key, None)
+    else:
+        _visual_buffer[key] = valid_items
+        
+    return valid_items
 
 
 def clear_visual_buffer(sender_number: str, chat_jid: str) -> None:
-    """Clear photo from visual buffer after processing."""
+    """Clear photos from visual buffer after processing."""
     key = visual_buffer_key(sender_number, chat_jid)
     _visual_buffer.pop(key, None)
 
 
 def has_visual_buffer(sender_number: str, chat_jid: str) -> bool:
     """Check if user has unexpired photo in buffer."""
-    return get_visual_buffer(sender_number, chat_jid) is not None
+    return len(get_visual_buffer(sender_number, chat_jid)) > 0
 
 
 # ===================== PENDING TRANSACTIONS =====================
