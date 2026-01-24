@@ -114,6 +114,29 @@ def has_pending_transaction(pkey: str) -> bool:
     return get_pending_transactions(pkey) is not None
 
 
+# ===================== PENDING MESSAGE REFS =====================
+# Store bot prompt message IDs -> pending key mapping
+# Format: {bot_msg_id: pending_key}
+_pending_message_refs: Dict[str, str] = {}
+
+
+def store_pending_message_ref(bot_msg_id: str, pkey: str) -> None:
+    """Store reference from bot's prompt message ID to pending key."""
+    if not bot_msg_id or not pkey:
+        return
+    _pending_message_refs[str(bot_msg_id)] = str(pkey)
+
+
+def get_pending_key_from_message(bot_msg_id: str) -> str:
+    """Get pending key from bot's prompt message ID."""
+    return _pending_message_refs.get(str(bot_msg_id), '')
+
+
+def clear_pending_message_ref(bot_msg_id: str) -> None:
+    """Remove a pending message reference."""
+    _pending_message_refs.pop(str(bot_msg_id), None)
+
+
 # ===================== MESSAGE DEDUP =====================
 # Format: {message_id: timestamp}
 _processed_messages: Dict[str, datetime] = {}
@@ -174,6 +197,7 @@ def get_state_stats() -> Dict[str, Any]:
         'pending_count': len(_pending_transactions),
         'processed_count': len(_processed_messages),
         'bot_refs_count': len(_bot_message_refs),
+        'pending_message_refs_count': len(_pending_message_refs),
     }
 
 
