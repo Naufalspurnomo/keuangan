@@ -568,6 +568,78 @@ def get_all_data(days: int = 30) -> List[Dict]:
         return []
 
 
+
+def check_duplicate_transaction(new_amount: int, new_desc: str, new_project: str, 
+                              company: str, days_lookback: int = 2) -> tuple:
+    """
+    Check for potential duplicate transactions (Layer 5: Semantic Duplicate Detection).
+    
+    Args:
+        new_amount: Amount of new transaction
+        new_desc: Description of new transaction
+        new_project: Project name
+        company: Company/Company Sheet name
+        days_lookback: How many days back to check
+        
+    Returns:
+        (is_duplicate: bool, warning_message: str or None)
+    """
+    try:
+        from difflib import SequenceMatcher
+        
+        # Pull recent data
+        recent_data = get_all_data(days=days_lookback)
+        
+        normalized_new_desc = new_desc.lower().strip()
+        normalized_new_proj = (new_project or "").lower().strip()
+        
+        potential_dupes = []
+        
+        for txn in recent_data:
+            # Check 1: Company match (if known)
+            txn_company = (txn.get('company_sheet') or "").strip()
+            if company and company != "Unknown" and txn_company != "Unknown":
+                if company.lower() != txn_company.lower():
+                    continue
+
+            # Check 2: Amount exact match
+            # (Relaxed check: allow slight variance not implemented yet to be safe, stick to exact amount for now)
+            if txn['jumlah'] != new_amount:
+                continue
+                
+            # Check 3: Description Semantic Similarity
+            # Calculate similarity ratio (0.0 to 1.0)
+            txn_desc = txn['keterangan'].lower().strip()
+            similarity = SequenceMatcher(None, normalized_new_desc, txn_desc).ratio()
+            
+            # Check 4: Project Match (if both exist)
+            txn_proj = (txn.get('nama_projek') or "").lower().strip()
+            project_mismatch = False
+            if normalized_new_proj and txn_proj:
+                 if normalized_new_proj != txn_proj:
+                     project_mismatch = True
+            
+            # Decision Logic
+            # High similarity (> 0.75) AND Same Amount AND Not different projects
+            if similarity > 0.75 and not project_mismatch:
+                potential_dupes.append(txn)
+                
+        if potential_dupes:
+            # Construct warning message
+            dupe = potential_dupes[0]
+            msg = (f"⚠️ Transaksi ini mirip dengan yang sudah ada:\n"
+                   f"📅 {dupe['tanggal']} | {dupe['keterangan']} | Rp {dupe['jumlah']:,}\n"
+                   f"📍 {dupe.get('company_sheet', 'Unknown')} ({dupe.get('nama_projek', '-')})\n\n"
+                   f"Yakin mau simpan lagi? (Reply Y untuk lanjut simpan)")
+            return True, msg
+            
+        return False, None
+        
+    except Exception as e:
+        secure_log("WARNING", f"Duplicate check failed: {str(e)}")
+        return False, None
+
+
 def get_summary(days: int = 30) -> Dict:
     """Get summary statistics for all transactions."""
     data = get_all_data(days)

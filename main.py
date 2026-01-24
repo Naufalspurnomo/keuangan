@@ -44,6 +44,7 @@ from sheets_helper import (
     get_selection_by_idx, get_dompet_for_company,
     find_transaction_by_message_id, update_transaction_amount,
     normalize_project_display_name,
+    check_duplicate_transaction,
 )
 from wuzapi_helper import (
     send_wuzapi_reply,
@@ -815,6 +816,62 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                             f"Ketik /cancel untuk batal semua, atau lanjutkan dengan input yang diminta.")
                         return jsonify({'status': 'no_match'}), 200
             
+            # ===== HANDLE DUPLICATE CONFIRMATION (Layer 5) =====
+            if pending_type == 'confirmation_dupe':
+                if text.lower().strip() == 'y':
+                    # User confirmed to save duplicate
+                    option = pending.get('selected_option')
+                    if not option:
+                        # Fallback if option lost
+                         send_wuzapi_reply(reply_to, "❌ Error state. Silakan ulangi transaksi.")
+                         _pending_transactions.pop(pending_pkey, None)
+                         return jsonify({'status': 'error'}), 200
+                         
+                    dompet_sheet = option['dompet']
+                    company = option['company']
+                    
+                    # Inject message_id
+                    tx_message_id = pending.get('message_id', '')
+                    for t in pending['transactions']:
+                        t['message_id'] = tx_message_id
+                        
+                    # Save
+                    result = append_transactions(
+                        pending['transactions'], 
+                        pending['sender_name'], 
+                        pending['source'],
+                        dompet_sheet=dompet_sheet,
+                        company=company
+                    )
+                    
+                    if result['success']:
+                        _pending_transactions.pop(pending_pkey, None) # Clear pending
+                        clear_pending_prompt_refs(pending)
+                        
+                        invalidate_dashboard_cache()
+                        reply = format_success_reply_new(pending['transactions'], dompet_sheet, company).replace('*', '')
+                        reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
+                        sent_msg = send_reply_with_mention(reply)
+                        
+                        # Store bot ref
+                        bot_msg_id = None
+                        if sent_msg and isinstance(sent_msg, dict):
+                             bot_msg_id = (sent_msg.get('data', {}).get('Id') or sent_msg.get('ID'))
+                        if bot_msg_id and tx_message_id:
+                            store_bot_message_ref(bot_msg_id, tx_message_id)
+                    else:
+                        send_wuzapi_reply(reply_to, f"❌ Gagal: {result.get('company_error', 'Error')}")
+                        # Keep pending if save failed? No, clear it to avoid stuck.
+                        _pending_transactions.pop(pending_pkey, None)
+                        
+                    return jsonify({'status': 'processed_dupe'}), 200
+                else:
+                    # User declined
+                    send_wuzapi_reply(reply_to, "❌ Transaksi dibatalkan.")
+                    clear_pending_prompt_refs(pending)
+                    _pending_transactions.pop(pending_pkey, None)
+                    return jsonify({'status': 'cancelled_dupe'}), 200
+
             # ===== HANDLE PROJECT NAME INPUT =====
             if pending_type == 'needs_project':
                 project_name = sanitize_input(text.strip())[:100]
@@ -841,10 +898,29 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                         break
                 
                 if detected_company:
-                    # Has company, auto-save
+                    # Has company, check duplicate before auto-save
+                    dompet = get_dompet_for_company(detected_company)
+                    
+                    # LAYER 5 DUPLICATE CHECK
+                    t0 = pending['transactions'][0]
+                    is_dupe, warning_msg = check_duplicate_transaction(
+                         t0.get('jumlah', 0), 
+                         t0.get('keterangan', ''),
+                         t0.get('nama_projek', ''), 
+                         detected_company,
+                         days_lookback=2
+                    )
+                    
+                    if is_dupe:
+                        # Transition to confirmation state
+                        pending['pending_type'] = 'confirmation_dupe'
+                        pending['selected_option'] = {'dompet': dompet, 'company': detected_company}
+                        send_wuzapi_reply(reply_to, warning_msg)
+                        return jsonify({'status': 'dupe_warning'}), 200
+
+                    # No duplicate, proceed to save
                     clear_pending_prompt_refs(pending)
                     _pending_transactions.pop(pending_pkey, None)
-                    dompet = get_dompet_for_company(detected_company)
                     tx_message_id = pending.get('message_id', '')
                     
                     for t in pending['transactions']:
@@ -899,16 +975,35 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 return jsonify({'status': 'invalid_selection'}), 200
             
             # Valid selection 1-5
-            pending = _pending_transactions.pop(pending_pkey)
-            clear_pending_prompt_refs(pending)
-            option = get_selection_by_idx(selection)
+            pending = _pending_transactions.get(pending_pkey) # Use get to keep state if dupe check fails
             
+            option = get_selection_by_idx(selection)
             if not option:
-                send_wuzapi_reply(reply_to, UserErrors.SELECTION_OUT_OF_RANGE)
-                return jsonify({'status': 'error'}), 200
+                 send_wuzapi_reply(reply_to, UserErrors.SELECTION_OUT_OF_RANGE)
+                 return jsonify({'status': 'error'}), 200
             
             dompet_sheet = option['dompet']
             company = option['company']
+            
+            # LAYER 5 DUPLICATE CHECK
+            t0 = pending['transactions'][0]
+            is_dupe, warning_msg = check_duplicate_transaction(
+                 t0.get('jumlah', 0), 
+                 t0.get('keterangan', ''),
+                 t0.get('nama_projek', ''), 
+                 company,
+                 days_lookback=2
+            )
+            
+            if is_dupe:
+                pending['pending_type'] = 'confirmation_dupe'
+                pending['selected_option'] = option
+                send_wuzapi_reply(reply_to, warning_msg)
+                return jsonify({'status': 'dupe_warning'}), 200
+
+            # No dupe, safe to pop
+            _pending_transactions.pop(pending_pkey, None)
+            clear_pending_prompt_refs(pending)
             
             # Inject message_id into transactions if available from pending
             tx_message_id = pending.get('message_id', '')
