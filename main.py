@@ -65,6 +65,9 @@ from security import (
 
 from pdf_report import generate_pdf_from_input, parse_month_input, validate_period_data
 
+# 7-Layer Intelligent Architecture (optional, controlled by USE_LAYER_ARCHITECTURE env var)
+from layer_integration import process_with_layers, USE_LAYERS
+
 # Import from new modular services
 from services.state_manager import (
     pending_key,
@@ -552,6 +555,33 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         allowed, wait_time = rate_limit_check(sender_number)
         if not allowed:
             return jsonify({'status': 'rate_limited'}), 200
+        
+        # ============ 7-LAYER ARCHITECTURE (if enabled) ============
+        # Process through intelligent layer system first
+        # Falls back to existing logic if layers return None or disabled
+        if USE_LAYERS:
+            try:
+                layer_response = process_with_layers(
+                    user_id=sender_number,
+                    message_id=message_id,
+                    text=text or '',
+                    sender_name=sender_name,
+                    media_url=media_url,
+                    caption=text if input_type == 'image' else None,
+                    is_group=is_group,
+                    chat_id=chat_jid,
+                    quoted_message_id=quoted_msg_id,
+                    sender_jid=sender_jid
+                )
+                
+                if layer_response:
+                    # Layer system handled the message
+                    send_reply_with_mention(layer_response)
+                    return jsonify({'status': 'layer_processed'}), 200
+                # else: Layer returned None, fall through to existing logic
+            except Exception as e:
+                secure_log("WARNING", f"Layer processing failed, falling back: {type(e).__name__}")
+                # Continue with existing logic
         
         # Sanitize
         text = sanitize_input(text or '')
