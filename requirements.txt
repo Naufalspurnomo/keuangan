@@ -11,8 +11,10 @@ groq>=0.9.0
 # easyocr==1.7.1  # COMMENTED: Requires 2GB RAM. Uncomment if USE_EASYOCR=true in .env
 Pillow==10.2.0
 
-# Embeddings for Duplicate Detection (Layer 5)
-sentence-transformers>=2.2.0
+# Embeddings for Duplicate Detection (Layer 5) - OPTIONAL
+# COMMENTED: sentence-transformers pulls PyTorch (~2GB), exceeds Koyeb free tier
+# Uncomment if you have 4GB+ RAM and need semantic duplicate detection
+# sentence-transformers>=2.2.0
 
 # Utils
 requests==2.31.0
