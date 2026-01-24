@@ -50,9 +50,14 @@ def calculate_financial_score(message: str, has_media: bool = False, is_mentione
     if is_mentioned:
         score += 60
         
-    # Factor 3: Media Attachment (+20)
+    # Factor 3: Media Attachment
+    # If media comes with ANY text/caption, it's a strong signal (+50)
+    # If media only (no text), it's a weak signal (+20) -> waits for follow-up text
     if has_media:
-        score += 20
+        if message and len(message.strip()) > 0:
+            score += 50
+        else:
+            score += 20
         
     # Factor 1: Numeric Pattern (+40)
     # Check for amount patterns like 150rb, 1.5jt, 50.000, 5 juta (allow space)

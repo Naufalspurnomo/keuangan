@@ -1245,6 +1245,19 @@ Kirim transaksi, lalu pilih nomor (1-5)."""
                 # If text and not transactions, maybe just text chat? Return OK.
                 return jsonify({'status': 'no_transactions_text'}), 200
 
+            # GUARD: Zero Amount Check
+            zero_tx = [t for t in transactions if t.get('jumlah', 0) <= 0]
+            if zero_tx:
+                desc = zero_tx[0].get('keterangan', 'Item')
+                if len(desc) > 40: desc = desc[:37] + "..."
+                
+                send_wuzapi_reply(reply_to, 
+                    f"⚠️ Transaksi terdeteksi tapi nominal belum ada (Rp 0).\n\n"
+                    f"📝 {desc}\n\n"
+                    f"Mohon ulangi dengan menyertakan nominal angka.\n"
+                    f"Contoh: 'Beli semen 50rb'")
+                return jsonify({'status': 'zero_amount'}), 200
+
             # Inject message_id into transactions
             for t in transactions:
                 t['message_id'] = message_id
