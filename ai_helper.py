@@ -482,11 +482,12 @@ USE_EASYOCR = os.getenv('USE_EASYOCR', 'false').lower() == 'true'
 import base64
 
 # List of potential Groq Vision models to try (fallback mechanism)
+# Prioritize Llama 4 Scout (Original Working Model)
 VALID_VISION_MODELS = [
+    "meta-llama/llama-4-scout-17b-16e-instruct", # ORIGINAL WORKING MODEL
     "llama-3.2-90b-vision-preview",
     "llama-3.2-11b-vision-preview",
-    "llama-3.2-11b-vision-instruct", 
-    "llama-3.2-90b-vision-instruct"
+    "llama-3.2-11b-vision-instruct"
 ]
 
 def ocr_image(image_source: Union[str, List[str]]) -> str:
@@ -550,14 +551,11 @@ def ocr_image(image_source: Union[str, List[str]]) -> str:
                 return extracted_text
                 
             except Exception as e:
-                err_str = str(e).lower()
-                if "model_decommissioned" in err_str or "not found" in err_str or "400" in err_str or "404" in err_str:
-                    secure_log("WARNING", f"Model {model_name} failed/decommissioned. Trying next...")
-                    last_error = e
-                    continue
-                else:
-                    # Non-model error (e.g. rate limit, network), raise immediately
-                    raise e
+                # Log error and try next model
+                # We catch ALL exceptions here to ensure we try every available model
+                secure_log("WARNING", f"Model {model_name} failed: {type(e).__name__}. Trying next...")
+                last_error = e
+                continue
                     
         # If all failed
         secure_log("ERROR", "All Vision Models failed.")
