@@ -481,13 +481,21 @@ USE_EASYOCR = os.getenv('USE_EASYOCR', 'false').lower() == 'true'
 # ===================== GROQ VISION OCR (ACTIVE) =====================
 import base64
 
+# List of potential Groq Vision models to try (fallback mechanism)
+VALID_VISION_MODELS = [
+    "llama-3.2-90b-vision-preview",
+    "llama-3.2-11b-vision-preview",
+    "llama-3.2-11b-vision-instruct", 
+    "llama-3.2-90b-vision-instruct"
+]
+
 def ocr_image(image_source: Union[str, List[str]]) -> str:
     """
     Extract text from Single or Multiple images using Groq Vision.
-    Accepts local file path(s).
+    Uses fallback mechanism to try multiple models if one is decommissioned.
     """
     try:
-        secure_log("INFO", "Running OCR via Groq Vision (Multi-Image Support)...")
+        secure_log("INFO", "Running OCR via Groq Vision (Multi-Image)...")
         
         # Ensure list
         paths = [image_source] if isinstance(image_source, str) else image_source
@@ -503,12 +511,11 @@ def ocr_image(image_source: Union[str, List[str]]) -> str:
             }
         ]
         
+        # Build payload
         for path in paths:
-            # Read and encode image to base64
             with open(path, 'rb') as img_file:
                 image_data = base64.b64encode(img_file.read()).decode('utf-8')
             
-            # Determine MIME type
             ext = os.path.splitext(path)[1].lower()
             mime_types = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp'}
             mime_type = mime_types.get(ext, 'image/jpeg')
@@ -520,30 +527,44 @@ def ocr_image(image_source: Union[str, List[str]]) -> str:
                 }
             })
         
-        # Call Groq Vision API
-        # Using llama-3.2-11b-vision-preview (90b decommissioned)
-        response = groq_client.chat.completions.create(
-            model="llama-3.2-11b-vision-preview", 
-            messages=[
-                {
-                    "role": "user",
-                    "content": content_payload
-                }
-            ],
-            temperature=0.0,
-            max_completion_tokens=1024
-        )
-        
-        extracted_text = response.choices[0].message.content.strip()
-        
-        # Sanitize result
-        extracted_text = sanitize_input(extracted_text)
-        
-        secure_log("INFO", f"Groq Vision OCR complete: {len(extracted_text)} chars")
-        return extracted_text
-        
+        # Try models sequentially
+        last_error = None
+        for model_name in VALID_VISION_MODELS:
+            try:
+                secure_log("INFO", f"Trying Vision Model: {model_name}")
+                response = groq_client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": content_payload
+                        }
+                    ],
+                    temperature=0.0,
+                    max_completion_tokens=1024
+                )
+                
+                extracted_text = response.choices[0].message.content.strip()
+                extracted_text = sanitize_input(extracted_text)
+                secure_log("INFO", f"Groq Vision OCR success with {model_name}: {len(extracted_text)} chars")
+                return extracted_text
+                
+            except Exception as e:
+                err_str = str(e).lower()
+                if "model_decommissioned" in err_str or "not found" in err_str or "400" in err_str or "404" in err_str:
+                    secure_log("WARNING", f"Model {model_name} failed/decommissioned. Trying next...")
+                    last_error = e
+                    continue
+                else:
+                    # Non-model error (e.g. rate limit, network), raise immediately
+                    raise e
+                    
+        # If all failed
+        secure_log("ERROR", "All Vision Models failed.")
+        raise last_error
+
     except Exception as e:
-        secure_log("ERROR", f"Groq Vision OCR failed: {type(e).__name__}: {str(e)}")
+        secure_log("ERROR", f"Groq Vision OCR failed final: {type(e).__name__}: {str(e)}")
         raise
 
 
