@@ -521,9 +521,9 @@ def ocr_image(image_source: Union[str, List[str]]) -> str:
             })
         
         # Call Groq Vision API
-        # Using llama-3.2-90b-vision-preview for robust multi-image support
+        # Using llama-3.2-11b-vision-preview (90b decommissioned)
         response = groq_client.chat.completions.create(
-            model="llama-3.2-90b-vision-preview", 
+            model="llama-3.2-11b-vision-preview", 
             messages=[
                 {
                     "role": "user",
