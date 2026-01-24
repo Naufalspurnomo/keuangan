@@ -21,8 +21,66 @@ PENDING_TTL_SECONDS = Timeouts.PENDING_TRANSACTION
 DEDUP_TTL_SECONDS = Timeouts.DEDUP_WINDOW
 MAX_BOT_REFS = Timeouts.BOT_REFS_MAX
 
+# Visual Buffer TTL (2 minutes - photos expire quickly)
+VISUAL_BUFFER_TTL_SECONDS = 120
+
 # Thread lock for dedup operations
 _dedup_lock = threading.Lock()
+
+# ===================== VISUAL BUFFER (Grand Design Layer 2) =====================
+# Stores unprocessed photos for linking with later text commands
+# Format: {user_key: {'media_url': str, 'caption': str, 'message_id': str, 
+#                    'created_at': datetime, 'chat_jid': str}}
+# user_key = "chat_jid:sender_number" for groups OR sender_number for DM
+_visual_buffer: Dict[str, Dict] = {}
+
+
+def visual_buffer_key(sender_number: str, chat_jid: str) -> str:
+    """Generate key for visual buffer per user per chat."""
+    if chat_jid and "@g.us" in chat_jid:
+        return f"{chat_jid}:{sender_number}"
+    return sender_number
+
+
+def store_visual_buffer(sender_number: str, chat_jid: str, media_url: str, 
+                        message_id: str, caption: str = None) -> None:
+    """Store photo in visual buffer for later linking."""
+    key = visual_buffer_key(sender_number, chat_jid)
+    _visual_buffer[key] = {
+        'media_url': media_url,
+        'message_id': message_id,
+        'caption': caption,
+        'chat_jid': chat_jid,
+        'sender_number': sender_number,
+        'created_at': datetime.now()
+    }
+
+
+def get_visual_buffer(sender_number: str, chat_jid: str) -> Optional[Dict]:
+    """Get photo from visual buffer if exists and not expired."""
+    key = visual_buffer_key(sender_number, chat_jid)
+    photo = _visual_buffer.get(key)
+    
+    if photo:
+        created = photo.get('created_at')
+        if created and (datetime.now() - created).total_seconds() > VISUAL_BUFFER_TTL_SECONDS:
+            # Expired
+            _visual_buffer.pop(key, None)
+            return None
+        return photo
+    return None
+
+
+def clear_visual_buffer(sender_number: str, chat_jid: str) -> None:
+    """Clear photo from visual buffer after processing."""
+    key = visual_buffer_key(sender_number, chat_jid)
+    _visual_buffer.pop(key, None)
+
+
+def has_visual_buffer(sender_number: str, chat_jid: str) -> bool:
+    """Check if user has unexpired photo in buffer."""
+    return get_visual_buffer(sender_number, chat_jid) is not None
+
 
 # ===================== PENDING TRANSACTIONS =====================
 # Format: {pkey: {'transactions': [...], 'sender_name': str, 'source': str, 'created_at': datetime, 

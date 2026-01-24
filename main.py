@@ -82,6 +82,11 @@ from services.state_manager import (
     store_pending_message_ref,
     get_pending_key_from_message,
     clear_pending_message_ref,
+    # Visual Buffer for photo + text linking
+    store_visual_buffer,
+    get_visual_buffer,
+    clear_visual_buffer,
+    has_visual_buffer,
 )
 
 from utils.parsers import (
@@ -555,6 +560,26 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         allowed, wait_time = rate_limit_check(sender_number)
         if not allowed:
             return jsonify({'status': 'rate_limited'}), 200
+        
+        # ============ VISUAL BUFFER (Grand Design Layer 2) ============
+        # Handle photo + text linking across separate messages
+        
+        # Case 1: Photo without text → Store in visual buffer
+        if input_type == 'image' and media_url and not text.strip():
+            store_visual_buffer(sender_number, chat_jid, media_url, message_id)
+            secure_log("INFO", f"Visual buffer: Stored photo from {sender_number}, waiting for text")
+            # Don't respond yet - wait for text command
+            return jsonify({'status': 'photo_buffered'}), 200
+        
+        # Case 2: Text without photo → Check if we have buffered photo to link
+        if input_type == 'text' and not media_url:
+            buffered = get_visual_buffer(sender_number, chat_jid)
+            if buffered:
+                # Link buffered photo to this text
+                media_url = buffered.get('media_url')
+                input_type = 'image'  # Now treat as image message
+                secure_log("INFO", f"Visual buffer: Linked buffered photo to text '{text[:30]}...'")
+                clear_visual_buffer(sender_number, chat_jid)
         
         # ============ 7-LAYER ARCHITECTURE (if enabled) ============
         # Process through intelligent layer system first
