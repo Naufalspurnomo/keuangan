@@ -135,14 +135,30 @@ def classify_with_ai(message: str, context: dict) -> Tuple[str, float]:
             temperature=0.1
         )
         
-        result_text = response.choices[0].message.content.strip()
+        # Robust null checking - FIX for NoneType error
+        if not response or not response.choices or len(response.choices) == 0:
+            logger.warning("Empty response from Groq API")
+            return classify_with_patterns(message, context)
+        
+        message_obj = response.choices[0].message
+        if not message_obj or not message_obj.content:
+            logger.warning("No content in Groq response")
+            return classify_with_patterns(message, context)
+            
+        result_text = message_obj.content.strip()
+        
+        if not result_text:
+            logger.warning("Empty content from Groq")
+            return classify_with_patterns(message, context)
         
         # Parse JSON response
         # Handle markdown code blocks
         if "```" in result_text:
-            result_text = result_text.split("```")[1]
-            if result_text.startswith("json"):
-                result_text = result_text[4:]
+            parts = result_text.split("```")
+            if len(parts) >= 2:
+                result_text = parts[1]
+                if result_text.startswith("json"):
+                    result_text = result_text[4:].strip()
         
         result = json.loads(result_text)
         intent = result.get('intent', 'CHITCHAT').upper()
@@ -162,6 +178,9 @@ def classify_with_ai(message: str, context: dict) -> Tuple[str, float]:
         logger.info(f"AI classified: intent={intent}, confidence={confidence}")
         return intent, confidence
         
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse AI response as JSON: {e}")
+        return classify_with_patterns(message, context)
     except Exception as e:
         logger.error(f"AI classification failed: {e}")
         return classify_with_patterns(message, context)
