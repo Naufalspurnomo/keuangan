@@ -13,4 +13,7 @@ from .state_manager import (
     is_message_duplicate,
     store_bot_message_ref,
     get_original_message_id,
+    find_pending_by_bot_msg,
+    find_pending_for_user,
+    pending_key,
 )

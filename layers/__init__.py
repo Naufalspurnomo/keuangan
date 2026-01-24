@@ -1,0 +1,261 @@
+"""
+layers/__init__.py - 7-Layer Intelligence Pipeline Orchestrator
+
+This module orchestrates the complete message processing pipeline
+through all 7 layers of the intelligent architecture.
+
+Architecture:
+    Layer 0: Spam Filter & Rate Limiter
+    Layer 1: Semantic Intent Classifier
+    Layer 2: Context Assembly Engine  
+    Layer 3: Adaptive AI Processor & Validation
+    Layer 4: State Machine Orchestrator
+    Layer 5: Duplicate Detection Engine
+    Layer 6: Storage & Wallet Mapping
+    Layer 7: Feedback & Learning Engine
+"""
+
+from typing import Optional, Dict, Any, Tuple
+from dataclasses import dataclass
+from enum import Enum
+import logging
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+
+class ProcessingMode(Enum):
+    """Message processing modes based on financial signal score."""
+    SILENT = "silent"           # Score < 50: Ignore message
+    TENTATIVE = "tentative"     # Score 50-69: Process with extra validation
+    CONFIDENT = "confident"     # Score >= 70: Process with confidence
+
+
+class Intent(Enum):
+    """User intent categories."""
+    RECORD_TRANSACTION = "record"
+    REVISION_REQUEST = "revision"
+    QUERY_STATUS = "query"
+    ANSWER_PENDING = "answer"
+    CANCEL_TRANSACTION = "cancel"
+    CHITCHAT = "chitchat"
+
+
+@dataclass
+class MessageContext:
+    """Context object passed through the pipeline."""
+    # Raw input
+    user_id: str
+    message_id: str
+    text: str
+    media_url: Optional[str] = None
+    caption: Optional[str] = None
+    is_group: bool = False
+    chat_id: Optional[str] = None
+    sender_name: Optional[str] = None
+    quoted_message_id: Optional[str] = None
+    
+    # Layer 0 output
+    financial_score: int = 0
+    processing_mode: ProcessingMode = ProcessingMode.SILENT
+    
+    # Layer 1 output
+    intent: Optional[Intent] = None
+    intent_confidence: float = 0.0
+    
+    # Layer 2 output
+    linked_photo: Optional[Dict] = None
+    pending_question: Optional[Dict] = None
+    
+    # Layer 3 output
+    extracted_data: Optional[Dict] = None
+    validation_flags: list = None
+    
+    # Layer 4 output
+    current_state: Optional[str] = None
+    next_action: Optional[str] = None
+    
+    # Layer 5 output
+    duplicate_info: Optional[Dict] = None
+    
+    # Layer 6 output
+    saved_transaction: Optional[Dict] = None
+    
+    # Layer 7 output
+    response_message: Optional[str] = None
+    
+    def __post_init__(self):
+        if self.validation_flags is None:
+            self.validation_flags = []
+
+
+class LayerPipeline:
+    """
+    Main orchestrator for the 7-layer processing pipeline.
+    
+    Each layer processes the MessageContext and enriches it
+    with additional data for downstream layers.
+    """
+    
+    def __init__(self):
+        # Lazy imports to avoid circular dependencies
+        self._layer_0 = None
+        self._layer_1 = None
+        self._layer_2 = None
+        self._layer_3 = None
+        self._layer_4 = None
+        self._layer_5 = None
+        self._layer_6 = None
+        self._layer_7 = None
+    
+    @property
+    def layer_0(self):
+        if self._layer_0 is None:
+            from . import layer_0_spam_filter
+            self._layer_0 = layer_0_spam_filter
+        return self._layer_0
+    
+    @property
+    def layer_1(self):
+        if self._layer_1 is None:
+            from . import layer_1_intent_classifier
+            self._layer_1 = layer_1_intent_classifier
+        return self._layer_1
+    
+    @property
+    def layer_2(self):
+        if self._layer_2 is None:
+            from . import layer_2_context_engine
+            self._layer_2 = layer_2_context_engine
+        return self._layer_2
+    
+    @property
+    def layer_3(self):
+        if self._layer_3 is None:
+            from . import layer_3_ai_processor
+            self._layer_3 = layer_3_ai_processor
+        return self._layer_3
+    
+    @property
+    def layer_4(self):
+        if self._layer_4 is None:
+            from . import layer_4_state_machine
+            self._layer_4 = layer_4_state_machine
+        return self._layer_4
+    
+    @property
+    def layer_5(self):
+        if self._layer_5 is None:
+            from . import layer_5_duplicate_detection
+            self._layer_5 = layer_5_duplicate_detection
+        return self._layer_5
+    
+    @property
+    def layer_6(self):
+        if self._layer_6 is None:
+            from . import layer_6_storage
+            self._layer_6 = layer_6_storage
+        return self._layer_6
+    
+    @property
+    def layer_7(self):
+        if self._layer_7 is None:
+            from . import layer_7_feedback
+            self._layer_7 = layer_7_feedback
+        return self._layer_7
+    
+    def process(self, ctx: MessageContext) -> Tuple[Optional[str], MessageContext]:
+        """
+        Process message through all layers.
+        
+        Args:
+            ctx: MessageContext with raw input data
+            
+        Returns:
+            Tuple of (response_message, enriched_context)
+            response_message is None if bot should stay silent
+        """
+        try:
+            # Layer 0: Spam Filter
+            ctx = self.layer_0.process(ctx)
+            if ctx.processing_mode == ProcessingMode.SILENT:
+                logger.debug(f"Layer 0: Message filtered (score={ctx.financial_score})")
+                return None, ctx
+            
+            # Layer 1: Intent Classification
+            ctx = self.layer_1.process(ctx)
+            if ctx.intent == Intent.CHITCHAT and not ctx.is_group:
+                # In private chat, might want to respond to chitchat
+                pass
+            
+            # Layer 2: Context Assembly
+            ctx = self.layer_2.process(ctx)
+            
+            # Layer 3: AI Extraction & Validation
+            ctx = self.layer_3.process(ctx)
+            
+            # Layer 4: State Machine
+            ctx = self.layer_4.process(ctx)
+            
+            # Layer 5: Duplicate Detection (if ready to save)
+            if ctx.current_state == "READY_TO_SAVE":
+                ctx = self.layer_5.process(ctx)
+            
+            # Layer 6: Storage (if confirmed)
+            if ctx.current_state == "CONFIRMED_SAVE":
+                ctx = self.layer_6.process(ctx)
+            
+            # Layer 7: Feedback & Learning
+            ctx = self.layer_7.process(ctx)
+            
+            return ctx.response_message, ctx
+            
+        except Exception as e:
+            logger.error(f"Pipeline error: {e}", exc_info=True)
+            # Generate error response
+            ctx.response_message = f"❌ Terjadi kesalahan: {str(e)}"
+            return ctx.response_message, ctx
+
+
+# Global pipeline instance
+_pipeline = None
+
+def get_pipeline() -> LayerPipeline:
+    """Get or create the global pipeline instance."""
+    global _pipeline
+    if _pipeline is None:
+        _pipeline = LayerPipeline()
+    return _pipeline
+
+
+def process_message(
+    user_id: str,
+    message_id: str,
+    text: str,
+    media_url: str = None,
+    caption: str = None,
+    is_group: bool = False,
+    chat_id: str = None,
+    sender_name: str = None,
+    quoted_message_id: str = None
+) -> Optional[str]:
+    """
+    Main entry point for message processing.
+    
+    Returns response message or None if bot should stay silent.
+    """
+    ctx = MessageContext(
+        user_id=user_id,
+        message_id=message_id,
+        text=text,
+        media_url=media_url,
+        caption=caption,
+        is_group=is_group,
+        chat_id=chat_id,
+        sender_name=sender_name,
+        quoted_message_id=quoted_message_id
+    )
+    
+    pipeline = get_pipeline()
+    response, _ = pipeline.process(ctx)
+    return response

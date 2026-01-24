@@ -25,14 +25,61 @@ MAX_BOT_REFS = Timeouts.BOT_REFS_MAX
 _dedup_lock = threading.Lock()
 
 # ===================== PENDING TRANSACTIONS =====================
-# Format: {pkey: {'transactions': [...], 'sender_name': str, 'source': str, 'created_at': datetime, 'chat_jid': str}}
-# pkey = chat_jid (group) or sender_number (DM) to allow any member to reply in-group
+# Format: {pkey: {'transactions': [...], 'sender_name': str, 'source': str, 'created_at': datetime, 
+#                 'chat_jid': str, 'sender_number': str, 'bot_msg_id': str}}
+# pkey = "chat_jid:sender_number" for groups OR sender_number for DM
+# This allows multiple pending transactions per group (one per user)
 _pending_transactions: Dict[str, Dict] = {}
 
 
 def pending_key(sender_number: str, chat_jid: str) -> str:
-    """Generate unique key for pending transactions per chat."""
-    return chat_jid or sender_number
+    """
+    Generate unique key for pending transactions.
+    - Group: "group@g.us:6281xxx" (per user per group)
+    - DM: sender_number only
+    """
+    if chat_jid and "@g.us" in chat_jid:
+        # Group chat: key includes both group and sender for uniqueness
+        return f"{chat_jid}:{sender_number}"
+    return sender_number
+
+
+def pending_key_from_chat(chat_jid: str) -> str:
+    """Generate base key for chat (without sender - for lookups)."""
+    return chat_jid if chat_jid else ""
+
+
+def find_pending_by_bot_msg(chat_jid: str, bot_msg_id: str) -> tuple:
+    """
+    Find pending transaction by the bot's question message ID.
+    Returns (pkey, pending_data) or (None, None) if not found.
+    
+    This allows any group member to reply to a specific bot question.
+    """
+    if not bot_msg_id:
+        return None, None
+    
+    # Search all pending transactions for this chat
+    for pkey, pending in _pending_transactions.items():
+        # Match by chat_jid prefix and bot_msg_id
+        if pkey.startswith(chat_jid) or pkey == chat_jid:
+            if pending.get("bot_msg_id") == bot_msg_id:
+                if not pending_is_expired(pending):
+                    return pkey, pending
+    
+    return None, None
+
+
+def find_pending_for_user(sender_number: str, chat_jid: str) -> tuple:
+    """
+    Find pending transaction for a specific user in chat.
+    Returns (pkey, pending_data) or (None, None) if not found.
+    """
+    pkey = pending_key(sender_number, chat_jid)
+    pending = get_pending_transactions(pkey)
+    if pending:
+        return pkey, pending
+    return None, None
 
 
 def pending_is_expired(pending: dict) -> bool:

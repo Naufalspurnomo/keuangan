@@ -76,6 +76,8 @@ from services.state_manager import (
     is_message_duplicate,
     store_bot_message_ref,
     get_original_message_id,
+    find_pending_by_bot_msg,
+    find_pending_for_user,
 )
 
 from utils.parsers import (
@@ -526,11 +528,26 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         # Sanitize
         text = sanitize_input(text or '')
         
-        # GROUP CHAT FILTER: Only respond if triggered or command
-        # Triggers: +catat, +bot, +input, /catat, or any / command
-        # EXCEPTION: If user has pending transaction IN THIS CHAT, allow through
-        pkey = pending_key(sender_number, chat_jid)
-        pending_data = _pending_transactions.get(pkey)
+        # ============ PENDING TRANSACTION LOOKUP ============
+        # Priority 1: If user is replying to a bot message, find that specific pending
+        # Priority 2: If user has their own pending transaction
+        # This allows DELEGATION: any group member can reply to answer for someone
+        
+        pkey = None
+        pending_data = None
+        is_reply_to_bot = False
+        
+        # Try to find pending by reply first (for delegation support)
+        if quoted_msg_id and is_group:
+            pkey, pending_data = find_pending_by_bot_msg(chat_jid, quoted_msg_id)
+            if pending_data:
+                is_reply_to_bot = True
+                secure_log("DEBUG", f"Found pending by bot_msg reply: {pkey}")
+        
+        # Fall back to sender's own pending
+        if not pending_data:
+            pkey = pending_key(sender_number, chat_jid)
+            pending_data = _pending_transactions.get(pkey)
         
         # Check if pending exists and not expired
         pending_was_expired = False
@@ -554,8 +571,10 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         
         # Debug logging for group chat
         if is_group:
-            secure_log("DEBUG", f"Group msg from {sender_number}: pkey={pkey}, has_pending={has_pending}, text='{text[:30]}...'")
+            secure_log("DEBUG", f"Group msg from {sender_number}: pkey={pkey}, has_pending={has_pending}, is_reply_to_bot={is_reply_to_bot}, text='{text[:30]}...'")
         
+        # GROUP CHAT FILTER: Only respond if triggered or command
+        # EXCEPTION: If found pending (own or by reply), allow through
         if is_group and not has_pending:
             should_respond, cleaned_text = should_respond_in_group(text, is_group)
             if not should_respond:
