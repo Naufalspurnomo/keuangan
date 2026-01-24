@@ -1,27 +1,25 @@
 """
-layer_7_feedback.py - Feedback & Learning Engine
+layer_7_feedback.py - Feedback & Response Generation Layer
 
-Layer 7 of the 7-layer architecture. Provides clear feedback to users
-and learns from interaction patterns.
+Layer 7 of the 7-layer architecture. Handles final response generation
+and learning from user interactions.
 
 Features:
-- Response templates (success, waiting, error, duplicate)
-- Error pattern tracking with persistence
-- Category auto-learning
-- User behavior adaptation
-- Dynamic AI prompt strengthening
+- Response formatting based on current state
+- Error message generation
+- Pattern learning for future improvements
+- Feedback tracking
 
-Based on Grand Design Ultimate lines 1393-1571.
+Based on Grand Design Ultimate lines 1459-1614.
 """
 
 import os
 import json
-import time
 import logging
-from typing import Dict, List, Optional, Any
+import re
+from typing import Dict, List, Optional
+from datetime import datetime
 from pathlib import Path
-from collections import defaultdict
-from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -31,55 +29,23 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path(os.getenv('DATA_DIR', 'data'))
 LEARNING_FILE = DATA_DIR / 'learning_data.json'
 
-# Error thresholds for prompt strengthening
-ERROR_THRESHOLD_24H = 5  # If > 5 errors in 24h, strengthen prompt
 
+# ===================== LEARNING DATA =====================
 
-# ===================== LEARNING DATA STRUCTURES =====================
-
-# Error pattern tracking (Grand Design lines 1457-1496)
-_error_log = {
-    "truncation_errors": {
-        "count": 0,
-        "examples": [],
-        "last_24h_count": 0,
-        "last_reset": time.time()
-    },
-    "semantic_errors": {
-        "count": 0,
-        "examples": [],
-        "last_24h_count": 0,
-        "last_reset": time.time()
-    },
-    "user_confusion_events": {
-        "count": 0,
-        "examples": []
-    }
+_learned_patterns: Dict[str, any] = {
+    'corrections': [],      # User corrections for learning
+    'category_hints': {},   # Description -> category mapping
+    'error_patterns': [],   # Patterns that caused errors
 }
 
-# Category auto-learning (Grand Design lines 1498-1547)
-_learned_patterns: Dict[str, Dict] = {}
-
-# User behavior profiles (Grand Design lines 1549-1570)
-_user_profiles: Dict[str, Dict] = {}
-
-
-# ===================== PERSISTENCE =====================
 
 def _load_learning_data():
     """Load learning data from disk."""
-    global _error_log, _learned_patterns, _user_profiles
-    
+    global _learned_patterns
     try:
         if LEARNING_FILE.exists():
-            with open(LEARNING_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            _error_log = data.get('error_log', _error_log)
-            _learned_patterns = data.get('learned_patterns', {})
-            _user_profiles = data.get('user_profiles', {})
-            
-            logger.info("Loaded learning data")
+            with open(LEARNING_FILE, 'r') as f:
+                _learned_patterns = json.load(f)
     except Exception as e:
         logger.warning(f"Failed to load learning data: {e}")
 
@@ -88,378 +54,184 @@ def _save_learning_data():
     """Save learning data to disk."""
     try:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        
-        data = {
-            'error_log': _error_log,
-            'learned_patterns': _learned_patterns,
-            'user_profiles': _user_profiles,
-            'last_saved': time.time()
-        }
-        
-        with open(LEARNING_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-            
+        with open(LEARNING_FILE, 'w') as f:
+            json.dump(_learned_patterns, f, indent=2, default=str)
     except Exception as e:
         logger.error(f"Failed to save learning data: {e}")
 
 
-# ===================== ERROR TRACKING =====================
-
-def track_error(error_type: str, original: str, extracted: str):
-    """
-    Track an error for pattern learning.
-    
-    Args:
-        error_type: Type of error (truncation, semantic, etc.)
-        original: Original user input
-        extracted: What AI extracted (incorrectly)
-    """
-    global _error_log
-    
-    if error_type not in _error_log:
-        _error_log[error_type] = {
-            "count": 0,
-            "examples": [],
-            "last_24h_count": 0,
-            "last_reset": time.time()
-        }
-    
-    entry = _error_log[error_type]
-    entry["count"] += 1
-    entry["last_24h_count"] += 1
-    
-    # Keep last 10 examples
-    entry["examples"].append({
-        "original": original[:200],
-        "extracted": extracted[:100],
-        "timestamp": time.time()
+def record_correction(original: Dict, corrected: Dict, field: str):
+    """Record a user correction for learning."""
+    _learned_patterns['corrections'].append({
+        'original': original,
+        'corrected': corrected,
+        'field': field,
+        'timestamp': datetime.now().isoformat()
     })
-    entry["examples"] = entry["examples"][-10:]
-    
-    _save_learning_data()
-    logger.info(f"Tracked {error_type} error (24h count: {entry['last_24h_count']})")
-
-
-def reset_24h_counters():
-    """Reset 24-hour error counters (call daily)."""
-    global _error_log
-    
-    current_time = time.time()
-    for error_type, entry in _error_log.items():
-        if isinstance(entry, dict) and 'last_reset' in entry:
-            if current_time - entry['last_reset'] > 86400:  # 24 hours
-                entry['last_24h_count'] = 0
-                entry['last_reset'] = current_time
-    
+    # Keep only last 100 corrections
+    _learned_patterns['corrections'] = _learned_patterns['corrections'][-100:]
     _save_learning_data()
 
 
-def get_error_addendum() -> str:
-    """
-    Generate error correction addendum for AI prompt.
-    
-    If certain error patterns are frequent, generate instructions
-    to prevent them.
-    """
-    reset_24h_counters()
-    
-    addendum_parts = []
-    
-    # Check truncation errors
-    truncation = _error_log.get('truncation_errors', {})
-    if truncation.get('last_24h_count', 0) > ERROR_THRESHOLD_24H:
-        examples = truncation.get('examples', [])[-3:]
-        if examples:
-            addendum_parts.append("""
-ERROR PATTERN DETECTED: Project name truncation
-In the last 24 hours, you truncated proper nouns multiple times.
-
-CRITICAL OVERRIDE:
-When user provides multi-word proper noun (Title Case, specific name),
-you MUST preserve it EXACTLY. No abbreviation, no summarization.
-""")
-            for ex in examples:
-                addendum_parts.append(f"- '{ex['original']}' was truncated to '{ex['extracted']}' ❌")
-    
-    # Check semantic errors
-    semantic = _error_log.get('semantic_errors', {})
-    if semantic.get('last_24h_count', 0) > ERROR_THRESHOLD_24H:
-        addendum_parts.append("""
-ERROR PATTERN DETECTED: Invalid project names
-You have been extracting action verbs or generic nouns as project names.
-
-CRITICAL OVERRIDE:
-Project names should be proper nouns or specific descriptions.
-Words like 'revisi', 'update', 'beli', 'dompet' are NOT project names.
-""")
-    
-    return '\n'.join(addendum_parts)
+def record_error(pattern: str, error_type: str, context: Dict = None):
+    """Record an error pattern for analysis."""
+    _learned_patterns['error_patterns'].append({
+        'pattern': pattern,
+        'error_type': error_type,
+        'context': context,
+        'timestamp': datetime.now().isoformat()
+    })
+    # Keep only last 50 errors
+    _learned_patterns['error_patterns'] = _learned_patterns['error_patterns'][-50:]
+    _save_learning_data()
 
 
-# ===================== CATEGORY LEARNING =====================
+def suggest_category(description: str) -> Optional[str]:
+    """Suggest category based on learned patterns."""
+    if not description:
+        return None
+    
+    normalized = _normalize_description(description)
+    return _learned_patterns['category_hints'].get(normalized)
 
-def _normalize_description(description: str) -> str:
+
+def _normalize_description(desc: str) -> str:
     """Normalize description for pattern matching."""
-    # Remove amounts and specific text, keep action + category
-    import re
-    
-    text = description.lower()
-    text = re.sub(r'\d+', '', text)  # Remove numbers
-    text = re.sub(r'rp\.?\s*', '', text)  # Remove Rp
-    text = ' '.join(text.split())  # Normalize whitespace
-    
-    return text
+    # Remove amounts
+    text = re.sub(r'rp\.?\s*[\d.,]+', '', desc.lower())
+    text = re.sub(r'[\d.,]+\s*(?:rb|ribu|jt|juta|k)', '', text)
+    return ' '.join(text.split())
 
 
-def learn_from_transaction(txn: Dict):
-    """
-    Learn category patterns from saved transaction.
-    Grand Design lines 1503-1536.
-    """
-    global _learned_patterns
-    
-    description = txn.get('description', '')
-    category = txn.get('category', '')
-    
-    if not description or not category:
-        return
-    
-    pattern_key = _normalize_description(description)
-    if not pattern_key or len(pattern_key) < 3:
-        return
-    
-    if pattern_key not in _learned_patterns:
-        _learned_patterns[pattern_key] = {
-            "category": category,
-            "count": 1,
-            "confidence": 0.5
-        }
-    else:
-        learned = _learned_patterns[pattern_key]
-        if learned["category"] == category:
-            # Same category, increase confidence
-            learned["count"] += 1
-            learned["confidence"] = min(0.95, 0.5 + (learned["count"] * 0.05))
-        # If different category, don't update (conflict)
-    
-    _save_learning_data()
+# ===================== RESPONSE FORMATTERS =====================
 
-
-def suggest_category(description: str) -> Optional[Dict]:
-    """
-    Suggest category based on learned patterns.
-    
-    Returns:
-        Dict with suggestion or None
-    """
-    pattern_key = _normalize_description(description)
-    
-    if pattern_key in _learned_patterns:
-        learned = _learned_patterns[pattern_key]
-        if learned["confidence"] > 0.8 and learned["count"] > 5:
-            return {
-                "category": learned["category"],
-                "confidence": learned["confidence"],
-                "auto_fill": True
-            }
-        elif learned["confidence"] > 0.6:
-            return {
-                "category": learned["category"],
-                "confidence": learned["confidence"],
-                "auto_fill": False,
-                "ask_confirm": True
-            }
-    
-    return None
-
-
-# ===================== USER BEHAVIOR =====================
-
-def update_user_profile(user_id: str, event: str, data: Dict = None):
-    """Update user behavior profile."""
-    global _user_profiles
-    
-    if user_id not in _user_profiles:
-        _user_profiles[user_id] = {
-            "error_count": 0,
-            "success_count": 0,
-            "error_rate": 0.0,
-            "common_mistakes": [],
-            "average_amount": 0,
-            "frequent_categories": [],
-            "response_time_samples": []
-        }
-    
-    profile = _user_profiles[user_id]
-    
-    if event == "error":
-        profile["error_count"] += 1
-        if data and data.get("mistake_type"):
-            if data["mistake_type"] not in profile["common_mistakes"]:
-                profile["common_mistakes"].append(data["mistake_type"])
-    
-    elif event == "success":
-        profile["success_count"] += 1
-        if data:
-            # Update average amount
-            if data.get("amount"):
-                old_avg = profile["average_amount"]
-                count = profile["success_count"]
-                profile["average_amount"] = (old_avg * (count-1) + data["amount"]) / count
-            
-            # Track categories
-            if data.get("category"):
-                cats = profile["frequent_categories"]
-                if data["category"] not in cats:
-                    cats.append(data["category"])
-                profile["frequent_categories"] = cats[-5:]  # Keep last 5
-    
-    # Update error rate
-    total = profile["error_count"] + profile["success_count"]
-    if total > 0:
-        profile["error_rate"] = profile["error_count"] / total
-    
-    _save_learning_data()
-
-
-def get_feedback_style(user_id: str) -> str:
-    """
-    Get feedback style based on user profile.
-    
-    Returns:
-        'DETAILED' for high-error users, 'CONCISE' for experienced
-    """
-    profile = _user_profiles.get(user_id, {})
-    error_rate = profile.get("error_rate", 0)
-    
-    if error_rate > 0.2:
-        return "DETAILED"
-    return "CONCISE"
-
-
-# ===================== RESPONSE TEMPLATES =====================
-
-def format_success_response(txn: Dict, wallet: str, style: str = "CONCISE") -> str:
-    """Format success response message."""
-    amount = txn.get('amount', 0)
-    desc = txn.get('description', '')
-    company = txn.get('company', '')
-    project = txn.get('project_name', '')
-    
-    timestamp = datetime.now().strftime('%H:%M')
-    
-    if style == "DETAILED":
+def format_success_response(ctx) -> str:
+    """Format success response after transaction saved."""
+    try:
+        from utils.formatters import format_success_reply_new
+        from security import now_wib
+        
+        result = ctx.saved_transaction or {}
+        dompet = getattr(ctx, 'selected_dompet', 'Unknown')
+        company = getattr(ctx, 'selected_company', 'Unknown')
+        
+        response = format_success_reply_new(
+            ctx.extracted_data or [],
+            dompet,
+            company,
+            ""
+        ).replace('*', '')
+        
+        # Add revision hint
+        response += "\n\n💡 Reply /revisi [jumlah] untuk ralat"
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Format success failed: {e}")
+        total = sum(t.get('jumlah', 0) for t in (ctx.extracted_data or []))
         return f"""✅ Transaksi Tercatat!
-
-💸 {desc}: Rp {amount:,}
-📍 {wallet} → {company} → {project}
-⏱️ {timestamp}
-
-💡 Tips:
-- Revisi: reply pesan ini + /revisi [jumlah]
-- Lihat laporan: /laporan
-- Cek saldo: /saldo"""
-    else:
-        return f"""✅ Tercatat!
-💸 {desc}: Rp {amount:,}
-📍 {wallet} → {company} → {project}
-💡 Revisi: reply + /revisi [jumlah]"""
+📊 Total: Rp {total:,}
+💡 Reply /revisi untuk ralat""".replace(',', '.')
 
 
-def format_waiting_response(waiting_for: str, txn: Dict, style: str = "CONCISE") -> str:
-    """Format waiting for input response."""
-    amount = txn.get('amount', 0)
-    desc = txn.get('description', '')
+def format_error_response(ctx, error_type: str = None) -> str:
+    """Format error response."""
+    error_type = error_type or getattr(ctx, 'save_error', 'Unknown error')
     
-    base = f"""⏳ Transaksi terdeteksi:
-💸 {desc}: Rp {amount:,}
-"""
+    error_messages = {
+        'EXTRACTION_ERROR': "❌ Gagal memproses input. Coba kirim ulang dengan format yang lebih jelas.",
+        'NO_TRANSACTIONS': "❓ Tidak ada transaksi terdeteksi. Kirim dalam format:\n• beli semen 500rb\n• bayar tukang 1.5jt",
+        'SAVE_ERROR': f"❌ Gagal menyimpan: {error_type}",
+        'RATE_LIMITED': "⏳ Terlalu banyak request. Tunggu sebentar.",
+    }
     
-    if waiting_for == "project":
-        return base + "\n❓ Untuk projek apa?"
-    elif waiting_for == "company":
-        return base + "\n❓ Simpan ke company mana? (1-5)"
-    elif waiting_for == "amount":
-        return base + "\n❓ Berapa nominalnya?"
+    return error_messages.get(error_type, f"❌ Error: {error_type}")
+
+
+def format_waiting_response(ctx) -> str:
+    """Format response for waiting states."""
+    state = ctx.current_state
     
-    return base
-
-
-def format_error_response(error_type: str, details: str, style: str = "CONCISE") -> str:
-    """Format error response with guidance."""
-    if style == "DETAILED":
-        return f"""❌ {details}
-
-📍 Cara yang benar:
-1. Ketik transaksi dengan format lengkap
-2. Contoh: "beli semen 500rb projek Renovasi"
-3. Atau kirim foto struk + ketik "catat"
-
-💡 Bantuan: /help"""
-    else:
-        return f"❌ {details}"
+    if state == 'WAITING_COMPANY':
+        return ctx.response_message or "❓ Pilih company (1-5)"
+    
+    if state == 'WAITING_PROJECT':
+        return ctx.response_message or "❓ Ketik nama projek"
+    
+    if state == 'CONFIRM_DUPLICATE':
+        return ctx.response_message or "⚠️ Transaksi mirip terdeteksi. Y=Batal, N=Tetap simpan"
+    
+    return ctx.response_message or ""
 
 
 # ===================== MAIN PROCESSING =====================
 
 def process(ctx) -> 'MessageContext':
     """
-    Layer 7 processing: Feedback & Learning.
+    Layer 7 processing: Response Generation & Feedback.
     
-    Generates appropriate response and updates learning data.
+    Generates final response based on current state.
     
     Args:
         ctx: MessageContext from pipeline
         
     Returns:
-        Enriched MessageContext with response_message
+        MessageContext with response_message set
     """
-    user_id = ctx.user_id
-    style = get_feedback_style(user_id)
+    current_state = getattr(ctx, 'current_state', 'INITIAL')
     
-    # Handle different states
-    if ctx.current_state == "SUCCESS":
-        txn = ctx.extracted_data or {}
-        wallet = txn.get('wallet', 'N/A')
+    logger.info(f"Layer 7: Generating response for state={current_state}")
+    
+    # Generate response based on final state
+    if current_state == 'SAVED':
+        ctx.response_message = format_success_response(ctx)
         
-        # Generate success response
-        ctx.response_message = format_success_response(txn, wallet, style)
+        # Record successful patterns for learning
+        for t in (ctx.extracted_data or []):
+            desc = t.get('keterangan', '')
+            cat = t.get('kategori', '')
+            if desc and cat:
+                normalized = _normalize_description(desc)
+                _learned_patterns['category_hints'][normalized] = cat
+        _save_learning_data()
+    
+    elif current_state in ['WAITING_COMPANY', 'WAITING_PROJECT', 'CONFIRM_DUPLICATE']:
+        ctx.response_message = format_waiting_response(ctx)
+    
+    elif current_state == 'ERROR':
+        ctx.response_message = format_error_response(ctx)
         
-        # Learn from transaction
-        learn_from_transaction(txn)
-        update_user_profile(user_id, "success", txn)
+        # Record error for learning
+        record_error(
+            pattern=ctx.text or '',
+            error_type=getattr(ctx, 'extraction_error', 'unknown'),
+            context={'intent': str(ctx.intent)}
+        )
     
-    elif ctx.current_state == "ERROR":
-        # Track error
-        error_msg = ctx.response_message or "Unknown error"
-        update_user_profile(user_id, "error", {"mistake_type": "unknown"})
-        
-        # Format with guidance if needed
-        if style == "DETAILED" and ctx.response_message:
-            ctx.response_message = format_error_response("error", error_msg, style)
+    elif current_state == 'SAVE_ERROR':
+        ctx.response_message = format_error_response(ctx, 'SAVE_ERROR')
     
-    elif ctx.current_state in ["WAITING_AMOUNT", "WAITING_PROJECT", "WAITING_COMPANY"]:
-        # Response already set by state machine
-        pass
+    elif current_state == 'CANCELLED':
+        ctx.response_message = ctx.response_message or "❌ Dibatalkan"
     
-    elif ctx.current_state == "CONFIRM_DUPLICATE":
-        # Response already set by duplicate detection
-        pass
+    elif current_state == 'NO_TRANSACTION':
+        # No transactions detected - return None (stay silent or ask)
+        if ctx.is_group:
+            # In groups, stay silent for non-transaction messages
+            ctx.response_message = None
+        else:
+            ctx.response_message = format_error_response(ctx, 'NO_TRANSACTIONS')
     
-    elif ctx.current_state == "CANCELLED":
-        update_user_profile(user_id, "error", {"mistake_type": "cancelled"})
+    # If response is still None, generate generic
+    if ctx.response_message is None and current_state == 'INITIAL':
+        # Layer processing completed but no clear action
+        ctx.response_message = None
     
-    # Track validation errors for learning
-    for flag, msg in ctx.validation_flags or []:
-        if flag == "TRUNCATION":
-            track_error("truncation_errors", ctx.text or "", msg)
-        elif flag in ["SEMANTIC_TYPE", "ACTION_VERB"]:
-            track_error("semantic_errors", ctx.text or "", msg)
-    
-    logger.info(f"Layer 7: Generated response, style={style}")
+    logger.info(f"Layer 7: Response generated, length={len(ctx.response_message or '')}")
     
     return ctx
 
 
-# Initialize learning data on module load
+# Initialize on module load
 _load_learning_data()

@@ -8,15 +8,15 @@ Architecture:
     Layer 0: Spam Filter & Rate Limiter
     Layer 1: Semantic Intent Classifier
     Layer 2: Context Assembly Engine  
-    Layer 3: Adaptive AI Processor & Validation
+    Layer 3: Adaptive AI Processor & Validation (uses ai_helper)
     Layer 4: State Machine Orchestrator
     Layer 5: Duplicate Detection Engine
-    Layer 6: Storage & Wallet Mapping
-    Layer 7: Feedback & Learning Engine
+    Layer 6: Storage & Wallet Mapping (uses sheets_helper)
+    Layer 7: Feedback & Response Generation
 """
 
 from typing import Optional, Dict, Any, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import logging
 
@@ -66,27 +66,28 @@ class MessageContext:
     # Layer 2 output
     linked_photo: Optional[Dict] = None
     pending_question: Optional[Dict] = None
+    pending_context: Optional[Dict] = None  # For resuming pending transactions
     
     # Layer 3 output
-    extracted_data: Optional[Dict] = None
-    validation_flags: list = None
+    extracted_data: Optional[list] = None  # List of transactions
+    validation_flags: list = field(default_factory=list)
+    detected_company: Optional[str] = None
+    extraction_error: Optional[str] = None
     
     # Layer 4 output
     current_state: Optional[str] = None
-    next_action: Optional[str] = None
+    selected_company: Optional[str] = None
+    selected_dompet: Optional[str] = None
     
     # Layer 5 output
     duplicate_info: Optional[Dict] = None
     
     # Layer 6 output
     saved_transaction: Optional[Dict] = None
+    save_error: Optional[str] = None
     
     # Layer 7 output
     response_message: Optional[str] = None
-    
-    def __post_init__(self):
-        if self.validation_flags is None:
-            self.validation_flags = []
 
 
 class LayerPipeline:
@@ -184,15 +185,21 @@ class LayerPipeline:
             
             # Layer 1: Intent Classification
             ctx = self.layer_1.process(ctx)
-            if ctx.intent == Intent.CHITCHAT and not ctx.is_group:
-                # In private chat, might want to respond to chitchat
-                pass
+            logger.info(f"Layer 1: Intent={ctx.intent}, Confidence={ctx.intent_confidence:.2f}")
             
             # Layer 2: Context Assembly
             ctx = self.layer_2.process(ctx)
             
-            # Layer 3: AI Extraction & Validation
-            ctx = self.layer_3.process(ctx)
+            # Check if this is resuming a pending transaction
+            if ctx.pending_context:
+                # Restore extracted data from pending
+                ctx.extracted_data = ctx.pending_context.get('transactions', [])
+                ctx.current_state = ctx.pending_context.get('pending_state', 'WAITING_COMPANY')
+                logger.info(f"Layer 2: Resuming pending transaction, state={ctx.current_state}")
+            
+            # Layer 3: AI Extraction & Validation (only for new transactions)
+            if not ctx.extracted_data and ctx.intent == Intent.RECORD_TRANSACTION:
+                ctx = self.layer_3.process(ctx)
             
             # Layer 4: State Machine
             ctx = self.layer_4.process(ctx)
@@ -200,12 +207,15 @@ class LayerPipeline:
             # Layer 5: Duplicate Detection (if ready to save)
             if ctx.current_state == "READY_TO_SAVE":
                 ctx = self.layer_5.process(ctx)
+                # If no duplicate, move to confirmed
+                if ctx.current_state == "READY_TO_SAVE":
+                    ctx.current_state = "CONFIRMED_SAVE"
             
             # Layer 6: Storage (if confirmed)
             if ctx.current_state == "CONFIRMED_SAVE":
                 ctx = self.layer_6.process(ctx)
             
-            # Layer 7: Feedback & Learning
+            # Layer 7: Response Generation & Feedback
             ctx = self.layer_7.process(ctx)
             
             return ctx.response_message, ctx
