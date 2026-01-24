@@ -32,7 +32,7 @@ load_dotenv()
 # Import helper modules
 from ai_helper import extract_financial_data, query_data
 from sheets_helper import (
-    append_transactions, test_connection, 
+    append_transactions, append_transaction, test_connection, 
     generate_report, format_report_message,
     get_all_categories, get_summary,
     format_data_for_ai, check_budget_alert,
@@ -46,6 +46,7 @@ from sheets_helper import (
     normalize_project_display_name,
     check_duplicate_transaction,
 )
+from services.retry_service import process_retry_queue
 from wuzapi_helper import (
     send_wuzapi_reply,
     format_mention_body,
@@ -1964,9 +1965,46 @@ def home():
     }), 200
 
 
+
+def background_retry_worker():
+    """Worker to process retry queue periodically (Layer 6)."""
+    secure_log("INFO", "Starting background retry worker for offline transactions...")
+    
+    def retry_callback(tx, meta):
+        try:
+            # allow_queue=False prevents infinite loop if it fails again
+            res = append_transaction(
+                tx, 
+                meta.get('sender_name'),
+                meta.get('source'),
+                dompet_sheet=meta.get('dompet_sheet'),
+                company=meta.get('company'),
+                nama_projek=meta.get('nama_projek'),
+                allow_queue=False 
+            )
+            return bool(res)
+        except Exception as e:
+            secure_log("WARNING", f"Retry failed for item: {e}")
+            return False
+
+    while True:
+        try:
+            processed = process_retry_queue(retry_callback)
+            if processed > 0:
+                secure_log("INFO", f"Background worker processed {processed} offline items")
+        except Exception as e:
+            secure_log("ERROR", f"Background worker error: {e}")
+            
+        time.sleep(300) # 5 minutes
+
+
 # ===================== MAIN =====================
 
 if __name__ == '__main__':
+    # Layer 6: Start Retry Worker
+    retry_thread = threading.Thread(target=background_retry_worker, daemon=True)
+    retry_thread.start()
+
     print("=" * 50)
     print("Bot Keuangan")
     print("=" * 50)

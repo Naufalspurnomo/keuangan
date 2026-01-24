@@ -14,10 +14,13 @@ load_dotenv()
 from security import (
     ALLOWED_CATEGORIES,
     validate_category,
+    validate_category,
     sanitize_input,
     secure_log,
     mask_sensitive_data,
 )
+import requests
+from services.retry_service import add_to_retry_queue
 
 # Import configuration from centralized config module
 from config.wallets import (
@@ -199,7 +202,8 @@ def _prefer_display_name(current: str, candidate: str) -> str:
 def append_transaction(transaction: Dict, sender_name: str, source: str = "Text", 
                        dompet_sheet: str = None, company: str = None, 
                        nama_projek: str = None,
-                       company_sheet: str = None) -> bool:
+                       company_sheet: str = None,
+                       allow_queue: bool = True) -> int:
     """
     Append a single transaction to a dompet sheet.
     
@@ -211,6 +215,7 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
         company: Company name (e.g., 'HOLLA', 'HOJJA', 'UMUM')
         nama_projek: Project name (REQUIRED) - use 'Saldo Umum' for wallet updates
         company_sheet: DEPRECATED - for backward compatibility, maps to dompet_sheet
+        allow_queue: If True, queues transaction on network failure. Set False for retry worker.
     
     Transaction dict should have:
     - tanggal: YYYY-MM-DD
@@ -325,6 +330,42 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
         secure_log("ERROR", f"Transaction error: {str(e)}")
         raise
     except Exception as e:
+        # Layer 6: Offline Resilience
+        # Check for network/transient errors
+        is_transient = False
+        
+        # Check gspread API errors (usually 500, 502, 503, 429)
+        if hasattr(e, 'response') and hasattr(e.response, 'status_code'):
+            if e.response.status_code in [429, 500, 502, 503, 504]:
+                is_transient = True
+                
+        # Check connection errors
+        if isinstance(e, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
+            is_transient = True
+            
+        # Catch generic socket errors masked as other things
+        if "socket" in str(e).lower() or "connection" in str(e).lower():
+            is_transient = True
+            
+        if is_transient and allow_queue:
+             secure_log("WARNING", f"Connection failed ({type(e).__name__}). Queueing transaction...")
+             
+             metadata = {
+                 'sender_name': sender_name,
+                 'source': source,
+                 'dompet_sheet': dompet_sheet,
+                 'company': company,
+                 'nama_projek': nama_projek
+             }
+             
+             try:
+                 qid = add_to_retry_queue(transaction, metadata)
+                 secure_log("INFO", f"Transaction queued offline with ID: {qid}")
+                 return -1 # Special code for QUEUED
+             except Exception as qe:
+                 secure_log("ERROR", f"Failed to queue: {qe}")
+                 # Fall through to raise original error if queuing also fails
+        
         # Re-raise generic exceptions so they can be caught by the caller with details
         secure_log("ERROR", f"Failed to add transaction: {type(e).__name__} - {str(e)}")
         raise
@@ -420,6 +461,7 @@ def append_transactions(transactions: List[Dict], sender_name: str, source: str 
         Dict with success status, rows_added count, and errors
     """
     rows_added = 0
+    queued_count = 0
     errors = []
     company_error = None
     
@@ -433,6 +475,7 @@ def append_transactions(transactions: List[Dict], sender_name: str, source: str 
         return {
             'success': False,
             'rows_added': 0,
+            'queued_count': 0,
             'total_transactions': len(transactions),
             'errors': ['dompet_sheet_required'],
             'company_error': 'Dompet belum dipilih'
@@ -441,12 +484,17 @@ def append_transactions(transactions: List[Dict], sender_name: str, source: str 
     for t in transactions:
         try:
             nama_projek = t.get('nama_projek', '')
-            # append_transaction now returns row number (truthy) or raises Exception
-            if append_transaction(t, sender_name, source, 
+            # append_transaction now returns row number (truthy) or -1 (queued) or raises Exception
+            res = append_transaction(t, sender_name, source, 
                                   dompet_sheet=dompet_sheet, 
                                   company=company,
-                                  nama_projek=nama_projek):
+                                  nama_projek=nama_projek)
+            
+            if res == -1:
+                queued_count += 1
+            elif res:
                 rows_added += 1
+                
         except ValueError as e:
             company_error = str(e)
             errors.append("dompet_not_found")
@@ -456,9 +504,11 @@ def append_transactions(transactions: List[Dict], sender_name: str, source: str 
             company_error = f"{type(e).__name__}: {str(e)}"
             errors.append("transaction_failed")
             break    
+            
     return {
-        'success': rows_added > 0,
+        'success': (rows_added + queued_count) > 0,
         'rows_added': rows_added,
+        'queued_count': queued_count,
         'total_transactions': len(transactions),
         'errors': errors,
         'company_error': company_error
