@@ -22,8 +22,9 @@ from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-# Feature flag - set USE_LAYER_ARCHITECTURE=true in .env to enable
-USE_LAYERS = os.getenv('USE_LAYER_ARCHITECTURE', 'false').lower() == 'true'
+# Feature flag - DISABLED by default until layer system is fully tested
+# Set USE_LAYER_ARCHITECTURE=true in .env to enable (NOT RECOMMENDED YET)
+USE_LAYERS = False  # Hardcoded off until stable
 
 
 def process_with_layers(
