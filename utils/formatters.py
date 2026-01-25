@@ -31,58 +31,67 @@ GROUP_TRIGGERS = ["+catat", "+bot", "+input", "/catat"]
 
 START_MESSAGE = f"""💼 *Bot Keuangan*
 
-Catat transaksi → Otomatis masuk Google Sheets
+*Smart. Simple. Sat-set.*
 
 *━━ Cara Pakai ━━*
-📝 Ketik langsung: `Beli semen 500rb`
-📷 Kirim struk (bisa sekaligus 2-3 foto)
-🗣️ Voice note: "Bayar tukang 2 juta"
+💬 *Ketik Biasa:* `Beli semen 500rb`
+📷 *Kirim Foto:* Struk/Nota (bisa banyak!)
+🗣️ *Voice Note:* "Bayar tukang 2 juta"
 
-*Di grup?* Awali dengan `+catat` atau `/catat`
+*━━ Di Group Chat ━━*
+Gak perlu kode-kodean! Bot otomatis muncul kalau ada transaksi.
+Contoh: `Bayar listrik 500rb` (Bot langsung respon)
+*Bot cuek?* Mention `@Bot` atau pakai `+catat`
 
 *━━ Dompet & Company ━━*
 {SELECTION_DISPLAY}
 
-*━━ Command ━━*
+*━━ Menu ━━*
 `/status` Dashboard  •  `/saldo` Cek saldo
 `/list` Riwayat  •  `/laporan` Report 7 hari
 `/tanya ...` Tanya AI  •  `/link` Buka Sheets
 
-💡 Reply transaksi + `/revisi 500rb` untuk koreksi
+💡 Reply transaksi + `/revisi` buat koreksi
 """
 
 
-HELP_MESSAGE = f"""📖 *Panduan Lengkap*
+HELP_MESSAGE = f"""📖 *Panduan Bot Keuangan*
 
 *━━ Input Transaksi ━━*
-✅ `Beli material 500rb projek Renovasi`
+✅ `Beli material 500rb buat Renovasi`
 ✅ `Bayar gaji tukang 2jt`
 ✅ `Isi dompet holja 10jt`
-✅ 📷 Foto struk (support multi-foto!)
+✅ 📷 Foto struk (langsung kirim aja!)
 
-*━━ Di Group Chat ━━*
-Awali dengan `+catat` atau `/catat`
-Contoh: `+catat bayar listrik 350rb`
+*━━ Fitur Grup Pintar ━━*
+Bot otomatis baca pesan yang ada *angka* & *kata kerja*.
+• `Beli kopi 25rb` → ✅ Bot respon
+• `Halo pagi` → ❌ Bot diam (anti-spam)
+
+*Kalau darurat/bot diam:*
+• Mention: `@Bot catat ini dong...`
+• Perintah: `/catat ...`
 
 *━━ Pilih Dompet (1-5) ━━*
 {SELECTION_DISPLAY}
 
-*━━ Kategori (Auto) ━━*
+*━━ Kategori (Auto Detect) ━━*
 {', '.join(ALLOWED_CATEGORIES)}
 
-*━━ Semua Command ━━*
+*━━ Menu Lengkap ━━*
 📊 `/status` - Dashboard
 💰 `/saldo` - Saldo tiap dompet
-📋 `/list` - Transaksi 7 hari
-📈 `/laporan` - Laporan mingguan
-📈 `/laporan30` - Laporan bulanan
-🤖 `/tanya [pertanyaan]` - Tanya AI
-🔗 `/link` - Link Google Sheets
-📄 `/exportpdf` - Export PDF
+📋 `/list` - Riwayat transaksi
+📈 `/laporan` - Report mingguan
+📈 `/laporan30` - Report bulanan
+🤖 `/tanya [pertanyaan]` - Analisa AI
+🔗 `/link` - Link Spreadsheet
+📄 `/exportpdf` - Download PDF
 
 *━━ Koreksi ━━*
-Reply pesan sukses + `/revisi 150rb`
-Atau edit langsung di Sheets"""
+Salah input? Reply pesannya, ketik:
+`/revisi 150rb` (untuk ubah nominal)
+`/cancel` (untuk batal)"""
 
 
 def format_mention(sender_name: str, is_group: bool = False) -> str:
