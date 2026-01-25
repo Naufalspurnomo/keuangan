@@ -29,83 +29,60 @@ SELECTION_DISPLAY = """  📁 Dompet Holja:
 # Group chat triggers
 GROUP_TRIGGERS = ["+catat", "+bot", "+input", "/catat"]
 
-START_MESSAGE = f"""👋 *Selamat datang di Bot Keuangan!*
+START_MESSAGE = f"""💼 *Bot Keuangan*
 
-Bot ini mencatat pengeluaran & pemasukan ke Google Sheets.
+Catat transaksi → Otomatis masuk Google Sheets
 
-━━━━━━━━━━━━━━━━━━━━━
-📝 *CARA PAKAI*
-━━━━━━━━━━━━━━━━━━━━━
+*━━ Cara Pakai ━━*
+📝 Ketik langsung: `Beli semen 500rb`
+📷 Kirim struk (bisa sekaligus 2-3 foto)
+🗣️ Voice note: "Bayar tukang 2 juta"
 
-*Private Chat:* Langsung kirim transaksi
-*Group Chat:* Awali dengan `+catat`
+*Di grup?* Awali dengan `+catat` atau `/catat`
 
-*Contoh:*
-• `+catat Beli cat 500rb projek Purana`
-• `+catat Isi dompet holja 10jt`
-• 📷 Foto struk dengan caption `+catat`
-
-Setelah transaksi terdeteksi, pilih nomor (1-5).
-
-*3 Dompet & 5 Company:*
+*━━ Dompet & Company ━━*
 {SELECTION_DISPLAY}
 
-*4 Kategori (Auto-detect):*
-{CATEGORIES_DISPLAY}
+*━━ Command ━━*
+`/status` Dashboard  •  `/saldo` Cek saldo
+`/list` Riwayat  •  `/laporan` Report 7 hari
+`/tanya ...` Tanya AI  •  `/link` Buka Sheets
 
-━━━━━━━━━━━━━━━━━━━━━
-⚙️ *PERINTAH*
-━━━━━━━━━━━━━━━━━━━━━
-📊 `/status` - Dashboard keuangan
-💰 `/saldo` - Saldo per dompet
-📋 `/list` - Transaksi 7 hari terakhir
-📈 `/laporan` - Laporan 7 hari
-🗂️ `/dompet` - Daftar dompet
-🔗 `/link` - Link Google Sheets
-❓ `/help` - Panduan lengkap
-
-🔒 Bot hanya MENAMBAH data, tidak bisa hapus.
+💡 Reply transaksi + `/revisi 500rb` untuk koreksi
 """
 
 
-HELP_MESSAGE = f"""📖 *PANDUAN BOT KEUANGAN*
+HELP_MESSAGE = f"""📖 *Panduan Lengkap*
 
-*Input Transaksi:*
-1. Private: Langsung kirim
-2. Group: Awali dengan `+catat`
-3. Pilih nomor dompet & company (1-5)
+*━━ Input Transaksi ━━*
+✅ `Beli material 500rb projek Renovasi`
+✅ `Bayar gaji tukang 2jt`
+✅ `Isi dompet holja 10jt`
+✅ 📷 Foto struk (support multi-foto!)
 
-💡 *Tips:*
-- Sebutkan nama dompet agar lebih akurat (misal: "Isi dompet evan 2jt")
-- Jika bot tidak yakin, bot akan minta pilihan 1-5
-- Reply transaksi dengan `/revisi [jumlah]` jika salah nominal
+*━━ Di Group Chat ━━*
+Awali dengan `+catat` atau `/catat`
+Contoh: `+catat bayar listrik 350rb`
 
-*Contoh Input:*
-• `+catat Beli material 500rb projek X`
-• `+catat Bayar gaji 2jt`
-• `+catat Isi dompet evan 10jt`
-
-*3 Dompet & 5 Company:*
+*━━ Pilih Dompet (1-5) ━━*
 {SELECTION_DISPLAY}
 
-*Kategori (Auto-detect):*
+*━━ Kategori (Auto) ━━*
 {', '.join(ALLOWED_CATEGORIES)}
 
-━━━━━━━━━━━━━━━━━━━━━
-*PERINTAH:*
-━━━━━━━━━━━━━━━━━━━━━
-📊 `/status` - Dashboard semua dompet
-💰 `/saldo` - Saldo per dompet
-📋 `/list` - Transaksi terakhir
-📈 `/laporan` - Laporan 7 hari
-📈 `/laporan30` - Laporan 30 hari
-🗂️ `/dompet` - Daftar dompet
-🗂️ `/kategori` - Daftar kategori
-🤖 `/tanya [x]` - Tanya AI
-🔗 `/link` - Link spreadsheet
+*━━ Semua Command ━━*
+📊 `/status` - Dashboard
+💰 `/saldo` - Saldo tiap dompet
+📋 `/list` - Transaksi 7 hari
+📈 `/laporan` - Laporan mingguan
+📈 `/laporan30` - Laporan bulanan
+🤖 `/tanya [pertanyaan]` - Tanya AI
+🔗 `/link` - Link Google Sheets
 📄 `/exportpdf` - Export PDF
 
-_Koreksi data langsung di Google Sheets._"""
+*━━ Koreksi ━━*
+Reply pesan sukses + `/revisi 150rb`
+Atau edit langsung di Sheets"""
 
 
 def format_mention(sender_name: str, is_group: bool = False) -> str:
