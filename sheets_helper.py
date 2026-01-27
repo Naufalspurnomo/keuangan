@@ -1181,6 +1181,11 @@ def find_all_transactions_by_message_id(message_id: str) -> List[Dict]:
             try:
                 sheet = get_dompet_sheet(dompet)
                 
+                # Check if column exists
+                if sheet.col_count < COL_MESSAGE_ID:
+                    secure_log("WARNING", f"Sheet {dompet} has only {sheet.col_count} columns, expected at least {COL_MESSAGE_ID}. Skipping.")
+                    continue
+
                 # Get MessageID column
                 message_ids = sheet.col_values(COL_MESSAGE_ID)
                 
@@ -1206,7 +1211,7 @@ def find_all_transactions_by_message_id(message_id: str) -> List[Dict]:
                         })
                         
             except Exception as e:
-                secure_log("WARNING", f"Error searching {dompet}: {type(e).__name__}")
+                secure_log("WARNING", f"Error searching {dompet}: {type(e).__name__} - {str(e)}")
                 continue
         
         return results

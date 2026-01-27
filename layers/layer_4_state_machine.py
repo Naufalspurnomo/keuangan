@@ -96,10 +96,23 @@ def handle_initial_state(ctx) -> 'MessageContext':
             ctx.response_message = f"❌ Gagal memproses: {getattr(ctx, 'extraction_error', 'Unknown error')}"
             return ctx
         
-        if 'NO_TRANSACTIONS' in ctx.validation_flags:
             # No transactions detected - might be casual chat
             ctx.current_state = 'NO_TRANSACTION'
             return ctx
+            
+        # SAFETY GUARD: If extracted_data is empty/None and no error flags
+        # This prevents falling through to WAITING_COMPANY for non-transaction intents
+        ctx.current_state = 'NO_TRANSACTION'
+        return ctx
+
+    # Check for Zero Total Amount (Guard against empty/spam inputs)
+    total_amount = sum(t.get('jumlah', 0) for t in ctx.extracted_data)
+    if total_amount <= 0:
+        logger.warning(f"Layer 4: Filtered zero-amount transaction. Total={total_amount}")
+        ctx.current_state = 'NO_TRANSACTION'
+        # Optional: Set response message if we want to tell user "Nothing to record"
+        # ctx.response_message = "❌ Tidak ada nominal transaksi yang terbaca."
+        return ctx
     
     # Check validation flags
     if 'NEEDS_PROJECT' in ctx.validation_flags:
@@ -392,6 +405,9 @@ def process(ctx) -> 'MessageContext':
             ctx = handle_query_setup(ctx)
         elif ctx.intent == Intent.CONVERSATIONAL_QUERY:
             ctx = handle_conversational_query(ctx)
+        elif ctx.intent == Intent.CANCEL_TRANSACTION:
+            ctx.current_state = 'CANCELLED'
+            ctx.response_message = "✅ Mode standby."
         else:
             ctx = handle_initial_state(ctx)
 

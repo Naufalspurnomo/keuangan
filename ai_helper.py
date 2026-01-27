@@ -201,10 +201,15 @@ def detect_wallet_from_text(text: str) -> Optional[str]:
     wallet_patterns = {
         "Dompet Holja": [
             r'\bdompet\s+holja\b',
+            r'\bdompet\s+holla\b',  # Alias
             r'\bsaldo\s+holja\b',
+            r'\bsaldo\s+holla\b',   # Alias
             r'\bwallet\s+holja\b',
+            r'\bwallet\s+holla\b',  # Alias
             r'\bisi\s+holja\b',
-            r'\bholja\b'  # Last priority (standalone) check context later if needed
+            r'\bisi\s+holla\b',     # Alias
+            r'\bholja\b',  # Last priority (standalone) check context later if needed
+            r'\bholla\b'   # Alias standalone
         ],
         "Dompet Texturin Sby": [
             r'\bdompet\s+texturin\s*(surabaya|sby)?\b',
@@ -242,7 +247,7 @@ def detect_wallet_from_text(text: str) -> Optional[str]:
                 
                 # "evan" / "holja" / "texturin" standalone -> Require wallet context
                 # This prevents "Bayar Evan" from becoming a wallet transaction
-                if any(k in pattern for k in [r'\bholja\b', r'\bevan\b', r'texturin']):
+                if any(k in pattern for k in [r'\bholja\b', r'\bholla\b', r'\bevan\b', r'texturin']):
                     if not has_wallet_context:
                         continue
                         
@@ -573,6 +578,7 @@ WALLET_DETECTION_RULES = """
 
 1. Dompet Holja:
    - "dompet holja", "holja", "saldo holja", "wallet holja"
+   - "dompet holla", "holla", "saldo holla"
 
 2. Dompet Texturin Sby:
    - "dompet texturin", "texturin surabaya", "texturin sby", "saldo texturin"
