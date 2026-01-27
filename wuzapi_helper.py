@@ -88,11 +88,14 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
             payload_variants.append({"Phone": phone, "Body": body})
             payload_variants.append({"Phone": phone, "Message": body})
 
-        # Endpoints to try (different WuzAPI versions)
+        # Endpoints to try (different WuzAPI versions/hostings)
         endpoints = [
             f"{base}/chat/send/text",
             f"{base}/message/send/text",
             f"{base}/send/text",
+            # Try with /api prefix (some hostings map root to /api)
+            f"{base}/api/chat/send/text",
+            f"{base}/api/message/send/text",
         ]
 
         last_err = None
