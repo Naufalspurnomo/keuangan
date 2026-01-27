@@ -189,20 +189,19 @@ def is_prefix_match(text: str, prefix_list: list, is_group: bool = False) -> boo
 
 def parse_selection(text: str) -> tuple:
     """
-    Parse user selection input (1-5).
+    Parse user selection input (1-5 or company name).
     
     Returns:
         (is_valid: bool, selection: int, error_message: str)
     """
+    from config.wallets import SELECTION_OPTIONS
+    import difflib
+    
     text = text.strip()
     
     # Check for cancel
-    if text.lower() in ['/cancel', 'batal', 'cancel']:
+    if text.lower() in ['/cancel', 'batal', 'cancel', 'stop']:
         return False, 0, "cancel"
-    
-    # Check for multi-selection (not allowed)
-    if ',' in text or ' ' in text.strip():
-        return False, 0, "Pilih satu saja. Ketik angka 1-5."
     
     # Try to parse as number
     try:
@@ -212,7 +211,27 @@ def parse_selection(text: str) -> tuple:
         else:
             return False, 0, "Pilihan tidak tersedia. Ketik angka 1-5."
     except ValueError:
-        return False, 0, "Balas dengan angka 1-5 untuk memilih."
+        # Not a number - try fuzzy match against company names
+        text_lower = text.lower()
+        best_match = None
+        highest_score = 0
+        
+        for opt in SELECTION_OPTIONS:
+            company = opt['company'].lower()
+            # Direct substr match (e.g. "bali" in "TEXTURIN-Bali")
+            if text_lower in company or company in text_lower:
+                score = 0.9 # High score for substr
+            else:
+                score = difflib.SequenceMatcher(None, text_lower, company).ratio()
+            
+            if score > highest_score:
+                highest_score = score
+                best_match = opt['idx']
+        
+        if highest_score > 0.6: # Threshold for confidence
+            return True, best_match, ""
+            
+        return False, 0, "Balas dengan angka 1-5 atau nama perusahaan untuk memilih."
 
 
 def parse_revision_amount(text: str) -> int:

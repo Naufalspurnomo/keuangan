@@ -287,10 +287,14 @@ def should_quick_filter(message: Dict[str, Any]) -> Optional[str]:
         return "PROCESS"
     
     # Quick accept: Has media + financial keyword
+    financial_keywords = ['beli', 'bayar', 'transfer', 'catat', 'struk', 'bon', 'pemasukan', 'pengeluaran', 'revisi', 'ralat']
     if message.get('has_media'):
-        financial_keywords = ['beli', 'bayar', 'transfer', 'catat', 'struk', 'bon']
         if any(kw in text for kw in financial_keywords):
             return "PROCESS"
+            
+    # Quick accept: Strong direct financial command (text-only)
+    if any(text.startswith(kw) for kw in financial_keywords):
+        return "PROCESS"
     
     # Quick reject: Common non-financial chitchat
     chitchat_patterns = [

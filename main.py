@@ -575,6 +575,9 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             # Don't respond yet - wait for text command
             return jsonify({'status': 'photo_buffered'}), 200
         
+        # Check visual buffer for context (Stage 1 Decision Signal)
+        has_visual = has_visual_buffer(sender_number, chat_jid)
+        
         # ============ LAYER 1: SEMANTIC ENGINE (Hybrid AI) ============
         if USE_LAYERS:
             # Try to process with new smart engine first
@@ -589,7 +592,8 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 chat_id=chat_jid,
                 quoted_message_id=quoted_msg_id,
                 quoted_message_text=quoted_message_text,
-                sender_jid=sender_jid
+                sender_jid=sender_jid,
+                has_visual=has_visual
             )
             
             if action == "IGNORE":
@@ -686,8 +690,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         if is_group:
             secure_log("DEBUG", f"Group msg from {sender_number}: pkey={pending_pkey}, has_pending={has_pending}, text='{text[:30]}...'")
         
-        # Check visual buffer (counts as active session/media context)
-        has_visual = has_visual_buffer(sender_number, chat_jid)
+        # Check visual buffer (already calculated earlier for context)
 
         if not USE_LAYERS:
             # LEGACY FILTER (Only if Layer 1 disabled)
@@ -979,6 +982,8 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                                          sent_msg.get('key', {}).get('id'))
                         if bot_msg_id and tx_message_id:
                             store_bot_message_ref(bot_msg_id, tx_message_id)
+                            from services.state_manager import store_last_bot_report
+                            store_last_bot_report(chat_jid, bot_msg_id)
                     else:
                         send_reply_with_mention(f"❌ Gagal: {result.get('company_error', 'Error')}")
                     return jsonify({'status': 'processed'}), 200
@@ -1069,7 +1074,9 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 
                 if bot_msg_id and tx_message_id:
                     store_bot_message_ref(bot_msg_id, tx_message_id)
-                    secure_log("INFO", f"Selection flow - Stored bot->tx ref: {bot_msg_id} -> {tx_message_id}")
+                    from services.state_manager import store_last_bot_report
+                    store_last_bot_report(chat_jid, bot_msg_id)
+                    secure_log("INFO", f"Selection flow - Stored bot->tx ref and last report: {bot_msg_id} -> {tx_message_id}")
             else:
                 send_wuzapi_reply(reply_to, f"❌ Gagal: {result.get('company_error', 'Error')}")
             return jsonify({'status': 'processed'}), 200

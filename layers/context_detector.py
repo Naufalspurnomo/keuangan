@@ -31,6 +31,7 @@ BOOST_MENTION = 50             # @bot or /command
 BOOST_CONVERSATION_1MIN = 30   # Last interaction < 1 min
 BOOST_CONVERSATION_3MIN = 15   # Last interaction < 3 min
 BOOST_MEDIA = 20               # Has image/document
+BOOST_VISUAL_BUFFER = 50       # Has buffered photos waiting for text
 
 # Conversation TTL
 CONVERSATION_TTL_SECONDS = 180  # 3 minutes
@@ -262,7 +263,8 @@ def calculate_addressed_score(
     mention_context: Dict = None,
     conversation_context: Dict = None,
     has_media: bool = False,
-    has_pending: bool = False
+    has_pending: bool = False,
+    has_visual: bool = False
 ) -> int:
     """
     Calculate overall "addressed to bot" score (0-100).
@@ -300,6 +302,10 @@ def calculate_addressed_score(
     # Pending transaction boost (user is in flow with bot)
     if has_pending:
         score += 40
+        
+    # Visual buffer boost (recent photo uploaded)
+    if has_visual:
+        score += BOOST_VISUAL_BUFFER
     
     # Cap at 100
     return min(score, 100)
@@ -312,7 +318,8 @@ def get_full_context(
     user_id: str = None,
     chat_id: str = None,
     has_media: bool = False,
-    has_pending: bool = False
+    has_pending: bool = False,
+    has_visual: bool = False
 ) -> Dict:
     """
     Get full context analysis for a message.
@@ -331,7 +338,8 @@ def get_full_context(
         mention_context=mention_ctx,
         conversation_context=conversation_ctx,
         has_media=has_media,
-        has_pending=has_pending
+        has_pending=has_pending,
+        has_visual=has_visual
     )
     
     return {
@@ -351,4 +359,5 @@ def get_full_context(
         'addressed_score': addressed_score,
         'has_media': has_media,
         'has_pending': has_pending,
+        'has_visual': has_visual,
     }

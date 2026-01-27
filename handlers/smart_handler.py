@@ -36,7 +36,8 @@ class SmartHandler:
         
     def process(self, text: str, chat_jid: str, sender_number: str, 
                 reply_message_id: str = None, has_media: bool = False,
-                sender_name: str = "User", quoted_message_text: str = None) -> dict:
+                sender_name: str = "User", quoted_message_text: str = None,
+                has_visual: bool = False) -> dict:
         """
         Main intelligence pipeline (Hybrid AI).
         """
@@ -60,14 +61,15 @@ class SmartHandler:
             user_id=sender_number,
             chat_id=chat_jid,
             has_media=has_media,
-            has_pending=self.state_manager.has_pending_transaction(pending_key(sender_number, chat_jid))
+            has_pending=self.state_manager.has_pending_transaction(pending_key(sender_number, chat_jid)),
+            has_visual=has_visual
         )
         
         # Enrich Context for AI
         context = {
             "chat_type": "GROUP" if chat_jid.endswith("@g.us") else "PRIVATE",
             "is_reply_to_bot": is_reply_to_bot,
-            "replied_message_type": "TRANSACTION_REPORT" if is_reply_to_bot else None,
+            "replied_message_type": full_ctx.get('reply_context_type'),
             "addressed_score": full_ctx.get('addressed_score', 0),
             "mention_type": full_ctx.get('mention_type'),
             "in_conversation": full_ctx.get('in_conversation', False)
@@ -133,7 +135,7 @@ class SmartHandler:
         elif intent == "REVISION_REQUEST":
             hint = extracted.get('item_hint')
             amount = extracted.get('new_amount')
-            return self.handle_revision_ai(hint, amount, reply_message_id, original_tx_id)
+            return self.handle_revision_ai(hint, amount, reply_message_id, original_tx_id, chat_jid)
 
         elif intent == "QUERY_STATUS":
             return {
@@ -142,6 +144,29 @@ class SmartHandler:
                 "normalized_text": text
             }
             
+        elif intent == "RECORD_TRANSACTION":
+            amount = extracted.get('amount', 0)
+            # Smart Amount Warning (> 10jt)
+            if amount > 10000000:
+                warning = "⚠️ *Nominal Cukup Besar:* Rp {:,}".format(amount)
+                from wuzapi_helper import send_wuzapi_reply
+                send_wuzapi_reply(chat_jid, warning)
+                
+            return {
+                "action": "PROCESS",
+                "intent": "RECORD_TRANSACTION",
+                "normalized_text": text,
+                "layer_response": text # Return normalized text for main processing
+            }
+
+        elif intent == "ANSWER_PENDING":
+             return {
+                 "action": "PROCESS",
+                 "intent": "ANSWER_PENDING",
+                 "normalized_text": text,
+                 "layer_response": text
+             }
+             
         elif intent == "CONVERSATIONAL_QUERY":
              return {
                  "action": "REPLY",
@@ -151,12 +176,19 @@ class SmartHandler:
         # Default
         return {
             "action": "PROCESS",
-            "intent": "STANDARD_TRANSACTION",
+            "intent": intent, # Pass the actual intent back
             "normalized_text": text 
         }
 
-    def handle_revision_ai(self, hint, amount, reply_message_id, original_tx_id) -> dict:
+    def handle_revision_ai(self, hint, amount, reply_message_id, original_tx_id, chat_jid) -> dict:
         """AI-assisted revision handler"""
+        if not original_tx_id:
+             # Intelligent Fallback: Try to use the last report sent to this chat
+             from services.state_manager import get_last_bot_report, get_original_message_id
+             last_bot_msg_id = get_last_bot_report(chat_jid)
+             if last_bot_msg_id:
+                 original_tx_id = get_original_message_id(last_bot_msg_id)
+                 
         if not original_tx_id:
              return {
                  "action": "REPLY",

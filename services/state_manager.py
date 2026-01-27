@@ -271,6 +271,23 @@ def get_original_message_id(bot_msg_id: str) -> str:
     return _bot_message_refs.get(str(bot_msg_id), '')
 
 
+# Track last bot report per chat
+_last_bot_reports: Dict[str, str] = {}
+
+
+def store_last_bot_report(chat_id: str, bot_msg_id: str) -> None:
+    """Track the most recent bot report ID for a chat."""
+    if not chat_id or not bot_msg_id:
+        return
+    _last_bot_reports[str(chat_id)] = str(bot_msg_id)
+    _save_state()
+
+
+def get_last_bot_report(chat_id: str) -> Optional[str]:
+    """Get the most recent bot report ID for a chat."""
+    return _last_bot_reports.get(str(chat_id))
+
+
 # ===================== CONVERSATION TRACKING =====================
 # Track last bot interaction per user/chat
 # Format: {key: {'timestamp': datetime, 'type': str}}
@@ -339,7 +356,8 @@ def _save_state():
                 "visual_buffer": {k: [
                     {**item, 'created_at': item['created_at'].isoformat() if isinstance(item.get('created_at'), datetime) else item.get('created_at')} 
                     for item in v
-                ] for k, v in _visual_buffer.items()}
+                ] for k, v in _visual_buffer.items()},
+                "last_bot_reports": _last_bot_reports
             }
             
             # Ensure directory exists
@@ -397,8 +415,11 @@ def _load_state():
                              pass
                      reconstructed.append(item)
                  _visual_buffer[k] = reconstructed
+                  
+        if "last_bot_reports" in data:
+            _last_bot_reports.update(data["last_bot_reports"])
             
-        print(f"[INFO] State loaded: {len(_pending_transactions)} pending txs")
+        print(f"[INFO] State loaded: {len(_pending_transactions)} pending txs, {len(_last_bot_reports)} reports")
         
     except Exception as e:
         print(f"[ERROR] Failed to load state: {e}")

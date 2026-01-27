@@ -63,7 +63,8 @@ def process_with_layers(
     chat_id: str = None,
     quoted_message_id: str = None,
     quoted_message_text: str = None,
-    sender_jid: str = None
+    sender_jid: str = None,
+    has_visual: bool = False
 ) -> tuple:
     """
     Process message through Smart Handler (Semantic Engine).
@@ -85,7 +86,8 @@ def process_with_layers(
             reply_message_id=quoted_message_id,
             has_media=bool(media_url),
             sender_name=sender_name,
-            quoted_message_text=quoted_message_text
+            quoted_message_text=quoted_message_text,
+            has_visual=has_visual
         )
         
         action = result.get("action")
