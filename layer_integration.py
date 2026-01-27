@@ -44,6 +44,10 @@ class StateManagerWrapper:
     def get_last_bot_interaction(self, user_id, chat_id):
         from services.state_manager import get_last_bot_interaction
         return get_last_bot_interaction(user_id, chat_id)
+        
+    def has_pending_transaction(self, pkey):
+        from services.state_manager import has_pending_transaction
+        return has_pending_transaction(pkey)
 
 _smart_handler = SmartHandler(StateManagerWrapper())
 

@@ -21,6 +21,12 @@ from ai_helper import groq_client
 import asyncio
 
 logger = logging.getLogger(__name__)
+ 
+def pending_key(user_id: str, chat_id: str = None) -> str:
+    """Standardize key for pending transactions."""
+    if chat_id:
+        return f"{chat_id}:{user_id}"
+    return user_id
 
 class SmartHandler:
     def __init__(self, state_manager):

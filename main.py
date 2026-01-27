@@ -644,33 +644,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     clear_visual_buffer(sender_number, chat_jid)
                     was_visual_link = True
         
-        # ============ 7-LAYER ARCHITECTURE (if enabled) ============
-        # Process through intelligent layer system first
-        # Falls back to existing logic if layers return None or disabled
-        if USE_LAYERS:
-            try:
-                layer_response = process_with_layers(
-                    user_id=sender_number,
-                    message_id=message_id,
-                    text=text or '',
-                    sender_name=sender_name,
-                    media_url=media_url,
-                    caption=text if input_type == 'image' else None,
-                    is_group=is_group,
-                    chat_id=chat_jid,
-                    quoted_message_id=quoted_msg_id,
-                    sender_jid=sender_jid
-                )
-                
-                if layer_response:
-                    # Layer system handled the message
-                    send_reply_with_mention(layer_response)
-                    record_bot_interaction(sender_number, chat_jid)
-                    return jsonify({'status': 'layer_processed'}), 200
-                # else: Layer returned None, fall through to existing logic
-            except Exception as e:
-                secure_log("WARNING", f"Layer processing failed, falling back: {type(e).__name__}")
-                # Continue with existing logic
+        # No more Layer 2-7 redundant block here, already handled by Semantic Engine at the start
         
         # Sanitize
         text = sanitize_input(text or '')
