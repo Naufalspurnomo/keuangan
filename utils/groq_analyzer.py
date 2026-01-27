@@ -213,7 +213,10 @@ OUTPUT FORMAT (JSON):
         # Context summary
         context_str = f"""CONTEXT:
 - Chat Type: {context.get('chat_type', 'UNKNOWN')}
-- Is Reply to Bot: {context.get('is_reply_to_bot', False)}"""
+- Is Reply to Bot: {context.get('is_reply_to_bot', False)}
+- Addressed Score: {context.get('addressed_score', 0)}/100
+- Mention Type: {context.get('mention_type', 'None')}
+- In Conversation: {context.get('in_conversation', False)}"""
         
         if context.get('is_reply_to_bot'):
             context_str += f"\n- Replied Message Type: {context.get('replied_message_type', 'UNKNOWN')}"
@@ -285,21 +288,24 @@ def should_quick_filter(message: Dict[str, Any]) -> Optional[str]:
         if any(kw in text for kw in financial_keywords):
             return "PROCESS"
     
-    # Quick reject: Short non-financial chitchat
-    if len(text) < 20:  # Increased from 10 to 20 to catch more short chitchat
-        chitchat_exact = [
-            'halo', 'hai', 'selamat pagi', 'selamat siang', 
-            'selamat sore', 'selamat malam', 'apa kabar',
-            'udah makan', 'makasih', 'thanks', 'ok', 'oke',
-            'siap', 'mantap', 'baaal', 'test', 'tes'
-        ]
-        # Check explicit match or contained
-        if any(c in text for c in chitchat_exact) and len(text.split()) <= 3:
-             return "IGNORE"
-             
-        # Also simple exact match check
-        if text in chitchat_exact: 
-            return "IGNORE"
+    # Quick reject: Common non-financial chitchat
+    chitchat_patterns = [
+        'halo', 'hai', 'pagi', 'siang', 'sore', 'malam', 'apa kabar',
+        'makan', 'minum', 'tidur', 'kerja', 'siap', 'ok', 'oke', 'sip',
+        'mantap', 'baaal', 'test', 'tes', 'waali', 'ngantuk', 'capek',
+        'anjir', 'anjing', 'tolol', 'bego', 'wkwk', 'haha', 'lol'
+    ]
+    
+    # If text is relatively short and contains only chitchat, ignore
+    if len(text) < 40:
+        words = text.split()
+        if len(words) <= 5: # Only 1-5 words
+            # If any word is a chitchat word and NO financial words are present
+            has_chitchat = any(p in text for p in chitchat_patterns)
+            has_financial = any(f in text for f in ['beli', 'bayar', 'transfer', 'catat', 'revisi', 'saldo', 'laporan'])
+            
+            if has_chitchat and not has_financial:
+                return "IGNORE"
     
     # Uncertain - need AI
     return None
@@ -309,11 +315,11 @@ def should_quick_filter(message: Dict[str, Any]) -> Optional[str]:
 # USAGE EXAMPLE
 # ============================================
 
-async def smart_analyze_message(message, context, groq_client):
+def smart_analyze_message(message, context, groq_client):
     """
     Main entry point for message analysis.
     
-    Combines quick filter + AI analysis.
+    Combines quick filter + AI analysis. (Synchronous version)
     """
     
     # STAGE 1: Quick Filter (Free, <1ms)
@@ -327,13 +333,6 @@ async def smart_analyze_message(message, context, groq_client):
             "confidence": 1.0,
             "reasoning": "Quick filter: obvious chitchat"
         }
-    
-    if quick_decision == "PROCESS":
-        logger.info("[QuickFilter] Explicit command - will process")
-        # Still need to determine intent, so continue to AI if complex
-        # But if explicit command, we can just process it.
-        # However, for hybrid approach, we might want AI to extract intent even for explicit commands.
-        pass
     
     # STAGE 2: AI Analysis (500ms, uses tokens)
     analyzer = GroqContextAnalyzer(groq_client)

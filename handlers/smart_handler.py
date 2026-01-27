@@ -12,8 +12,9 @@ Features:
 
 import logging
 from config.constants import Commands
-from utils.groq_analyzer import smart_analyze_message
+from utils.groq_analyzer import GroqContextAnalyzer, should_quick_filter
 from utils.semantic_matcher import find_matching_item, extract_revision_entities
+from layers.context_detector import get_full_context, record_interaction
 from sheets_helper import find_transaction_by_message_id, update_transaction_amount
 from security import secure_log
 from ai_helper import groq_client
@@ -33,60 +34,67 @@ class SmartHandler:
         """
         Main intelligence pipeline (Hybrid AI).
         """
-        # 0. EXPLICIT COMMAND BYPASS (Moved to Top)
+        # 0. EXPLICIT COMMAND BYPASS
         if text.strip().startswith('/'):
              return {"action": "PROCESS", "intent": "COMMAND", "normalized_text": text}
 
-        # Prepare Message Object
+        # 1. Reply Logic
+        original_tx_id = None
+        is_reply_to_bot = False
+        if reply_message_id:
+             original_tx_id = self.state_manager.get_original_message_id(reply_message_id)
+             if original_tx_id:
+                 is_reply_to_bot = True
+        
+        # 2. Build Context using ContextDetector
+        full_ctx = get_full_context(
+            text=text,
+            quoted_message_text=None, # TODO: Pass metadata text if available
+            is_quoted_from_bot=is_reply_to_bot,
+            user_id=sender_number,
+            chat_id=chat_jid,
+            has_media=has_media,
+            has_pending=False # Will be checked inside analyzer
+        )
+        
+        # Enrich Context for AI
+        context = {
+            "chat_type": "GROUP" if chat_jid.endswith("@g.us") else "PRIVATE",
+            "is_reply_to_bot": is_reply_to_bot,
+            "replied_message_type": "TRANSACTION_REPORT" if is_reply_to_bot else None,
+            "addressed_score": full_ctx.get('addressed_score', 0),
+            "mention_type": full_ctx.get('mention_type'),
+            "in_conversation": full_ctx.get('in_conversation', False)
+        }
+        
+        # Prepare Message Object for AI
         message = {
             "text": text,
             "sender": sender_name,
             "has_media": has_media,
-            "is_reply_to_bot": False # determined below
-        }
-        
-        # Prepare Context
-        context = {
-            "chat_type": "GROUP" if chat_jid.endswith("@g.us") else "PRIVATE",
-            "is_reply_to_bot": False,
-            "replied_message_type": None,
-            "recent_bot_interactions": [] 
+            "is_reply_to_bot": is_reply_to_bot
         }
 
-        # Reply Logic
-        original_tx_id = None
-        if reply_message_id:
-             original_tx_id = self.state_manager.get_original_message_id(reply_message_id)
-             if original_tx_id:
-                 context['is_reply_to_bot'] = True
-                 context['replied_message_type'] = "TRANSACTION_REPORT" # Assumption for now
-                 message['is_reply_to_bot'] = True
+        # Record interaction for continuity
+        record_interaction(sender_number, chat_jid)
         
-        # 0.1 NORMALIZATION (Added Intelligence)
+        # 3. NORMALIZATION
         try:
             from utils.normalizer import normalize_nyeleneh_text
             original_text = text
             text = normalize_nyeleneh_text(text)
             if text != original_text:
                 logger.info(f"[SmartHandler] Normalized: '{original_text}' -> '{text}'")
-                message['text'] = text # Update message object for AI
-        except ImportError:
-            logger.warning("[SmartHandler] Normalizer not found, skipping.")
+                message['text'] = text # Update for AI
+        except Exception:
+            pass
 
-        # AI Analysis (async wrapper needed as `smart_analyze_message` is async)
-        # For simplicity in this synchronous flow, we run it sync or refactor `smart_analyze_message` to sync.
-        # Let's make `smart_analyze_message` synchronous for now or run generic.
-        # Actually `smart_analyze_message` in groq_analyzer.py is defined async but `GroqContextAnalyzer.analyze_message` is sync.
-        # Let's use `analyze_message` directly synchronously to avoid async/await refactor hell in main.py.
-        
-        from utils.groq_analyzer import GroqContextAnalyzer, should_quick_filter
-        
-        # 1. Quick Filter
+        # 4. Quick Filter
         quick = should_quick_filter(message)
         if quick == "IGNORE":
              return {"action": "IGNORE"}
              
-        # 2. AI Analysis
+        # 5. AI Analysis
         analyzer = GroqContextAnalyzer(groq_client)
         analysis = analyzer.analyze_message(message, context)
         
@@ -96,7 +104,7 @@ class SmartHandler:
         intent = analysis['intent']
         extracted = analysis.get('extracted_data', {})
         
-        # 6. Record Interaction
+        # 6. Record Bot Interaction
         self.state_manager.record_bot_interaction(sender_number, chat_jid, intent)
 
         # 7. ROUTING
@@ -104,26 +112,19 @@ class SmartHandler:
             wait_time = extracted.get('wait_time', 'beberapa saat')
             return {
                 "action": "REPLY",
-                "response": f"⏳ *AI Sedang Istirahat*\n\nLimit penggunaan otak AI tercapai. Mohon tunggu sekitar *{wait_time}* sebelum mengirim perintah kompleks lagi.\n\n_Note: Anda tetap bisa menggunakan command manual seperti /status atau /list_"
+                "response": f"⏳ *AI Sedang Istirahat*\n\nLimit penggunaan otak AI tercapai. Mohon tunggu sekitar *{wait_time}* sebelum mengirim perintah kompleks lagi."
             }
 
         elif intent == "REVISION_REQUEST":
-            # AI extracted hint & amount?
             hint = extracted.get('item_hint')
             amount = extracted.get('new_amount')
-            
-            # If AI didn't extract specific fields, fallback to old rule based extraction
-            if not hint or not amount:
-                 pass # Logic to handle fallback or ask user
-            
-            # We still need the original message_id to find what to revise
             return self.handle_revision_ai(hint, amount, reply_message_id, original_tx_id)
 
         elif intent == "QUERY_STATUS":
             return {
                 "action": "PROCESS",
                 "intent": "QUERY_STATUS",
-                "normalized_text": text # Fallback
+                "normalized_text": text
             }
             
         elif intent == "CONVERSATIONAL_QUERY":

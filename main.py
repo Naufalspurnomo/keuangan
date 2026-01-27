@@ -581,7 +581,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         # ============ LAYER 1: SEMANTIC ENGINE (Hybrid AI) ============
         if USE_LAYERS:
             # Try to process with new smart engine first
-            layer_response = process_with_layers(
+            action, layer_response = process_with_layers(
                 user_id=sender_number,
                 message_id=message_id,
                 text=text,
@@ -594,10 +594,19 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 sender_jid=sender_jid
             )
             
-            if layer_response:
+            if action == "IGNORE":
+                secure_log("DEBUG", "Message IGNORED by Semantic Engine (Layer 1)")
+                return jsonify({'status': 'ignored_by_layer'}), 200
+                
+            if action == "REPLY" and layer_response:
                 # Engine handled it and wants to reply (e.g. Revision Success)
                 send_reply_with_mention(layer_response)
                 return jsonify({'status': 'handled_by_layer'}), 200
+            
+            if action == "PROCESS" and layer_response:
+                # Engine normalized the text, use it for the rest of processing
+                text = layer_response
+                secure_log("INFO", f"Semantic Engine normalized text to: '{text}'")
         
         # Case 2: Text without photo → Check if we have buffered photo to link
         # Case 2: Text without photo → Check if we have buffered photo(s) to link
@@ -695,22 +704,21 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         # Check visual buffer (counts as active session/media context)
         has_visual = has_visual_buffer(sender_number, chat_jid)
 
-        # Pass all context to Layer 0 Scoring
-        should_respond, cleaned_text = should_respond_in_group(
-            message=text or "", 
-            is_group=is_group,
-            has_media=media_url is not None,
-            has_pending=has_pending or has_visual or was_visual_link,  # Pending OR Visual Buffer OR Linked = Active Session
-            is_mentioned=False  # TODO: Implement explicit bot mention check if needed from WuzAPI
-        )
-        
-        if not should_respond:
-            # Noise/No trigger - silently ignore
-            secure_log("DEBUG", f"{'Group' if is_group else 'Private'} msg IGNORED (Low signal)")
-            return jsonify({'status': 'ignored'}), 200
-        
-        # Use cleaned text (trigger prefix removed)
-        text = cleaned_text if cleaned_text else text
+        if not USE_LAYERS:
+            # LEGACY FILTER (Only if Layer 1 disabled)
+            should_respond, cleaned_text = should_respond_in_group(
+                message=text or "", 
+                is_group=is_group,
+                has_media=media_url is not None,
+                has_pending=has_pending or has_visual or was_visual_link,
+                is_mentioned=False
+            )
+            
+            if not should_respond:
+                secure_log("DEBUG", f"{'Group' if is_group else 'Private'} msg IGNORED (Legacy Filter)")
+                return jsonify({'status': 'ignored'}), 200
+            
+            text = cleaned_text if cleaned_text else text
         
         
         

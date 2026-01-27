@@ -58,68 +58,42 @@ def process_with_layers(
     is_group: bool = False,
     chat_id: str = None,
     quoted_message_id: str = None,
-    quoted_message_text: str = None,  # For context-aware classification
+    quoted_message_text: str = None,
     sender_jid: str = None
-) -> Optional[str]:
+) -> tuple:
     """
     Process message through Smart Handler (Semantic Engine).
+    
+    Returns: (action, response)
+    - action: "IGNORE", "REPLY", "PROCESS"
+    - response: str (the text to reply with, or None)
     """
     if not USE_LAYERS:
-        return None
+        return None, None
     
     try:
         # Map arguments to SmartHandler.process
-        # process(text, chat_jid, sender_number, reply_message_id, has_media, sender_name)
-        
         result = _smart_handler.process(
             text=text or (caption if media_url else ""),
             chat_jid=chat_id,
-            sender_number=user_id, # Assuming user_id is sender_number
+            sender_number=user_id,
             reply_message_id=quoted_message_id,
             has_media=bool(media_url),
             sender_name=sender_name
         )
         
-        # Analyze result
         action = result.get("action")
+        response = result.get("response")
         
-        if action == "IGNORE":
-            return None # Signal main loop to ignore
+        # If normalizing, we might want to return the normalized text for PROCESS
+        if action == "PROCESS" and result.get("normalized_text"):
+            return "PROCESS", result.get("normalized_text")
             
-        elif action == "REPLY":
-            return result.get("response")
-            
-        elif action == "PROCESS":
-            # If standard process, return None so it falls through to Main Loop logic
-            # OR we can return a special signal if SmartHandler modified the text (normalization)
-            # For now, let's allow fallthrough but maybe we should expose the normalized text?
-            # The current main.py flow calls process_with_layers, if it returns string -> reply & stop.
-            # If it returns None -> continue to legacy flow.
-            # 
-            # If normalizing, we ideally want to pass the normalized text back.
-            # But specific signature of process_with_layers returns Optional[str] (response).
-            #
-            # If the user text was "woi bot catat makan 50rb"
-            # Normalized: "catat makan 50rb"
-            # If we fall through, main loop sees "woi bot..." and might fail or not be smart.
-            # 
-            # However, main.py calls ai_helper.extract_financial_data(text).
-            # ai_helper.extract_from_text calls sanitize_input.
-            # 
-            # To truly integrate normalization, we might need to modify main.py to accept normalized text.
-            # OR, since we claimed "Phase 1" complete, maybe we just handle complex cases here.
-            # 
-            # For "REVISION_REQUEST", SmartHandler handles it and returns "REPLY".
-            # For "QUERY_STATUS", SmartHandler returns "PROCESS" (fallthrough to main.py /tanya or status).
-            # For "STANDARD_TRANSACTION", SmartHandler returns "PROCESS".
-            
-            return None 
-
-        return None
+        return action, response
         
     except Exception as e:
-        logger.error(f"Page processing failed: {e}")
-        return None
+        logger.error(f"Layer processing failed: {e}")
+        return None, None
 
 
 def get_layer_status() -> Dict[str, Any]:
