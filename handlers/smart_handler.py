@@ -150,12 +150,20 @@ class SmartHandler:
         self.state_manager.record_bot_interaction(sender_number, chat_jid, intent)
 
         # 7. ROUTING
+
         if intent == "RATE_LIMIT":
-            wait_time = extracted.get('wait_time', 'beberapa saat')
-            return {
-                "action": "REPLY",
-                "response": f"⏳ *AI Sedang Istirahat*\n\nLimit penggunaan otak AI tercapai. Mohon tunggu sekitar *{wait_time}* sebelum mengirim perintah kompleks lagi."
-            }
+            wait_time = extracted.get('wait_time', '1 menit')
+    
+            # SMART: Only show if actually addressed to bot
+            if context.get('addressed_score', 0) >= 50:
+                return {
+                    "action": "REPLY",
+                    "response": f"⏳ Bot sedang istirahat (terlalu banyak request).\n\n"
+                               f"💡 Coba lagi sekitar *{wait_time}*.\n\n"
+                }
+            else:
+                # Silent for low-confidence messages
+                return {"action": "IGNORE"}
 
         elif intent == "REVISION_REQUEST":
             hint = extracted.get('item_hint')

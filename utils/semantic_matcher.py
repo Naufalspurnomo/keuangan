@@ -73,6 +73,19 @@ def find_matching_item(items: list, item_hint: str, original_amount: int=None) -
              "needs_confirmation": bool
         }
     """
+    if not match_result:
+        # FALLBACK: If only 1 item, auto-select
+        if len(items) == 1:
+            logger.info("Auto-selecting only available item")
+            return {
+                "matched_item": items[0],
+                "confidence": 90,
+                "method": "only_available_item"
+            }
+    
+        # If multiple items, need clarification
+        return None
+    
     if not items or not isinstance(items, list):
         return None
     

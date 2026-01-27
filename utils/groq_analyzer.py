@@ -286,8 +286,12 @@ def should_quick_filter(message: Dict[str, Any]) -> Optional[str]:
     if message.get('is_reply_to_bot'):
         return "PROCESS"
     
-    # Quick accept: Has media + financial keyword
-    financial_keywords = ['beli', 'bayar', 'transfer', 'catat', 'struk', 'bon', 'pemasukan', 'pengeluaran', 'revisi', 'ralat']
+    financial_keywords = [
+        'beli', 'bayar', 'transfer', 'catat', 'struk', 'bon', 
+        'pemasukan', 'pengeluaran', 'revisi', 'ralat',
+        'dp', 'down payment', 'uang muka', 'lunas', 'invoice', 'kwitansi', 'nota',
+        'project', 'proyek'
+    ]
     if message.get('has_media'):
         if any(kw in text for kw in financial_keywords):
             return "PROCESS"
