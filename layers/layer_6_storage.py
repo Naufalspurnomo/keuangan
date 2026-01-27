@@ -16,7 +16,7 @@ Based on Grand Design Ultimate lines 1203-1330.
 import os
 import logging
 from typing import Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -30,22 +30,21 @@ try:
         DOMPET_COMPANIES,
         get_dompet_for_company,
         get_all_data,
-        invalidate_dashboard_cache
+        invalidate_dashboard_cache,
+        append_transactions,
+        find_all_transactions_by_message_id,
+        update_transaction_amount
     )
 except ImportError:
-    # Fallback definitions if sheets_helper not available
+    # Fallback definitions (mock/stub) if imports fail
     DOMPET_SHEETS = ["Dompet Holja", "Dompet Texturin Sby", "Dompet Evan"]
-    DOMPET_COMPANIES = {
-        "Dompet Holja": ["HOLLA", "HOJJA"],
-        "Dompet Texturin Sby": ["TEXTURIN-Surabaya"],
-        "Dompet Evan": ["TEXTURIN-Bali", "KANTOR"]
-    }
-    
-    def get_dompet_for_company(company: str) -> str:
-        for dompet, companies in DOMPET_COMPANIES.items():
-            if company in companies:
-                return dompet
-        return "Dompet Holja"  # Default
+    DOMPET_COMPANIES = {}
+    def get_dompet_for_company(c): return "Dompet Holja"
+    def get_all_data(**kwargs): return []
+    def invalidate_dashboard_cache(): pass
+    def append_transactions(**kwargs): return {'success': False, 'error': 'ImportError'}
+    def find_all_transactions_by_message_id(mid): return []
+    def update_transaction_amount(d, r, a): return False
 
 
 # Company name normalization
@@ -93,8 +92,6 @@ def save_transactions(
         Result dict with success status and details
     """
     try:
-        from sheets_helper import append_transactions
-        
         # Inject message_id for revision tracking
         if message_id:
             for t in transactions:
@@ -136,8 +133,6 @@ def get_recent_transactions(
     Uses sheets_helper.get_all_data() with day filter.
     """
     try:
-        from sheets_helper import get_all_data
-        
         data = get_all_data(days=days)
         
         # Filter by user if specified
@@ -168,18 +163,10 @@ def get_recent_transactions(
         return []
 
 
-# ===================== MAIN PROCESSING =====================
+# ===================== PROCESS HANDLERS =====================
 
 def process_revision(ctx) -> 'MessageContext':
     """Handle revision execution."""
-    try:
-        from sheets_helper import find_all_transactions_by_message_id, update_transaction_amount, invalidate_dashboard_cache
-    except ImportError:
-        logger.error("Layer 6: sheets_helper imports failed")
-        ctx.current_state = 'ERROR'
-        ctx.response_message = "❌ System Error: Helper missing."
-        return ctx
-    
     revision_data = getattr(ctx, 'revision_data', {})
     if not revision_data:
         ctx.current_state = 'ERROR'
@@ -204,14 +191,6 @@ def process_revision(ctx) -> 'MessageContext':
          ctx.current_state = 'ERROR'
          ctx.response_message = "❌ System Error: Matcher missing."
          return ctx
-
-    # We need the original amount logic. 
-    # Semantic Matcher: find_matching_item(items, item_hint, original_amount=revision_data.get('amount'))?
-    # No, original_amount in matcher is meant for matching based on OLD amount.
-    # But here we only have NEW amount.
-    # Actually, if user says "revisi 9.75jt" (without item), we might match by finding item close to 9.75jt?
-    # No, usually user provides either item hint OR just new amount.
-    # Let's pass what we have.
     
     match_result = find_matching_item(txns, keyword)
     
@@ -232,11 +211,6 @@ def process_revision(ctx) -> 'MessageContext':
         ctx.response_message = f"❓ Kurang yakin. Maksudnya '{target['keterangan']}'? Mohon spesifik lagi."
         return ctx
         
-    # If 50-70, maybe ask confirmation? For MVP assume explicit confirm or >50 is OK if forced.
-    # User spec: "If score > 70: Confident match. If score 50-70: Ask confirmation"
-    # For now, let's treat >50 as "Proceed" but maybe log warning?
-    # Or strict >60.
-    
     # 3. Execute Update
     success = update_transaction_amount(target['dompet'], target['row'], amount)
     
@@ -260,34 +234,9 @@ def process_revision(ctx) -> 'MessageContext':
     return ctx
 
 
-# ===================== MAIN PROCESSING =====================
-
-def process(ctx) -> 'MessageContext':
-    """
-    Layer 6 processing: Storage.
-    
-    Only runs when state is CONFIRMED_SAVE.
-    
-    Args:
-        ctx: MessageContext from pipeline
-        
-    Returns:
-        Enriched MessageContext with saved_transaction
-    """
-    # Handle Revision
-    if ctx.current_state == "READY_TO_REVISE":
-        return process_revision(ctx)
-
-    # Handle Query
-    if ctx.current_state == "READY_TO_QUERY":
-        return process_query(ctx)
-
 def process_query(ctx) -> 'MessageContext':
     """Handle financial query execution."""
     try:
-        from sheets_helper import get_all_data
-        from datetime import timedelta
-        
         params = getattr(ctx, 'query_params', {})
         period = params.get('period', 'today')
         q_type = params.get('type', 'summary')
@@ -375,8 +324,24 @@ def process_query(ctx) -> 'MessageContext':
         ctx.response_message = "❌ Gagal mengambil data laporan."
         return ctx
 
-    # Only save when confirmed
+
+# ===================== MAIN PROCESSING =====================
+
+def process(ctx) -> 'MessageContext':
+    """
+    Layer 6 processing: Storage.
+    Only runs when state is CONFIRMED_SAVE, READY_TO_REVISE, or READY_TO_QUERY.
+    """
+    # 1. Routing
+    if ctx.current_state == "READY_TO_REVISE":
+        return process_revision(ctx)
+
+    if ctx.current_state == "READY_TO_QUERY":
+        return process_query(ctx)
+
+    # 2. Storage Logic (CONFIRMED_SAVE)
     if ctx.current_state != "CONFIRMED_SAVE":
+        # If not confirmed, we do nothing and return ctx as is
         return ctx
     
     if not ctx.extracted_data:

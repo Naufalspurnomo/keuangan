@@ -425,6 +425,29 @@ def process(ctx) -> 'MessageContext':
             
     except ImportError:
         logger.warning("Layer 1: Normalizer utility not found.")
+        extract_intent_from_nyeleneh = None
+    
+    # 0.5. Enhanced Rule-Based Extraction (from Normalizer)
+    # This captures logic like CONVERSATIONAL_QUERY ("gimana cara") and robust REVISION detection
+    if extract_intent_from_nyeleneh:
+        enhanced_result = extract_intent_from_nyeleneh(text)
+        if enhanced_result['confidence'] >= 0.75 and enhanced_result['intent'] != 'UNKNOWN':
+             logger.info(f"Layer 1: Normalizer detected {enhanced_result['intent']} (conf={enhanced_result['confidence']})")
+             # Override pre-filter result if high confidence
+             ctx.text = enhanced_result['normalized_text'] # Use the normalized text from extractor
+             
+             # Map directly
+             intent_map = {
+                'RECORD_TRANSACTION': Intent.RECORD_TRANSACTION,
+                'REVISION_REQUEST': Intent.REVISION_REQUEST,
+                'QUERY_STATUS': Intent.QUERY_STATUS,
+                'CONVERSATIONAL_QUERY': Intent.CONVERSATIONAL_QUERY,
+                'CHITCHAT': Intent.CHITCHAT,
+             }
+             ctx.intent = intent_map.get(enhanced_result['intent'], Intent.CHITCHAT)
+             ctx.intent_confidence = enhanced_result['confidence']
+             ctx.skip_ai = True
+             return ctx
     
     # Build context for classification (includes Stage 1 results)
     context = {
