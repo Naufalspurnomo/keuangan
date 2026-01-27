@@ -64,12 +64,13 @@ def process_with_layers(
     """
     Process message through Smart Handler (Semantic Engine).
     
-    Returns: (action, response)
+    # Returns: (action, response, intent)
     - action: "IGNORE", "REPLY", "PROCESS"
-    - response: str (the text to reply with, or None)
+    - response: str (the text to reply with, or normalized text for PROCESS)
+    - intent: str (The intent detected by AI)
     """
     if not USE_LAYERS:
-        return None, None
+        return None, None, None
     
     try:
         # Map arguments to SmartHandler.process
@@ -79,21 +80,23 @@ def process_with_layers(
             sender_number=user_id,
             reply_message_id=quoted_message_id,
             has_media=bool(media_url),
-            sender_name=sender_name
+            sender_name=sender_name,
+            quoted_message_text=quoted_message_text
         )
         
         action = result.get("action")
         response = result.get("response")
+        intent = result.get("intent")
         
-        # If normalizing, we might want to return the normalized text for PROCESS
+        # If normalizing, return the normalized text for PROCESS
         if action == "PROCESS" and result.get("normalized_text"):
-            return "PROCESS", result.get("normalized_text")
+            return "PROCESS", result.get("normalized_text"), intent
             
-        return action, response
+        return action, response, intent
         
     except Exception as e:
         logger.error(f"Layer processing failed: {e}")
-        return None, None
+        return None, None, None
 
 
 def get_layer_status() -> Dict[str, Any]:

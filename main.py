@@ -405,34 +405,30 @@ def webhook_wuzapi():
                    message_obj.get('extendedTextMessage', {}).get('text', '') or \
                    message_obj.get('ExtendedTextMessage', {}).get('Text', '')
             
-            # Extract quoted message ID (for revision feature)
-            # WuzAPI sends contextInfo in various formats depending on version
+            # Extract quoted message info (for context-aware processing)
             quoted_msg_id = ''
+            quoted_message_text = ''
             
-            # Try extendedTextMessage format (most common for replies)
             ext_text = message_obj.get('extendedTextMessage', {}) or message_obj.get('ExtendedTextMessage', {})
             if ext_text:
                 context_info = ext_text.get('contextInfo', {}) or ext_text.get('ContextInfo', {})
-                # WuzAPI sends 'stanzaID' (uppercase ID), not 'stanzaId'
-                quoted_msg_id = context_info.get('stanzaID', '') or context_info.get('stanzaId', '') or context_info.get('StanzaId', '') or context_info.get('quotedMessageId', '')
-                secure_log("DEBUG", f"WuzAPI ExtText contextInfo: {json.dumps(context_info)[:200]}")
+                quoted_msg_id = context_info.get('stanzaID', '') or context_info.get('stanzaId', '') or context_info.get('StanzaId', '')
+                
+                # Extract quoted message text
+                quoted_msg_obj = context_info.get('quotedMessage', {}) or context_info.get('QuotedMessage', {})
+                if quoted_msg_obj:
+                    quoted_message_text = (
+                        quoted_msg_obj.get('conversation', '') or 
+                        quoted_msg_obj.get('Conversation', '') or
+                        quoted_msg_obj.get('extendedTextMessage', {}).get('text', '') or
+                        quoted_msg_obj.get('ExtendedTextMessage', {}).get('Text', '')
+                    )
+                secure_log("DEBUG", f"WuzAPI Quoted Info: id='{quoted_msg_id}', text='{quoted_message_text[:50]}'")
             
-            # Also check top-level contextInfo (some WuzAPI versions)
+            # Simple fallback for ID
             if not quoted_msg_id:
                 top_context = message_obj.get('contextInfo', {}) or message_obj.get('ContextInfo', {})
-                if top_context:
-                    quoted_msg_id = top_context.get('stanzaID', '') or top_context.get('stanzaId', '') or top_context.get('StanzaId', '') or top_context.get('quotedMessageId', '')
-                    secure_log("DEBUG", f"WuzAPI Top contextInfo: {json.dumps(top_context)[:200]}")
-            
-            # Check event-level context (another variant)
-            if not quoted_msg_id:
-                event_context = event.get('ContextInfo', {}) or event.get('contextInfo', {})
-                if event_context:
-                    quoted_msg_id = event_context.get('stanzaID', '') or event_context.get('stanzaId', '') or event_context.get('StanzaId', '')
-                    secure_log("DEBUG", f"WuzAPI Event contextInfo: {json.dumps(event_context)[:200]}")
-            
-            secure_log("DEBUG", f"WuzAPI quoted_msg_id resolved: '{quoted_msg_id}', message_obj keys: {list(message_obj.keys())}")
-            
+                quoted_msg_id = top_context.get('stanzaID', '') or top_context.get('stanzaId', '') or top_context.get('StanzaId', '')
         elif msg_type == 'media':
             # Media with caption
             caption = message_obj.get('imageMessage', {}).get('caption', '') or \
@@ -482,9 +478,11 @@ def webhook_wuzapi():
             return jsonify({'status': 'duplicate'}), 200
 
         # Process the message (with image URL and message IDs)
-        # Pass chat_jid so group messages get replies in the group, not personal chat
-        # Pass sender_alt for proper @mention in group replies
-        return process_wuzapi_message(sender_number, push_name, text, input_type, media_url, quoted_msg_id, message_id, is_group, chat_jid, sender_alt)
+        return process_wuzapi_message(
+            sender_number, push_name, text, input_type, media_url, 
+            quoted_msg_id, message_id, is_group, chat_jid, sender_alt,
+            quoted_message_text=quoted_message_text
+        )
         
     except Exception as e:
         secure_log("ERROR", f"Webhook WuzAPI Error: {traceback.format_exc()}")
@@ -495,7 +493,8 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                            input_type: str = 'text', media_url: str = None,
                            quoted_msg_id: str = None, message_id: str = None,
                            is_group: bool = False, chat_jid: str = None,
-                           sender_jid: str = None):
+                           sender_jid: str = None,
+                           quoted_message_text: str = None):
     """Process a WuzAPI message and return response.
     
     This mirrors the Telegram command handling for consistency.
@@ -512,6 +511,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         is_group: Boolean indicating if it's a group chat
         chat_jid: The chat JID (group ID for groups, personal for DM)
         sender_jid: Full sender JID for @mention (format: 628xxx@s.whatsapp.net)
+        quoted_message_text: Text content of the message being replied to
     """
     try:
         # Determine reply destination: for groups, reply to group; for personal, reply to sender
@@ -581,7 +581,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         # ============ LAYER 1: SEMANTIC ENGINE (Hybrid AI) ============
         if USE_LAYERS:
             # Try to process with new smart engine first
-            action, layer_response = process_with_layers(
+            action, layer_response, intent = process_with_layers(
                 user_id=sender_number,
                 message_id=message_id,
                 text=text,
@@ -591,22 +591,36 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 is_group=is_group,
                 chat_id=chat_jid,
                 quoted_message_id=quoted_msg_id,
+                quoted_message_text=quoted_message_text,
                 sender_jid=sender_jid
             )
             
             if action == "IGNORE":
-                secure_log("DEBUG", "Message IGNORED by Semantic Engine (Layer 1)")
+                secure_log("DEBUG", f"Message IGNORED by Semantic Engine (Intent: {intent})")
                 return jsonify({'status': 'ignored_by_layer'}), 200
                 
             if action == "REPLY" and layer_response:
-                # Engine handled it and wants to reply (e.g. Revision Success)
+                # Engine handled it and wants to reply (e.g. Revision Success or Chitchat)
                 send_reply_with_mention(layer_response)
                 return jsonify({'status': 'handled_by_layer'}), 200
             
-            if action == "PROCESS" and layer_response:
-                # Engine normalized the text, use it for the rest of processing
-                text = layer_response
-                secure_log("INFO", f"Semantic Engine normalized text to: '{text}'")
+            if action == "PROCESS":
+                # Engine wants to process. If it's a query, we handle it here.
+                if intent == "QUERY_STATUS" and layer_response:
+                    secure_log("INFO", f"Smart Query detected: '{layer_response}'")
+                    send_wuzapi_reply(reply_to, "🤔 Menganalisis...")
+                    try:
+                        data_context = format_data_for_ai(days=30)
+                        answer = query_data(layer_response, data_context)
+                        send_wuzapi_reply(reply_to, answer.replace('*', '').replace('_', ''))
+                        return jsonify({'status': 'queried_by_layer'}), 200
+                    except Exception as e:
+                        secure_log("ERROR", f"Smart Query failed: {e}")
+                
+                # Default process: Update text with normalized version and fall through
+                if layer_response:
+                    text = layer_response
+                    secure_log("INFO", f"Semantic Engine normalized text to: '{text}'")
         
         # Case 2: Text without photo → Check if we have buffered photo to link
         # Case 2: Text without photo → Check if we have buffered photo(s) to link

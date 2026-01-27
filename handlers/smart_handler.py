@@ -30,7 +30,7 @@ class SmartHandler:
         
     def process(self, text: str, chat_jid: str, sender_number: str, 
                 reply_message_id: str = None, has_media: bool = False,
-                sender_name: str = "User") -> dict:
+                sender_name: str = "User", quoted_message_text: str = None) -> dict:
         """
         Main intelligence pipeline (Hybrid AI).
         """
@@ -49,12 +49,12 @@ class SmartHandler:
         # 2. Build Context using ContextDetector
         full_ctx = get_full_context(
             text=text,
-            quoted_message_text=None, # TODO: Pass metadata text if available
+            quoted_message_text=quoted_message_text,
             is_quoted_from_bot=is_reply_to_bot,
             user_id=sender_number,
             chat_id=chat_jid,
             has_media=has_media,
-            has_pending=False # Will be checked inside analyzer
+            has_pending=self.state_manager.has_pending_transaction(pending_key(sender_number, chat_jid))
         )
         
         # Enrich Context for AI
