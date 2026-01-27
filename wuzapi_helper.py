@@ -7,6 +7,7 @@ from security import secure_log, sanitize_input
 # Environment Variables
 WUZAPI_DOMAIN = os.getenv('WUZAPI_DOMAIN')  # e.g. https://wuzapi-x.sumopod.my.id
 WUZAPI_TOKEN = os.getenv('WUZAPI_TOKEN')    # e.g. keuanganpakevan
+WUZAPI_INSTANCE = os.getenv('WUZAPI_INSTANCE', 'Keuangan') 
 
 # Global session
 _wuzapi_session = None
@@ -71,34 +72,35 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
         session = get_wuzapi_session()
 
         # Build payload variants (different WuzAPI builds use different field names)
+        # Inclusion of "Instance" is required by some Sumopod setups
         payload_variants = []
+        
         if is_group:
-            base_payload = {"JID": to, "Body": body}
-            
-            # Add mention if provided
+            base_payload = {"JID": to, "Body": body, "Instance": WUZAPI_INSTANCE}
             if mention_jid:
-                # WuzAPI uses "MentionedJID" for mentions
-                # Message body should contain @{phone} for visual display
                 base_payload["MentionedJID"] = [mention_jid]
             
             payload_variants.append(base_payload)
             payload_variants.append({**base_payload, "Message": body})
-            payload_variants.append({"Phone": to, "Body": body, "MentionedJID": [mention_jid] if mention_jid else []})
+            # Variant: use JID as 'Phone' (some versions)
+            payload_variants.append({**base_payload, "Phone": to})
         else:
-            payload_variants.append({"Phone": phone, "Body": body})
-            payload_variants.append({"Phone": phone, "Message": body})
+            # Handle LID and Phone
+            phone_clean = phone.split(":")[0] if ":" in phone else phone
+            
+            payload_variants.append({"Phone": phone_clean, "Body": body, "Instance": WUZAPI_INSTANCE})
+            payload_variants.append({"Phone": phone_clean, "Message": body, "Instance": WUZAPI_INSTANCE})
+            # Variant: use JID format
+            payload_variants.append({"JID": to if "@" in to else f"{phone_clean}@s.whatsapp.net", "Body": body, "Instance": WUZAPI_INSTANCE})
 
-        # Endpoints to try (different WuzAPI versions/hostings)
+        # Endpoints to try (Simplified to most likely ones based on Swagger)
         endpoints = [
             f"{base}/chat/send/text",
-            f"{base}/message/send/text",
             f"{base}/send/text",
-            # Try with /api prefix (some hostings map root to /api)
-            f"{base}/api/chat/send/text",
-            f"{base}/api/message/send/text",
+            f"{base}/message/send/text",
         ]
 
-        last_err = None
+        last_err = ""
         for url in endpoints:
             for payload in payload_variants:
                 try:
@@ -110,20 +112,22 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
                     # Capture error details
                     current_err = f"{resp.status_code} on {url}: {resp.text[:200]}"
                     
-                    # Priority Error Handling:
-                    # If 401 (Unauthorized) or 403 (Forbidden), it's likely a token issue. 
-                    # Stop trying other endpoints/payloads to avoid noise and return this error.
+                    # Stop if auth error
                     if resp.status_code in (401, 403):
                         secure_log("ERROR", f"WuzAPI Auth Error: {current_err}")
                         return None
+                    
+                    # 500 error is critical - usually DB lock
+                    if resp.status_code == 500:
+                        secure_log("ERROR", f"WuzAPI Server Error (500): {resp.text[:500]}")
+                        # Don't return None immediately, try other payloads just in case
+                        last_err = current_err
+                        continue
                         
                     if resp.status_code == 404:
-                        # 404 means wrong endpoint, keep searching
                         last_err = current_err
                         continue
                     
-                    # 400/500 - likely bad payload or server error
-                    # Keep this as last_err but continue trying other payloads if applicable
                     last_err = current_err
                     
                 except Exception as e:
