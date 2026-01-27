@@ -157,7 +157,7 @@ def process(ctx) -> 'MessageContext':
             input_data=ctx.text or '',
             input_type=input_type,
             sender_name=ctx.sender_name or 'User',
-            media_url=ctx.media_url,
+            media_urls=ctx.media_url,
             caption=ctx.caption
         )
         
