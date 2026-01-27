@@ -100,7 +100,14 @@ class SmartHandler:
         self.state_manager.record_bot_interaction(sender_number, chat_jid, intent)
 
         # 7. ROUTING
-        if intent == "REVISION_REQUEST":
+        if intent == "RATE_LIMIT":
+            wait_time = extracted.get('wait_time', 'beberapa saat')
+            return {
+                "action": "REPLY",
+                "response": f"⏳ *AI Sedang Istirahat*\n\nLimit penggunaan otak AI tercapai. Mohon tunggu sekitar *{wait_time}* sebelum mengirim perintah kompleks lagi.\n\n_Note: Anda tetap bisa menggunakan command manual seperti /status atau /list_"
+            }
+
+        elif intent == "REVISION_REQUEST":
             # AI extracted hint & amount?
             hint = extracted.get('item_hint')
             amount = extracted.get('new_amount')

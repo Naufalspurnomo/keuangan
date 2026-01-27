@@ -98,6 +98,25 @@ class GroqContextAnalyzer:
             
         except Exception as e:
             logger.error(f"[GroqAnalyzer] Error: {e}")
+            
+            # Check for Rate Limit specifically
+            error_str = str(e).lower()
+            if "rate limit" in error_str or "429" in error_str:
+                import re
+                # Extract wait time: "Please try again in 5m31.776s"
+                wait_time = "beberapa saat"
+                match = re.search(r"try again in ([0-9ms\.]+)", str(e))
+                if match:
+                    wait_time = match.group(1)
+                
+                return {
+                    "should_respond": True,
+                    "intent": "RATE_LIMIT",
+                    "confidence": 1.0,
+                    "reasoning": f"API Rate Limit. Wait: {wait_time}",
+                    "extracted_data": {"wait_time": wait_time}
+                }
+
             # Fallback to safe default
             return {
                 "should_respond": False,

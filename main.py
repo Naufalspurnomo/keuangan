@@ -30,7 +30,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Import helper modules
-from ai_helper import extract_financial_data, query_data
+from ai_helper import extract_financial_data, query_data, RateLimitException
 from sheets_helper import (
     append_transactions, append_transaction, test_connection, 
     generate_report, format_report_message,
@@ -1448,6 +1448,12 @@ Kirim transaksi, lalu pilih nomor (1-5)."""
                 sent_msg = send_reply_with_mention(reply)
                 record_pending_prompt(sender_pkey, _pending_transactions[sender_pkey], sent_msg)
 
+        except RateLimitException as e:
+            secure_log("WARNING", f"Groq Rate Limit Reached: {e.wait_time}")
+            send_wuzapi_reply(reply_to, 
+                f"⏳ *AI Sedang Istirahat*\n\n"
+                f"Limit penggunaan tercapai. Tunggu sekitar *{e.wait_time}*.\n"
+                f"Silakan coba lagi nanti atau gunakan command manual.")
         except Exception as e:
             secure_log("ERROR", f"WuzAPI AI Error: {str(e)}")
             send_wuzapi_reply(reply_to, "❌ Terjadi kesalahan sistem.")

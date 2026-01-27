@@ -156,8 +156,35 @@ def extract_transfer_fee(text: str) -> int:
 GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 
 # Initialize Groq client
-from groq import Groq
+# Initialize Groq client
+from groq import Groq, RateLimitError
 groq_client = Groq(api_key=GROQ_API_KEY)
+
+class RateLimitException(Exception):
+    """Custom exception when AI rate limit is reached."""
+    def __init__(self, wait_time="beberapa saat"):
+        self.wait_time = wait_time
+        super().__init__(f"AI Rate Limit Reached. Wait: {wait_time}")
+
+def call_groq_api(messages, **kwargs):
+    """
+    Wrapper for Groq API calls to handle Rate Limits gracefully.
+    """
+    try:
+        return groq_client.chat.completions.create(
+            messages=messages,
+            **kwargs
+        )
+    except RateLimitError as e:
+        secure_log("WARNING", f"Groq Rate Limit Hit: {str(e)}")
+        import re
+        wait_time = "beberapa saat"
+        # Extract "try again in X"
+        match = re.search(r"try again in ([0-9ms\.]+)", str(e))
+        if match:
+             wait_time = match.group(1)
+        raise RateLimitException(wait_time)
+
 
 WALLET_UPDATE_REGEX = re.compile(
     r"\b(isi saldo|tambah dompet|deposit|topup|top up|transfer ke dompet|update saldo|isi dompet)\b",
@@ -287,7 +314,7 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
         wrapped_input = get_safe_ai_prompt_wrapper(clean_text)
         system_prompt = get_extraction_prompt(sender_name)
 
-        response = groq_client.chat.completions.create(
+        response = call_groq_api(
             model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -538,7 +565,7 @@ def ocr_image(image_source: Union[str, List[str]]) -> str:
         for model_name in VALID_VISION_MODELS:
             try:
                 secure_log("INFO", f"Trying Vision Model: {model_name}")
-                response = groq_client.chat.completions.create(
+                response = call_groq_api(
                     model=model_name,
                     messages=[
                         {
