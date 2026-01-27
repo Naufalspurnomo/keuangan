@@ -391,44 +391,42 @@ def webhook_wuzapi():
         message_obj = event.get('Message', {})
         text = ''
         input_type = 'text'
-        media_url = None  # Changed from media_path to media_url
+        media_url = None
+        quoted_msg_id = ''
+        quoted_message_text = ''
         
         # DEBUG: Log full message object structure to find quote info
         secure_log("DEBUG", f"WuzAPI message_obj keys: {list(message_obj.keys())}")
         secure_log("DEBUG", f"WuzAPI message_obj full: {json.dumps(message_obj)[:500]}")
-        media_url = None  # Changed from media_path to media_url
         
+        # Extract quoted message info (for context-aware processing)
+        # Try to find contextInfo in various locations (extendedTextMessage or top-level)
+        ext_text = message_obj.get('extendedTextMessage', {}) or message_obj.get('ExtendedTextMessage', {})
+        context_info = message_obj.get('contextInfo', {}) or message_obj.get('ContextInfo', {})
+        
+        if ext_text:
+            context_info = ext_text.get('contextInfo', {}) or ext_text.get('ContextInfo', {})
+            
+        if context_info:
+            quoted_msg_id = context_info.get('stanzaID', '') or context_info.get('stanzaId', '') or context_info.get('StanzaId', '')
+            # Extract quoted message text
+            quoted_msg_obj = context_info.get('quotedMessage', {}) or context_info.get('QuotedMessage', {})
+            if quoted_msg_obj:
+                quoted_message_text = (
+                    quoted_msg_obj.get('conversation', '') or 
+                    quoted_msg_obj.get('Conversation', '') or
+                    quoted_msg_obj.get('extendedTextMessage', {}).get('text', '') or
+                    quoted_msg_obj.get('ExtendedTextMessage', {}).get('Text', '')
+                )
+            if quoted_msg_id:
+                secure_log("DEBUG", f"WuzAPI Quoted Info Found: id='{quoted_msg_id}', text='{quoted_message_text[:50]}'")
+
         if msg_type == 'text':
             # Text message - check various fields
             text = message_obj.get('conversation', '') or \
                    message_obj.get('Conversation', '') or \
                    message_obj.get('extendedTextMessage', {}).get('text', '') or \
                    message_obj.get('ExtendedTextMessage', {}).get('Text', '')
-            
-            # Extract quoted message info (for context-aware processing)
-            quoted_msg_id = ''
-            quoted_message_text = ''
-            
-            ext_text = message_obj.get('extendedTextMessage', {}) or message_obj.get('ExtendedTextMessage', {})
-            if ext_text:
-                context_info = ext_text.get('contextInfo', {}) or ext_text.get('ContextInfo', {})
-                quoted_msg_id = context_info.get('stanzaID', '') or context_info.get('stanzaId', '') or context_info.get('StanzaId', '')
-                
-                # Extract quoted message text
-                quoted_msg_obj = context_info.get('quotedMessage', {}) or context_info.get('QuotedMessage', {})
-                if quoted_msg_obj:
-                    quoted_message_text = (
-                        quoted_msg_obj.get('conversation', '') or 
-                        quoted_msg_obj.get('Conversation', '') or
-                        quoted_msg_obj.get('extendedTextMessage', {}).get('text', '') or
-                        quoted_msg_obj.get('ExtendedTextMessage', {}).get('Text', '')
-                    )
-                secure_log("DEBUG", f"WuzAPI Quoted Info: id='{quoted_msg_id}', text='{quoted_message_text[:50]}'")
-            
-            # Simple fallback for ID
-            if not quoted_msg_id:
-                top_context = message_obj.get('contextInfo', {}) or message_obj.get('ContextInfo', {})
-                quoted_msg_id = top_context.get('stanzaID', '') or top_context.get('stanzaId', '') or top_context.get('StanzaId', '')
         elif msg_type == 'media':
             # Media with caption
             caption = message_obj.get('imageMessage', {}).get('caption', '') or \
@@ -436,7 +434,6 @@ def webhook_wuzapi():
                      message_obj.get('caption', '')
             text = caption
             input_type = 'image'
-            quoted_msg_id = ''  # Initialize for media messages
             
             # Use base64 image directly from event_data if available
             if base64_image:
@@ -462,8 +459,8 @@ def webhook_wuzapi():
                         secure_log("WARNING", "WuzAPI image download failed, using caption only")
                         input_type = 'text'  # Fall back to text-only processing
         else:
-            # Unknown message type
-            quoted_msg_id = ''
+            # Unknown message type (e.g. ChatPresence)
+            pass
         
         # For text messages without any text, skip
         if not text and input_type == 'text':
