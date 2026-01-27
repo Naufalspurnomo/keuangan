@@ -315,7 +315,7 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
         system_prompt = get_extraction_prompt(sender_name)
 
         response = call_groq_api(
-            model="llama-3.3-70b-versatile",
+            model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": wrapped_input}
