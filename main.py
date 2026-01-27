@@ -1261,55 +1261,7 @@ Kirim transaksi, lalu pilih nomor (1-5)."""
              secure_log("INFO", f"Ignored unknown command: {text}")
              return jsonify({'status': 'ignored_command'}), 200
 
-            for prefix in Commands.EXPORT_PDF_PREFIXES:
-                if text.lower().startswith(prefix):
-                    month_arg = text[len(prefix):].strip()
-                    break
-            
-            if not month_arg:
-                now = datetime.now()
-                month_arg = f"{now.year}-{now.month:02d}"
-            
-            try:
-                # Step 1: Parse and validate period
-                year, month = parse_month_input(month_arg)
-                
-                # Step 2: Check if data exists
-                has_data, tx_count, period_name = validate_period_data(year, month)
-                
-                if not has_data:
-                    send_wuzapi_reply(reply_to, UserErrors.PDF_NO_DATA.format(period=period_name))
-                    return jsonify({'status': 'ok'}), 200
-                
-                # Step 3: Notify and generate
-                send_wuzapi_reply(reply_to, 
-                    f"✅ Ditemukan {tx_count} transaksi untuk {period_name}\n"
-                    f"📊 Generating PDF...")
-                
-                # Step 4: Generate PDF
-                pdf_path = generate_pdf_from_input(month_arg)
-                
-                file_size = os.path.getsize(pdf_path) / 1024  # KB
-                
-                reply = (
-                    f"📊 Laporan Keuangan Bulanan\n"
-                    f"📅 Periode: {period_name}\n"
-                    f"📝 Total: {tx_count} transaksi\n"
-                    f"📦 Ukuran: {file_size:.1f} KB\n\n"
-                    f"✅ PDF berhasil dibuat!\n\n"
-                    f"⚠️ Untuk download PDF, gunakan Telegram bot atau minta admin kirimkan file."
-                )
-                send_wuzapi_reply(reply_to, reply)
-                
-            except ValueError as e:
-                send_wuzapi_reply(reply_to, UserErrors.PDF_FORMAT_ERROR)
-            except ImportError:
-                send_wuzapi_reply(reply_to, UserErrors.PDF_NOT_INSTALLED)
-            except Exception as e:
-                secure_log("ERROR", f"PDF export failed (WuzAPI): {type(e).__name__}")
-                send_wuzapi_reply(reply_to, UserErrors.PDF_FAILED)
-            
-            return jsonify({'status': 'ok'}), 200 
+ 
 
         # AI Extraction for transactions
         transactions = []
