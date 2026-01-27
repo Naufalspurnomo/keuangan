@@ -728,6 +728,13 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             # Try to find the original transaction
             original_tx = find_transaction_by_message_id(target_msg_id)
             
+            # GUARD: strict revision command handling
+            # If text starts with /revisi but original_tx is NOT found, fail here.
+            # Do NOT fall through to AI.
+            if not original_tx and is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):
+                 send_wuzapi_reply(reply_to, "❌ Gagal revisi: Tidak dapat menemukan data transaksi asli pada pesan yang di-reply.")
+                 return jsonify({'status': 'revision_tx_not_found'}), 200
+
             if original_tx:
                 # Check directly if text starts with /revisi
                 if not is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):

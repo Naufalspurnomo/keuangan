@@ -97,6 +97,31 @@ class SmartHandler:
         except Exception:
             pass
 
+        # 3.5 RULE-BASED INTENT (Bypass AI for obvious patterns)
+        # Check for Revision Pattern (revisi ... ...)
+        lc_text = text.lower()
+        if 'revisi' in lc_text or 'ralat' in lc_text:
+             rev_entities = extract_revision_entities(text)
+             # If we successfully extracted an amount, it's definitely a revision
+             if rev_entities and rev_entities.get('amount'):
+                 logger.info(f"[SmartHandler] Rule-based Bypass detected REVISION: {rev_entities}")
+                 # Mock AI Analysis Result
+                 analysis = {
+                     "should_respond": True,
+                     "intent": "REVISION_REQUEST",
+                     "confidence": 0.95,
+                     "extracted_data": {
+                         "item_hint": rev_entities.get('item_hint'),
+                         "new_amount": rev_entities.get('amount')
+                     }
+                 }
+                 # Skip to routing
+                 # We need to manually invoke Step 6 & 7 behavior
+                 self.state_manager.record_bot_interaction(sender_number, chat_jid, "REVISION_REQUEST")
+                 hint = analysis['extracted_data'].get('item_hint')
+                 amount = analysis['extracted_data'].get('new_amount')
+                 return self.handle_revision_ai(hint, amount, reply_message_id, original_tx_id, chat_jid)
+
         # 4. Quick Filter
         quick = should_quick_filter(message)
         if quick == "IGNORE":
