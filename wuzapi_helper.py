@@ -107,12 +107,25 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
                         secure_log("INFO", f"WuzAPI Send OK via {url.split('/')[-1]}")
                         return resp.json()
                     
+                    # Capture error details
+                    current_err = f"{resp.status_code} on {url}: {resp.text[:200]}"
+                    
+                    # Priority Error Handling:
+                    # If 401 (Unauthorized) or 403 (Forbidden), it's likely a token issue. 
+                    # Stop trying other endpoints/payloads to avoid noise and return this error.
+                    if resp.status_code in (401, 403):
+                        secure_log("ERROR", f"WuzAPI Auth Error: {current_err}")
+                        return None
+                        
                     if resp.status_code == 404:
-                        last_err = f"404 on {url}"
+                        # 404 means wrong endpoint, keep searching
+                        last_err = current_err
                         continue
                     
-                    # 400/401/500
-                    last_err = f"{resp.status_code}: {resp.text[:200]}"
+                    # 400/500 - likely bad payload or server error
+                    # Keep this as last_err but continue trying other payloads if applicable
+                    last_err = current_err
+                    
                 except Exception as e:
                     last_err = f"{type(e).__name__}: {str(e)[:200]}"
                     continue
