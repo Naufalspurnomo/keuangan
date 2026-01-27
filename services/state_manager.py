@@ -266,6 +266,41 @@ def get_original_message_id(bot_msg_id: str) -> str:
     return _bot_message_refs.get(str(bot_msg_id), '')
 
 
+# ===================== CONVERSATION TRACKING =====================
+# Track last bot interaction per user/chat
+# Format: {key: {'timestamp': datetime, 'type': str}}
+# key = "chat_id:user_id"
+_bot_interactions: Dict[str, Dict] = {}
+
+
+def record_bot_interaction(user_id: str, chat_id: str, interaction_type: str = 'response') -> None:
+    """Record that bot interacted with user."""
+    if not user_id:
+        return
+    
+    key = f"{chat_id}:{user_id}" if chat_id else user_id
+    
+    _bot_interactions[key] = {
+        'timestamp': datetime.now(),
+        'type': interaction_type
+    }
+    
+    # Cleanup old entries (limit 1000)
+    if len(_bot_interactions) > 1000:
+        keys = list(_bot_interactions.keys())[:200]
+        for k in keys:
+             _bot_interactions.pop(k, None)
+
+
+def get_last_bot_interaction(user_id: str, chat_id: str) -> Optional[Dict]:
+    """Get last bot interaction with user."""
+    if not user_id:
+        return None
+        
+    key = f"{chat_id}:{user_id}" if chat_id else user_id
+    return _bot_interactions.get(key)
+
+
 # ===================== STATS =====================
 
 def get_state_stats() -> Dict[str, Any]:

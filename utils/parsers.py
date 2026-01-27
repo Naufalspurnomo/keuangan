@@ -229,43 +229,56 @@ def parse_revision_amount(text: str) -> int:
     text = re.sub(r'^[/]?(revisi|ubah|ganti|koreksi|edit)\s*', '', text).strip()
     
     # Handle "2 juta", "500 rb", "1.5jt", "500 perak" - number followed by optional space and suffix
-    match = re.match(r'^([\d]+(?:[.,]\d+)?)\s*(rb|ribu|k|jt|juta|perak)?$', text)
+    # Changed from re.match (strict) to re.search (flexible) to allow "revisi dp 7.5jt"
+    match = re.search(r'\b([\d]+(?:[.,]\d+)?)\s*(rb|ribu|k|jt|juta|perak)\b', text)
     if match:
         num_str = match.group(1)
-        suffix = match.group(2) or ''
+        suffix = match.group(2)
         
-        if suffix:
-            # Has suffix - comma/dot is ALWAYS decimal separator
-            num_str = num_str.replace(',', '.')
-            try:
-                num = float(num_str)
-            except ValueError:
-                return 0
-            
-            if suffix in ['rb', 'ribu', 'k']:
-                return int(num * 1000)
-            elif suffix in ['jt', 'juta']:
-                return int(num * 1000000)
-            elif suffix == 'perak':
-                # "perak" = no multiplier, just round to int
-                return int(round(num))
-        else:
-            # No suffix - check if separator is decimal or thousand
-            # Look for comma or dot with digits after
-            sep_match = re.search(r'[.,](\d+)$', num_str)
-            if sep_match:
-                digits_after = len(sep_match.group(1))
-                if digits_after >= 3:
-                    # 3+ digits = thousand separator (509,500 -> 509500)
-                    cleaned = num_str.replace('.', '').replace(',', '')
-                    return int(cleaned)
-                else:
-                    # 1-2 digits = decimal separator (509,5 -> 509.5 -> 510)
-                    num_str = num_str.replace(',', '.')
-                    return int(round(float(num_str)))
-            else:
-                # No separator, just parse as int
-                return int(num_str)
+        # Has suffix - comma/dot is ALWAYS decimal separator in this context mostly
+        # But 1.500 rb is ambiguous. Assume 1.5 -> 1500 if rb.
+        num_str = num_str.replace(',', '.')
+        try:
+            num = float(num_str)
+        except ValueError:
+            return 0
+        
+        if suffix in ['rb', 'ribu', 'k']:
+            return int(num * 1000)
+        elif suffix in ['jt', 'juta']:
+            return int(num * 1000000)
+        elif suffix == 'perak':
+            return int(round(num))
+    
+    # Try direct number pattern if no suffix found (e.g. 500000)
+    # Search for number with potential thousands separators
+    # Look for sequence of digits that might have , or .
+    # Exclude common date formats?
+    # Simple approach: find the standard number format
+    
+    # Check if user just sent a clean number like "500.000" or "500000"
+    # Remove item words first to avoid confusion?
+    # Let's try to find potential amount strings
+    
+    match_clean = re.search(r'\b(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?)\b', text)
+    if match_clean:
+         num_str = match_clean.group(1)
+         # Verify it's not a date?
+         # Parse logic
+         sep_match = re.search(r'[.,](\d+)$', num_str)
+         if sep_match:
+             digits_after = len(sep_match.group(1))
+             if digits_after >= 3:
+                 # 3+ digits = thousand separator (509,500 -> 509500)
+                 cleaned = num_str.replace('.', '').replace(',', '')
+                 return int(cleaned)
+             else:
+                 # 1-2 digits = decimal separator
+                 num_str = num_str.replace(',', '.')
+                 return int(round(float(num_str)))
+         else:
+             return int(num_str.replace('.', '').replace(',', ''))
+
     
     # Try direct number (just digits after cleaning separators)
     cleaned = text.replace('.', '').replace(',', '').replace(' ', '')

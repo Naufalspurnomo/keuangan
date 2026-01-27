@@ -39,6 +39,7 @@ class Intent(Enum):
     ANSWER_PENDING = "answer"
     CANCEL_TRANSACTION = "cancel"
     CHITCHAT = "chitchat"
+    CONVERSATIONAL_QUERY = "conversational"
 
 
 @dataclass
@@ -54,6 +55,16 @@ class MessageContext:
     chat_id: Optional[str] = None
     sender_name: Optional[str] = None
     quoted_message_id: Optional[str] = None
+    quoted_message_text: Optional[str] = None  # Content of quoted message (for context analysis)
+    
+    # Context Detection (Stage 1) - from context_detector.py
+    is_reply_to_bot: bool = False
+    reply_context_type: Optional[str] = None  # 'TRANSACTION_REPORT', 'PENDING_QUESTION', etc
+    addressed_score: int = 0  # 0-100 how likely message is for bot
+    
+    # Pre-filter result (Stage 2)
+    pre_filter_result: Optional[Dict] = None
+    skip_ai: bool = False  # True if pre-filter confident enough
     
     # Layer 0 output
     financial_score: int = 0
@@ -167,7 +178,7 @@ class LayerPipeline:
     
     def process(self, ctx: MessageContext) -> Tuple[Optional[str], MessageContext]:
         """
-        Process message through all layers.
+        Process message through all layers with 3-stage context-aware pipeline.
         
         Args:
             ctx: MessageContext with raw input data
@@ -177,6 +188,41 @@ class LayerPipeline:
             response_message is None if bot should stay silent
         """
         try:
+            # ============= STAGE 1: Context Detection =============
+            # Import context detector
+            from . import context_detector
+            
+            # Check if we have pending transaction for this user
+            from services import state_manager
+            pkey = state_manager.pending_key(ctx.user_id, ctx.chat_id)
+            has_pending = state_manager.has_pending_transaction(pkey)
+            
+            # Determine if quoted message is from bot
+            # For now, we check if quoted_message_text contains bot signatures
+            is_quoted_from_bot = False
+            if ctx.quoted_message_text:
+                bot_signatures = ['✅', '❓', '❌', '⚠️', 'Transaksi Tercatat']
+                is_quoted_from_bot = any(sig in ctx.quoted_message_text for sig in bot_signatures)
+            
+            # Get full context analysis
+            full_context = context_detector.get_full_context(
+                text=ctx.text,
+                quoted_message_text=ctx.quoted_message_text,
+                is_quoted_from_bot=is_quoted_from_bot,
+                user_id=ctx.user_id,
+                chat_id=ctx.chat_id,
+                has_media=ctx.media_url is not None,
+                has_pending=has_pending
+            )
+            
+            # Populate context fields in ctx
+            ctx.is_reply_to_bot = full_context['is_reply_to_bot']
+            ctx.reply_context_type = full_context['reply_context_type']
+            ctx.addressed_score = full_context['addressed_score']
+            
+            logger.debug(f"Context: is_reply_to_bot={ctx.is_reply_to_bot}, "
+                        f"reply_type={ctx.reply_context_type}, addressed_score={ctx.addressed_score}")
+            
             # Layer 0: Spam Filter
             ctx = self.layer_0.process(ctx)
             if ctx.processing_mode == ProcessingMode.SILENT:
@@ -186,6 +232,11 @@ class LayerPipeline:
             # Layer 1: Intent Classification
             ctx = self.layer_1.process(ctx)
             logger.info(f"Layer 1: Intent={ctx.intent}, Confidence={ctx.intent_confidence:.2f}")
+            
+            # Check for SILENT action from pre-filter (chitchat not addressed)
+            if ctx.pre_filter_result and ctx.pre_filter_result.get('action') == 'SILENT':
+                logger.info("Pre-filter: SILENT action (chitchat not addressed to bot)")
+                return None, ctx
             
             # Layer 2: Context Assembly
             ctx = self.layer_2.process(ctx)
@@ -247,7 +298,8 @@ def process_message(
     is_group: bool = False,
     chat_id: str = None,
     sender_name: str = None,
-    quoted_message_id: str = None
+    quoted_message_id: str = None,
+    quoted_message_text: str = None  # For context-aware classification
 ) -> Optional[str]:
     """
     Main entry point for message processing.
@@ -263,7 +315,8 @@ def process_message(
         is_group=is_group,
         chat_id=chat_id,
         sender_name=sender_name,
-        quoted_message_id=quoted_message_id
+        quoted_message_id=quoted_message_id,
+        quoted_message_text=quoted_message_text
     )
     
     pipeline = get_pipeline()

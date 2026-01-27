@@ -89,6 +89,7 @@ from services.state_manager import (
     get_visual_buffer,
     clear_visual_buffer,
     has_visual_buffer,
+    record_bot_interaction,
 )
 
 from utils.parsers import (
@@ -619,6 +620,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 if layer_response:
                     # Layer system handled the message
                     send_reply_with_mention(layer_response)
+                    record_bot_interaction(sender_number, chat_jid)
                     return jsonify({'status': 'layer_processed'}), 200
                 # else: Layer returned None, fall through to existing logic
             except Exception as e:

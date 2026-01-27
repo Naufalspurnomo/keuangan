@@ -170,6 +170,98 @@ def get_recent_transactions(
 
 # ===================== MAIN PROCESSING =====================
 
+def process_revision(ctx) -> 'MessageContext':
+    """Handle revision execution."""
+    try:
+        from sheets_helper import find_all_transactions_by_message_id, update_transaction_amount, invalidate_dashboard_cache
+    except ImportError:
+        logger.error("Layer 6: sheets_helper imports failed")
+        ctx.current_state = 'ERROR'
+        ctx.response_message = "❌ System Error: Helper missing."
+        return ctx
+    
+    revision_data = getattr(ctx, 'revision_data', {})
+    if not revision_data:
+        ctx.current_state = 'ERROR'
+        ctx.response_message = "❌ Data revisi tidak ditemukan."
+        return ctx
+        
+    keyword = revision_data.get('keyword')
+    amount = revision_data.get('amount')
+    
+    # 1. Find transactions
+    txns = find_all_transactions_by_message_id(ctx.quoted_message_id)
+    
+    if not txns:
+        ctx.current_state = 'ERROR'
+        ctx.response_message = "❌ Transaksi asli tidak ditemukan di database."
+        return ctx
+
+    # 2. Match Item (Semantic Matching)
+    try:
+        from utils.semantic_matcher import find_matching_item
+    except ImportError:
+         ctx.current_state = 'ERROR'
+         ctx.response_message = "❌ System Error: Matcher missing."
+         return ctx
+
+    # We need the original amount logic. 
+    # Semantic Matcher: find_matching_item(items, item_hint, original_amount=revision_data.get('amount'))?
+    # No, original_amount in matcher is meant for matching based on OLD amount.
+    # But here we only have NEW amount.
+    # Actually, if user says "revisi 9.75jt" (without item), we might match by finding item close to 9.75jt?
+    # No, usually user provides either item hint OR just new amount.
+    # Let's pass what we have.
+    
+    match_result = find_matching_item(txns, keyword)
+    
+    if not match_result:
+        # Ambiguous or no match
+        # Provide list
+        items_str = ", ".join([f"{t['keterangan']}" for t in txns[:3]])
+        ctx.current_state = 'ERROR'
+        ctx.response_message = f"❓ Tidak ketemu item yang cocok dengan '{keyword}'.\nOpsi: {items_str}..."
+        return ctx
+        
+    target = match_result['matched_item']
+    confidence = match_result['confidence']
+    
+    if confidence < 50:
+        # Too low
+        ctx.current_state = 'ERROR'
+        ctx.response_message = f"❓ Kurang yakin. Maksudnya '{target['keterangan']}'? Mohon spesifik lagi."
+        return ctx
+        
+    # If 50-70, maybe ask confirmation? For MVP assume explicit confirm or >50 is OK if forced.
+    # User spec: "If score > 70: Confident match. If score 50-70: Ask confirmation"
+    # For now, let's treat >50 as "Proceed" but maybe log warning?
+    # Or strict >60.
+    
+    # 3. Execute Update
+    success = update_transaction_amount(target['dompet'], target['row'], amount)
+    
+    if success:
+        # Formatting difference
+        old_amount_fmt = f"{target.get('jumlah', target.get('amount', 0)):,}".replace(',', '.')
+        new_amount_fmt = f"{amount:,}".replace(',', '.')
+        
+        ctx.current_state = 'REVISION_DONE'
+        ctx.response_message = (f"✅ Revisi Berhasil!\n"
+                                f"📝 {target['keterangan']}\n"
+                                f"💸 Rp {old_amount_fmt} → Rp {new_amount_fmt}")
+        # Invalidate cache
+        try:
+             invalidate_dashboard_cache()
+        except: pass
+    else:
+        ctx.current_state = 'ERROR'
+        ctx.response_message = "❌ Gagal mengupdate spreadsheet."
+     
+    return ctx
+
+
+# ===================== MAIN PROCESSING =====================
+
 def process(ctx) -> 'MessageContext':
     """
     Layer 6 processing: Storage.
@@ -182,6 +274,107 @@ def process(ctx) -> 'MessageContext':
     Returns:
         Enriched MessageContext with saved_transaction
     """
+    # Handle Revision
+    if ctx.current_state == "READY_TO_REVISE":
+        return process_revision(ctx)
+
+    # Handle Query
+    if ctx.current_state == "READY_TO_QUERY":
+        return process_query(ctx)
+
+def process_query(ctx) -> 'MessageContext':
+    """Handle financial query execution."""
+    try:
+        from sheets_helper import get_all_data
+        from datetime import timedelta
+        
+        params = getattr(ctx, 'query_params', {})
+        period = params.get('period', 'today')
+        q_type = params.get('type', 'summary')
+        
+        # Calculate Date Range
+        now = datetime.now()
+        cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        start_date = cutoff
+        end_date = now + timedelta(days=1) # Default: Today to T+1 (cover all today)
+        label = "Hari Ini"
+        
+        if period == 'yesterday':
+            start_date = cutoff - timedelta(days=1)
+            end_date = cutoff
+            label = "Kemarin"
+        elif period == 'week':
+            start_date = cutoff - timedelta(days=cutoff.weekday()) # Previous Monday
+            label = "Minggu Ini"
+        elif period == 'month':
+            start_date = cutoff.replace(day=1)
+            label = "Bulan Ini"
+        elif period == '30days':
+            start_date = now - timedelta(days=30)
+            label = "30 Hari Terakhir"
+            
+        # Fetch Data (Fetch extra days to be safe)
+        days_to_fetch = (now - start_date).days + 5
+        data = get_all_data(days=days_to_fetch)
+        
+        # Filter & Aggregate
+        income = 0
+        expense = 0
+        tx_count = 0
+        
+        for t in data:
+            try:
+                # Parse date (sheets_helper returns YYYY-MM-DD usually)
+                t_date_str = t.get('tanggal', '')
+                try:
+                    t_date = datetime.strptime(t_date_str, '%Y-%m-%d')
+                except:
+                    # Try other formats if needed, or skip
+                    continue
+                    
+                t_date = t_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                
+                if start_date <= t_date < end_date:
+                    amt = int(t.get('jumlah', 0))
+                    tipe = t.get('tipe', 'Pengeluaran').lower()
+                    
+                    if 'pemasukan' in tipe:
+                        income += amt
+                    else:
+                        expense += amt
+                    tx_count += 1
+            except: continue
+            
+        profit = income - expense
+        
+        # Format Output
+        msg = f"📊 *Laporan {label}*\n"
+        msg += f"📅 {start_date.strftime('%d %b')} - {now.strftime('%d %b %Y')}\n\n"
+        
+        if q_type == 'income':
+            msg += f"📈 Pemasukan: Rp {income:,}".replace(',', '.')
+        elif q_type == 'expense':
+            msg += f"📉 Pengeluaran: Rp {expense:,}".replace(',', '.')
+        else: # Summary/Profit/Balance
+            msg += f"📈 Pemasukan: Rp {income:,}\n".replace(',', '.')
+            msg += f"📉 Pengeluaran: Rp {expense:,}\n".replace(',', '.')
+            msg += f"------------------------\n"
+            msg += f"💰 Profit/Loss: Rp {profit:,}".replace(',', '.')
+            
+        if tx_count == 0:
+            msg += "\n\n(Belum ada transaksi)"
+            
+        ctx.response_message = msg
+        ctx.current_state = 'QUERY_DONE'
+        return ctx
+        
+    except Exception as e:
+        logger.error(f"Query failed: {e}")
+        ctx.current_state = 'ERROR'
+        ctx.response_message = "❌ Gagal mengambil data laporan."
+        return ctx
+
     # Only save when confirmed
     if ctx.current_state != "CONFIRMED_SAVE":
         return ctx

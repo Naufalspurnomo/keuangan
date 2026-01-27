@@ -373,50 +373,13 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
 
 def find_transaction_by_message_id(message_id: str) -> Optional[Dict]:
     """
-    Find a transaction by its MessageID across all dompet sheets.
-    
-    Args:
-        message_id: The message ID to search for
-        
-    Returns:
-        Dict with dompet, row, amount, keterangan, user_id if found, None otherwise
+    Find first transaction by its MessageID.
+    Legacy wrapper for find_all_transactions_by_message_id.
     """
-    if not message_id:
-        return None
-    
-    try:
-        for dompet in DOMPET_SHEETS:
-            try:
-                sheet = get_dompet_sheet(dompet)
-                
-                # Get MessageID column (column K)
-                message_ids = sheet.col_values(COL_MESSAGE_ID)
-                
-                # Search for the message_id
-                for row_idx, mid in enumerate(message_ids):
-                    if mid == message_id:
-                        row_number = row_idx + 1  # 1-based row number
-                        
-                        # Get the row data
-                        row_data = sheet.row_values(row_number)
-                        
-                        return {
-                            'dompet': dompet,
-                            'row': row_number,
-                            'amount': int(row_data[COL_JUMLAH - 1]) if row_data[COL_JUMLAH - 1] else 0,
-                            'keterangan': row_data[COL_KETERANGAN - 1] if len(row_data) > COL_KETERANGAN - 1 else '',
-                            'user_id': row_data[COL_OLEH - 1] if len(row_data) > COL_OLEH - 1 else '',
-                        }
-                        
-            except Exception as e:
-                secure_log("WARNING", f"Error searching {dompet}: {type(e).__name__}")
-                continue
+    results = find_all_transactions_by_message_id(message_id)
+    return results[0] if results else None
         
-        return None
-        
-    except Exception as e:
-        secure_log("ERROR", f"Find transaction error: {type(e).__name__}")
-        return None
+
 
 
 def update_transaction_amount(dompet_sheet: str, row: int, new_amount: int) -> bool:
@@ -1201,6 +1164,56 @@ def get_dashboard_summary() -> Dict:
 
 
 
+
+
+def find_all_transactions_by_message_id(message_id: str) -> List[Dict]:
+    """
+    Find ALL transactions by MessageID across all dompet sheets.
+    Useful for revisions of multi-item messages.
+    """
+    if not message_id:
+        return []
+    
+    results = []
+    
+    try:
+        for dompet in DOMPET_SHEETS:
+            try:
+                sheet = get_dompet_sheet(dompet)
+                
+                # Get MessageID column
+                message_ids = sheet.col_values(COL_MESSAGE_ID)
+                
+                # Search for ALL matches of message_id
+                for row_idx, mid in enumerate(message_ids):
+                    if mid == message_id:
+                        row_number = row_idx + 1  # 1-based row number
+                        
+                        # Get the row data
+                        row_data = sheet.row_values(row_number)
+                        
+                        # Pad row_data safety
+                        while len(row_data) < 12:
+                            row_data.append('')
+                        
+                        results.append({
+                            'dompet': dompet,
+                            'row': row_number,
+                            'amount': int(row_data[COL_JUMLAH - 1]) if row_data[COL_JUMLAH - 1] else 0,
+                            'keterangan': row_data[COL_KETERANGAN - 1],
+                            'user_id': row_data[COL_OLEH - 1],
+                            'nama_projek': row_data[COL_NAMA_PROJEK - 1] if len(row_data) >= COL_NAMA_PROJEK else '',
+                        })
+                        
+            except Exception as e:
+                secure_log("WARNING", f"Error searching {dompet}: {type(e).__name__}")
+                continue
+        
+        return results
+        
+    except Exception as e:
+        secure_log("ERROR", f"Find all transactions failed: {type(e).__name__} - {str(e)}")
+        return []
 
 
 if __name__ == '__main__':

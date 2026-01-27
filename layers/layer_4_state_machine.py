@@ -254,6 +254,116 @@ def _format_success_response(ctx) -> str:
 
 # ===================== MAIN PROCESSING =====================
 
+def handle_revision_setup(ctx) -> 'MessageContext':
+    """Prepare for revision execution."""
+    
+    if not ctx.quoted_message_id:
+        ctx.current_state = 'ERROR'
+        ctx.response_message = "❌ Mohon reply pesan transaksi yang mau direvisi."
+        return ctx
+
+    # Parse inputs (amount and keyword) using Semantic Matcher
+    try:
+        from utils.semantic_matcher import extract_revision_entities
+    except ImportError:
+        ctx.current_state = 'ERROR'
+        ctx.response_message = "❌ System Error: Semantic Matcher missing."
+        return ctx
+
+    revision_data = extract_revision_entities(ctx.text)
+    
+    amount_val = revision_data.get('amount', 0)
+    keyword = revision_data.get('item_hint')
+    
+    if not amount_val and not keyword:
+         # Failed to extract anything useful
+         ctx.current_state = 'ERROR' 
+         ctx.response_message = "❌ Format revisi tidak dikenali. Contoh: revisi dp 500rb"
+         return ctx
+    
+    if not amount_val:
+         # Keyword only? "revisi dp" (maybe update description?)
+         # For MVP, we likely require amount update.
+         # But the new engine supports it? 
+         # User blueprint implies finding item requires checking amount proximity or hint.
+         # We will proceed but warn if amount is 0/missing later or assume just finding item is useful?
+         # "revisi Dp 9.750.000" -> extracted amount.
+         pass
+
+    ctx.revision_data = {
+        'amount': amount_val,
+        'keyword': keyword,
+        'original_text': ctx.text
+    }
+    
+    ctx.current_state = 'READY_TO_REVISE'
+    return ctx
+
+
+def handle_conversational_query(ctx) -> 'MessageContext':
+    """Handle conversational help requests (how to, help, etc)."""
+    ctx.current_state = 'HELP_RESPONDED'
+    ctx.response_message = (
+        "🤖 *Bantuan Bot Keuangan*\n\n"
+        "Saya bisa bantu catat transaksi & laporan.\n\n"
+        "*Contoh Perintah:*\n"
+        "• Catat: `Beli bensin 50rb`\n"
+        "• Tanya: `Berapa pengeluaran hari ini?`\n"
+        "• Revisi: Reply pesan bot dengan `Revisi 60rb`\n"
+        "• Cancel: `/cancel`\n\n"
+        "Ketik apa saja, saya akan coba mengerti! 😉"
+    )
+    return ctx
+
+
+
+def handle_query_setup(ctx) -> 'MessageContext':
+    """Parse query intent into structured params for Layer 6."""
+    text = ctx.text.lower()
+    
+    # Defaults
+    period = 'today'
+    q_type = 'summary'
+    
+    # Parse Period
+    if 'kemarin' in text:
+        period = 'yesterday'
+    elif 'bulan ini' in text or 'bulan' in text:
+        period = 'month'
+    elif 'hari ini' in text:
+        period = 'today'
+    elif 'minggu ini' in text or 'pekan ini' in text:
+        period = 'week'
+    elif '7 hari' in text:
+        period = '7days'
+    elif '30 hari' in text:
+        period = '30days'
+        
+    # Parse Type
+    if 'pengeluaran' in text or 'keluar' in text or 'belanja' in text:
+        q_type = 'expense'
+    elif 'pemasukan' in text or 'masuk' in text or 'income' in text:
+        q_type = 'income'
+    elif 'saldo' in text:
+        q_type = 'balance'
+    elif 'profit' in text or 'laba' in text or 'untung' in text:
+        q_type = 'profit'
+    elif 'laporan' in text or 'rekap' in text:
+        q_type = 'summary'
+        
+    ctx.query_params = {
+        'period': period,
+        'type': q_type,
+        'original_text': ctx.text
+    }
+    
+    logger.info(f"Layer 4: Query Setup: {ctx.query_params}")
+    ctx.current_state = 'READY_TO_QUERY'
+    return ctx
+
+
+# ===================== MAIN PROCESSING =====================
+
 def process(ctx) -> 'MessageContext':
     """
     Layer 4 processing: State Machine.
@@ -275,7 +385,17 @@ def process(ctx) -> 'MessageContext':
     
     # State machine routing
     if current_state == 'INITIAL':
-        ctx = handle_initial_state(ctx)
+        # Priority Intents
+        if ctx.intent == Intent.REVISION_REQUEST:
+            ctx = handle_revision_setup(ctx)
+        elif ctx.intent == Intent.QUERY_STATUS:
+            ctx = handle_query_setup(ctx)
+        elif ctx.intent == Intent.CONVERSATIONAL_QUERY:
+            ctx = handle_conversational_query(ctx)
+        else:
+            ctx = handle_initial_state(ctx)
+
+
     
     elif current_state == 'WAITING_COMPANY':
         ctx = handle_waiting_company(ctx)

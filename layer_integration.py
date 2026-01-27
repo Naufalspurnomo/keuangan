@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Feature flag - DISABLED by default until layer system is fully tested
 # Set USE_LAYER_ARCHITECTURE=true in .env to enable (NOT RECOMMENDED YET)
-USE_LAYERS = False  # Hardcoded off until stable
+USE_LAYERS = True  # Enabled Semantic Engine
 
 
 def process_with_layers(
@@ -37,6 +37,7 @@ def process_with_layers(
     is_group: bool = False,
     chat_id: str = None,
     quoted_message_id: str = None,
+    quoted_message_text: str = None,  # For context-aware classification
     sender_jid: str = None
 ) -> Optional[str]:
     """
@@ -52,6 +53,7 @@ def process_with_layers(
         is_group: Whether message is from group
         chat_id: Chat/group ID
         quoted_message_id: ID of quoted message (for replies)
+        quoted_message_text: Text content of quoted message (for context analysis)
         sender_jid: Full sender JID for mentions
         
     Returns:
@@ -73,7 +75,8 @@ def process_with_layers(
             is_group=is_group,
             chat_id=chat_id,
             sender_name=sender_name,
-            quoted_message_id=quoted_message_id
+            quoted_message_id=quoted_message_id,
+            quoted_message_text=quoted_message_text
         )
         
         return response
