@@ -8,6 +8,8 @@ Contains:
 - Budget configuration
 - Commands: Bot command aliases
 - Timeouts: Time-related constants
+- KNOWN_COMPANY_NAMES: Hardcoded list of companies/wallets
+- PROJECT_STOPWORDS: Words forbidden from being project names
 """
 
 import os
@@ -15,6 +17,8 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+# ===================== SPREADSHEET CONFIG =====================
 
 # Column order: No, Tanggal, Company, Keterangan, Jumlah, Tipe, Oleh, Source, Kategori, Nama Projek, MessageID
 SHEET_HEADERS = ['No', 'Tanggal', 'Company', 'Keterangan', 'Jumlah', 'Tipe', 'Oleh', 'Source', 'Kategori', 'Nama Projek', 'MessageID']
@@ -50,6 +54,50 @@ SCOPES = [
     'https://www.googleapis.com/auth/drive'
 ]
 
+# ===================== MAGIC STRINGS (YAGNI Config) =====================
+
+# Daftar nama perusahaan/dompet yang sudah pasti (Hardcoded for efficiency)
+# Digunakan untuk mencegah AI menganggap nama ini sebagai "Nama Projek"
+KNOWN_COMPANY_NAMES = {
+    # Companies
+    "holla", "hojja", "holja",
+    "texturin", "texturin-bali", "texturin bali",
+    "texturin-surabaya", "texturin surabaya", "texturin sby",
+    "kantor", "umum",
+    
+    # Wallets (Agar "Isi Dompet Evan" tidak dianggap Projek "Dompet Evan")
+    "dompet evan", "dompet holja", "dompet holla",
+    "dompet texturin", "dompet texturin sby"
+}
+
+# Daftar kata yang DILARANG menjadi Nama Projek
+# Jika AI mendeteksi kata ini sebagai projek, akan diabaikan/dihapus
+PROJECT_STOPWORDS = {
+    # Kata Kerja Transaksi
+    "biaya", "bayar", "beli", "transfer", "kirim", "isi", "topup",
+    "terima", "lunasin", "ganti", "revisi", "ubah", "koreksi", 
+    "update", "cancel", "batal", "hapus", "catat", "input", "simpan",
+    
+    # Istilah Keuangan
+    "fee", "gaji", "pajak", "kas", "uang", "lunas", "dp", "pelunasan",
+    "cicil", "cicilan", "admin", "tunai", "cash", "debt", "hutang",
+    "saldo", "wallet", "dompet", "rekening", "atm", "bank",
+    
+    # Kebutuhan Umum (Bukan nama bangunan/projek spesifik)
+    "makan", "minum", "jamu", "snack", "konsumsi",
+    "bensin", "bbm", "parkir", "tol", "toll", "ongkir",
+    "sewa", "listrik", "air", "wifi", "pulsa", "internet",
+    "kebersihan", "keamanan", "transport",
+    
+    # Material Umum (Agar tidak muncul "Projek Semen")
+    "semen", "pasir", "cat", "bata", "kayu", "paku", 
+    "besi", "keramik", "gerinda", "bor", "gergaji", "meteran",
+    
+    # Kata Sambung
+    "dari", "ke", "untuk", "via", "dengan", "dan", "atau", 
+    "pembayaran", "transaksi", "project", "projek"
+}
+
 
 # ===================== TIMEOUTS =====================
 
@@ -67,11 +115,6 @@ class Timeouts:
 class Commands:
     """
     Bot command aliases - all lowercase for matching.
-    
-    Structure:
-    - SLASH: Commands with "/" prefix - work in BOTH private and group chats
-    - PRIVATE: Aliases without "/" - work ONLY in private chats (to avoid spam)
-    - ALL: Combined list for private chat matching
     """
     
     # Bot start/help
@@ -136,7 +179,6 @@ class Commands:
 
 # ===================== GROUP TRIGGERS =====================
 
-
 GROUP_TRIGGERS = ["+catat", "+bot", "+input", "/catat"]
 
 
@@ -144,10 +186,6 @@ GROUP_TRIGGERS = ["+catat", "+bot", "+input", "/catat"]
 if __name__ == '__main__':
     print("Constants Configuration Test")
     print(f"Sheet Headers: {SHEET_HEADERS}")
-    print(f"Col Jumlah (1-based): {COL_JUMLAH}")
+    print(f"Known Companies Count: {len(KNOWN_COMPANY_NAMES)}")
+    print(f"Project Stopwords Count: {len(PROJECT_STOPWORDS)}")
     print(f"Default Budget: {DEFAULT_BUDGET}")
-    print(f"Spreadsheet ID: {SPREADSHEET_ID}")
-    print(f"Timeouts.PENDING_TRANSACTION: {Timeouts.PENDING_TRANSACTION}s")
-    print(f"Commands.START: {Commands.START}")
-    print(f"GROUP_TRIGGERS: {GROUP_TRIGGERS}")
-

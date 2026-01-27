@@ -6,7 +6,50 @@ from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 from typing import List, Dict, Optional
+from config.constants import COL_NAMA_PROJEK
 
+
+# Cache sederhana agar tidak boros kuota Google API
+_project_cache = {
+    'names': set(),
+    'last_updated': None
+}
+
+def get_existing_projects(force_refresh=False):
+    """
+    Mengambil set nama projek unik dari Spreadsheet.
+    Menggunakan cache memori selama 5 menit.
+    """
+    global _project_cache
+    now = datetime.now()
+    
+    # Refresh jika cache kosong atau sudah > 5 menit
+    if force_refresh or not _project_cache['names'] or \
+       (_project_cache['last_updated'] and (now - _project_cache['last_updated']).total_seconds() > 300):
+           
+        try:
+            sh = get_sheet("Data_Agregat") # Atau sheet utama tempat transaksi masuk
+            # Ambil semua data kolom Nama Projek (Kolom J = index 10)
+            # Asumsi row 1 adalah header
+            values = sh.col_values(COL_NAMA_PROJEK)[1:] 
+            
+            # Bersihkan data: Hapus kosong, hapus strip, lowercase untuk set
+            unique_projects = set()
+            for v in values:
+                clean = v.strip()
+                if clean and clean.lower() not in ["-", "bensin", "test", ""]: # Filter sampah
+                    unique_projects.add(clean)
+            
+            _project_cache['names'] = unique_projects
+            _project_cache['last_updated'] = now
+            print(f"[INFO] Project cache updated: {len(unique_projects)} projects found.")
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch projects: {e}")
+            # Return old cache if fail
+            
+    return _project_cache['names']
+    
 # ===================== STATE PERSISTENCE (HIDDEN SHEET) =====================
 STATE_SHEET_NAME = "_BOT_STATE"
 
@@ -157,6 +200,16 @@ def get_spreadsheet():
     client = authenticate()
     _spreadsheet = client.open_by_key(SPREADSHEET_ID)
     return _spreadsheet
+
+
+def get_sheet(sheet_name: str):
+    """Get a specific worksheet by name from the main spreadsheet."""
+    spreadsheet = get_spreadsheet()
+    try:
+        return spreadsheet.worksheet(sheet_name)
+    except gspread.WorksheetNotFound:
+        secure_log("ERROR", f"Worksheet '{sheet_name}' not found.")
+        return None
 
 
 def get_company_sheets() -> List[str]:

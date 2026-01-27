@@ -22,9 +22,11 @@ import os
 import traceback
 import requests
 import re
+import threading
 from datetime import datetime
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
+from services.project_service import resolve_project_name, add_new_project_to_cache
 
 # Load environment variables
 load_dotenv()
@@ -559,6 +561,79 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             """Clear all stored prompt refs for a pending transaction."""
             for msg_id in pending.get('prompt_message_ids', []):
                 clear_pending_message_ref(msg_id)
+
+        def finalize_transaction_workflow(pending: dict, pkey: str):
+            """Unified workflow for transaction finalization (Save or Selection)."""
+            txs = pending.get('transactions', [])
+            if not txs:
+                return jsonify({'status': 'error_no_tx'}), 200
+            
+            # 1. Company Detection & Dompet Resolution
+            detected_company = None
+            detected_dompet = None
+            for t in txs:
+                if t.get('company'):
+                    detected_company = t['company']
+                if t.get('detected_dompet'):
+                    detected_dompet = t['detected_dompet']
+                if detected_company: break
+            
+            dompet = None
+            if detected_company:
+                if detected_company == "UMUM":
+                    # For UMUM, we MUST have a specific dompet or we ask user
+                    dompet = detected_dompet or pending.get('override_dompet')
+                else:
+                    dompet = get_dompet_for_company(detected_company)
+            
+            # 2. Case A: Auto-save (Company Known & Dompet Resolved)
+            if detected_company and dompet:
+                # LAYER 5 DUPLICATE CHECK
+                t0 = txs[0]
+                is_dupe, warning_msg = check_duplicate_transaction(
+                     t0.get('jumlah', 0), t0.get('keterangan', ''),
+                     t0.get('nama_projek', ''), detected_company,
+                     days_lookback=2
+                )
+                
+                if is_dupe:
+                    pending['pending_type'] = 'confirmation_dupe'
+                    pending['selected_option'] = {'dompet': dompet, 'company': detected_company}
+                    send_wuzapi_reply(reply_to, warning_msg)
+                    return jsonify({'status': 'dupe_warning'}), 200
+
+                # SAVE
+                clear_pending_prompt_refs(pending)
+                _pending_transactions.pop(pkey, None)
+                tx_msg_id = pending.get('message_id', '')
+                for t in txs: t['message_id'] = tx_msg_id
+                
+                result = append_transactions(txs, pending['sender_name'], pending['source'], 
+                                           dompet_sheet=dompet, company=detected_company)
+                
+                if result['success']:
+                    invalidate_dashboard_cache()
+                    reply = format_success_reply_new(txs, dompet, detected_company).replace('*', '')
+                    reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
+                    sent_msg = send_reply_with_mention(reply)
+                    
+                    bot_msg_id = extract_bot_msg_id(sent_msg)
+                    if bot_msg_id and tx_msg_id:
+                        store_bot_message_ref(bot_msg_id, tx_msg_id)
+                        from services.state_manager import store_last_bot_report
+                        store_last_bot_report(chat_jid, bot_msg_id)
+                else:
+                    send_wuzapi_reply(reply_to, f"❌ Gagal: {result.get('company_error', 'Error')}")
+                return jsonify({'status': 'processed'}), 200
+            
+            # 3. Case B: Manual Selection (Company Unknown or UMUM without Dompet)
+            pending['pending_type'] = 'selection'
+            reply = build_selection_prompt(txs).replace('*', '')
+            if is_group:
+                reply += "\n\n↩️ Reply pesan ini dengan angka 1-5"
+            sent_msg = send_reply_with_mention(reply)
+            record_pending_prompt(pkey, pending, sent_msg)
+            return jsonify({'status': 'asking_company'}), 200
         
         # Rate Limit
         allowed, wait_time = rate_limit_check(sender_number)
@@ -914,6 +989,52 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     _pending_transactions.pop(pending_pkey, None)
                     return jsonify({'status': 'cancelled_dupe'}), 200
 
+            # ===== HANDLE PROJECT CONFIRMATION =====
+            if pending_type == 'confirmation_project':
+                text_clean = text.lower().strip()
+                suggested = pending.get('suggested_project')
+                
+                final_project = ""
+                
+                # 1. POSITIVE CONFIRMATION (User setuju)
+                if text_clean in ['ya', 'y', 'ok', 'yes', 'sip', 'benar', 'betul', 'lanjut', 'gas', 'bener', 'yoi', 'oke', 'okay', 'iyh', 'iya', 'iy', 'yup', 'yap', 'lanjutkan', 'gaspol', 'setuju', 'acc', 'confirm', 'okeh', 'mantap']:
+                    final_project = suggested
+                    send_wuzapi_reply(reply_to, f"✅ Sip, masuk ke projek **{final_project}**.")
+                
+                # 2. NEGATIVE REJECTION (User menolak tanpa kasih nama)
+                elif text_clean in ['tidak', 'bukan', 'no', 'salah', 'ga', 'gak', 'nggak', 'g', 'tdk', 'bkn', 'nope', 'nah', 'kaga', 'kagak', 'ndak', 'ora', 'mboten', 'ngak', 'ngga', 'gag', 'males']:
+                    # Bot salah tebak -> Tanya user maunya apa
+                    send_wuzapi_reply(reply_to, "Oalah, maaf salah tebak. 🙏\n\nKalau begitu, nama projek yang benar apa?")
+                    # Kembalikan state ke 'needs_project' agar input berikutnya dianggap nama projek
+                    pending['pending_type'] = 'needs_project'
+                    return jsonify({'status': 'asking_correct_name'}), 200
+                
+                # 3. DIRECT CORRECTION (User langsung mengetik nama yang benar)
+                # Contoh: Bot tanya "Maksudnya Purana?", User jawab "Bukan, tapi Villa Baru" atau cuma "Villa Baru"
+                else:
+                    # Anggap input user adalah nama projek yang sebenarnya
+                    final_project = sanitize_input(text.strip())
+                    
+                    # Validasi minimal agar tidak input sampah
+                    if len(final_project) < 3:
+                        send_wuzapi_reply(reply_to, "⚠️ Nama projek terlalu pendek. Mohon ketik nama yang jelas.")
+                        return jsonify({'status': 'invalid_name_length'}), 200
+
+                    # [PENTING] Ajari bot nama baru ini agar besok tidak ditanya lagi
+                    from services.project_service import add_new_project_to_cache
+                    add_new_project_to_cache(final_project)
+                    
+                    send_wuzapi_reply(reply_to, f"👌 Oke, mencatat projek baru: **{final_project}**")
+
+                # --- APPLY & FINALIZE ---
+                # Update semua transaksi di pending list
+                for t in pending['transactions']:
+                    t['nama_projek'] = final_project
+                    t.pop('needs_project', None) # Bersihkan flag
+                
+                # Lanjut ke alur penyimpanan (Cek Company -> Save)
+                return finalize_transaction_workflow(pending, pending_pkey)
+
             # ===== HANDLE PROJECT NAME INPUT =====
             if pending_type == 'needs_project':
                 project_name = sanitize_input(text.strip())[:100]
@@ -928,81 +1049,31 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     return jsonify({'status': 'invalid_project'}), 200
                 
                 # Update transactions with project name
+                from services.project_service import resolve_project_name
+                resolved = resolve_project_name(project_name)
+                
+                # Intercept Ambiguous Match
+                if resolved.get('status') == 'AMBIGUOUS':
+                    pending['pending_type'] = 'confirmation_project'
+                    pending['suggested_project'] = resolved['final_name']
+                    
+                    msg = (f"🤔 Maksud Anda untuk projek *{resolved['final_name']}*?\n\n"
+                           f"✅ Balas *Ya* jika benar\n"
+                           f"❌ Ketik nama projek lain jika salah")
+                    send_wuzapi_reply(reply_to, msg)
+                    return jsonify({'status': 'waiting_project_confirm'}), 200
+                
+                # Auto-Apply Exact or Typo matches
+                if resolved.get('status') in ['EXACT', 'AUTO_FIX']:
+                    project_name = resolved['final_name']
+                
+                # Finalize project assignment
                 for t in pending['transactions']:
                     t['nama_projek'] = project_name
                     t.pop('needs_project', None)
                 
-                # Now check if company is detected
-                detected_company = None
-                for t in pending['transactions']:
-                    if t.get('company'):
-                        detected_company = t['company']
-                        break
-                
-                if detected_company:
-                    # Has company, check duplicate before auto-save
-                    dompet = get_dompet_for_company(detected_company)
-                    
-                    # LAYER 5 DUPLICATE CHECK
-                    t0 = pending['transactions'][0]
-                    is_dupe, warning_msg = check_duplicate_transaction(
-                         t0.get('jumlah', 0), 
-                         t0.get('keterangan', ''),
-                         t0.get('nama_projek', ''), 
-                         detected_company,
-                         days_lookback=2
-                    )
-                    
-                    if is_dupe:
-                        # Transition to confirmation state
-                        pending['pending_type'] = 'confirmation_dupe'
-                        pending['selected_option'] = {'dompet': dompet, 'company': detected_company}
-                        send_wuzapi_reply(reply_to, warning_msg)
-                        return jsonify({'status': 'dupe_warning'}), 200
-
-                    # No duplicate, proceed to save
-                    clear_pending_prompt_refs(pending)
-                    _pending_transactions.pop(pending_pkey, None)
-                    tx_message_id = pending.get('message_id', '')
-                    
-                    for t in pending['transactions']:
-                        t['message_id'] = tx_message_id
-                    
-                    result = append_transactions(
-                        pending['transactions'],
-                        pending['sender_name'],
-                        pending['source'],
-                        dompet_sheet=dompet,
-                        company=detected_company
-                    )
-                    
-                    if result['success']:
-                        # update_user_activity removed
-                        invalidate_dashboard_cache()
-                        reply = format_success_reply_new(pending['transactions'], dompet, detected_company).replace('*', '')
-                        reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
-                        sent_msg = send_reply_with_mention(reply)
-                        bot_msg_id = None
-                        if sent_msg and isinstance(sent_msg, dict):
-                            bot_msg_id = (sent_msg.get('data', {}).get('Id') or
-                                         sent_msg.get('data', {}).get('id') or
-                                         sent_msg.get('key', {}).get('id'))
-                        if bot_msg_id and tx_message_id:
-                            store_bot_message_ref(bot_msg_id, tx_message_id)
-                            from services.state_manager import store_last_bot_report
-                            store_last_bot_report(chat_jid, bot_msg_id)
-                    else:
-                        send_reply_with_mention(f"❌ Gagal: {result.get('company_error', 'Error')}")
-                    return jsonify({'status': 'processed'}), 200
-                else:
-                    # No company, continue to selection
-                    pending['pending_type'] = 'selection'
-                    reply = build_selection_prompt(pending['transactions']).replace('*', '')
-                    if is_group:
-                        reply += "\n\n↩️ Reply pesan ini dengan angka 1-5"
-                    sent_msg = send_reply_with_mention(reply)
-                    record_pending_prompt(pending_pkey, pending, sent_msg)
-                    return jsonify({'status': 'asking_company'}), 200
+                # FINALISASI (Save/Selection)
+                return finalize_transaction_workflow(pending, pending_pkey)
             
             # ===== HANDLE COMPANY SELECTION =====
             is_valid, selection, error_msg = parse_selection(text)
@@ -1029,64 +1100,14 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             dompet_sheet = option['dompet']
             company = option['company']
             
-            # LAYER 5 DUPLICATE CHECK
-            t0 = pending['transactions'][0]
-            is_dupe, warning_msg = check_duplicate_transaction(
-                 t0.get('jumlah', 0), 
-                 t0.get('keterangan', ''),
-                 t0.get('nama_projek', ''), 
-                 company,
-                 days_lookback=2
-            )
-            
-            if is_dupe:
-                pending['pending_type'] = 'confirmation_dupe'
-                pending['selected_option'] = option
-                send_wuzapi_reply(reply_to, warning_msg)
-                return jsonify({'status': 'dupe_warning'}), 200
-
-            # No dupe, safe to pop
-            _pending_transactions.pop(pending_pkey, None)
-            clear_pending_prompt_refs(pending)
-            
-            # Inject message_id into transactions if available from pending
-            tx_message_id = pending.get('message_id', '')
+            # Transition to finalization
+            pending['selected_option'] = option # Useful for confirmation_dupe
+            # Update transactions with the explicitly selected company
             for t in pending['transactions']:
-                t['message_id'] = tx_message_id
+                t['company'] = company
             
-            result = append_transactions(
-                pending['transactions'], 
-                pending['sender_name'], 
-                pending['source'],
-                dompet_sheet=dompet_sheet,
-                company=company
-            )
-            
-            if result['success']:
-                # update_user_activity removed
-                invalidate_dashboard_cache()
-                reply = format_success_reply_new(pending['transactions'], dompet_sheet, company).replace('*', '')
-                reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
-                
-                # Send reply with @mention and capture bot message ID for revision tracking
-                sent_msg = send_reply_with_mention(reply)
-                secure_log("DEBUG", f"Selection flow - WuzAPI send response: {str(sent_msg)[:200]}")
-                
-                # WuzAPI returns: {'data': {'Id': 'xxx'}}
-                bot_msg_id = None
-                if sent_msg and isinstance(sent_msg, dict):
-                    bot_msg_id = (sent_msg.get('data', {}).get('Id') or
-                                 sent_msg.get('data', {}).get('id') or
-                                 sent_msg.get('key', {}).get('id'))
-                
-                if bot_msg_id and tx_message_id:
-                    store_bot_message_ref(bot_msg_id, tx_message_id)
-                    from services.state_manager import store_last_bot_report
-                    store_last_bot_report(chat_jid, bot_msg_id)
-                    secure_log("INFO", f"Selection flow - Stored bot->tx ref and last report: {bot_msg_id} -> {tx_message_id}")
-            else:
-                send_wuzapi_reply(reply_to, f"❌ Gagal: {result.get('company_error', 'Error')}")
-            return jsonify({'status': 'processed'}), 200
+            # Use unified finalization workflow
+            return finalize_transaction_workflow(pending, pending_pkey)
         
         
         # /start
@@ -1139,20 +1160,18 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         
         # /dompet
         if is_command_match(text, Commands.DOMPET, is_group):
-            reply = """🗂️ Dompet & Company:
-
-📁 Dompet Holja
-  1. HOLLA
-  2. HOJJA
-
-📁 Dompet Texturin Sby
-  3. TEXTURIN-Surabaya
-
-📁 Dompet Evan  
-  4. TEXTURIN-Bali
-  5. KANTOR
-
-Kirim transaksi, lalu pilih nomor (1-5)."""
+            reply = (
+                "🗂️ *Dompet & Company*:\n\n"
+                "📁 *Dompet Holja*\n"
+                "  1. HOLLA\n"
+                "  2. HOJJA\n\n"
+                "📁 *Dompet Texturin Sby*\n"
+                "  3. TEXTURIN-Surabaya\n\n"
+                "📁 *Dompet Evan*\n"
+                "  4. TEXTURIN-Bali\n"
+                "  5. KANTOR\n\n"
+                "💡 _Kirim transaksi, lalu pilih nomor (1-5)._"
+            )
             send_wuzapi_reply(reply_to, reply)
             return jsonify({'status': 'ok'}), 200
         
@@ -1338,43 +1357,63 @@ Kirim transaksi, lalu pilih nomor (1-5)."""
             # Check if any transaction needs project name
             needs_project = any(t.get('needs_project') for t in transactions)
             
-            if needs_project:
-                # Store as pending and ask user for project name
+# ==================================================================
+            # 🔥 SMART INTERCEPT: CEK KEMIRIPAN PROJEK SEBELUM LANJUT 🔥
+            # ==================================================================
+            ambiguous_project = None
+            
+            for t in transactions:
+                p_name = t.get('nama_projek')
+                # Skip jika kosong atau Saldo Umum (Wallet Update)
+                if not p_name or p_name.lower() == "saldo umum": 
+                    continue
+                
+                # Cek ke database projek
+                res = resolve_project_name(p_name)
+                
+                if res['status'] == 'EXACT':
+                    # Perfect match, normalkan casing (misal: "purana" -> "Purana")
+                    t['nama_projek'] = res['final_name']
+                    
+                elif res['status'] == 'AUTO_FIX':
+                    # Typo dikit, auto benerin
+                    secure_log("INFO", f"Auto-fix project: {p_name} -> {res['final_name']}")
+                    t['nama_projek'] = res['final_name']
+                    
+                elif res['status'] == 'NEW':
+                    # Projek baru, tidak perlu aksi apa-apa, nanti disimpan as-is
+                    pass
+                    
+                elif res['status'] == 'AMBIGUOUS':
+                    # STOP! Ada keraguan. Simpan info untuk ditanyakan ke user.
+                    ambiguous_project = res
+                    break # Handle satu per satu biar ga pusing
+            
+            # Jika ada yang ambigu, TAHAN proses dan tanya user
+            if ambiguous_project:
+                # Buat pending state khusus konfirmasi
                 _pending_transactions[sender_pkey] = {
                     'transactions': transactions,
                     'sender_name': sender_name,
                     'source': source,
                     'created_at': datetime.now(),
                     'message_id': message_id,
-                    'pending_type': 'needs_project',
                     'chat_jid': chat_jid,
+                    'pending_type': 'confirmation_project', # State konfirmasi
+                    'suggested_project': ambiguous_project['final_name'],
+                    'original_project': ambiguous_project['original'], # Simpan nama asli user
                     'requires_reply': is_group,
                     'prompt_message_ids': []
                 }
                 
-                # Build friendly ask message with all transactions
-                total = sum(t.get('jumlah', 0) for t in transactions)
-                items_str = "\n".join([
-                    f"   {'🟢' if t.get('tipe') == 'Pemasukan' else '🔴'} {t.get('keterangan', 'Item')}: Rp {t.get('jumlah', 0):,}".replace(',', '.')
-                    for t in transactions
-                ])
+                msg = (f"🤔 Maksud Anda untuk projek *{ambiguous_project['final_name']}*?\n"
+                       f"(Input Anda: _{ambiguous_project['original']}_)\n\n"
+                       f"✅ Balas *Ya* jika benar\n"
+                       f"❌ Balas *Tidak* jika ini projek baru")
                 
-                item_count = len(transactions)
-                ask_msg = (
-                    f"📋 Transaksi terdeteksi ({item_count} item)\n"
-                    f"{items_str}\n"
-                    f"📊 Total: Rp {total:,}\n\n"
-                    f"❓ Perlu nama projek (biar laporan per projek rapi)\n"
-                    f"{'Reply pesan ini dengan nama projek saja' if is_group else 'Balas: nama projek saja'}\n"
-                    f"Contoh: Purana Ubud / Villa Sunset\n\n"
-                    f"{'👥 Siapa pun di grup boleh jawab' if is_group else ''}\n"
-                    f"⏳ Batas waktu: 15 menit\n"
-                    f"Ketik /cancel untuk batal"
-                ).replace(',', '.')
-                
-                sent_msg = send_reply_with_mention(ask_msg)
+                sent_msg = send_reply_with_mention(msg)
                 record_pending_prompt(sender_pkey, _pending_transactions[sender_pkey], sent_msg)
-                return jsonify({'status': 'asking_project'}), 200
+                return jsonify({'status': 'waiting_project_confirm'}), 200
             
             # Check if AI detected company from input
             detected_company = None
@@ -1388,80 +1427,21 @@ Kirim transaksi, lalu pilih nomor (1-5)."""
                 if detected_company:
                     break
             
-            # Determine dompet (wallet sheet)
-            dompet = None
-            if detected_company:
-                # Auto-save: Company detected
-                
-                # SPECIAL LOGIC: "UMUM" (Wallet Update)
-                # If "UMUM" AND detected_dompet is valid -> Use it (Auto-save)
-                # If "UMUM" AND detected_dompet NOT found -> Ask User (Ambiguous)
-                if detected_company == "UMUM":
-                     if detected_dompet:
-                         dompet = detected_dompet
-                     else:
-                         dompet = None # Force selection
-                else:
-                    dompet = get_dompet_for_company(detected_company)
+            # Create/Update pending state for the unified workflow
+            pending = {
+                'transactions': transactions,
+                'sender_name': sender_name,
+                'source': source,
+                'created_at': datetime.now(),
+                'message_id': message_id,
+                'chat_jid': chat_jid,
+                'requires_reply': is_group,
+                'prompt_message_ids': []
+            }
+            _pending_transactions[sender_pkey] = pending
             
-            # Auto-save if BOTH company and dompet are valid
-            if detected_company and dompet:
-                result = append_transactions(
-                    transactions, 
-                    sender_name, 
-                    source,
-                    dompet_sheet=dompet,
-                    company=detected_company
-                )
-                
-                if result['success']:
-                    # update_user_activity removed
-                    invalidate_dashboard_cache()
-                    reply = format_success_reply_new(transactions, dompet, detected_company).replace('*', '')
-                    reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
-                    
-                    # Send reply with @mention and capture bot message ID for revision tracking
-                    sent_msg = send_reply_with_mention(reply)
-                    secure_log("DEBUG", f"WuzAPI send response type: {type(sent_msg)}, content: {str(sent_msg)[:300]}")
-                    
-                    # WuzAPI can return message ID in different structures
-                    bot_msg_id = None
-                    if sent_msg and isinstance(sent_msg, dict):
-                        # WuzAPI returns: {'data': {'Id': 'xxx'}} - this is the main format
-                        bot_msg_id = (sent_msg.get('data', {}).get('Id') or
-                                     sent_msg.get('data', {}).get('id') or
-                                     sent_msg.get('key', {}).get('id') or 
-                                     sent_msg.get('Key', {}).get('ID') or
-                                     sent_msg.get('ID') or
-                                     sent_msg.get('id') or
-                                     sent_msg.get('MessageID') or
-                                     sent_msg.get('Info', {}).get('ID'))
-                        secure_log("DEBUG", f"Extracted bot_msg_id: {bot_msg_id}")
-                    
-                    if bot_msg_id and message_id:
-                        store_bot_message_ref(bot_msg_id, message_id)
-                        secure_log("INFO", f"Stored bot->tx ref: {bot_msg_id} -> {message_id}")
-                else:
-                    send_wuzapi_reply(reply_to, f"❌ Gagal: {result.get('company_error', 'Error')}")
-            else:
-                # No company detected - ask for selection
-                _pending_transactions[sender_pkey] = {
-                    'transactions': transactions,
-                    'sender_name': sender_name,
-                    'source': source,
-                    'created_at': datetime.now(),
-                    'message_id': message_id,
-                    'chat_jid': chat_jid,
-                    'requires_reply': is_group,
-                    'prompt_message_ids': []
-                }
-                
-                # Use the new selection prompt format with @mention
-                reply = build_selection_prompt(transactions).replace('*', '')
-                if is_group:
-                    reply += "\n\n↩️ Reply pesan ini dengan angka 1-5"
-                sent_msg = send_reply_with_mention(reply)
-                record_pending_prompt(sender_pkey, _pending_transactions[sender_pkey], sent_msg)
+            # Execute unified finalization workflow
+            return finalize_transaction_workflow(pending, sender_pkey)
 
         except RateLimitException as e:
             secure_log("WARNING", f"Groq Rate Limit Reached: {e.wait_time}")

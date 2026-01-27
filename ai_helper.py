@@ -40,55 +40,7 @@ from security import (
     MAX_TRANSACTIONS_PER_MESSAGE,
 )
 from utils.parsers import parse_revision_amount
-
-PROJECT_STOPWORDS = {
-    "biaya",
-    "bayar",
-    "beli",
-    "transfer",
-    "fee",
-    "gaji",
-    "ongkir",
-    "pajak",
-    "kas",
-    "uang",
-    "sewa",
-    "makan",
-    "tol",
-    "toll",
-    "parkir",
-    "bensin",
-    "bbm",
-    "admin",
-    "dp",
-    "pelunasan",
-    "lunas",
-    "cicil",
-    "cicilan",
-}
-
-# Known company names - used to detect when AI incorrectly sets company as project
-# All lowercase for case-insensitive matching
-KNOWN_COMPANY_NAMES = {
-    "holla",
-    "hojja", 
-    "holja",
-    "texturin",
-    "texturin-bali",
-    "texturin bali",
-    "texturin-surabaya",
-    "texturin surabaya",
-    "texturin sby",
-    "kantor",
-    "umum",
-    # Wallet names that should NOT be project names
-    "dompet evan",
-    "dompet holja",
-    "dompet holla",
-    "dompet texturin",
-    "dompet texturin sby",
-}
-
+from config.constants import KNOWN_COMPANY_NAMES, PROJECT_STOPWORDS
 
 def extract_project_from_description(description: str) -> str:
     """
