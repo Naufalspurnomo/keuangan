@@ -1,11 +1,66 @@
+import json
 import os
 import time
 import gspread
-import json
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 from typing import List, Dict, Optional
+
+# ===================== STATE PERSISTENCE (HIDDEN SHEET) =====================
+STATE_SHEET_NAME = "_BOT_STATE"
+
+def get_or_create_state_sheet():
+    """
+    Cari sheet _BOT_STATE. Jika tidak ada, buat baru dan HIDE.
+    """
+    try:
+        sh = get_spreadsheet() # Fungsi ini sudah ada di helper Anda
+        
+        try:
+            # Coba ambil sheetnya
+            worksheet = sh.worksheet(STATE_SHEET_NAME)
+        except:
+            # Jika error (tidak ketemu), buat baru
+            worksheet = sh.add_worksheet(title=STATE_SHEET_NAME, rows=10, cols=2)
+            # Sembunyikan sheet agar rapi
+            worksheet.hide()
+            print(f"[INFO] Created hidden state sheet: {STATE_SHEET_NAME}")
+            
+        return worksheet
+    except Exception as e:
+        print(f"[ERROR] Failed to get state sheet: {e}")
+        return None
+
+def save_state_to_cloud(json_state_string):
+    """
+    Simpan JSON string ke Cell A1 di sheet tersembunyi.
+    """
+    try:
+        ws = get_or_create_state_sheet()
+        if ws:
+            # Simpan di cell A1. 
+            # Batas karakter cell google sheet ~50.000 chars. Cukup untuk pending tx.
+            ws.update_cell(1, 1, json_state_string)
+            # Optional: Tambahkan timestamp di B1 biar tau kapan terakhir update
+            ws.update_cell(1, 2, str(datetime.now()))
+    except Exception as e:
+        print(f"[ERROR] Failed to save state to cloud: {e}")
+
+def load_state_from_cloud():
+    """
+    Ambil JSON string dari Cell A1.
+    """
+    try:
+        ws = get_or_create_state_sheet()
+        if ws:
+            # Ambil data dari A1
+            val = ws.cell(1, 1).value
+            if val and val.startswith("{"):
+                return val
+    except Exception as e:
+        print(f"[ERROR] Failed to load state from cloud: {e}")
+    return None
 
 # Load environment variables
 load_dotenv()

@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Dict, Optional, Any
 import json
 import os
-
+from sheets_helper import save_state_to_cloud, load_state_from_cloud
 from config.constants import Timeouts
 
 # Use centralized timeouts
@@ -345,7 +345,7 @@ PERSISTENCE_FILE = "data/user_state.json"
 _state_lock = threading.Lock()
 
 def _save_state():
-    """Save critical state to JSON file."""
+    """Save state to local JSON AND Google Sheets (Background)."""
     with _state_lock:
         try:
             data = {
@@ -362,9 +362,14 @@ def _save_state():
             
             # Ensure directory exists
             os.makedirs(os.path.dirname(PERSISTENCE_FILE), exist_ok=True)
-            
+            json_str = json.dumps(data, default=str)
+
             with open(PERSISTENCE_FILE, 'w') as f:
-                json.dump(data, f, default=str)
+                f.write(json_str)
+
+            # 3. BACKUP KE GOOGLE SHEETS (Asynchronous / Fire-and-Forget)
+            # Pakai thread biar bot tidak lemot nungguin Google API
+            threading.Thread(target=save_state_to_cloud, args=(json_str,), daemon=True).start()
                 
         except Exception as e:
             print(f"[ERROR] Failed to save state: {e}")
@@ -373,57 +378,74 @@ def _load_state():
     """Load state from JSON file."""
     global _pending_transactions, _bot_message_refs, _pending_message_refs, _visual_buffer, _bot_interactions
     
-    if not os.path.exists(PERSISTENCE_FILE):
-        return
-        
-    try:
-        with open(PERSISTENCE_FILE, 'r') as f:
-            data = json.load(f)
-            
-        if "pending_transactions" in data:
-            _pending_transactions.update(data["pending_transactions"])
-            # Restore datetime objects
-            for pkey, pending in _pending_transactions.items():
-                if "created_at" in pending and isinstance(pending["created_at"], str):
-                    try:
-                        pending["created_at"] = datetime.fromisoformat(pending["created_at"])
-                    except:
-                        pass
-                        
-        if "bot_message_refs" in data:
-            _bot_message_refs.update(data["bot_message_refs"])
-            
-        if "pending_message_refs" in data:
-            _pending_message_refs.update(data["pending_message_refs"])
-            
-        if "bot_interactions" in data:
-             for k, v in data["bot_interactions"].items():
-                 try:
-                     v['timestamp'] = datetime.fromisoformat(v['timestamp'])
-                     _bot_interactions[k] = v
-                 except:
-                     pass
+    loaded_data = None
 
-        if "visual_buffer" in data:
-             for k, v in data["visual_buffer"].items():
-                 reconstructed = []
-                 for item in v:
-                     if "created_at" in item and isinstance(item["created_at"], str):
-                         try:
-                             item["created_at"] = datetime.fromisoformat(item["created_at"])
-                         except:
-                             pass
-                     reconstructed.append(item)
-                 _visual_buffer[k] = reconstructed
-                  
-        if "last_bot_reports" in data:
-            _last_bot_reports.update(data["last_bot_reports"])
+    # 1. Coba load dari Local File (Prioritas 1)
+    if os.path.exists(PERSISTENCE_FILE):
+        try:
+            with open(PERSISTENCE_FILE, 'r') as f:
+                loaded_data = json.load(f)
+                print("[INFO] State loaded from LOCAL storage.")
+        except:
+            pass
             
-        print(f"[INFO] State loaded: {len(_pending_transactions)} pending txs, {len(_last_bot_reports)} reports")
-        
-    except Exception as e:
-        print(f"[ERROR] Failed to load state: {e}")
+    # 2. Jika Local gagal (misal baru Restart Koyeb), Load dari Google Sheets (Prioritas 2)
+    if not loaded_data:
+        print("[INFO] Local state missing (Koyeb Restart?). Fetching from Google Sheets...")
+        try:
+            cloud_json = load_state_from_cloud() # Ini synchronous gpp, karena cuma sekali pas start
+            if cloud_json:
+                loaded_data = json.loads(cloud_json)
+                print("[INFO] State restored from GOOGLE SHEETS backup!")
+        except Exception as e:
+            print(f"[WARNING] Could not restore from cloud: {e}")
 
+    # 3. Terapkan Data ke Variable Memory
+    if loaded_data:
+        try:
+            data = loaded_data
+            
+            if "pending_transactions" in data:
+                _pending_transactions.update(data["pending_transactions"])
+                # Restore datetime objects
+                for pkey, pending in _pending_transactions.items():
+                    if "created_at" in pending and isinstance(pending["created_at"], str):
+                        try:
+                            pending["created_at"] = datetime.fromisoformat(pending["created_at"])
+                        except:
+                            pass
+                            
+            if "bot_message_refs" in data:
+                _bot_message_refs.update(data["bot_message_refs"])
+                
+            if "pending_message_refs" in data:
+                _pending_message_refs.update(data["pending_message_refs"])
+                
+            if "bot_interactions" in data:
+                 for k, v in data["bot_interactions"].items():
+                     try:
+                         v['timestamp'] = datetime.fromisoformat(v['timestamp'])
+                         _bot_interactions[k] = v
+                     except:
+                         pass
+
+            if "visual_buffer" in data:
+                 for k, v in data["visual_buffer"].items():
+                     reconstructed = []
+                     for item in v:
+                         if "created_at" in item and isinstance(item["created_at"], str):
+                             try:
+                                 item["created_at"] = datetime.fromisoformat(item["created_at"])
+                             except:
+                                 pass
+                         reconstructed.append(item)
+                     _visual_buffer[k] = reconstructed
+                     
+            if "last_bot_reports" in data:
+                _last_bot_reports.update(data["last_bot_reports"])
+                
+        except Exception as e:
+             print(f"[ERROR] Error parsing loaded state: {e}")
 # Load state on startup
 _load_state()
 
