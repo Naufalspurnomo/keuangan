@@ -61,6 +61,9 @@ def store_visual_buffer(sender_number: str, chat_jid: str, media_url: str,
         'sender_number': sender_number,
         'created_at': datetime.now()
     })
+    
+    # Sort by created_at to ensure order
+    _visual_buffer[key].sort(key=lambda x: x['created_at'])
 
 
 def get_visual_buffer(sender_number: str, chat_jid: str) -> list:
@@ -422,6 +425,9 @@ def store_visual_buffer(sender_number: str, chat_jid: str, media_url: str,
         'sender_number': sender_number,
         'created_at': datetime.now()
     })
+    
+    # Sort by created_at to ensure order
+    _visual_buffer[key].sort(key=lambda x: x['created_at'])
     _save_state()
 
 def clear_visual_buffer(sender_number: str, chat_jid: str) -> None:
