@@ -58,6 +58,13 @@ class SmartHandler:
                  context['replied_message_type'] = "TRANSACTION_REPORT" # Assumption for now
                  message['is_reply_to_bot'] = True
 
+        # 0. EXPLICIT COMMAND BYPASS
+        # If message starts with '/', it's a command. Return PROCESS immediately.
+        # This bypasses AI analysis to ensure commands like /cancel, /help, /start 
+        # are handled largely by the main loop logic without AI interference.
+        if text.strip().startswith('/'):
+             return {"action": "PROCESS", "intent": "COMMAND", "normalized_text": text}
+
         # AI Analysis (async wrapper needed as `smart_analyze_message` is async)
         # For simplicity in this synchronous flow, we run it sync or refactor `smart_analyze_message` to sync.
         # Let's make `smart_analyze_message` synchronous for now or run generic.
