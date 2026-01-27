@@ -47,6 +47,7 @@ from sheets_helper import (
     check_duplicate_transaction,
 )
 from services.retry_service import process_retry_queue
+from layer_integration import process_with_layers, USE_LAYERS
 from wuzapi_helper import (
     send_wuzapi_reply,
     format_mention_body,
@@ -576,6 +577,27 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             secure_log("INFO", f"Visual buffer: Stored photo from {sender_number}, waiting for text")
             # Don't respond yet - wait for text command
             return jsonify({'status': 'photo_buffered'}), 200
+        
+        # ============ LAYER 1: SEMANTIC ENGINE (Hybrid AI) ============
+        if USE_LAYERS:
+            # Try to process with new smart engine first
+            layer_response = process_with_layers(
+                user_id=sender_number,
+                message_id=message_id,
+                text=text,
+                sender_name=sender_name,
+                media_url=media_url,
+                caption=text if input_type == 'image' else None,
+                is_group=is_group,
+                chat_id=chat_jid,
+                quoted_message_id=quoted_msg_id,
+                sender_jid=sender_jid
+            )
+            
+            if layer_response:
+                # Engine handled it and wants to reply (e.g. Revision Success)
+                send_reply_with_mention(layer_response)
+                return jsonify({'status': 'handled_by_layer'}), 200
         
         # Case 2: Text without photo → Check if we have buffered photo to link
         # Case 2: Text without photo → Check if we have buffered photo(s) to link

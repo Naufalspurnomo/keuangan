@@ -57,8 +57,19 @@ class SmartHandler:
                  context['is_reply_to_bot'] = True
                  context['replied_message_type'] = "TRANSACTION_REPORT" # Assumption for now
                  message['is_reply_to_bot'] = True
+        
+        # 0. NORMALIZATION (Added Intelligence)
+        try:
+            from utils.normalizer import normalize_nyeleneh_text
+            original_text = text
+            text = normalize_nyeleneh_text(text)
+            if text != original_text:
+                logger.info(f"[SmartHandler] Normalized: '{original_text}' -> '{text}'")
+                message['text'] = text # Update message object for AI
+        except ImportError:
+            logger.warning("[SmartHandler] Normalizer not found, skipping.")
 
-        # 0. EXPLICIT COMMAND BYPASS
+        # 0.1 EXPLICIT COMMAND BYPASS
         # If message starts with '/', it's a command. Return PROCESS immediately.
         # This bypasses AI analysis to ensure commands like /cancel, /help, /start 
         # are handled largely by the main loop logic without AI interference.
