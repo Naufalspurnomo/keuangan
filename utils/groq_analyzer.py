@@ -109,11 +109,15 @@ class GroqContextAnalyzer:
                 if match:
                     wait_time = match.group(1)
                 
+                # Only show rate limit message if it was actually addressed to the bot
+                addressed_score = context.get('addressed_score', 0)
+                should_warn = addressed_score >= 40 or context.get('chat_type') == 'PRIVATE'
+                
                 return {
-                    "should_respond": True,
+                    "should_respond": should_warn,
                     "intent": "RATE_LIMIT",
                     "confidence": 1.0,
-                    "reasoning": f"API Rate Limit. Wait: {wait_time}",
+                    "reasoning": f"API Rate Limit hit. Addressed: {addressed_score}. Warn: {should_warn}",
                     "extracted_data": {"wait_time": wait_time}
                 }
 

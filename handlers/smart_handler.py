@@ -100,6 +100,15 @@ class SmartHandler:
         if quick == "IGNORE":
              return {"action": "IGNORE"}
              
+        # 4b. Address Check (Silent Filter for Groups)
+        # If in group and score is low (< 40), ignore to save AI tokens and prevent 
+        # rate-limit spam for messages not addressed to the bot.
+        if chat_jid.endswith("@g.us") and context.get('addressed_score', 0) < 40:
+             # Exception: if quick filter said PROCESS, we keep going
+             if quick != "PROCESS":
+                 logger.info(f"[SmartHandler] Low addressed score ({context.get('addressed_score')}) in group - ignoring")
+                 return {"action": "IGNORE"}
+             
         # 5. AI Analysis
         analyzer = GroqContextAnalyzer(groq_client)
         analysis = analyzer.analyze_message(message, context)
