@@ -98,7 +98,14 @@ def should_respond_in_group(message: str, is_group: bool, has_media: bool = Fals
         (should_respond: bool, cleaned_message: str)
     """
     if not is_group:
-        return True, message  # Private chat always responds
+        # For private chat, we still want to filter out obvious non-financial noise
+        # but be more lenient than groups.
+        # Threshold: 20 (Allows media-only, but filters "Halo", "Pagi", etc.)
+        score = calculate_financial_score(message, has_media, is_mentioned)
+        if score < 20 and not message.startswith('/'):
+            # Noise (Score < 20 and not a command)
+            return False, ""
+        return True, message  # Process likely transactions and commands
     
     message_lower = message.lower().strip()
     

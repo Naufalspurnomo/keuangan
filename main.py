@@ -692,26 +692,25 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         if is_group:
             secure_log("DEBUG", f"Group msg from {sender_number}: pkey={pending_pkey}, has_pending={has_pending}, text='{text[:30]}...'")
         
-        if is_group:
-            # Check visual buffer (counts as active session/media context)
-            has_visual = has_visual_buffer(sender_number, chat_jid)
-            
-            # Pass all context to Layer 0 Scoring
-            should_respond, cleaned_text = should_respond_in_group(
-                message=text, 
-                is_group=True,
-                has_media=media_url is not None,
-                has_pending=has_pending or has_visual or was_visual_link,  # Pending OR Visual Buffer OR Linked = Active Session
-                is_mentioned=False  # TODO: Implement explicit bot mention check if needed from WuzAPI
-            )
-            
-            if not should_respond:
-                # No trigger - silently ignore this group message
-                secure_log("DEBUG", f"Group msg IGNORED (Score < 50, no pending, no trigger)")
-                return jsonify({'status': 'ignored_group'}), 200
-            
-            # Use cleaned text (trigger prefix removed)
-            text = cleaned_text if cleaned_text else text
+        # Check visual buffer (counts as active session/media context)
+        has_visual = has_visual_buffer(sender_number, chat_jid)
+
+        # Pass all context to Layer 0 Scoring
+        should_respond, cleaned_text = should_respond_in_group(
+            message=text or "", 
+            is_group=is_group,
+            has_media=media_url is not None,
+            has_pending=has_pending or has_visual or was_visual_link,  # Pending OR Visual Buffer OR Linked = Active Session
+            is_mentioned=False  # TODO: Implement explicit bot mention check if needed from WuzAPI
+        )
+        
+        if not should_respond:
+            # Noise/No trigger - silently ignore
+            secure_log("DEBUG", f"{'Group' if is_group else 'Private'} msg IGNORED (Low signal)")
+            return jsonify({'status': 'ignored'}), 200
+        
+        # Use cleaned text (trigger prefix removed)
+        text = cleaned_text if cleaned_text else text
         
         
         
@@ -1300,15 +1299,24 @@ Kirim transaksi, lalu pilih nomor (1-5)."""
             # GUARD: Zero Amount Check
             zero_tx = [t for t in transactions if t.get('jumlah', 0) <= 0]
             if zero_tx:
-                desc = zero_tx[0].get('keterangan', 'Item')
-                if len(desc) > 40: desc = desc[:37] + "..."
+                # Only show error if it looks like a real transaction or came with an image
+                # Otherwise it's likely AI misinterpreting noise
+                from utils.parsers import calculate_financial_score
+                score = calculate_financial_score(text or "", has_media=(input_type == 'image'))
                 
-                send_wuzapi_reply(reply_to, 
-                    f"⚠️ Transaksi terdeteksi tapi nominal belum ada (Rp 0).\n\n"
-                    f"📝 {desc}\n\n"
-                    f"Mohon ulangi dengan menyertakan nominal angka.\n"
-                    f"Contoh: 'Beli semen 50rb'")
-                return jsonify({'status': 'zero_amount'}), 200
+                if score >= 40 or input_type == 'image':
+                    desc = zero_tx[0].get('keterangan', 'Item')
+                    if len(desc) > 40: desc = desc[:37] + "..."
+                    
+                    send_wuzapi_reply(reply_to, 
+                        f"⚠️ Transaksi terdeteksi tapi nominal belum ada (Rp 0).\n\n"
+                        f"📝 {desc}\n\n"
+                        f"Mohon ulangi dengan menyertakan nominal angka.\n"
+                        f"Contoh: 'Beli semen 50rb'")
+                    return jsonify({'status': 'zero_amount'}), 200
+                else:
+                    secure_log("INFO", f"Zero amount transaction from low signal ({score}), staying silent")
+                    return jsonify({'status': 'silent_ignore_zero'}), 200
 
             # Inject message_id into transactions
             for t in transactions:
