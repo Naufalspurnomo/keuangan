@@ -68,40 +68,52 @@ class SmartHandler:
         # 3. Quick Filter (Rule Based)
         quick = should_quick_filter(message)
         if quick == "IGNORE":
-             return {"action": "IGNORE"}
+             # KECUALI jika ada gambar, jangan di-ignore walau caption pendek
+             if not has_media:
+                 return {"action": "IGNORE"}
              
         # ============================================================
-        # 🔥 SMART FILTER: Deteksi Obrolan Keuangan Tanpa Mention 🔥
+        # 🔥 SMART FILTER V2: Deteksi Obrolan Keuangan Tanpa Mention 🔥
         # ============================================================
-        # Jika ada di grup dan skor rendah (tidak dipanggil bot),
-        # Cek apakah isinya "Daging" (ada keyword keuangan).
         
         is_group = chat_jid.endswith("@g.us")
         score = context.get('addressed_score', 0)
         
+        # LIST KEYWORD DIPERLUAS (Termasuk kata kerja perintah)
         finance_keywords = [
+            # Transaksi
             "beli", "bayar", "transfer", "lunas", "dp", "biaya", "ongkir", 
             "saldo", "uang", "dana", "keluar", "masuk", "total", "rekap", 
-            "laporan", "hutang", "tagihan", "invoice", "nota", "struk",
-            "mahal", "murah", "boros", "hemat", "budget", "anggaran"
+            "hutang", "tagihan", "invoice", "nota", "struk", "jajan",
+            "mahal", "murah", "boros", "hemat", "budget", "anggaran",
+            # Perintah Kerja (Ini yang kemarin kurang!)
+            "catat", "tulis", "input", "rekam", "masukin", "simpan",
+            "cek", "lihat", "tanya", "info", "help"
         ]
         
-        # Cek keyword keuangan (Hanya jika kalimatnya > 2 kata biar gak false positive)
         is_finance_talk = False
         text_lower = text.lower()
-        if len(text.split()) >= 2:
-            if any(k in text_lower for k in finance_keywords):
+        
+        # Cek keyword keuangan
+        # Syarat: Ada keyword DAN (kalimat > 1 kata ATAU itu adalah gambar)
+        if any(k in text_lower for k in finance_keywords):
+            if len(text.split()) >= 2 or has_media:
                 is_finance_talk = True
 
-        # LOGIKA SAKTI:
-        # Ignore jika di grup DAN skor rendah DAN bukan ngomongin keuangan
+        # LOGIKA SAKTI (DIPERBAIKI):
+        # Ignore jika:
+        # 1. Di grup
+        # 2. Skor rendah (tidak dipanggil)
+        # 3. Quick filter bukan PROCESS
+        # 4. Bukan ngomongin keuangan
+        # 5. DAN TIDAK ADA GAMBAR (Penting!)
         if is_group and score < 40:
-             if quick != "PROCESS" and not is_finance_talk:
-                 secure_log("DEBUG", f"Group Ignore (No Mention & No Finance Keyword): {text[:20]}...")
+             if quick != "PROCESS" and not is_finance_talk and not has_media:
+                 secure_log("DEBUG", f"Group Ignore: {text[:20]}...")
                  return {"action": "IGNORE"}
              
-             if is_finance_talk:
-                 secure_log("INFO", f"👀 Auto-Sambar: Mendeteksi obrolan keuangan: {text[:30]}...")
+             if is_finance_talk or has_media:
+                 secure_log("INFO", f"👀 Auto-Sambar: Mendeteksi potensi transaksi...")
 
         # ============================================================
 
@@ -125,7 +137,7 @@ class SmartHandler:
 
         # 5. Routing Intents
         if intent == "RATE_LIMIT":
-            return {"action": "IGNORE"} # Silent for rate limit
+            return {"action": "IGNORE"}
 
         elif intent == "REVISION_REQUEST":
             hint = extracted.get('item_hint')
@@ -137,12 +149,10 @@ class SmartHandler:
                 "action": "PROCESS",
                 "intent": "QUERY_STATUS",
                 "normalized_text": text,
-                "layer_response": extracted.get('search_query', text) # Use refined query from AI
+                "layer_response": extracted.get('search_query', text)
             }
             
         elif intent == "RECORD_TRANSACTION":
-            # Jika AI yakin ini transaksi, normalisasi teksnya
-            # (Misal user bilang: "Tolong catat beli bensin", dinormalkan jadi "Beli bensin")
             clean_text = text
             if extracted.get('clean_text'):
                 clean_text = extracted['clean_text']
@@ -168,10 +178,6 @@ class SmartHandler:
         }
 
     def handle_revision_ai(self, hint, amount, reply_message_id, original_tx_id, chat_jid) -> dict:
-        # ... (Logika revisi tetap sama, tidak perlu diubah) ...
-        # Copy logic handle_revision_ai dari file lama Anda atau gunakan referensi sebelumnya
-        # (Bagian ini sepertinya sudah oke di kode lama)
-        
         if not original_tx_id:
              from services.state_manager import get_last_bot_report, get_original_message_id
              last_bot_msg_id = get_last_bot_report(chat_jid)
