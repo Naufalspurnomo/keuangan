@@ -1,29 +1,20 @@
-
 """
 handlers/smart_handler.py - Smart Message Handler
 Orchestrates all intelligence layers (Semantic Engine).
-
-Features:
-- Context detection (addressed to bot?)
-- Normalization (slang/typo fix)
-- Intent classification
-- Routing to specialized handlers
 """
 
 import logging
+import re
 from config.constants import Commands
 from utils.groq_analyzer import GroqContextAnalyzer, should_quick_filter
 from utils.semantic_matcher import find_matching_item, extract_revision_entities
 from layers.context_detector import get_full_context, record_interaction
-from sheets_helper import find_transaction_by_message_id, update_transaction_amount
 from security import secure_log
 from ai_helper import groq_client
-import asyncio
 
 logger = logging.getLogger(__name__)
- 
+
 def pending_key(user_id: str, chat_id: str = None) -> str:
-    """Standardize key for pending transactions."""
     if chat_id:
         return f"{chat_id}:{user_id}"
     return user_id
@@ -31,16 +22,12 @@ def pending_key(user_id: str, chat_id: str = None) -> str:
 class SmartHandler:
     def __init__(self, state_manager):
         self.state_manager = state_manager
-        # No more manual context detector or normalizer needed!
-        # self.context_detector = ContextDetector(state_manager)
         
     def process(self, text: str, chat_jid: str, sender_number: str, 
                 reply_message_id: str = None, has_media: bool = False,
                 sender_name: str = "User", quoted_message_text: str = None,
                 has_visual: bool = False) -> dict:
-        """
-        Main intelligence pipeline (Hybrid AI).
-        """
+        
         # 0. EXPLICIT COMMAND BYPASS
         if text.strip().startswith('/'):
              return {"action": "PROCESS", "intent": "COMMAND", "normalized_text": text}
@@ -53,7 +40,7 @@ class SmartHandler:
              if original_tx_id:
                  is_reply_to_bot = True
         
-        # 2. Build Context using ContextDetector
+        # 2. Build Context
         full_ctx = get_full_context(
             text=text,
             quoted_message_text=quoted_message_text,
@@ -65,17 +52,12 @@ class SmartHandler:
             has_visual=has_visual
         )
         
-        # Enrich Context for AI
         context = {
             "chat_type": "GROUP" if chat_jid.endswith("@g.us") else "PRIVATE",
             "is_reply_to_bot": is_reply_to_bot,
-            "replied_message_type": full_ctx.get('reply_context_type'),
-            "addressed_score": full_ctx.get('addressed_score', 0),
-            "mention_type": full_ctx.get('mention_type'),
-            "in_conversation": full_ctx.get('in_conversation', False)
+            "addressed_score": full_ctx.get('addressed_score', 0)
         }
         
-        # Prepare Message Object for AI
         message = {
             "text": text,
             "sender": sender_name,
@@ -83,61 +65,52 @@ class SmartHandler:
             "is_reply_to_bot": is_reply_to_bot
         }
 
-        # Record interaction for continuity
-        record_interaction(sender_number, chat_jid)
-        
-        # 3. NORMALIZATION
-        try:
-            from utils.normalizer import normalize_nyeleneh_text
-            original_text = text
-            text = normalize_nyeleneh_text(text)
-            if text != original_text:
-                logger.info(f"[SmartHandler] Normalized: '{original_text}' -> '{text}'")
-                message['text'] = text # Update for AI
-        except Exception:
-            pass
-
-        # 3.5 RULE-BASED INTENT (Bypass AI for obvious patterns)
-        # Check for Revision Pattern (revisi ... ...)
-        lc_text = text.lower()
-        if 'revisi' in lc_text or 'ralat' in lc_text:
-             rev_entities = extract_revision_entities(text)
-             # If we successfully extracted an amount, it's definitely a revision
-             if rev_entities and rev_entities.get('amount'):
-                 logger.info(f"[SmartHandler] Rule-based Bypass detected REVISION: {rev_entities}")
-                 # Mock AI Analysis Result
-                 analysis = {
-                     "should_respond": True,
-                     "intent": "REVISION_REQUEST",
-                     "confidence": 0.95,
-                     "extracted_data": {
-                         "item_hint": rev_entities.get('item_hint'),
-                         "new_amount": rev_entities.get('amount')
-                     }
-                 }
-                 # Skip to routing
-                 # We need to manually invoke Step 6 & 7 behavior
-                 self.state_manager.record_bot_interaction(sender_number, chat_jid, "REVISION_REQUEST")
-                 hint = analysis['extracted_data'].get('item_hint')
-                 amount = analysis['extracted_data'].get('new_amount')
-                 return self.handle_revision_ai(hint, amount, reply_message_id, original_tx_id, chat_jid)
-
-        # 4. Quick Filter
+        # 3. Quick Filter (Rule Based)
         quick = should_quick_filter(message)
         if quick == "IGNORE":
              return {"action": "IGNORE"}
              
-        # 4b. Address Check (Silent Filter for Groups)
-        # If in group and score is low (< 40), ignore to save AI tokens and prevent 
-        # rate-limit spam for messages not addressed to the bot.
-        if chat_jid.endswith("@g.us") and context.get('addressed_score', 0) < 40:
-             # Exception: if quick filter said PROCESS, we keep going
-             if quick != "PROCESS":
-                 logger.info(f"[SmartHandler] Low addressed score ({context.get('addressed_score')}) in group - ignoring")
+        # ============================================================
+        # 🔥 SMART FILTER: Deteksi Obrolan Keuangan Tanpa Mention 🔥
+        # ============================================================
+        # Jika ada di grup dan skor rendah (tidak dipanggil bot),
+        # Cek apakah isinya "Daging" (ada keyword keuangan).
+        
+        is_group = chat_jid.endswith("@g.us")
+        score = context.get('addressed_score', 0)
+        
+        finance_keywords = [
+            "beli", "bayar", "transfer", "lunas", "dp", "biaya", "ongkir", 
+            "saldo", "uang", "dana", "keluar", "masuk", "total", "rekap", 
+            "laporan", "hutang", "tagihan", "invoice", "nota", "struk",
+            "mahal", "murah", "boros", "hemat", "budget", "anggaran"
+        ]
+        
+        # Cek keyword keuangan (Hanya jika kalimatnya > 2 kata biar gak false positive)
+        is_finance_talk = False
+        text_lower = text.lower()
+        if len(text.split()) >= 2:
+            if any(k in text_lower for k in finance_keywords):
+                is_finance_talk = True
+
+        # LOGIKA SAKTI:
+        # Ignore jika di grup DAN skor rendah DAN bukan ngomongin keuangan
+        if is_group and score < 40:
+             if quick != "PROCESS" and not is_finance_talk:
+                 secure_log("DEBUG", f"Group Ignore (No Mention & No Finance Keyword): {text[:20]}...")
                  return {"action": "IGNORE"}
              
-        # 5. AI Analysis
+             if is_finance_talk:
+                 secure_log("INFO", f"👀 Auto-Sambar: Mendeteksi obrolan keuangan: {text[:30]}...")
+
+        # ============================================================
+
+        # 4. AI Analysis (Groq)
         analyzer = GroqContextAnalyzer(groq_client)
+        
+        # Kirim sinyal ke AI bahwa ini mungkin "Ambient Talk"
+        context['is_ambient'] = (score < 40)
+        
         analysis = analyzer.analyze_message(message, context)
         
         if not analysis['should_respond']:
@@ -146,24 +119,13 @@ class SmartHandler:
         intent = analysis['intent']
         extracted = analysis.get('extracted_data', {})
         
-        # 6. Record Bot Interaction
+        # Record Interaction only if we respond
+        record_interaction(sender_number, chat_jid)
         self.state_manager.record_bot_interaction(sender_number, chat_jid, intent)
 
-        # 7. ROUTING
-
+        # 5. Routing Intents
         if intent == "RATE_LIMIT":
-            wait_time = extracted.get('wait_time', '1 menit')
-    
-            # SMART: Only show if actually addressed to bot
-            if context.get('addressed_score', 0) >= 50:
-                return {
-                    "action": "REPLY",
-                    "response": f"⏳ Bot sedang istirahat (terlalu banyak request).\n\n"
-                               f"💡 Coba lagi sekitar *{wait_time}*.\n\n"
-                }
-            else:
-                # Silent for low-confidence messages
-                return {"action": "IGNORE"}
+            return {"action": "IGNORE"} # Silent for rate limit
 
         elif intent == "REVISION_REQUEST":
             hint = extracted.get('item_hint')
@@ -174,152 +136,69 @@ class SmartHandler:
             return {
                 "action": "PROCESS",
                 "intent": "QUERY_STATUS",
-                "normalized_text": text
+                "normalized_text": text,
+                "layer_response": extracted.get('search_query', text) # Use refined query from AI
             }
             
         elif intent == "RECORD_TRANSACTION":
-            amount = extracted.get('amount') or 0
-            # Smart Amount Warning (> 10jt)
-            if amount > 10000000:
-                warning = "⚠️ *Nominal Cukup Besar:* Rp {:,}".format(amount)
-                from wuzapi_helper import send_wuzapi_reply
-                send_wuzapi_reply(chat_jid, warning)
+            # Jika AI yakin ini transaksi, normalisasi teksnya
+            # (Misal user bilang: "Tolong catat beli bensin", dinormalkan jadi "Beli bensin")
+            clean_text = text
+            if extracted.get('clean_text'):
+                clean_text = extracted['clean_text']
                 
             return {
                 "action": "PROCESS",
                 "intent": "RECORD_TRANSACTION",
-                "normalized_text": text,
-                "layer_response": text # Return normalized text for main processing
+                "normalized_text": clean_text,
+                "layer_response": clean_text 
             }
 
-        elif intent == "ANSWER_PENDING":
-             return {
-                 "action": "PROCESS",
-                 "intent": "ANSWER_PENDING",
-                 "normalized_text": text,
-                 "layer_response": text
-             }
-             
         elif intent == "CONVERSATIONAL_QUERY":
              return {
                  "action": "REPLY",
-                 "response": "Halo! Saya Bot Keuangan AI. Ketik /help untuk bantuan."
+                 "response": analysis.get('conversational_response', "Halo! Ada yang bisa saya bantu?")
              }
              
         # Default
         return {
             "action": "PROCESS",
-            "intent": intent, # Pass the actual intent back
+            "intent": intent, 
             "normalized_text": text 
         }
 
     def handle_revision_ai(self, hint, amount, reply_message_id, original_tx_id, chat_jid) -> dict:
-        """AI-assisted revision handler"""
+        # ... (Logika revisi tetap sama, tidak perlu diubah) ...
+        # Copy logic handle_revision_ai dari file lama Anda atau gunakan referensi sebelumnya
+        # (Bagian ini sepertinya sudah oke di kode lama)
+        
         if not original_tx_id:
-             # Intelligent Fallback: Try to use the last report sent to this chat
              from services.state_manager import get_last_bot_report, get_original_message_id
              last_bot_msg_id = get_last_bot_report(chat_jid)
              if last_bot_msg_id:
                  original_tx_id = get_original_message_id(last_bot_msg_id)
                  
         if not original_tx_id:
-             return {
-                 "action": "REPLY",
-                 "response": "💡 Untuk merevisi, silakan *Reply* pesan laporan transaksi yang salah."
-             }
+             return {"action": "REPLY", "response": "💡 Reply pesan laporan untuk merevisi."}
         
-        # Determine items
         from sheets_helper import find_all_transactions_by_message_id
         items = find_all_transactions_by_message_id(original_tx_id)
         
         if not items:
             return {"action": "REPLY", "response": "❌ Data transaksi lama tidak ditemukan."}
 
-        # Semantic Match
         match_result = find_matching_item(items, hint, amount)
         
         if not match_result:
-             # If AI gave us a hint but we couldn't match, maybe the hint was "dp" but item is "Down Payment"
-             # The semantic matcher already handles this.
-             return {
-                 "action": "REPLY",
-                 "response": f"⚠️ Saya bingung item mana yang dimaksud '{hint}'. Bisa lebih spesifik?"
-             }
+             return {"action": "REPLY", "response": f"⚠️ Bingung item '{hint}'. Bisa lebih spesifik?"}
              
         target = match_result['matched_item']
         
-        # Execute
         if not amount:
              return {"action": "REPLY", "response": "⚠️ Nominal barunya berapa?"}
              
         success = update_transaction_amount(target['dompet'], target['row'], amount)
         if success:
-            return {
-                "action": "REPLY", 
-                "response": f"✅ Revisi Berhasil!\n📝 {target.get('keterangan')}\n💸 Rp {target.get('amount',0):,} → Rp {amount:,}"
-            }
+            return {"action": "REPLY", "response": f"✅ Revisi: {target.get('keterangan')} → Rp {amount:,}"}
         else:
              return {"action": "REPLY", "response": "❌ Gagal update spreadsheet."}
-        
-    def handle_revision(self, text: str, reply_message_id: str, original_tx_id: str, sender: str) -> dict:
-        """Smart revision handling with semantic matching."""
-        if not original_tx_id:
-             return {
-                 "action": "REPLY",
-                 "response": "💡 Untuk merevisi, silakan *Reply* pesan laporan transaksi yang salah."
-             }
-             
-        # Extract entities
-        entities = extract_revision_entities(text)
-        if not entities.get('amount') and not entities.get('item_hint'):
-             return {
-                 "action": "REPLY",
-                 "response": "⚠️ Format revisi tidak dikenali. Contoh: 'revisi dp 5jt' atau reply dan ketik '500rb'"
-             }
-             
-        # Fetch original transactions
-        from sheets_helper import find_all_transactions_by_message_id
-        items = find_all_transactions_by_message_id(original_tx_id)
-        
-        if not items:
-            return {
-                 "action": "REPLY",
-                 "response": "❌ Data transaksi lama tidak ditemukan."
-             }
-             
-        # Find match
-        match_result = find_matching_item(items, entities.get('item_hint'), entities.get('amount'))
-        
-        if not match_result:
-            return {
-                 "action": "REPLY",
-                 "response": "⚠️ Bingung item mana yang dimaksud. Bisa sebutkan nama itemnya? Contoh: 'revisi semen 50rb'"
-             }
-             
-        if match_result.get('needs_confirmation'):
-            # In a full valid flow we would ask confirmation. 
-            # For now, let's just do it but warn.
-            pass
-            
-        target = match_result['matched_item']
-        
-        # Execute Revision
-        new_amount = entities.get('amount')
-        if not new_amount:
-             return {
-                 "action": "REPLY",
-                 "response": "⚠️ Nominal barunya berapa?"
-             }
-             
-        success = update_transaction_amount(target['dompet'], target['row'], new_amount)
-        
-        if success:
-            return {
-                "action": "REPLY", 
-                "response": f"✅ Revisi Berhasil!\n📝 {target.get('keterangan')}\n💸 Rp {target.get('amount',0):,} → Rp {new_amount:,}"
-            }
-        else:
-             return {
-                 "action": "REPLY",
-                 "response": "❌ Gagal update ke spreadsheet."
-             }

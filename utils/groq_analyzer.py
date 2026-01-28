@@ -1,353 +1,93 @@
-
 """
-utils/groq_analyzer.py - AI-Powered Context & Intent Analyzer
-
-WHY THIS APPROACH:
-1. SIMPLE: One AI call replaces 450+ lines of rule-based code
-2. SMART: Handles nyeleneh, typo, slang, mixed language automatically
-3. EFFICIENT: Still within Groq Free tier for most use cases
-4. FUTURE-PROOF: Adapts to new patterns without code changes
-
-HYBRID STRATEGY:
-- Layer 0 (Basic Filter): Rule-based (instant, free)
-- Layer 1 (Smart Analysis): AI-powered (500ms, uses tokens but worth it)
+utils/groq_analyzer.py - AI Intent Analyzer
 """
-
 import json
 import logging
-from datetime import datetime
-from typing import Optional, Dict, Any
+from config.constants import Timeouts
 
 logger = logging.getLogger(__name__)
 
 class GroqContextAnalyzer:
-    """
-    All-in-one analyzer using Groq AI.
-    Replaces: ContextDetector + Normalizer + IntentClassifier
-    """
-    
     def __init__(self, groq_client):
+        self.client = groq_client
+        self.model = "llama-3.1-8b-instant" # Cepat & Murah
+
+    def analyze_message(self, message: dict, context: dict) -> dict:
         """
-        Args:
-            groq_client: Initialized Groq client
+        Analyze message intent using Groq Llama 3.1.
+        Decides: IGNORE, RECORD, QUERY, or REVISION.
         """
-        self.groq_client = groq_client
+        text = message.get('text', '')
+        sender = message.get('sender', 'User')
+        is_ambient = context.get('is_ambient', False)
         
-    def analyze_message(
-        self, 
-        message: Dict[str, Any],
-        context: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Single AI call to analyze everything.
-        
-        Args:
-            message: {
-                "text": str,
-                "sender": str,
-                "has_media": bool,
-                "timestamp": datetime
-            }
-            context: {
-                "is_reply_to_bot": bool,
-                "replied_message_type": str or None,  # "TRANSACTION_REPORT" | "QUESTION" | etc
-                "chat_type": str,  # "PRIVATE" | "GROUP"
-                "recent_bot_interactions": list  # Last 3 interactions
-            }
-        
-        Returns:
-            {
-                "should_respond": bool,
-                "intent": str,
-                "confidence": float,
-                "reasoning": str,
-                "extracted_data": dict  # If intent=REVISION, contains matched items etc
-            }
-        """
-        
-        # Build smart prompt
-        prompt = self._build_analysis_prompt(message, context)
-        
+        # SYSTEM PROMPT CANGGIH
+        system_prompt = f"""You are the brain of "Bot Keuangan".
+Your job is to CLASSIFY the user's intent from a chat message.
+
+USER CONTEXT:
+- Name: {sender}
+- Chat Type: {'Group' if context.get('chat_type') == 'GROUP' else 'Private'}
+- Addressed Directly to Bot: {'NO (Ambient Talk)' if is_ambient else 'YES'}
+
+POSSIBLE INTENTS:
+1. **IGNORE**: Casual chat, jokes, greetings not for bot, or discussing budget plans (not actual transactions).
+   - E.g.: "Besok kita makan sate ya", "Semangat pagi", "Kalau ada biaya langganan AI gpp ya Fal" (This is permission, not reporting).
+2. **RECORD_TRANSACTION**: Reporting an expense/income that JUST happened or needs recording.
+   - E.g.: "Barusan beli bensin 50rb", "Tolong catat transfer 1jt", "Udah bayar listrik".
+3. **QUERY_STATUS**: Asking about financial data/history/advice.
+   - E.g.: "Pengeluaran hari ini berapa?", "Sisa saldo ada berapa?", "Boros gak sih kita?".
+4. **REVISION_REQUEST**: Correcting a previous entry.
+   - E.g.: "Eh salah, harusnya 50rb", "Revisi yang tadi jadi 100k".
+5. **CONVERSATIONAL_QUERY**: Greeting the BOT directly.
+   - E.g.: "Halo bot", "Pagi min", "Makasih bot".
+
+RULES FOR AMBIENT TALK (When user is NOT talking directly to bot):
+- Be STRICT. If it looks like a discussion between humans ("Nanti beli ya", "Harusnya gini"), classify as **IGNORE**.
+- ONLY classify as **RECORD_TRANSACTION** if it clearly states an action happened ("Udah transfer", "Habis beli").
+- ONLY classify as **QUERY_STATUS** if it's a clear question about data ("Totalnya berapa?").
+
+OUTPUT FORMAT (JSON ONLY):
+{{
+  "should_respond": boolean,
+  "intent": "STRING_INTENT",
+  "confidence": float (0.0-1.0),
+  "extracted_data": {{ ... specific data ... }},
+  "conversational_response": "String (Only for CONVERSATIONAL_QUERY)"
+}}
+"""
+
         try:
-            # Single Groq API call
-            response = self.groq_client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+            response = self.client.chat.completions.create(
+                model=self.model,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": self._get_system_prompt()
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": text}
                 ],
-                temperature=0.1,  # Low for consistent classification
-                max_tokens=400,  # Enough for analysis
-                response_format={"type": "json_object"}  # Force JSON output
+                temperature=0.0,
+                response_format={"type": "json_object"},
+                max_tokens=256
             )
             
-            # Parse response
             result = json.loads(response.choices[0].message.content)
-            
-            logger.info(f"[GroqAnalyzer] Intent: {result.get('intent')} | "
-                       f"Respond: {result.get('should_respond')} | "
-                       f"Confidence: {result.get('confidence')}")
-            
             return result
             
         except Exception as e:
-            logger.error(f"[GroqAnalyzer] Error: {e}")
-            
-            # Check for Rate Limit specifically
-            error_str = str(e).lower()
-            if "rate limit" in error_str or "429" in error_str:
-                import re
-                # Extract wait time: "Please try again in 5m31.776s"
-                wait_time = "beberapa saat"
-                match = re.search(r"try again in ([0-9ms\.]+)", str(e))
-                if match:
-                    wait_time = match.group(1)
-                
-                # Only show rate limit message if it was actually addressed to the bot
-                addressed_score = context.get('addressed_score', 0)
-                should_warn = addressed_score >= 40 or context.get('chat_type') == 'PRIVATE'
-                
-                return {
-                    "should_respond": should_warn,
-                    "intent": "RATE_LIMIT",
-                    "confidence": 1.0,
-                    "reasoning": f"API Rate Limit hit. Addressed: {addressed_score}. Warn: {should_warn}",
-                    "extracted_data": {"wait_time": wait_time}
-                }
+            logger.error(f"Groq Analyzer Failed: {e}")
+            # Fallback safe: Ignore if AI fails
+            return {"should_respond": False, "intent": "ERROR"}
 
-            # Fallback to safe default
-            return {
-                "should_respond": False,
-                "intent": "UNKNOWN",
-                "confidence": 0.0,
-                "reasoning": f"Error in analysis: {str(e)}",
-                "extracted_data": {}
-            }
+def should_quick_filter(message: dict) -> str:
+    """Pre-AI filter to save tokens."""
+    text = message.get('text', '').lower()
     
-    def _get_system_prompt(self) -> str:
-        """
-        Core system prompt that defines bot's intelligence.
-        """
-        return """You are a context-aware assistant for a financial bot in a WhatsApp/Telegram group.
-
-YOUR JOB: Analyze messages to determine:
-1. Should the bot respond? (vs stay silent for chitchat)
-2. What is user's intent?
-3. Extract relevant data if needed
-
-CONTEXT AWARENESS RULES:
-- If message REPLIES TO BOT: Very likely for bot (respond unless pure chitchat)
-- If message MENTIONS BOT or starts with '/': Definitely for bot
-- If message has FINANCIAL keywords (beli, bayar, saldo, etc): Likely for bot
-- If message is CHITCHAT ("halo", "udah makan", etc) WITHOUT addressing bot: Stay silent
-- If message is QUESTION ("berapa?", "gimana?") but NOT about finances: Stay silent UNLESS addressed to bot
-
-INTENT TYPES:
-1. RECORD_TRANSACTION - User wants to record new financial transaction
-   Examples: "beli semen 500rb", "bayar tukang 2jt", "transfer 3.5jt ke supplier"
-   
-2. REVISION_REQUEST - User wants to revise existing transaction
-   Examples: "revisi Dp 9.750.000", "salah harusnya 500rb", "ganti jadi 2jt"
-   IMPORTANT: Only if replying to bot's transaction report!
-   
-3. QUERY_STATUS - User asking about financial data
-   Examples: "berapa saldo?", "pengeluaran hari ini?", "laporan bulan ini"
-   
-4. ANSWER_PENDING - User answering bot's question
-   Examples: "4" (when bot asked "pilih company 1-5"), "Renovasi Rumah" (when bot asked project name)
-   IMPORTANT: Only if bot recently asked a question!
-   
-5. CONVERSATIONAL_QUERY - User asking bot for help/explanation (not financial data)
-   Examples: "bot, cara export excel gimana?", "kenapa ga jalan?"
-   
-6. CHITCHAT - Casual conversation not for bot
-   Examples: "selamat pagi", "udah makan belum?", "gimana kabar?"
-   Should respond: NO (stay silent)
-
-LANGUAGE HANDLING:
-- Automatically handle typos: "berapee" → understand as "berapa"
-- Handle slang: "anjir", "woi", "oi" → ignore, focus on core meaning
-- Handle abbreviations: "tf" = transfer, "dp" = down payment
-- Handle mixed language: English + Indonesian
-- Handle informal: "males banget", "capek nih" → ignore filler words
-
-FOR REVISION_REQUEST:
-Extract:
-- item_hint: What item to revise? (e.g., "Dp", "transfer", "biaya")
-  Can be abbreviation or partial match!
-- new_amount: What's the new amount?
-
-OUTPUT FORMAT (JSON):
-{
-  "should_respond": true/false,
-  "intent": "INTENT_TYPE",
-  "confidence": 0.0-1.0,
-  "reasoning": "Brief explanation of decision",
-  "extracted_data": {
-    // For REVISION_REQUEST:
-    "item_hint": "dp",
-    "new_amount": 9750000
-    
-    // For RECORD_TRANSACTION:
-    "amount": 500000,
-    "description": "beli semen",
-    "project_hint": "renovasi"
-    
-    // For QUERY_STATUS:
-    "query_type": "expense" | "income" | "balance" | "report",
-    "time_range": "today" | "this_week" | "this_month"
-  }
-}"""
-    
-    def _build_analysis_prompt(
-        self, 
-        message: Dict[str, Any],
-        context: Dict[str, Any]
-    ) -> str:
-        """
-        Build context-rich prompt for analysis.
-        """
+    # 1. Ignore very short messages (unless specific commands)
+    if len(text) < 3 and text not in ['hi', 'tes', 'cek']:
+        return "IGNORE"
         
-        # Context summary
-        context_str = f"""CONTEXT:
-- Chat Type: {context.get('chat_type', 'UNKNOWN')}
-- Is Reply to Bot: {context.get('is_reply_to_bot', False)}
-- Addressed Score: {context.get('addressed_score', 0)}/100
-- Mention Type: {context.get('mention_type', 'None')}
-- In Conversation: {context.get('in_conversation', False)}"""
+    # 2. Ignore laughter/agreement
+    ignore_starts = ['wkwk', 'haha', 'hihi', 'oke', 'siap', 'yoi', 'mantap', 'ok', 'sip', 'betul']
+    if text in ignore_starts:
+        return "IGNORE"
         
-        if context.get('is_reply_to_bot'):
-            context_str += f"\n- Replied Message Type: {context.get('replied_message_type', 'UNKNOWN')}"
-        
-        if context.get('recent_bot_interactions'):
-            interactions = context['recent_bot_interactions'][:2]  # Last 2
-            context_str += "\n- Recent Bot Interactions:"
-            for i, interaction in enumerate(interactions, 1):
-                context_str += f"\n  {i}. {interaction.get('type')} ({interaction.get('ago_seconds')}s ago)"
-        
-        # Message details
-        message_str = f"""MESSAGE:
-Text: "{message.get('text', '')}"
-Sender: {message.get('sender', 'Unknown')}
-Has Media: {message.get('has_media', False)}"""
-        
-        # Special case hints
-        hints = []
-        
-        if context.get('is_reply_to_bot'):
-            if context.get('replied_message_type') == 'TRANSACTION_REPORT':
-                hints.append("User replied to transaction report - likely wants to REVISE")
-            elif context.get('replied_message_type') == 'QUESTION':
-                hints.append("User replied to bot's question - likely ANSWERING")
-        
-        if message.get('text', '').startswith('/'):
-            hints.append("Message starts with '/' - explicit command for bot")
-        
-        hints_str = "\nHINTS:\n" + "\n".join(f"- {h}" for h in hints) if hints else ""
-        
-        # Combine
-        full_prompt = f"""{context_str}
-
-{message_str}
-{hints_str}
-
-TASK: Analyze this message and provide JSON response with your decision."""
-        
-        return full_prompt
-
-
-# ============================================
-# LAYER 0: Quick Pre-Filter (Rule-Based)
-# ============================================
-
-def should_quick_filter(message: Dict[str, Any]) -> Optional[str]:
-    """
-    Quick rule-based filter BEFORE calling AI.
-    Only for OBVIOUS cases to save API calls.
-    
-    Returns:
-        "IGNORE" - Definitely ignore (chitchat)
-        "PROCESS" - Definitely process (explicit command)
-        None - Uncertain, need AI analysis
-    """
-    text = (message.get('text') or '').lower().strip()
-    
-    # Quick accept: Explicit commands
-    if text.startswith('/'):
-        return "PROCESS"
-    
-    # Quick accept: Reply to bot
-    if message.get('is_reply_to_bot'):
-        return "PROCESS"
-    
-    financial_keywords = [
-        'beli', 'bayar', 'transfer', 'catat', 'struk', 'bon', 
-        'pemasukan', 'pengeluaran', 'revisi', 'ralat',
-        'dp', 'down payment', 'uang muka', 'lunas', 'invoice', 'kwitansi', 'nota',
-        'project', 'proyek'
-    ]
-    if message.get('has_media'):
-        if any(kw in text for kw in financial_keywords):
-            return "PROCESS"
-            
-    # Quick accept: Strong direct financial command (text-only)
-    if any(text.startswith(kw) for kw in financial_keywords):
-        return "PROCESS"
-    
-    # Quick reject: Common non-financial chitchat
-    chitchat_patterns = [
-        'halo', 'hai', 'pagi', 'siang', 'sore', 'malam', 'apa kabar',
-        'makan', 'minum', 'tidur', 'kerja', 'siap', 'ok', 'oke', 'sip',
-        'mantap', 'baaal', 'test', 'tes', 'waali', 'ngantuk', 'capek',
-        'anjir', 'anjing', 'tolol', 'bego', 'wkwk', 'haha', 'lol'
-    ]
-    
-    # If text is relatively short and contains only chitchat, ignore
-    if len(text) < 40:
-        words = text.split()
-        if len(words) <= 5: # Only 1-5 words
-            # If any word is a chitchat word and NO financial words are present
-            has_chitchat = any(p in text for p in chitchat_patterns)
-            has_financial = any(f in text for f in ['beli', 'bayar', 'transfer', 'catat', 'revisi', 'saldo', 'laporan'])
-            
-            if has_chitchat and not has_financial:
-                return "IGNORE"
-    
-    # Uncertain - need AI
-    return None
-
-
-# ============================================
-# USAGE EXAMPLE
-# ============================================
-
-def smart_analyze_message(message, context, groq_client):
-    """
-    Main entry point for message analysis.
-    
-    Combines quick filter + AI analysis. (Synchronous version)
-    """
-    
-    # STAGE 1: Quick Filter (Free, <1ms)
-    quick_decision = should_quick_filter(message)
-    
-    if quick_decision == "IGNORE":
-        logger.info("[QuickFilter] Obvious chitchat - ignored")
-        return {
-            "should_respond": False,
-            "intent": "CHITCHAT",
-            "confidence": 1.0,
-            "reasoning": "Quick filter: obvious chitchat"
-        }
-    
-    # STAGE 2: AI Analysis (500ms, uses tokens)
-    analyzer = GroqContextAnalyzer(groq_client)
-    result = analyzer.analyze_message(message, context)
-    
-    return result
+    return "PROCESS"
