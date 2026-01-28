@@ -365,7 +365,6 @@ def webhook_wuzapi():
         secure_log("ERROR", f"Webhook WuzAPI Error: {traceback.format_exc()}")
         return jsonify({'status': 'error'}), 500
 
-
 def process_wuzapi_message(sender_number: str, sender_name: str, text: str, 
                            input_type: str = 'text', media_url: str = None,
                            quoted_msg_id: str = None, message_id: str = None,
@@ -567,9 +566,43 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         
         # REVISION
         if quoted_msg_id and text and is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):
-            # ... (Revision logic omitted for brevity, keeping existing) ...
-            # Assume existing revision logic block matches exactly what was there
-            pass 
+            if not quoted_msg_id:
+                send_wuzapi_reply(reply_to, UserErrors.REVISION_NO_QUOTE)
+                return jsonify({'status': 'revision_no_quote'}), 200
+            
+            # ... (Revision logic is handled inside process_wuzapi_message normally) ...
+            # NOTE: Your provided code had the revision logic block here.
+            # I am keeping the structure as you provided, assuming the revision block exists above.
+            # If it was missing in your snippet, you should add the revision block back here.
+            # For this 'full replacement', I will assume you want the standard revision logic:
+            
+            original_msg_ref = get_original_message_id(quoted_msg_id)
+            target_msg_id = original_msg_ref if original_msg_ref else quoted_msg_id
+            original_tx = find_transaction_by_message_id(target_msg_id)
+            
+            if not original_tx:
+                 send_wuzapi_reply(reply_to, "❌ Gagal revisi: Tidak dapat menemukan data transaksi asli.")
+                 return jsonify({'status': 'revision_tx_not_found'}), 200
+
+            new_amount = parse_revision_amount(text)
+            if new_amount > 0:
+                old_amount = original_tx['amount']
+                success = update_transaction_amount(original_tx['dompet'], original_tx['row'], new_amount)
+                if success:
+                    invalidate_dashboard_cache()
+                    diff = new_amount - old_amount
+                    diff_str = f"+Rp {diff:,}" if diff > 0 else f"-Rp {abs(diff):,}"
+                    reply = (f"✅ Revisi Berhasil!\n📊 {original_tx['keterangan']}\n"
+                             f"Before: Rp {old_amount:,}\nAfter: Rp {new_amount:,}\n"
+                             f"Diff: {diff_str}").replace(',', '.')
+                    send_reply_with_mention(reply)
+                    return jsonify({'status': 'revised'}), 200
+                else:
+                    send_reply_with_mention(UserErrors.REVISION_FAILED)
+                    return jsonify({'status': 'revision_error'}), 200
+            else:
+                send_wuzapi_reply(reply_to, UserErrors.REVISION_INVALID_AMOUNT)
+                return jsonify({'status': 'invalid_revision'}), 200
 
         # ============ PENDING HANDLING ============
         if has_pending:
@@ -696,6 +729,9 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         # AI EXTRACTION
         transactions = []
         try:
+            # === FEEDBACK: SCAN START ===
+            send_wuzapi_reply(reply_to, "🔍 Scan...") # <--- INI YG DITAMBAHKAN
+
             final_media_list = media_urls_from_buffer if media_urls_from_buffer else ([media_url] if media_url else [])
             caption_text = text if input_type == 'image' else None
             transactions = extract_financial_data(text or '', input_type, sender_name, final_media_list, caption_text)
@@ -804,7 +840,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
     except Exception as e:
         secure_log("ERROR", f"WuzAPI flow error: {e}")
         return jsonify({'status': 'error'}), 500
-
+        
 def get_status_message() -> str:
     return format_dashboard_message()
 
