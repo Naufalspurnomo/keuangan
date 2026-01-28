@@ -369,7 +369,12 @@ def _save_state():
 
             # 3. BACKUP KE GOOGLE SHEETS (Asynchronous / Fire-and-Forget)
             # Pakai thread biar bot tidak lemot nungguin Google API
-            threading.Thread(target=save_state_to_cloud, args=(json_str,), daemon=True).start()
+            # EXCLUDE visual_buffer from cloud backup (too large for base64 images)
+            cloud_data = data.copy()
+            cloud_data.pop("visual_buffer", None)
+            cloud_json = json.dumps(cloud_data, default=str)
+            
+            threading.Thread(target=save_state_to_cloud, args=(cloud_json,), daemon=True).start()
                 
         except Exception as e:
             print(f"[ERROR] Failed to save state: {e}")

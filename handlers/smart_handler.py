@@ -178,7 +178,7 @@ class SmartHandler:
             }
             
         elif intent == "RECORD_TRANSACTION":
-            amount = extracted.get('amount', 0)
+            amount = extracted.get('amount') or 0
             # Smart Amount Warning (> 10jt)
             if amount > 10000000:
                 warning = "⚠️ *Nominal Cukup Besar:* Rp {:,}".format(amount)
