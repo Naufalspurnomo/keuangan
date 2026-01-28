@@ -697,7 +697,8 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         transactions = []
         try:
             final_media_list = media_urls_from_buffer if media_urls_from_buffer else ([media_url] if media_url else [])
-            transactions = extract_financial_data(text or '', input_type, sender_name, final_media_list, caption)
+            caption_text = text if input_type == 'image' else None
+            transactions = extract_financial_data(text or '', input_type, sender_name, final_media_list, caption_text)
             
             if not transactions:
                 if input_type == 'image':
