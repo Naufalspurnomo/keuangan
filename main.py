@@ -261,7 +261,7 @@ def map_operational_category(keyword: str) -> str:
     if keyword_lower in ['gaji', 'salary', 'upah karyawan', 'honor']:
         return 'Gaji'
     elif keyword_lower in ['listrik', 'pln', 'air', 'pdam', 'listrikair']:
-        return 'ListrikAir'
+        return 'Listrik Air'
     elif keyword_lower in ['konsumsi', 'makan', 'snack', 'jamu', 'kopi', 'minum']:
         return 'Konsumsi'
     elif keyword_lower in ['peralatan', 'atk', 'alat tulis', 'perlengkapan kantor']:
