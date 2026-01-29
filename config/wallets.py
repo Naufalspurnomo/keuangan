@@ -59,10 +59,11 @@ DOMPET_ALIASES = {
 }
 
 # Company -> Dompet mapping (for backward compatibility)
+# NOTE: KANTOR is NOT a company - it's operational expense category
 DOMPET_COMPANIES = {
     "CV HB (101)": ["HOLLA", "HOJJA", "CV HB"],
     "TX SBY(216)": ["TEXTURIN-Surabaya", "TX SBY"],
-    "TX BALI(087)": ["TEXTURIN-Bali", "KANTOR", "TX BALI"]
+    "TX BALI(087)": ["TEXTURIN-Bali", "TX BALI"]
 }
 
 # Flat selection options for 1-3 display in operational mode
@@ -72,13 +73,13 @@ WALLET_SELECTION_OPTIONS = [
     {"idx": 3, "dompet": "TX BALI(087)", "short": "TX BALI", "display": "3. TX BALI (087)"},
 ]
 
-# Project company selection (5 options - for non-operational transactions)
+# Project company selection (4 options - for project transactions)
+# KANTOR expenses go to Operasional sheet, not here
 SELECTION_OPTIONS = [
     {"idx": 1, "dompet": "CV HB (101)", "company": "HOLLA"},
     {"idx": 2, "dompet": "CV HB (101)", "company": "HOJJA"},
     {"idx": 3, "dompet": "TX SBY(216)", "company": "TEXTURIN-Surabaya"},
     {"idx": 4, "dompet": "TX BALI(087)", "company": "TEXTURIN-Bali"},
-    {"idx": 5, "dompet": "TX BALI(087)", "company": "KANTOR"},
 ]
 
 # Legacy aliases for backward compatibility
