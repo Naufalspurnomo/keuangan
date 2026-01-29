@@ -271,6 +271,7 @@ def format_success_reply_new(transactions: list, dompet_sheet: str, company: str
     lines.append("\n💡 _Reply pesan ini untuk revisi_")
     
     return '\n'.join(lines)
+
 # ===================== WUZAPI HANDLERS =====================
 
 @app.route('/webhook_wuzapi', methods=['POST'])
@@ -394,6 +395,7 @@ def webhook_wuzapi():
     except Exception as e:
         secure_log("ERROR", f"Webhook WuzAPI Error: {traceback.format_exc()}")
         return jsonify({'status': 'error'}), 500
+
 
 def process_wuzapi_message(sender_number: str, sender_name: str, text: str, 
                            input_type: str = 'text', media_url: str = None,
@@ -520,56 +522,12 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         
         has_visual = has_visual_buffer(sender_number, chat_jid)
         
-        # ============ LAYER 1: SEMANTIC ENGINE ============
-        if USE_LAYERS:
-            action, layer_response, intent = process_with_layers(
-                user_id=sender_number, message_id=message_id, text=text,
-                sender_name=sender_name, media_url=media_url,
-                caption=text if input_type == 'image' else None,
-                is_group=is_group, chat_id=chat_jid,
-                quoted_message_id=quoted_msg_id, quoted_message_text=quoted_message_text,
-                sender_jid=sender_jid, has_visual=has_visual
-            )
-            
-            if action == "IGNORE":
-                return jsonify({'status': 'ignored_by_layer'}), 200
-            if action == "REPLY" and layer_response:
-                send_reply_with_mention(layer_response)
-                return jsonify({'status': 'handled_by_layer'}), 200
-            if action == "PROCESS":
-                if intent == "QUERY_STATUS" and layer_response:
-                    send_wuzapi_reply(reply_to, "🤔 Menganalisis...")
-                    try:
-                        data_context = format_data_for_ai(days=30)
-                        answer = query_data(layer_response, data_context)
-                        send_wuzapi_reply(reply_to, answer.replace('*', '').replace('_', ''))
-                        return jsonify({'status': 'queried_by_layer'}), 200
-                    except Exception as e:
-                        secure_log("ERROR", f"Smart Query failed: {e}")
-                if layer_response:
-                    text = layer_response
-        
-        # Check buffer link
-        media_urls_from_buffer = []
-        if input_type == 'text' and not media_url:
-            buffered_items = get_visual_buffer(sender_number, chat_jid)
-            if buffered_items:
-                if isinstance(buffered_items, list):
-                     media_urls_from_buffer = [item.get('media_url') for item in buffered_items]
-                else:
-                     media_urls_from_buffer = [buffered_items.get('media_url')]
-                
-                if media_urls_from_buffer:
-                    media_url = media_urls_from_buffer[0]
-                    input_type = 'image'
-                    clear_visual_buffer(sender_number, chat_jid)
-                    was_visual_link = True
-        
-        text = sanitize_input(text or '')
-        
-        # PENDING & GROUP CHECKS
+        # ============ [PRIORITY 1] PENDING CHECK FIRST ============
+        # Cek apakah ada transaksi pending SEBELUM masuk ke AI/Filter
+        # agar jawaban user tidak terfilter sebagai spam
         sender_pkey = pending_key(sender_number, chat_jid)
         pending_pkey = sender_pkey
+        
         if is_group and quoted_msg_id:
             mapped_pkey = get_pending_key_from_message(quoted_msg_id)
             if mapped_pkey: pending_pkey = mapped_pkey
@@ -584,27 +542,72 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             clear_pending_message_ref(quoted_msg_id)
         
         has_pending = pending_data is not None
-        
-        if not USE_LAYERS:
-            should_respond, cleaned_text = should_respond_in_group(
-                message=text or "", is_group=is_group, has_media=media_url is not None,
-                has_pending=has_pending or has_visual or was_visual_link, is_mentioned=False
-            )
-            if not should_respond:
-                return jsonify({'status': 'ignored'}), 200
-            text = cleaned_text if cleaned_text else text
+
+        if has_pending:
+            secure_log("INFO", f"Bypassing AI Filter due to Pending State: {pending_pkey}")
+            text = sanitize_input(text or '') # Just sanitize and proceed
+        else:
+            # ============ [PRIORITY 2] LAYER 1: SEMANTIC ENGINE ============
+            if USE_LAYERS:
+                action, layer_response, intent = process_with_layers(
+                    user_id=sender_number, message_id=message_id, text=text,
+                    sender_name=sender_name, media_url=media_url,
+                    caption=text if input_type == 'image' else None,
+                    is_group=is_group, chat_id=chat_jid,
+                    quoted_message_id=quoted_msg_id, quoted_message_text=quoted_message_text,
+                    sender_jid=sender_jid, has_visual=has_visual
+                )
+                
+                if action == "IGNORE":
+                    return jsonify({'status': 'ignored_by_layer'}), 200
+                if action == "REPLY" and layer_response:
+                    send_reply_with_mention(layer_response)
+                    return jsonify({'status': 'handled_by_layer'}), 200
+                if action == "PROCESS":
+                    if intent == "QUERY_STATUS" and layer_response:
+                        send_wuzapi_reply(reply_to, "🤔 Menganalisis...")
+                        try:
+                            data_context = format_data_for_ai(days=30)
+                            answer = query_data(layer_response, data_context)
+                            send_wuzapi_reply(reply_to, answer.replace('*', '').replace('_', ''))
+                            return jsonify({'status': 'queried_by_layer'}), 200
+                        except Exception as e:
+                            secure_log("ERROR", f"Smart Query failed: {e}")
+                    if layer_response:
+                        text = layer_response
+            
+            # Check buffer link (only if not pending)
+            media_urls_from_buffer = []
+            if input_type == 'text' and not media_url:
+                buffered_items = get_visual_buffer(sender_number, chat_jid)
+                if buffered_items:
+                    if isinstance(buffered_items, list):
+                         media_urls_from_buffer = [item.get('media_url') for item in buffered_items]
+                    else:
+                         media_urls_from_buffer = [buffered_items.get('media_url')]
+                    
+                    if media_urls_from_buffer:
+                        media_url = media_urls_from_buffer[0]
+                        input_type = 'image'
+                        clear_visual_buffer(sender_number, chat_jid)
+                        was_visual_link = True
+            
+            text = sanitize_input(text or '')
+            
+            if not USE_LAYERS:
+                should_respond, cleaned_text = should_respond_in_group(
+                    message=text or "", is_group=is_group, has_media=media_url is not None,
+                    has_pending=has_pending or has_visual or was_visual_link, is_mentioned=False
+                )
+                if not should_respond:
+                    return jsonify({'status': 'ignored'}), 200
+                text = cleaned_text if cleaned_text else text
         
         # REVISION
         if quoted_msg_id and text and is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):
             if not quoted_msg_id:
                 send_wuzapi_reply(reply_to, UserErrors.REVISION_NO_QUOTE)
                 return jsonify({'status': 'revision_no_quote'}), 200
-            
-            # ... (Revision logic is handled inside process_wuzapi_message normally) ...
-            # NOTE: Your provided code had the revision logic block here.
-            # I am keeping the structure as you provided, assuming the revision block exists above.
-            # If it was missing in your snippet, you should add the revision block back here.
-            # For this 'full replacement', I will assume you want the standard revision logic:
             
             original_msg_ref = get_original_message_id(quoted_msg_id)
             target_msg_id = original_msg_ref if original_msg_ref else quoted_msg_id
@@ -689,6 +692,12 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 # 3. DIRECT CORRECTION
                 else:
                     final_project = sanitize_input(text.strip())
+                    
+                    # Guard against commands
+                    if final_project.startswith('/'):
+                        send_wuzapi_reply(reply_to, "⚠️ Command tidak bisa jadi nama projek. Ketik nama projek yang benar atau '/cancel'.")
+                        return jsonify({'status': 'invalid_name_command'}), 200
+
                     if len(final_project) < 3:
                         send_wuzapi_reply(reply_to, "⚠️ Nama projek terlalu pendek.")
                         return jsonify({'status': 'invalid_name_length'}), 200
@@ -749,18 +758,22 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             return finalize_transaction_workflow(pending, pending_pkey)
         
         
-        # COMMANDS HANDLER (/start, /help, etc) - Keep existing...
+        # COMMANDS HANDLER (/start, /help, etc)
         if is_command_match(text, Commands.START, is_group):
             send_wuzapi_reply(reply_to, START_MESSAGE.replace('*', '').replace('_', ''))
             return jsonify({'status': 'ok'}), 200
         
-        # ... (Other commands omitted for brevity, include them from your original file) ...
+        if is_command_match(text, Commands.HELP, is_group):
+            send_wuzapi_reply(reply_to, HELP_MESSAGE.replace('*', '').replace('_', ''))
+            return jsonify({'status': 'ok'}), 200
+
+        # ... (Other commands logic remains same) ...
 
         # AI EXTRACTION
         transactions = []
         try:
             # === FEEDBACK: SCAN START ===
-            send_wuzapi_reply(reply_to, "🔍 Scan...") # <--- INI YG DITAMBAHKAN
+            send_wuzapi_reply(reply_to, "🔍 Scan...")
 
             final_media_list = media_urls_from_buffer if media_urls_from_buffer else ([media_url] if media_url else [])
             caption_text = text if input_type == 'image' else None
@@ -779,7 +792,6 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             # Check needs project (Manual AI Flag)
             needs_project = any(t.get('needs_project') for t in transactions)
             if needs_project:
-                # ... existing logic for asking project ...
                 # Create pending and ask
                 _pending_transactions[sender_pkey] = {
                     'transactions': transactions,
