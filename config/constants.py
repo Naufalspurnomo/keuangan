@@ -54,6 +54,69 @@ SCOPES = [
     'https://www.googleapis.com/auth/drive'
 ]
 
+# ===================== SPLIT LAYOUT CONFIGURATION =====================
+# Dompet sheets use Split Layout: Pemasukan (Left) | Pengeluaran (Right)
+# Headers at Row 7 (section title) and Row 8 (column headers)
+# Data starts at Row 9
+
+SPLIT_LAYOUT_TITLE_ROW = 7   # "PEMASUKAN" and "PENGELUARAN" titles
+SPLIT_LAYOUT_HEADER_ROW = 8  # Column headers
+SPLIT_LAYOUT_DATA_START = 9  # First data row
+
+# PEMASUKAN Block (Columns A-I, indices 1-9)
+SPLIT_PEMASUKAN = {
+    'NO': 1,           # A
+    'WAKTU': 2,        # B - Time (HH:MM:SS)
+    'TANGGAL': 3,      # C - Date (YYYY-MM-DD)
+    'JUMLAH': 4,       # D - Amount
+    'PROJECT': 5,      # E - Project name
+    'KETERANGAN': 6,   # F - Description
+    'OLEH': 7,         # G - Recorded by
+    'SOURCE': 8,       # H - Source (WhatsApp/Telegram)
+    'MESSAGE_ID': 9    # I - Message ID for revision
+}
+
+# PENGELUARAN Block (Columns J-R, indices 10-18)
+SPLIT_PENGELUARAN = {
+    'NO': 10,          # J
+    'WAKTU': 11,       # K
+    'TANGGAL': 12,     # L
+    'JUMLAH': 13,      # M
+    'PROJECT': 14,     # N
+    'KETERANGAN': 15,  # O
+    'OLEH': 16,        # P
+    'SOURCE': 17,      # Q
+    'MESSAGE_ID': 18   # R
+}
+
+# Split Layout Headers (for auto-create)
+SPLIT_PEMASUKAN_HEADERS = ['No', 'Waktu', 'Waktu/Tanggal', 'Jumlah', 'Project', 'Keterangan', 'Oleh', 'Source', 'MessageID']
+SPLIT_PENGELUARAN_HEADERS = ['No', 'Waktu', 'Waktu/Tanggal', 'Jumlah', 'Project', 'Keterangan', 'Oleh', 'Source', 'MessageID']
+
+# ===================== OPERASIONAL KANTOR SHEET =====================
+OPERASIONAL_SHEET_NAME = "Operasional Ktr"
+OPERASIONAL_HEADER_ROW = 1  # Headers at row 1
+OPERASIONAL_DATA_START = 2  # Data starts at row 2
+
+OPERASIONAL_COLS = {
+    'NO': 1,           # A
+    'TANGGAL': 2,      # B
+    'JUMLAH': 3,       # C
+    'KETERANGAN': 4,   # D - Includes "[Sumber: Dompet]"
+    'OLEH': 5,         # E
+    'SOURCE': 6,       # F
+    'KATEGORI': 7,     # G - Gaji/ListrikAir/Konsumsi/Peralatan/LainLain
+    'MESSAGE_ID': 8    # H
+}
+
+OPERASIONAL_HEADERS = ['No', 'Tanggal', 'JUMLAH', 'KETERANGAN', 'Oleh', 'Source', 'Kategori', 'MessageID']
+
+# Operational Categories
+OPERATIONAL_CATEGORIES = ['Gaji', 'ListrikAir', 'Konsumsi', 'Peralatan', 'Lain Lain']
+
+# Operational Location Tags (for Surabaya/Bali categorization)
+OPERATIONAL_LOCATIONS = ['Surabaya', 'Bali']
+
 # ===================== MAGIC STRINGS (YAGNI Config) =====================
 
 # Daftar nama perusahaan/dompet yang sudah pasti (Hardcoded for efficiency)
@@ -96,6 +159,32 @@ PROJECT_STOPWORDS = {
     # Kata Sambung
     "dari", "ke", "untuk", "via", "dengan", "dan", "atau", 
     "pembayaran", "transaksi", "project", "projek"
+}
+
+# ===================== OPERATIONAL KEYWORDS =====================
+# Keywords that trigger OPERATIONAL mode (not project transactions)
+# When detected, bot asks which wallet (CV HB/TX SBY/TX BALI) to debit
+
+OPERATIONAL_KEYWORDS = {
+    # Payroll
+    'gaji', 'salary', 'upah karyawan', 'honor',
+    
+    # Utilities
+    'listrik', 'pln', 'air', 'pdam', 'listrikair',
+    'wifi', 'internet', 'speedy', 'indihome',
+    
+    # Consumables
+    'konsumsi', 'makan', 'snack', 'jamu', 'kopi', 'minum',
+    
+    # Equipment/Office
+    'peralatan', 'atk', 'alat tulis', 'perlengkapan kantor',
+    
+    # General Ops
+    'operasional', 'ops', 'biaya kantor', 'sewa kantor',
+    'kebersihan', 'keamanan', 'security', 'cleaning',
+    
+    # Misc that shouldn't be project
+    'transport kantor', 'perjalanan dinas'
 }
 
 

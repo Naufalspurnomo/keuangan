@@ -47,6 +47,10 @@ from sheets_helper import (
     find_transaction_by_message_id, update_transaction_amount,
     normalize_project_display_name,
     check_duplicate_transaction,
+    # NEW: Split Layout functions
+    append_project_transaction,
+    append_operational_transaction,
+    get_or_create_operational_sheet,
 )
 from services.retry_service import process_retry_queue
 from layer_integration import process_with_layers, USE_LAYERS
@@ -115,9 +119,15 @@ from utils.formatters import (
 )
 
 # Import centralized config
-from config.constants import Commands, Timeouts, GROUP_TRIGGERS, SPREADSHEET_ID
+from config.constants import Commands, Timeouts, GROUP_TRIGGERS, SPREADSHEET_ID, OPERATIONAL_KEYWORDS
 from config.errors import UserErrors
 from config.allowlist import is_sender_allowed
+from config.wallets import (
+    format_wallet_selection_prompt,
+    get_wallet_selection_by_idx,
+    WALLET_SELECTION_OPTIONS,
+    get_dompet_short_name,
+)
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -174,6 +184,109 @@ from services import state_manager as _state
 
 # Re-export for backward compatibility - these point to the state_manager's internal dicts
 _pending_transactions = _state._pending_transactions
+
+
+# ===================== SMART ROUTER (Cost Accounting) =====================
+
+def detect_transaction_context(text: str, transactions: list) -> dict:
+    """
+    Detect transaction routing context (Smart Router).
+    
+    Returns:
+        {
+            'mode': 'PROJECT' | 'OPERATIONAL' | 'AMBIGUOUS',
+            'operational_category': str or None,
+            'needs_source_wallet': bool,
+            'detected_keywords': list
+        }
+    """
+    text_lower = (text or '').lower()
+    
+    # Check for operational keywords
+    detected_keywords = []
+    for kw in OPERATIONAL_KEYWORDS:
+        if kw in text_lower:
+            detected_keywords.append(kw)
+    
+    # Check if transactions have valid project names
+    has_valid_project = False
+    for t in transactions:
+        nama_projek = t.get('nama_projek', '')
+        if nama_projek and nama_projek.lower() not in OPERATIONAL_KEYWORDS:
+            # Additional check - not just a generic name
+            if len(nama_projek) > 2 and nama_projek.lower() not in ['umum', 'kantor', 'ops']:
+                has_valid_project = True
+                break
+    
+    # Determine mode
+    if detected_keywords and not has_valid_project:
+        # Definite operational mode - need to ask which wallet
+        category = map_operational_category(detected_keywords[0])
+        return {
+            'mode': 'OPERATIONAL',
+            'operational_category': category,
+            'needs_source_wallet': True,
+            'detected_keywords': detected_keywords
+        }
+    elif has_valid_project:
+        return {
+            'mode': 'PROJECT',
+            'operational_category': None,
+            'needs_source_wallet': False,
+            'detected_keywords': []
+        }
+    else:
+        # Ambiguous - default to project flow
+        return {
+            'mode': 'PROJECT',  # Default to project, let existing flow handle company selection
+            'operational_category': None,
+            'needs_source_wallet': False,
+            'detected_keywords': []
+        }
+
+
+def map_operational_category(keyword: str) -> str:
+    """Map detected keyword to operational category."""
+    keyword_lower = keyword.lower()
+    
+    if keyword_lower in ['gaji', 'salary', 'upah karyawan', 'honor']:
+        return 'Gaji'
+    elif keyword_lower in ['listrik', 'pln', 'air', 'pdam', 'listrikair']:
+        return 'ListrikAir'
+    elif keyword_lower in ['konsumsi', 'makan', 'snack', 'jamu', 'kopi', 'minum']:
+        return 'Konsumsi'
+    elif keyword_lower in ['peralatan', 'atk', 'alat tulis', 'perlengkapan kantor']:
+        return 'Peralatan'
+    else:
+        return 'Lain Lain'
+
+
+def apply_lifecycle_markers(project_name: str, transaction: dict) -> str:
+    """
+    Apply Start/Finish markers to project name based on transaction context.
+    
+    Rules:
+    - If Pemasukan + "DP"/"Down Payment" + new project -> "{Name} (Start)"
+    - If Pemasukan + "Pelunasan"/"Lunas" -> "{Name} (Finish)"
+    """
+    if not project_name:
+        return project_name
+    
+    if transaction.get('tipe') != 'Pemasukan':
+        return project_name
+    
+    keterangan = (transaction.get('keterangan', '') or '').lower()
+    
+    # Check for DP (Start) - only for new projects
+    if any(kw in keterangan for kw in ['dp', 'down payment', 'uang muka', 'pembayaran awal']):
+        # Could add check if project is new in database
+        return f"{project_name} (Start)"
+    
+    # Check for Pelunasan (Finish)
+    if any(kw in keterangan for kw in ['pelunasan', 'lunas', 'terakhir', 'final payment']):
+        return f"{project_name} (Finish)"
+    
+    return project_name
 
 
 # ===================== HELPERS =====================
@@ -438,11 +551,88 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
 
         # --- UNIFIED SAVE FUNCTION ---
         def finalize_transaction_workflow(pending: dict, pkey: str):
-            """Unified workflow for transaction finalization (Save or Selection)."""
+            """Unified workflow for transaction finalization (Save or Selection).
+            
+            Smart Router Integration:
+            - OPERATIONAL mode -> Ask for source wallet, save to Operasional Ktr
+            - PROJECT mode -> Existing company/dompet resolution flow
+            """
             txs = pending.get('transactions', [])
             if not txs:
                 return jsonify({'status': 'error_no_tx'}), 200
             
+            # =============== SMART ROUTER CHECK ===============
+            original_text = pending.get('original_text', '')
+            context = detect_transaction_context(original_text, txs)
+            
+            # CASE: OPERATIONAL MODE - Route to Operasional Ktr
+            if context['mode'] == 'OPERATIONAL' and context['needs_source_wallet']:
+                # Check if user already selected a source wallet
+                source_wallet = pending.get('selected_source_wallet')
+                
+                if source_wallet:
+                    # User has selected wallet -> Save to Operasional Ktr
+                    clear_pending_prompt_refs(pending)
+                    _pending_transactions.pop(pkey, None)
+                    
+                    tx_msg_id = pending.get('message_id', '')
+                    for t in txs: 
+                        t['message_id'] = tx_msg_id
+                    
+                    # Save each transaction to Operational sheet
+                    results = []
+                    for tx in txs:
+                        result = append_operational_transaction(
+                            transaction=tx,
+                            sender_name=pending['sender_name'],
+                            source=pending['source'],
+                            source_wallet=source_wallet,
+                            category=context['operational_category'] or 'Lain Lain'
+                        )
+                        results.append(result)
+                    
+                    if all(r.get('success') for r in results):
+                        invalidate_dashboard_cache()
+                        total = sum(tx.get('jumlah', 0) for tx in txs)
+                        short_name = get_dompet_short_name(source_wallet)
+                        reply = (
+                            f"✅ *Operasional Tersimpan!*\n\n"
+                            f"📝 Kategori: {context['operational_category']}\n"
+                            f"💰 Total: Rp {total:,}\n".replace(',', '.') +
+                            f"🏦 Sumber: {short_name}\n"
+                            f"📊 Tersimpan di: Operasional Ktr"
+                        ).replace('*', '')
+                        send_reply_with_mention(reply)
+                    else:
+                        error_msg = results[0].get('error', 'Unknown error')
+                        send_wuzapi_reply(reply_to, f"❌ Gagal simpan: {error_msg}")
+                    
+                    return jsonify({'status': 'processed_operational'}), 200
+                else:
+                    # Need to ask user for source wallet selection (1-3)
+                    pending['pending_type'] = 'select_source_wallet'
+                    pending['operational_context'] = context
+                    
+                    prompt = format_wallet_selection_prompt()
+                    total = sum(tx.get('jumlah', 0) for tx in txs)
+                    keterangan = txs[0].get('keterangan', '') if txs else ''
+                    
+                    header = (
+                        f"💼 *Biaya Operasional*\n\n"
+                        f"📝 {keterangan}\n"
+                        f"💰 Rp {total:,}\n".replace(',', '.') +
+                        f"📂 Kategori: {context['operational_category']}\n\n"
+                    ).replace('*', '')
+                    
+                    full_prompt = header + prompt
+                    if is_group:
+                        full_prompt += "\n\n↩️ Reply pesan ini dengan angka 1-3"
+                    
+                    sent_msg = send_reply_with_mention(full_prompt)
+                    record_pending_prompt(pkey, pending, sent_msg)
+                    return jsonify({'status': 'asking_source_wallet'}), 200
+            
+            # =============== PROJECT MODE (Original Flow) ===============
             # 1. Company Detection & Dompet Resolution
             detected_company = None
             detected_dompet = None
@@ -477,16 +667,28 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     send_wuzapi_reply(reply_to, warning_msg)
                     return jsonify({'status': 'dupe_warning'}), 200
 
-                # SAVE
+                # SAVE using Split Layout
                 clear_pending_prompt_refs(pending)
                 _pending_transactions.pop(pkey, None)
                 tx_msg_id = pending.get('message_id', '')
-                for t in txs: t['message_id'] = tx_msg_id
                 
-                result = append_transactions(txs, pending['sender_name'], pending['source'], 
-                                           dompet_sheet=dompet, company=detected_company)
+                results = []
+                for tx in txs:
+                    tx['message_id'] = tx_msg_id
+                    # Apply lifecycle markers
+                    project_name = tx.get('nama_projek', '') or 'Umum'
+                    project_name = apply_lifecycle_markers(project_name, tx)
+                    
+                    result = append_project_transaction(
+                        transaction=tx,
+                        sender_name=pending['sender_name'],
+                        source=pending['source'],
+                        dompet_sheet=dompet,
+                        project_name=project_name
+                    )
+                    results.append(result)
                 
-                if result['success']:
+                if all(r.get('success') for r in results):
                     invalidate_dashboard_cache()
                     reply = format_success_reply_new(txs, dompet, detected_company).replace('*', '')
                     reply += "\n\n💡 Reply pesan ini dengan `/revisi [jumlah]` untuk ralat"
@@ -498,7 +700,8 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                         from services.state_manager import store_last_bot_report
                         store_last_bot_report(chat_jid, bot_msg_id)
                 else:
-                    send_wuzapi_reply(reply_to, f"❌ Gagal: {result.get('company_error', 'Error')}")
+                    error_msg = results[0].get('error', 'Unknown error')
+                    send_wuzapi_reply(reply_to, f"❌ Gagal: {error_msg}")
                 return jsonify({'status': 'processed'}), 200
             
             # 3. Case B: Manual Selection (Company Unknown or UMUM without Dompet)
@@ -740,7 +943,28 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 
                 return finalize_transaction_workflow(pending, pending_pkey)
             
-            # ===== HANDLE COMPANY SELECTION =====
+            # ===== HANDLE SOURCE WALLET SELECTION (OPERATIONAL) =====
+            if pending_type == 'select_source_wallet':
+                # Parse 1-3 selection for source wallet
+                try:
+                    selection = int(text.strip())
+                    if selection < 1 or selection > 3:
+                        raise ValueError("Out of range")
+                    
+                    wallet_option = get_wallet_selection_by_idx(selection)
+                    if not wallet_option:
+                        send_wuzapi_reply(reply_to, "❌ Pilihan tidak valid. Ketik 1, 2, atau 3.")
+                        return jsonify({'status': 'invalid_wallet_selection'}), 200
+                    
+                    # Set selected wallet and re-run finalize
+                    pending['selected_source_wallet'] = wallet_option['dompet']
+                    return finalize_transaction_workflow(pending, pending_pkey)
+                    
+                except ValueError:
+                    send_wuzapi_reply(reply_to, "❌ Pilihan tidak valid.\n\n1. CV HB (101)\n2. TX SBY (216)\n3. TX BALI (087)\n\nBalas angka 1-3")
+                    return jsonify({'status': 'invalid_wallet_selection'}), 200
+            
+            # ===== HANDLE COMPANY SELECTION (PROJECT MODE) =====
             is_valid, selection, error_msg = parse_selection(text)
             if not is_valid:
                 send_wuzapi_reply(reply_to, f"❌ {error_msg}")

@@ -128,6 +128,9 @@ from config.wallets import (
     get_dompet_for_company,
     get_selection_by_idx,
     get_available_dompets,
+    get_dompet_short_name,
+    DOMPET_ALIASES,
+    DOMPET_SHORT_NAMES,
     # Legacy aliases
     COMPANY_SHEETS,
     FUND_SOURCES,
@@ -140,7 +143,16 @@ from config.constants import (
     DASHBOARD_SHEET_NAME, SYSTEM_SHEETS,
     DEFAULT_BUDGET, BUDGET_WARNING_PERCENT,
     SPREADSHEET_ID, CREDENTIALS_FILE, SCOPES,
+    # Split Layout Constants
+    SPLIT_LAYOUT_TITLE_ROW, SPLIT_LAYOUT_HEADER_ROW, SPLIT_LAYOUT_DATA_START,
+    SPLIT_PEMASUKAN, SPLIT_PENGELUARAN,
+    SPLIT_PEMASUKAN_HEADERS, SPLIT_PENGELUARAN_HEADERS,
+    # Operasional Constants
+    OPERASIONAL_SHEET_NAME, OPERASIONAL_HEADER_ROW, OPERASIONAL_DATA_START,
+    OPERASIONAL_COLS, OPERASIONAL_HEADERS,
 )
+
+import re  # For parsing [Sumber: X] tags
 
 # Global instances
 _client = None
@@ -222,16 +234,13 @@ def get_company_sheets() -> List[str]:
 
 
 def get_dompet_sheet(dompet_name: str):
-    """Get a specific dompet sheet by name.
+    """Get a specific dompet sheet by name, auto-create with Split Layout if missing.
     
     Args:
-        dompet_name: Name of the dompet sheet (e.g., 'Dompet Holja')
+        dompet_name: Name of the dompet sheet (e.g., 'CV HB (101)')
         
     Returns:
         gspread.Worksheet object
-        
-    Raises:
-        ValueError: If sheet not found
     """
     if dompet_name not in DOMPET_SHEETS:
         available_str = ', '.join(DOMPET_SHEETS)
@@ -247,10 +256,254 @@ def get_dompet_sheet(dompet_name: str):
         secure_log("INFO", f"Using dompet sheet: {dompet_name}")
         return sheet
     except gspread.WorksheetNotFound:
-        raise ValueError(
-            f"Sheet '{dompet_name}' tidak ditemukan di spreadsheet.\n"
-            f"Hubungi admin untuk membuat sheet."
-        )
+        # Auto-create with Split Layout structure
+        secure_log("INFO", f"Creating new dompet sheet: {dompet_name}")
+        return _create_dompet_sheet_with_split_layout(spreadsheet, dompet_name)
+
+
+def _create_dompet_sheet_with_split_layout(spreadsheet, dompet_name: str):
+    """Create a new dompet sheet with Split Layout headers.
+    
+    Layout:
+    - Row 7: PEMASUKAN (A), PENGELUARAN (J)
+    - Row 8: Column headers for each block
+    - Row 9+: Data
+    """
+    # Create sheet with enough columns (A-R = 18 columns)
+    sheet = spreadsheet.add_worksheet(title=dompet_name, rows=100, cols=18)
+    
+    # Row 7: Section titles
+    sheet.update_cell(SPLIT_LAYOUT_TITLE_ROW, 1, "PEMASUKAN")
+    sheet.update_cell(SPLIT_LAYOUT_TITLE_ROW, 10, "PENGELUARAN")
+    
+    # Row 8: Column headers
+    # Pemasukan headers (A-I)
+    for i, header in enumerate(SPLIT_PEMASUKAN_HEADERS):
+        sheet.update_cell(SPLIT_LAYOUT_HEADER_ROW, i + 1, header)
+    
+    # Pengeluaran headers (J-R)
+    for i, header in enumerate(SPLIT_PENGELUARAN_HEADERS):
+        sheet.update_cell(SPLIT_LAYOUT_HEADER_ROW, 10 + i, header)
+    
+    secure_log("INFO", f"Created Split Layout sheet: {dompet_name}")
+    return sheet
+
+
+def get_or_create_operational_sheet():
+    """Get Operasional Ktr sheet, auto-create with headers if missing.
+    
+    Returns:
+        gspread.Worksheet object
+    """
+    spreadsheet = get_spreadsheet()
+    
+    try:
+        sheet = spreadsheet.worksheet(OPERASIONAL_SHEET_NAME)
+        secure_log("INFO", f"Using operational sheet: {OPERASIONAL_SHEET_NAME}")
+        return sheet
+    except gspread.WorksheetNotFound:
+        # Auto-create with headers
+        secure_log("INFO", f"Creating new operational sheet: {OPERASIONAL_SHEET_NAME}")
+        sheet = spreadsheet.add_worksheet(title=OPERASIONAL_SHEET_NAME, rows=100, cols=10)
+        
+        # Row 1: Headers
+        for i, header in enumerate(OPERASIONAL_HEADERS):
+            sheet.update_cell(OPERASIONAL_HEADER_ROW, i + 1, header)
+        
+        secure_log("INFO", f"Created operational sheet: {OPERASIONAL_SHEET_NAME}")
+        return sheet
+
+
+def _find_next_empty_row(sheet, check_column: int, start_row: int = 9) -> int:
+    """Find the next empty row in a specific column.
+    
+    Args:
+        sheet: gspread Worksheet
+        check_column: 1-based column index to check
+        start_row: Row to start checking from
+        
+    Returns:
+        1-based row index of first empty cell
+    """
+    try:
+        col_values = sheet.col_values(check_column)
+        # Find first empty after start_row
+        for i in range(start_row - 1, len(col_values)):
+            if not col_values[i].strip():
+                return i + 1  # Convert to 1-based
+        return len(col_values) + 1  # Append after last
+    except Exception:
+        return start_row  # Fallback to start
+
+
+def _count_entries_in_block(sheet, no_column: int, start_row: int = 9) -> int:
+    """Count non-empty entries in a block (for auto-numbering)."""
+    try:
+        col_values = sheet.col_values(no_column)
+        count = 0
+        for i in range(start_row - 1, len(col_values)):
+            if col_values[i].strip():
+                count += 1
+        return count
+    except Exception:
+        return 0
+
+
+def append_project_transaction(
+    transaction: Dict,
+    sender_name: str,
+    source: str,
+    dompet_sheet: str,
+    project_name: str
+) -> Dict:
+    """
+    Append transaction to Split Layout dompet sheet.
+    
+    Logic:
+    - Pemasukan: Write to Left block (columns A-I)
+    - Pengeluaran: Write to Right block (columns J-R)
+    
+    Args:
+        transaction: Dict with jumlah, keterangan, tipe, message_id
+        sender_name: Name of person recording
+        source: Source (WhatsApp/Telegram)
+        dompet_sheet: Target dompet sheet name
+        project_name: Project name to record
+        
+    Returns:
+        Dict with success status and row info
+    """
+    try:
+        sheet = get_dompet_sheet(dompet_sheet)
+        tipe = transaction.get('tipe', 'Pengeluaran')
+        
+        # Determine which block to use
+        if tipe == 'Pemasukan':
+            cols = SPLIT_PEMASUKAN
+            no_col = cols['NO']
+        else:
+            cols = SPLIT_PENGELUARAN
+            no_col = cols['NO']
+        
+        # Find next empty row and count for numbering
+        next_row = _find_next_empty_row(sheet, no_col, SPLIT_LAYOUT_DATA_START)
+        entry_count = _count_entries_in_block(sheet, no_col, SPLIT_LAYOUT_DATA_START)
+        
+        # Build row data
+        now = datetime.now()
+        jumlah = abs(int(transaction.get('jumlah', 0)))
+        keterangan = sanitize_input(str(transaction.get('keterangan', '')))[:200]
+        safe_sender = sanitize_input(sender_name)[:50]
+        safe_project = sanitize_input(project_name)[:100]
+        message_id = transaction.get('message_id', '')
+        
+        row_data = [
+            entry_count + 1,                    # No
+            now.strftime('%H:%M:%S'),           # Waktu
+            now.strftime('%Y-%m-%d'),           # Waktu/Tanggal
+            jumlah,                             # Jumlah
+            safe_project,                       # Project
+            keterangan,                         # Keterangan
+            safe_sender,                        # Oleh
+            source,                             # Source
+            message_id                          # MessageID
+        ]
+        
+        # Write to correct column range
+        start_col = cols['NO']
+        
+        # Batch update for efficiency
+        cell_list = []
+        for i, value in enumerate(row_data):
+            cell_list.append(gspread.Cell(next_row, start_col + i, value))
+        
+        sheet.update_cells(cell_list, value_input_option='USER_ENTERED')
+        
+        secure_log("INFO", f"Project TX: {tipe} Rp{jumlah:,} -> {dompet_sheet} Row {next_row}")
+        
+        return {
+            'success': True,
+            'row': next_row,
+            'dompet': dompet_sheet,
+            'tipe': tipe,
+            'jumlah': jumlah
+        }
+        
+    except Exception as e:
+        secure_log("ERROR", f"append_project_transaction failed: {type(e).__name__}: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+
+def append_operational_transaction(
+    transaction: Dict,
+    sender_name: str,
+    source: str,
+    source_wallet: str,
+    category: str = 'Lain Lain'
+) -> Dict:
+    """
+    Append operational expense to Operasional Ktr sheet.
+    Automatically appends "[Sumber: Wallet_Name]" to keterangan.
+    
+    Args:
+        transaction: Dict with jumlah, keterangan, message_id
+        sender_name: Name of person recording
+        source: Source (WhatsApp/Telegram)
+        source_wallet: Source wallet name (e.g., "CV HB (101)")
+        category: Category (Gaji/ListrikAir/Konsumsi/Peralatan/Lain Lain)
+        
+    Returns:
+        Dict with success status and row info
+    """
+    try:
+        sheet = get_or_create_operational_sheet()
+        
+        # Find next row
+        col_values = sheet.col_values(OPERASIONAL_COLS['NO'])
+        next_row = len(col_values) + 1
+        entry_count = len([v for v in col_values[OPERASIONAL_DATA_START - 1:] if v.strip()])
+        
+        # Build keterangan with source tag
+        keterangan = sanitize_input(str(transaction.get('keterangan', '')))[:150]
+        short_wallet = get_dompet_short_name(source_wallet)
+        keterangan_with_source = f"{keterangan} [Sumber: {short_wallet}]"
+        
+        jumlah = abs(int(transaction.get('jumlah', 0)))
+        safe_sender = sanitize_input(sender_name)[:50]
+        message_id = transaction.get('message_id', '')
+        
+        row_data = [
+            entry_count + 1,                        # No
+            datetime.now().strftime('%Y-%m-%d'),    # Tanggal
+            jumlah,                                 # JUMLAH
+            keterangan_with_source,                 # KETERANGAN with [Sumber: X]
+            safe_sender,                            # Oleh
+            source,                                 # Source
+            category,                               # Kategori
+            message_id                              # MessageID
+        ]
+        
+        sheet.append_row(row_data, value_input_option='USER_ENTERED')
+        
+        secure_log("INFO", f"Operational TX: Rp{jumlah:,} [{category}] from {short_wallet}")
+        
+        return {
+            'success': True,
+            'row': next_row,
+            'source_wallet': source_wallet,
+            'category': category,
+            'jumlah': jumlah
+        }
+        
+    except Exception as e:
+        secure_log("ERROR", f"append_operational_transaction failed: {type(e).__name__}: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
 
 
 def get_company_sheet(company_name: str):
@@ -1075,54 +1328,109 @@ def format_report_message(report: Dict) -> str:
 
 def get_wallet_balances() -> str:
     """
-    Calculate current balance for each wallet (fund source).
-    Aggregates data from ALL company sheets.
+    Calculate REAL wallet balances using Virtual Balance formula:
+    
+    Real Balance = (Pemasukan in Dompet Sheet - Pengeluaran in Dompet Sheet)
+                   - (Operational expenses where Sumber = this Dompet)
+    
+    This reads directly from Split Layout sheets (CV HB, TX SBY, TX BALI)
+    and the Operasional Ktr sheet for operational debits.
     """
-    # Get ALL history (no limit)
-    data = get_all_data(days=None)
+    balances = {}
     
-    balances = {wallet: 0 for wallet in FUND_SOURCES.keys()}
-    balances["Dompet Lainnya"] = 0
-    
-    for d in data:
-        wallet = d.get('sumber_dana', 'Dompet Lainnya')
-        # Normalize wallet name safely
-        if wallet not in balances:
-             # Try to match partially or fallback
-             found = False
-             for k in balances.keys():
-                 if k.lower() == str(wallet).lower():
-                     wallet = k
-                     found = True
-                     break
-             if not found:
-                 # Add new wallet dynamically if found in sheet
-                 balances[wallet] = 0
-        
+    # 1. Calculate base balance from each dompet sheet (Split Layout)
+    for dompet in DOMPET_SHEETS:
         try:
-            amount = int(d['jumlah'])
-            if d['tipe'] == 'Pemasukan':
-                balances[wallet] += amount
-            elif d['tipe'] == 'Pengeluaran':
-                balances[wallet] -= amount
-        except (ValueError, TypeError):
-            continue
-             
-    # Format message
-    lines = ["💰 *LAPORAN SALDO DOMPET*", "=" * 30, ""]
-    
-    # Sort: Defined wallets first, then others
-    for wallet in FUND_SOURCES.keys():
-        amount = balances.get(wallet, 0)
-        lines.append(f"• {wallet}: Rp {amount:,}".replace(',', '.'))
-        
-    lines.append("")
-    # Others
-    for wallet, amount in balances.items():
-        if wallet not in FUND_SOURCES and amount != 0:
-            lines.append(f"• {wallet}: Rp {amount:,}".replace(',', '.'))
+            sheet = get_dompet_sheet(dompet)
             
+            # Sum Pemasukan (Left block, Column D = JUMLAH)
+            pemasukan_col = sheet.col_values(SPLIT_PEMASUKAN['JUMLAH'])
+            total_masuk = 0
+            for v in pemasukan_col[SPLIT_LAYOUT_DATA_START - 1:]:  # Skip headers
+                total_masuk += _parse_amount(v)
+            
+            # Sum Pengeluaran (Right block, Column M = JUMLAH)
+            pengeluaran_col = sheet.col_values(SPLIT_PENGELUARAN['JUMLAH'])
+            total_keluar = 0
+            for v in pengeluaran_col[SPLIT_LAYOUT_DATA_START - 1:]:
+                total_keluar += _parse_amount(v)
+            
+            balances[dompet] = {
+                'pemasukan': total_masuk,
+                'pengeluaran': total_keluar,
+                'internal_balance': total_masuk - total_keluar,
+                'operational_debit': 0  # Will be calculated next
+            }
+            
+        except Exception as e:
+            secure_log("ERROR", f"Error reading dompet {dompet}: {e}")
+            balances[dompet] = {
+                'pemasukan': 0,
+                'pengeluaran': 0,
+                'internal_balance': 0,
+                'operational_debit': 0
+            }
+    
+    # 2. Parse Operasional Ktr sheet and debit from source wallets
+    try:
+        op_sheet = get_or_create_operational_sheet()
+        all_rows = op_sheet.get_all_values()[OPERASIONAL_DATA_START - 1:]  # Skip header
+        
+        for row in all_rows:
+            if len(row) >= OPERASIONAL_COLS['KETERANGAN']:
+                keterangan = row[OPERASIONAL_COLS['KETERANGAN'] - 1]
+                jumlah_str = row[OPERASIONAL_COLS['JUMLAH'] - 1] if len(row) >= OPERASIONAL_COLS['JUMLAH'] else '0'
+                amount = _parse_amount(jumlah_str)
+                
+                # Extract source wallet from "[Sumber: XXX]"
+                match = re.search(r'\[Sumber:\s*([^\]]+)\]', keterangan)
+                if match:
+                    source_wallet_short = match.group(1).strip()
+                    # Match to canonical dompet name
+                    for dompet in DOMPET_SHEETS:
+                        short_name = get_dompet_short_name(dompet)
+                        if source_wallet_short.lower() == short_name.lower():
+                            balances[dompet]['operational_debit'] += amount
+                            break
+    except Exception as e:
+        secure_log("ERROR", f"Error parsing operational sheet: {e}")
+    
+    # 3. Calculate real balance and format message
+    lines = ["💰 *SALDO DOMPET (Virtual Balance)*", "=" * 30, ""]
+    
+    total_all = 0
+    for dompet in DOMPET_SHEETS:
+        b = balances.get(dompet, {'internal_balance': 0, 'operational_debit': 0})
+        real_balance = b['internal_balance'] - b['operational_debit']
+        total_all += real_balance
+        
+        short_name = get_dompet_short_name(dompet)
+        icon = "🟢" if real_balance >= 0 else "🔴"
+        
+        lines.append(f"{icon} *{short_name}*: Rp {real_balance:,}".replace(',', '.'))
+        
+        # Show breakdown if there are operational debits
+        if b['operational_debit'] > 0:
+            lines.append(f"   └─ Internal: Rp {b['internal_balance']:,} | Ops: -Rp {b['operational_debit']:,}".replace(',', '.'))
+    
+    lines.append("")
+    lines.append(f"📊 *Total Semua*: Rp {total_all:,}".replace(',', '.'))
+    lines.append("")
+    lines.append("_Ketik /laporan untuk detail projek_")
+    
     return '\n'.join(lines)
+
+
+def _parse_amount(value) -> int:
+    """Parse amount string to integer, handling various formats."""
+    if not value:
+        return 0
+    try:
+        # Remove common formatting
+        clean = str(value).replace('.', '').replace(',', '').replace('Rp', '').replace(' ', '').strip()
+        return int(float(clean))
+    except (ValueError, TypeError):
+        return 0
 
 def test_connection() -> bool:
     """Test connection to Google Sheets."""

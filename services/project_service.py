@@ -2,7 +2,7 @@ import time
 import logging
 from difflib import SequenceMatcher
 from sheets_helper import get_sheet
-from config.constants import COL_NAMA_PROJEK, KNOWN_COMPANY_NAMES
+from config.constants import COL_NAMA_PROJEK, KNOWN_COMPANY_NAMES, OPERATIONAL_KEYWORDS
 
 _project_cache = {
     'names': set(),
@@ -43,19 +43,50 @@ def add_new_project_to_cache(new_project_name):
 def calculate_similarity(a, b):
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
+
+def is_operational_keyword(text: str) -> bool:
+    """Check if text matches any operational keyword."""
+    if not text:
+        return False
+    text_lower = text.lower().strip()
+    
+    # Direct match
+    if text_lower in OPERATIONAL_KEYWORDS:
+        return True
+    
+    # Partial match (e.g., "gaji admin" contains "gaji")
+    for kw in OPERATIONAL_KEYWORDS:
+        if kw in text_lower:
+            return True
+    
+    return False
+
+
 def resolve_project_name(candidate):
     """
     Logika Matching Strict & Professional.
-    Hanya menangani Exact Match, Typo Ringan, dan Substring (Vadim Purana vs Purana).
+    
+    NEW: First checks if candidate is an operational keyword.
+    If so, returns status 'OPERATIONAL' for routing to Operasional Ktr.
     """
     if not candidate:
         return {'status': 'NEW', 'final_name': candidate}
-        
+    
     candidate_clean = candidate.strip()
+    
+    # =============== OPERATIONAL KEYWORD FILTER ===============
+    # Check if this is an operational expense, not a project
+    if is_operational_keyword(candidate_clean):
+        return {
+            'status': 'OPERATIONAL',
+            'final_name': None,
+            'original': candidate_clean,
+            'detected_keyword': candidate_clean.lower()
+        }
+    
     existing_projects = get_existing_projects()
     
     # Kalau nama kependekan (misal singkatan 2 huruf), anggap NEW saja biar aman
-    # Kecuali klien emang punya projek nama "XY"
     if len(candidate_clean) < 3:
          return {'status': 'NEW', 'final_name': candidate_clean, 'original': candidate_clean}
 
