@@ -192,9 +192,13 @@ def detect_transaction_context(text: str, transactions: list) -> dict:
     """
     Detect transaction routing context (Smart Router).
     
+    Gaji Logic (from Cost Accounting spec):
+    - "Transfer gaji Mbak Admin" (no project) -> OPERATIONAL (Sheet Operasional)
+    - "Transfer fee Mas Budi untuk Taman Indah" (has project) -> PROJECT (Sheet Dompet)
+    
     Returns:
         {
-            'mode': 'PROJECT' | 'OPERATIONAL' | 'AMBIGUOUS',
+            'mode': 'PROJECT' | 'OPERATIONAL',
             'operational_category': str or None,
             'needs_source_wallet': bool,
             'detected_keywords': list
@@ -209,18 +213,30 @@ def detect_transaction_context(text: str, transactions: list) -> dict:
             detected_keywords.append(kw)
     
     # Check if transactions have valid project names
+    # CRITICAL: If there's a project name, it's a PROJECT transaction
+    # even if there are operational keywords (e.g., "fee untuk projek X")
     has_valid_project = False
     for t in transactions:
         nama_projek = t.get('nama_projek', '')
-        if nama_projek and nama_projek.lower() not in OPERATIONAL_KEYWORDS:
+        if nama_projek and nama_projek.lower().strip():
             # Additional check - not just a generic name
-            if len(nama_projek) > 2 and nama_projek.lower() not in ['umum', 'kantor', 'ops']:
+            generic_names = ['umum', 'kantor', 'ops', 'operasional', 'admin']
+            if len(nama_projek) > 2 and nama_projek.lower().strip() not in generic_names:
                 has_valid_project = True
                 break
     
-    # Determine mode
-    if detected_keywords and not has_valid_project:
-        # Definite operational mode - need to ask which wallet
+    # PRIORITY: Project name takes precedence over operational keywords
+    # "Fee Mas Budi untuk Taman Indah" -> PROJECT (Taman Indah is the project)
+    if has_valid_project:
+        return {
+            'mode': 'PROJECT',
+            'operational_category': None,
+            'needs_source_wallet': False,
+            'detected_keywords': []
+        }
+    
+    # No project name + operational keywords = OPERATIONAL mode
+    if detected_keywords:
         category = map_operational_category(detected_keywords[0])
         return {
             'mode': 'OPERATIONAL',
@@ -228,21 +244,14 @@ def detect_transaction_context(text: str, transactions: list) -> dict:
             'needs_source_wallet': True,
             'detected_keywords': detected_keywords
         }
-    elif has_valid_project:
-        return {
-            'mode': 'PROJECT',
-            'operational_category': None,
-            'needs_source_wallet': False,
-            'detected_keywords': []
-        }
-    else:
-        # Ambiguous - default to project flow
-        return {
-            'mode': 'PROJECT',  # Default to project, let existing flow handle company selection
-            'operational_category': None,
-            'needs_source_wallet': False,
-            'detected_keywords': []
-        }
+    
+    # Default: PROJECT mode (let existing company selection flow handle it)
+    return {
+        'mode': 'PROJECT',
+        'operational_category': None,
+        'needs_source_wallet': False,
+        'detected_keywords': []
+    }
 
 
 def map_operational_category(keyword: str) -> str:
@@ -265,26 +274,42 @@ def apply_lifecycle_markers(project_name: str, transaction: dict) -> str:
     """
     Apply Start/Finish markers to project name based on transaction context.
     
-    Rules:
-    - If Pemasukan + "DP"/"Down Payment" + new project -> "{Name} (Start)"
-    - If Pemasukan + "Pelunasan"/"Lunas" -> "{Name} (Finish)"
+    Smart Timeline Rules (from Cost Accounting spec):
+    - START: Pemasukan + "DP/Termin 1" + Projek BARU (belum pernah ada)
+    - RUNNING: Transaksi biasa (no marker)
+    - FINISH: Pemasukan + "Pelunasan/Lunas"
     """
     if not project_name:
         return project_name
     
     if transaction.get('tipe') != 'Pemasukan':
-        return project_name
+        return project_name  # Only income can trigger Start/Finish
     
     keterangan = (transaction.get('keterangan', '') or '').lower()
     
-    # Check for DP (Start) - only for new projects
-    if any(kw in keterangan for kw in ['dp', 'down payment', 'uang muka', 'pembayaran awal']):
-        # Could add check if project is new in database
-        return f"{project_name} (Start)"
-    
-    # Check for Pelunasan (Finish)
-    if any(kw in keterangan for kw in ['pelunasan', 'lunas', 'terakhir', 'final payment']):
+    # Check for Pelunasan (Finish) - regardless of project history
+    finish_keywords = ['pelunasan', 'lunas', 'final payment', 'pembayaran akhir', 'termin akhir', 'termin terakhir']
+    if any(kw in keterangan for kw in finish_keywords):
         return f"{project_name} (Finish)"
+    
+    # Check for DP/Termin 1 (Start) - ONLY if project is NEW
+    start_keywords = ['dp', 'down payment', 'uang muka', 'pembayaran awal', 'termin 1', 'termin pertama']
+    if any(kw in keterangan for kw in start_keywords):
+        # Check if project already exists in database
+        from services.project_service import get_existing_projects
+        existing_projects = get_existing_projects()
+        
+        # Normalize for comparison (case-insensitive)
+        project_normalized = project_name.lower().strip()
+        is_new_project = True
+        
+        for existing in existing_projects:
+            if existing.lower().strip() == project_normalized:
+                is_new_project = False
+                break
+        
+        if is_new_project:
+            return f"{project_name} (Start)"
     
     return project_name
 

@@ -16,13 +16,13 @@ from sheets_helper import check_budget_alert, normalize_project_display_name
 # Build categories list for display
 CATEGORIES_DISPLAY = '\n'.join(f"  • {cat}" for cat in ALLOWED_CATEGORIES)
 
-# Build dompet & company selection display
-SELECTION_DISPLAY = """  📁 Dompet Holja:
+# Build dompet & company selection display (NEW STRUCTURE)
+SELECTION_DISPLAY = """  📁 CV HB (101):
      1. HOLLA
      2. HOJJA
-  📁 Dompet Texturin Sby:
+  📁 TX SBY (216):
      3. TEXTURIN-Surabaya
-  📁 Dompet Evan:
+  📁 TX BALI (087):
      4. TEXTURIN-Bali
      5. KANTOR"""
 
@@ -122,9 +122,9 @@ def build_selection_prompt(transactions: list, mention: str = "") -> str:
 
 ❓ Simpan ke company mana? (1-5)
 
-📁 Dompet Holja: 1️⃣ HOLLA | 2️⃣ HOJJA
-📁 Texturin Sby: 3️⃣ TEXTURIN-Surabaya
-📁 Dompet Evan: 4️⃣ TEXTURIN-Bali | 5️⃣ KANTOR
+📁 CV HB (101): 1️⃣ HOLLA | 2️⃣ HOJJA
+📁 TX SBY (216): 3️⃣ TEXTURIN-Surabaya
+📁 TX BALI (087): 4️⃣ TEXTURIN-Bali | 5️⃣ KANTOR
 
 ⏳ Batas waktu: 15 menit
 💡 Salah pilih? /cancel lalu kirim ulang""".replace(',', '.')
