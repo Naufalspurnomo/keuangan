@@ -178,17 +178,39 @@ def detect_transaction_context(text: str, transactions: list) -> dict:
     detected_keywords = [kw for kw in OPERATIONAL_KEYWORDS if kw in text_lower]
     
     # Check Project Name Validity
+    from config.constants import PROJECT_STOPWORDS
+    
     has_valid_project = False
     for t in transactions:
         nama_projek = t.get('nama_projek', '')
         if nama_projek and len(nama_projek) > 2:
             # Check against stopwords/generic names
-            generic_names = ['umum', 'kantor', 'ops', 'operasional', 'admin', 'gaji']
-            if nama_projek.lower().strip() not in generic_names:
-                has_valid_project = True
-                break
+            # Combine explicit generic names with constants
+            generic_names = {'umum', 'kantor', 'ops', 'operasional', 'admin', 'gaji', 'finance'}
+            # Add all Operational Keywords (e.g., 'listrik', 'konsumsi') to generic list
+            generic_names.update(OPERATIONAL_KEYWORDS)
+            # Add keys from stopwords if they are single words
+            generic_names.update(PROJECT_STOPWORDS)
+            
+            clean_name = nama_projek.lower().strip()
+            
+            # Additional logic: Check if name is exactly a generic word
+            if clean_name not in generic_names:
+                # Also check if it partially matches but is just a keyword (e.g. "Biaya Listrik")
+                is_just_keyword = False
+                if clean_name in PROJECT_STOPWORDS or clean_name in OPERATIONAL_KEYWORDS:
+                     is_just_keyword = True
+                
+                if not is_just_keyword:
+                    has_valid_project = True
+                    break
     
     # Decision Tree
+    # Priority: If keywords found AND project name is suspicious (or missing), Force Operational
+    if detected_keywords and not has_valid_project:
+         category = map_operational_category(detected_keywords[0])
+         return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
+
     if has_valid_project:
         return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
     
@@ -201,9 +223,9 @@ def detect_transaction_context(text: str, transactions: list) -> dict:
 def map_operational_category(keyword: str) -> str:
     """Maps keywords to standard Operational Categories."""
     k = keyword.lower()
-    if k in ['gaji', 'salary', 'upah', 'honor', 'thr']: return 'Gaji'
-    if k in ['listrik', 'pln', 'air', 'pdam', 'wifi', 'internet']: return 'Listrik Air'
-    if k in ['konsumsi', 'makan', 'snack', 'minum']: return 'Konsumsi'
+    if k in ['gaji', 'salary', 'upah', 'honor', 'thr', 'bonus']: return 'Gaji'
+    if k in ['listrik', 'pln', 'air', 'pdam', 'wifi', 'internet', 'listrikair']: return 'ListrikAir'
+    if k in ['konsumsi', 'makan', 'snack', 'minum', 'jamu', 'kopi']: return 'Konsumsi'
     if k in ['peralatan', 'atk', 'alat', 'perlengkapan']: return 'Peralatan'
     return 'Lain Lain'
 
