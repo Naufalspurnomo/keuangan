@@ -204,43 +204,73 @@ def send_telegram_reply(chat_id: int, message: str, parse_mode: str = 'Markdown'
 
 
 def format_success_reply_new(transactions: list, dompet_sheet: str, company: str, mention: str = "") -> str:
-    """Format success reply message with dompet and company info."""
-    lines = [f"{mention}✅ Transaksi Tercatat!\n"]
+    """Format success reply message with rich visual indicators."""
+    lines = [f"{mention}✅ *Transaksi Berhasil Disimpan!*\n"]
     
-    total = 0
+    total_masuk = 0
+    total_keluar = 0
     nama_projek_set = set()
     
-    # Transaction details (compact)
+    # Transaction details
     for t in transactions:
         amount = t.get('jumlah', 0)
-        total += amount
-        tipe_icon = "💰" if t.get('tipe') == 'Pemasukan' else "💸"
-        lines.append(f"{tipe_icon} {t.get('keterangan', '-')}: Rp {amount:,}".replace(',', '.'))
+        tipe = t.get('tipe', 'Pengeluaran') # Default Pengeluaran
+        keterangan = t.get('keterangan', '-')
         
+        # Visual Logic: Merah (Keluar) vs Hijau (Masuk)
+        if tipe == 'Pemasukan':
+            icon = "🟢"  # Green Circle
+            sign = "+"
+            total_masuk += amount
+        else:
+            icon = "🔴"  # Red Circle
+            sign = "-"
+            total_keluar += amount
+            
+        # Format angka: +Rp 100.000 atau -Rp 50.000
+        amount_str = f"{sign}Rp {amount:,}".replace(',', '.')
+        
+        # Baris Item: 🔴 Beli Semen: -Rp 50.000
+        lines.append(f"{icon} {keterangan}: *{amount_str}*")
+        
+        # Collect Project Names
         if t.get('nama_projek'):
             display_name = normalize_project_display_name(t['nama_projek'])
             if display_name:
                 nama_projek_set.add(display_name)
     
-    lines.append(f"\n📊 Total: Rp {total:,}".replace(',', '.'))
+    # Summary Section (Totalan)
+    lines.append("") # Spasi
     
-    # Location info (compact)
-    lines.append(f"📍 {dompet_sheet} → {company}")
+    # Tampilkan ringkasan sesuai apa yang terjadi
+    if total_masuk > 0 and total_keluar > 0:
+        # Jika campuran (ada masuk dan keluar)
+        net = total_masuk - total_keluar
+        lines.append(f"📈 Masuk: Rp {total_masuk:,}".replace(',', '.'))
+        lines.append(f"📉 Keluar: Rp {total_keluar:,}".replace(',', '.'))
+        lines.append(f"📊 *Net Flow: Rp {net:,}*".replace(',', '.'))
+    elif total_masuk > 0:
+        # Cuma Pemasukan
+        lines.append(f"💰 *Total Masuk: Rp {total_masuk:,}*".replace(',', '.'))
+    else:
+        # Cuma Pengeluaran
+        lines.append(f"💸 *Total Keluar: Rp {total_keluar:,}*".replace(',', '.'))
+    
+    # Location Info
+    lines.append(f"\n📍 *{dompet_sheet}* → {company}")
     
     if nama_projek_set:
         projek_str = ', '.join(nama_projek_set)
-        lines.append(f"📋 Projek: {projek_str}")
+        lines.append(f"📋 *Projek:* {projek_str}")
     
     # Timestamp
     now = now_wib().strftime("%d %b %Y, %H:%M")
     lines.append(f"⏱️ {now}")
     
-    # Next steps
-    lines.append("\n💡 Ralat jumlah: reply /revisi 150rb")
-    lines.append("📊 Cek ringkas: /status | /saldo")
+    # Footer Actionable
+    lines.append("\n💡 _Reply pesan ini untuk revisi_")
     
     return '\n'.join(lines)
-
 # ===================== WUZAPI HANDLERS =====================
 
 @app.route('/webhook_wuzapi', methods=['POST'])
@@ -840,7 +870,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
     except Exception as e:
         secure_log("ERROR", f"WuzAPI flow error: {e}")
         return jsonify({'status': 'error'}), 500
-        
+
 def get_status_message() -> str:
     return format_dashboard_message()
 
