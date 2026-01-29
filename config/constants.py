@@ -94,7 +94,7 @@ SPLIT_PEMASUKAN_HEADERS = ['No', 'Waktu', 'Waktu/Tanggal', 'Jumlah', 'Project', 
 SPLIT_PENGELUARAN_HEADERS = ['No', 'Waktu', 'Waktu/Tanggal', 'Jumlah', 'Project', 'Keterangan', 'Oleh', 'Source', 'MessageID']
 
 # ===================== OPERASIONAL KANTOR SHEET =====================
-OPERASIONAL_SHEET_NAME = "Operasional Ktr"
+OPERASIONAL_SHEET_NAME = "Operasional Kantor"
 OPERASIONAL_HEADER_ROW = 1  # Headers at row 1
 OPERASIONAL_DATA_START = 2  # Data starts at row 2
 
@@ -167,7 +167,7 @@ PROJECT_STOPWORDS = {
 
 OPERATIONAL_KEYWORDS = {
     # Payroll
-    'gaji', 'salary', 'upah karyawan', 'honor',
+    'gaji', 'salary', 'upah karyawan', 'honor', 'thr', 'bonus',
     
     # Utilities
     'listrik', 'pln', 'air', 'pdam', 'listrikair',
