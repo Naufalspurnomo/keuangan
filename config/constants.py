@@ -258,7 +258,8 @@ class Commands:
     
     # Cancel/revision - ONLY slash for safety
     CANCEL = ['/cancel', 'batal', 'cancel']
-    REVISION_PREFIXES = ['/revisi']  # Slash only for revision
+    UNDO = ['/undo', 'undo'] # Undo command
+    REVISION_PREFIXES = ['/revisi', 'revisi', 'ralat']  # Enhanced revision support
     
     # Link command
     LINK_SLASH = ['/link']
