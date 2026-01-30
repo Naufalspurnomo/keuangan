@@ -14,8 +14,8 @@ from handlers.smart_handler import SmartHandler
 
 logger = logging.getLogger(__name__)
 
-# Feature flag
-USE_LAYERS = True  # Enabled Semantic Engine
+# Feature flag  
+USE_LAYERS = False  # TEMPORARY DISABLED for testing Operational
 
 # Initialize Handler
 # We need a singleton-like access or init new every time? 
