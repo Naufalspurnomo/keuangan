@@ -864,11 +864,13 @@ def get_all_data(days: int = 30) -> List[Dict]:
         List of transaction dicts with company and nama_projek
     """
     try:
+    try:
         from config.constants import (
             SPLIT_PEMASUKAN, SPLIT_PENGELUARAN, SPLIT_LAYOUT_DATA_START,
-            OPERASIONAL_SHEET_NAME, OPERASIONAL_COLS, OPERASIONAL_DATA_START,
-            DOMPET_COMPANIES
+            OPERASIONAL_SHEET_NAME, OPERASIONAL_COLS, OPERASIONAL_DATA_START
         )
+        # DOMPET_COMPANIES should come from config.wallets, not config.constants
+        from config.wallets import DOMPET_COMPANIES
         
         spreadsheet = get_spreadsheet()
         data = []
