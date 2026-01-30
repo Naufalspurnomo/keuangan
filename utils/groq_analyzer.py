@@ -468,19 +468,6 @@ REMEMBER:
 
             # 2. DP/Project keywords MUST be RECORD_TRANSACTION
             if result.get('intent') == 'IGNORE':
-                if op_keyword or is_human_cmd is False: # Simple logic fix, maybe just check if it was ignored
-                     if has_amount and is_past: # Only force if amount + past
-                        pass # Placeholder logic to match structure, actually just correcting indentation
-
-            # Re-implementing logic from file cleanly:
-            
-            # 2. DP/Project keywords MUST be RECORD_TRANSACTION
-            # Check for patterns that were ignored but shouldn't be
-            if result.get('intent') == 'IGNORE' and has_amount:
-                 # Logic for DP/Project recovery already in place below?
-                 pass
-
-            if result.get('intent') == 'IGNORE':
                  # Check for DP/term keywords
                  if any(k in text.lower() for k in ['dp', 'termin', 'pelunasan']):
                     logger.warning(f"AI ignored DP transaction. Forcing RECORD_TRANSACTION.")
