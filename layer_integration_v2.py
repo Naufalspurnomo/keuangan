@@ -221,6 +221,81 @@ def get_enhanced_layer_status() -> Dict[str, Any]:
 
 
 # =============================================================================
+# BACKWARD COMPATIBILITY WRAPPER (for main.py)
+# =============================================================================
+
+def process_with_layers(
+    user_id: str,
+    message_id: str,
+    text: str,
+    sender_name: str = "User",
+    media_url: str = None,
+    caption: str = None,
+    is_group: bool = False,
+    chat_id: str = None,
+    quoted_message_id: str = None,
+    quoted_message_text: str = None,
+    sender_jid: str = None,
+    has_visual: bool = False
+) -> Tuple[str, str, str, Dict]:
+    """
+    BACKWARD COMPATIBLE wrapper for old process_with_layers signature.
+    
+    Now uses Enhanced Context Detection v2.0 under the hood.
+    
+    Returns: (action, response, intent, extra_data)
+    - action: "IGNORE", "REPLY", "PROCESS" 
+    - response: str (the text to reply with, or normalized text for PROCESS)
+    - intent: str (The intent detected - for now just "RECORD_TRANSACTION")
+    - extra_data: dict (category_scope, context_analysis, etc.)
+    """
+    if not USE_ENHANCED_LAYERS:
+        return ("PROCESS", text, "RECORD_TRANSACTION", {})
+    
+    try:
+        # Process with enhanced layers
+        result = process_with_enhanced_layers(
+            text=text or caption or "",
+            user_id=user_id,
+            chat_id=chat_id or user_id,
+            is_group=is_group
+        )
+        
+        action_map = {
+            "AUTO": "PROCESS",      # High confidence -> proceed
+            "CONFIRM": "REPLY",     # Ask confirmation
+            "ASK": "REPLY",         # Ask clarification
+            "IGNORE": "IGNORE"
+        }
+        
+        enhanced_action = result.get('action', 'IGNORE')
+        compat_action = action_map.get(enhanced_action, "PROCESS")
+        
+        # Build response
+        prompt = result.get('prompt')
+        
+        # Extra data for routing
+        extra_data = {
+            "category_scope": result.get('category_scope', 'UNKNOWN'),
+            "confidence": result.get('confidence', 0.0),
+            "context_analysis": result.get('context_analysis', {}),
+            "enhanced_action": enhanced_action,  # Original action
+        }
+        
+        if compat_action == "REPLY" and prompt:
+            # Need user interaction
+            return (compat_action, prompt, "NEED_CLARIFICATION", extra_data)
+        
+        # Default: PROCESS
+        return ("PROCESS", text, "RECORD_TRANSACTION", extra_data)
+        
+    except Exception as e:
+        logger.error(f"Layer processing failed: {e}", exc_info=True)
+        return ("PROCESS", text, "RECORD_TRANSACTION", {})
+
+
+
+# =============================================================================
 # TESTING
 # =============================================================================
 

@@ -63,8 +63,8 @@ from services.state_manager import (
     record_bot_interaction, store_last_bot_report
 )
 
-# Layer Integration
-from layer_integration import process_with_layers, USE_LAYERS
+# Layer Integration - Enhanced V2 (Backward Compatible)
+from layer_integration_v2 import process_with_layers, USE_ENHANCED_LAYERS as USE_LAYERS
 
 # Utilities
 from wuzapi_helper import (
