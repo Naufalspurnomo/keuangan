@@ -73,6 +73,37 @@ def is_command_to_human(text: str) -> bool:
     return any(ind in text_lower for ind in COMMAND_TO_HUMAN)
 
 
+
+# Casual bot mentions (not commands)
+CASUAL_BOT_MENTIONS = [
+    "bot kamu", "bot lu", "bot ini", "botnya", "bot gw", "si bot",
+    "bot canggung", "bot marbot", "bot kece", "bot pintar", "bot bodoh",
+    "ajak omong bot", "ngomong sama bot", "chat sama bot", "tanya bot",
+]
+
+def is_casual_bot_mention(text: str) -> bool:
+    """
+    Check if text is just casual mention of bot (not command).
+    
+    Returns True if:
+    - Text mentions "bot" in casual context
+    - No amount pattern
+    - No finance keywords
+    """
+    text_lower = text.lower()
+    
+    # Check casual phrases
+    for phrase in CASUAL_BOT_MENTIONS:
+        if phrase in text_lower:
+            # Make sure it's not a real transaction
+            if not has_amount_pattern(text):
+                # Basic finance keywords to exempt
+                if not any(k in text_lower for k in ['beli', 'bayar', 'transfer', 'gaji', 'dp']):
+                    return True
+    
+    return False
+
+
 def detect_operational_keyword(text: str) -> str:
     """Detect if text contains operational keywords. Returns keyword or None."""
     text_lower = text.lower()
@@ -117,9 +148,8 @@ class GroqContextAnalyzer:
         context_signals = context_analysis.get("signals", {})
         context_reasoning = context_analysis.get("reasoning", "")
         
-        # ENHANCED SYSTEM PROMPT WITH NEGATIVE CONSTRAINTS
-        system_prompt = f"""You are the intelligent analyzer for "Bot Keuangan" (Finance Bot).
-Your goal is to classify the user's intent and extract structured data.
+# ENHANCED SYSTEM PROMPT WITH NEGATIVE CONSTRAINTS
+        system_prompt = f"""You are the intelligent analyzer for "Bot Keuangan" (Finance Bot) for a creative agency (DKV/Mural company).
 
 USER CONTEXT:
 - Sender: {sender}
@@ -134,82 +164,271 @@ PRE-ANALYSIS HINTS:
 - Command to Human: {is_human_cmd}
 - Operational Keyword Detected: {op_keyword or 'None'}
 
+===========================================
+CRITICAL: OPERATIONAL vs PROJECT CLASSIFICATION
+===========================================
+
+**OPERATIONAL (Office Overhead - Fixed Costs):**
+These are RECURRING, FIXED expenses for running the office, NOT tied to specific client projects.
+
+STRONG INDICATORS:
+1. **Office Location Keywords:**
+   - "untuk kantor", "buat kantor", "di kantor", "kantor pusat"
+   - "office", "ruangan", "gedung kantor"
+   
+2. **Office Roles (Non-Field):**
+   - "gaji admin", "gaji staff", "gaji karyawan", "gaji sekretaris"
+   - "gaji [nama orang] admin/staff"
+   
+3. **Recurring Temporal Patterns:**
+   - "gaji bulan [bulan]", "bulanan", "per bulan"
+   - "tagihan rutin", "bayar rutin"
+   
+4. **Utility & Office Expenses:**
+   - "listrik", "PLN", "token listrik"
+   - "air", "PDAM", "tagihan air"
+   - "wifi", "internet", "indihome", "speedy"
+   - "telepon kantor", "pulsa kantor"
+   
+5. **Office Supplies:**
+   - "ATK", "alat tulis", "printer", "tinta", "kertas"
+   - "peralatan kantor", "komputer kantor", "laptop kantor"
+   - "Iphone buat kantor", "HP untuk kantor"  ← KEY: "buat/untuk kantor"
+   
+6. **Office Consumption:**
+   - "konsumsi kantor", "snack kantor", "makan kantor"
+   - "kopi kantor", "air mineral kantor"
+
+**PROJECT (Client Work - Variable Costs):**
+These are expenses tied to SPECIFIC client projects (murals, DKV, renovations).
+
+STRONG INDICATORS:
+1. **Project Names:**
+   - ANY capitalized name: "Wooftopia", "Taman Indah", "Renovasi Cafe"
+   - "project [nama]", "untuk [nama project]"
+   
+2. **Field Worker Roles:**
+   - "tukang", "pekerja lapangan", "pelukis mural"
+   - "designer lapangan", "tim lapangan"
+   
+3. **Project-Specific Items:**
+   - "material", "bahan bangunan", "cat", "semen", "pasir"
+   - "ongkir ke site", "transport ke lokasi"
+   
+4. **Project Context Prepositions:**
+   - "untuk [project name]", "buat [project name]"
+   - "di [project name]", "project [name]"
+   - "fee tukang [project]", "upah [project]"
+
+===========================================
+DISAMBIGUATION RULES (CRITICAL!)
+===========================================
+
+**Rule 1: Preposition "buat/untuk + kantor" = OPERATIONAL**
+   ❌ WRONG: "Iphone buat kantor" → PROJECT
+   ✅ CORRECT: "Iphone buat kantor" → OPERATIONAL
+   
+   Why? "buat kantor" = for office use = office equipment = OPERATIONAL
+
+**Rule 2: Preposition "buat/untuk + [Project Name]" = PROJECT**
+   ✅ "Cat buat Wooftopia" → PROJECT
+   ✅ "Material untuk Taman Indah" → PROJECT
+
+**Rule 3: Ambiguous Words Need Context**
+   - "gaji" alone → AMBIGUOUS (need role/temporal)
+   - "gaji admin" → OPERATIONAL (office role)
+   - "gaji tukang Wooftopia" → PROJECT (field role + project name)
+   - "bon" alone → AMBIGUOUS
+   - "bon tukang buat [project]" → PROJECT
+   - "bon kantor" → OPERATIONAL
+
+**Rule 4: Role Disambiguation**
+   - Admin, Staff, Karyawan, Sekretaris → Office → OPERATIONAL
+   - Tukang, Pekerja Lapangan, Pelukis → Field → PROJECT
+
+**Rule 5: Location Context**
+   - "di kantor", "untuk kantor", "buat kantor" → OPERATIONAL
+   - "di site", "di lokasi", "ke lapangan" → PROJECT
+
+===========================================
+INTENT CLASSIFICATION
+===========================================
+
 AVAILABLE INTENTS:
 1. **IGNORE**
    - Casual conversation, jokes, greetings not for bot.
-   - Future plans/discussions: "Nanti beli ya", "Besok kita makan dimana?", "Gpp ya Fal" (permission, not reports).
-   - Commands to OTHER HUMANS: "Tolong beliin", "Bayarin dulu dong".
+   - Future plans: "Nanti beli ya", "Besok kita makan dimana?"
+   - Commands to OTHER HUMANS: "Tolong beliin", "Bayarin dulu dong"
+   - Mentions of "bot" in non-transactional context: "bot kamu marbot", "botnya canggung"
    - CRITICAL: If sentence is FUTURE TENSE or a COMMAND to human, classify as IGNORE.
-   - If uncertain in Group Chat WITHOUT mention, default to IGNORE.
 
 2. **RECORD_TRANSACTION**
    - Report of expense/income that HAS HAPPENED (past tense).
-   - MUST contain: Item description AND Amount (explicit or implicit from context).
-   - MUST use PAST tense indicators: "udah", "barusan", "tadi", "habis", "sudah bayar".
-   - E.g.: "Barusan beli bensin 50rb", "Udah transfer 1jt", "Tadi bayar parkir 5rb".
+   - MUST contain: Item description AND Amount.
+   - MUST use PAST tense: "udah", "barusan", "tadi", "habis", "sudah bayar", "abis beli"
+   - Examples: 
+     * "Barusan beli bensin 50rb"
+     * "Udah bayar gaji admin 5jt"
+     * "Abis beli Iphone buat kantor 7jt" ← OPERATIONAL
    
 3. **TRANSFER_FUNDS**
-   - Moving money BETWEEN internal wallets (not expense/income).
-   - E.g.: "Topup Gopay 100rb dari BCA", "Tarik tunai 500rb", "Transfer ke kas kecil".
-   - This is NOT an expense, just money movement.
+   - Moving money BETWEEN internal wallets.
+   - Examples: "Topup Gopay dari BCA 100rb", "Transfer ke TX SBY 1jt"
 
 4. **QUERY_STATUS**
    - Asking about financial data, balance, reports.
-   - E.g.: "Saldo berapa?", "Pengeluaran bulan ini?", "Total projek A?".
 
 5. **REVISION_REQUEST**
-   - Correcting a PREVIOUS entry (implies context of recent transaction).
-   - E.g.: "Eh salah, harusnya 50rb", "Revisi jadi 100k".
+   - Correcting a PREVIOUS entry.
+   - Examples: "Eh salah", "Revisi jadi 100k"
 
 6. **CONVERSATIONAL_QUERY**
-   - Greeting/thanking the BOT directly.
-   - E.g.: "Halo bot", "Makasih ya bot".
+   - Greeting/thanking the BOT directly (and expecting response).
+   - Examples: "Halo bot", "Thanks bot"
+   - NOT: "bot kamu marbot" (this is casual talk → IGNORE)
 
-CONTEXT ANALYSIS (PRE-DETECTED):
-- Category Scope: {category_scope} (Confidence: {context_confidence:.2f})
-- Context Reasoning: {context_reasoning}
-- Detected Signals:
-  * Role: {context_signals.get('role_detected', 'None')}
-  * Project Name: {context_signals.get('project_name', 'None')}
-  * Temporal Pattern: {context_signals.get('temporal_pattern', 'None')}
-  * Keyword Match: {context_signals.get('keyword_match', {}).get('keyword', 'None')} (Type: {context_signals.get('keyword_match', {}).get('type', 'None')})
+===========================================
+CRITICAL NEGATIVE CONSTRAINTS
+===========================================
 
-EXTRACTION RULES FOR TRANSACTIONS:
-When intent is RECORD_TRANSACTION, also extract:
-- "category_scope": Use the PRE-DETECTED category_scope above as strong guidance.
-  - "OPERATIONAL": Fixed office costs (Gaji staff kantor, Listrik, Air, WiFi, Konsumsi, ATK).
-  - "PROJECT": Variable costs for client projects (Gaji tukang lapangan, Material, Bahan, Transport).
-  - "UNKNOWN": Only if pre-detection is AMBIGUOUS and no clear context.
-  
-CONTEXT DISAMBIGUATION RULES:
-- If pre-detected category has confidence >= 0.85, TRUST IT.
-- If AMBIGUOUS (confidence < 0.60), look for:
-  * Office roles (admin, staff) → OPERATIONAL
-  * Field roles (tukang, pekerja lapangan) → PROJECT
-  * Project names in text → PROJECT
-  * Monthly patterns ("bulan ini", "gaji bulanan") → OPERATIONAL
+1. **Ignore Banter About Bot:**
+   - "bot kamu marbot" → IGNORE (not asking bot to do anything)
+   - "botnya canggung" → IGNORE (just commenting)
+   - "amin bot" → IGNORE (joke/casual response)
 
-CRITICAL NEGATIVE CONSTRAINTS:
-- If text is discussing a PLAN or PERMISSION, output IGNORE.
-- If text is a COMMAND to another human ("beli dong", "tolong bayarin"), output IGNORE.
-- Only output RECORD_TRANSACTION if action clearly already happened (PAST TENSE).
-- In Group Chat + Ambient Talk + No Amount Pattern = default IGNORE.
+2. **Ignore Future Plans:**
+   - "Nanti beli" → IGNORE
+   - "Besok bayar" → IGNORE
 
-OUTPUT FORMAT (JSON ONLY):
+3. **Ignore Commands to Humans:**
+   - "Tolong beliin" → IGNORE
+   - "Bayarin dulu dong" → IGNORE
+
+4. **Only Respond to PAST Actions:**
+   - MUST have past tense: "udah", "tadi", "barusan", "abis", "habis"
+   - OR: Clear reporting intent with amount
+
+===========================================
+CONFIDENCE SCORING
+===========================================
+
+**High Confidence (0.85 - 1.0):** Auto-classify
+- Clear keywords + context match
+- Examples:
+  * "Bayar listrik 200rb" → OPERATIONAL (confidence: 0.95)
+  * "Abis beli Iphone buat kantor 7jt" → OPERATIONAL (confidence: 0.90)
+  * "Gaji tukang Wooftopia 2jt" → PROJECT (confidence: 0.95)
+
+**Medium Confidence (0.60 - 0.84):** Confirm with user
+- Some context but ambiguous
+- Examples:
+  * "Gajian 5jt" → AMBIGUOUS (confidence: 0.50, ask user)
+
+**Low Confidence (< 0.60):** Ask clarifying question
+- Insufficient context
+- Examples:
+  * "Bon 500rb" → AMBIGUOUS (confidence: 0.40, ask details)
+
+===========================================
+OUTPUT FORMAT (JSON ONLY)
+===========================================
+
 {{
   "should_respond": boolean,
-  "intent": "STRING_INTENT",
-  "confidence": float (0.0-1.0),
+  "intent": "IGNORE" | "RECORD_TRANSACTION" | "TRANSFER_FUNDS" | "QUERY_STATUS" | "REVISION_REQUEST" | "CONVERSATIONAL_QUERY",
+  "confidence": 0.0-1.0,
   "category_scope": "OPERATIONAL" | "PROJECT" | "UNKNOWN",
   "extracted_data": {{
     "amount": int or null,
     "item_description": "string",
-    "clean_text": "normalized input for further processing",
-    "source_wallet": "detected wallet name if TRANSFER_FUNDS",
-    "destination_wallet": "detected destination if TRANSFER_FUNDS"
+    "clean_text": "normalized input",
+    "detected_project_name": "if found, else null",
+    "detected_category": "Gaji/Listrik/Air/etc if OPERATIONAL",
+    "source_wallet": "if TRANSFER_FUNDS",
+    "destination_wallet": "if TRANSFER_FUNDS"
   }},
+  "reasoning": "Brief explanation of classification decision",
   "conversational_response": "String (Only for CONVERSATIONAL_QUERY)"
 }}
+
+===========================================
+EXAMPLES (LEARN FROM THESE!)
+===========================================
+
+Example 1:
+Input: "Abis beli Iphone buat kantor 7jt"
+Output:
+{{
+  "should_respond": true,
+  "intent": "RECORD_TRANSACTION",
+  "confidence": 0.90,
+  "category_scope": "OPERATIONAL",
+  "extracted_data": {{
+    "amount": 7000000,
+    "item_description": "Beli Iphone untuk kantor",
+    "clean_text": "Beli Iphone buat kantor 7jt",
+    "detected_category": "Peralatan"
+  }},
+  "reasoning": "Preposition 'buat kantor' indicates office equipment → OPERATIONAL"
+}}
+
+Example 2:
+Input: "bot kamu marbot ya"
+Output:
+{{
+  "should_respond": false,
+  "intent": "IGNORE",
+  "reasoning": "Casual banter about bot, not a transaction or query"
+}}
+
+Example 3:
+Input: "Gaji tukang Wooftopia 2jt"
+Output:
+{{
+  "should_respond": true,
+  "intent": "RECORD_TRANSACTION",
+  "confidence": 0.95,
+  "category_scope": "PROJECT",
+  "extracted_data": {{
+    "amount": 2000000,
+    "item_description": "Gaji tukang",
+    "detected_project_name": "Wooftopia"
+  }},
+  "reasoning": "Role 'tukang' + project name 'Wooftopia' → PROJECT scope"
+}}
+
+Example 4:
+Input: "Gajian 5jt"
+Output:
+{{
+  "should_respond": true,
+  "intent": "RECORD_TRANSACTION",
+  "confidence": 0.45,
+  "category_scope": "UNKNOWN",
+  "extracted_data": {{
+    "amount": 5000000,
+    "item_description": "Gaji"
+  }},
+  "reasoning": "Insufficient context - could be office salary or project fee"
+}}
+
+Example 5:
+Input: "Ah masih canggung botnya"
+Output:
+{{
+  "should_respond": false,
+  "intent": "IGNORE",
+  "reasoning": "Comment about bot behavior, not financial transaction"
+}}
+
+===========================================
+REMEMBER:
+===========================================
+1. "buat kantor" / "untuk kantor" = OPERATIONAL
+2. "buat [Project Name]" = PROJECT
+3. Ignore casual mentions of "bot" in conversations
+4. Only respond to PAST tense transactions or direct queries
+5. High confidence → auto-classify, Low confidence → ask user
 """
 
         try:
@@ -270,11 +489,17 @@ OUTPUT FORMAT (JSON ONLY):
             result['should_respond'] = False
             result['intent'] = 'IGNORE'
         
+        # Rule 4: Casual bot mention = IGNORE
+        if is_casual_bot_mention(text):
+            logger.info(f"Safety override: Casual bot mention -> IGNORE")
+            result['should_respond'] = False
+            result['intent'] = 'IGNORE'
+
         return result
 
 
 def should_quick_filter(message: dict) -> str:
-    """Pre-AI filter to save tokens. IMPROVED v2.0."""
+    """Pre-AI filter to save tokens. IMPROVED v3.0."""
     text = message.get('text', '').lower()
     has_media = message.get('has_media', False)
     
@@ -293,11 +518,15 @@ def should_quick_filter(message: dict) -> str:
     if any(text.startswith(s) for s in ignore_starts):
         return "IGNORE"
     
-    # 4. PROCESS if has amount pattern (likely financial)
+    # 4. NEW: Ignore casual bot mentions
+    if is_casual_bot_mention(text):
+        return "IGNORE"
+    
+    # 5. PROCESS if has amount pattern (likely financial)
     if has_amount_pattern(text):
         return "PROCESS"
     
-    # 5. PROCESS if has media (likely receipt/nota)
+    # 6. PROCESS if has media (likely receipt/nota)
     if has_media:
         return "PROCESS"
         

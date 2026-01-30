@@ -60,11 +60,15 @@ from services.state_manager import (
     get_pending_key_from_message, clear_pending_message_ref,
     store_visual_buffer, get_visual_buffer,
     clear_visual_buffer, has_visual_buffer,
-    record_bot_interaction, store_last_bot_report
+    record_bot_interaction, store_last_bot_report,
+    # New Pending Confirmations
+    get_pending_confirmation, set_pending_confirmation,
+    clear_pending_confirmation, has_pending_confirmation
 )
 
-# Layer Integration - Enhanced V2 (Backward Compatible)
-from layer_integration_v2 import process_with_layers, USE_ENHANCED_LAYERS as USE_LAYERS
+# Layer Integration - Superseded by SmartHandler
+# from layer_integration_v2 import process_with_layers, USE_ENHANCED_LAYERS as USE_LAYERS
+USE_LAYERS = True # Enable SmartHandler logic by default
 
 # Utilities
 from wuzapi_helper import (
@@ -163,6 +167,11 @@ _pending_transactions = _state._pending_transactions
 
 # ===================== LOGIC CORE: SMART ROUTER v2.0 =====================
 # Enhanced with amount pattern detection and AI category_scope integration
+from handlers.smart_handler import SmartHandler
+import services.state_manager as state_manager_module
+
+# Initialize SmartHandler
+smart_handler = SmartHandler(state_manager_module)
 
 import re  # Ensure re is available for pattern matching
 
@@ -599,8 +608,43 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             return jsonify({'status': 'buffered'}), 200
         
         has_visual = has_visual_buffer(sender_number, chat_jid)
+
+        # ========================================
+        # STEP 0: CHECK PENDING CONFIRMATION (New Logic)
+        # ========================================
+        # ========================================
+        # STEP 0: CHECK PENDING CONFIRMATION (New Logic)
+        # ========================================
+        from handlers.pending_handler import handle_pending_response
+
+        pending_conf = get_pending_confirmation(sender_number, chat_jid)
+        if pending_conf:
+            # Check if handled by pending handler
+            result = handle_pending_response(
+                user_id=sender_number,
+                chat_id=chat_jid,
+                text=text,
+                pending_data=pending_conf,
+                sender_name=sender_name
+            )
+            
+            if result:
+                if result.get('response'):
+                    send_reply(result['response'])
+                
+                if result.get('completed'):
+                    # Flow finished (saved or cancelled)
+                    return jsonify({'status': 'handled_confirmation'}), 200
+                else:
+                    # Flow continues (asked next question)
+                    return jsonify({'status': 'pending_interaction'}), 200
+            
+            # If result is None, it means the input didn't match the expected options
+            # (e.g. user typed something random instead of '1' or '2')
+            # So we continue to normal processing (AI Layers)
+            pass
         
-        # 3. Check Pending (PRIORITY)
+        # 3. Check Pending (Standard/Legacy)
         sender_pkey = pending_key(sender_number, chat_jid)
         pending_pkey = sender_pkey
         if is_group and quoted_msg_id:
@@ -662,15 +706,30 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         else:
             # Smart Handler (AI Layer)
             if USE_LAYERS:
-                action, resp, intent, extra_data = process_with_layers(
-                    sender_number, message_id, text, sender_name, media_url,
-                    text if input_type == 'image' else None, is_group, chat_jid,
-                    quoted_msg_id, quoted_message_text, sender_jid, has_visual
+                # Use the initialized smart_handler instance
+                # It returns a dict with action, intent, normalized_text, etc.
+                smart_result = smart_handler.process(
+                    text=text,
+                    chat_jid=chat_jid,
+                    sender_number=sender_number,
+                    reply_message_id=quoted_msg_id,
+                    has_media=(input_type == 'image' or media_url is not None),
+                    sender_name=sender_name,
+                    quoted_message_text=quoted_message_text,
+                    has_visual=has_visual
                 )
                 
-                # Store category_scope for later routing
-                layer_category_scope = extra_data.get('category_scope', 'UNKNOWN')
+                action = smart_result.get('action', 'IGNORE')
+                resp = smart_result.get('response') # For REPLY
+                intent = smart_result.get('intent', 'UNKNOWN')
                 
+                # Store extra data
+                layer_category_scope = smart_result.get('category_scope', 'UNKNOWN')
+                if intent == "RECORD_TRANSACTION":
+                     # In case smart_handler cleaned the text (e.g. from extracted data)
+                     if smart_result.get('normalized_text'):
+                         text = smart_result.get('normalized_text')
+
                 if action == "IGNORE": return jsonify({'status': 'ignored'}), 200
                 if action == "REPLY": 
                     send_reply(resp)
@@ -679,12 +738,60 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     if intent == "QUERY_STATUS":
                         send_reply("🤔 Menganalisis...")
                         try:
+                            # Use the standardized search query from smart handler if available
+                            query_text = smart_result.get('layer_response', text)
                             ctx = format_data_for_ai(days=30)
-                            ans = query_data(resp, ctx)
+                            ans = query_data(query_text, ctx)
                             send_reply(ans.replace('*',''))
                             return jsonify({'status': 'queried'}), 200
                         except: pass
-                    if resp: text = resp
+                    
+                    # ========================================
+                    # STEP 2: HANDLE SPECIAL INTENTS
+                    # ========================================
+                    
+                    if intent == "TRANSFER_FUNDS":
+                        # Force logic for Transfer/Saldo logic
+                        if smart_result.get('layer_response'):
+                             text = smart_result.get('layer_response')
+                        
+                        layer_category_scope = "TRANSFER" 
+                        pass 
+
+                    if intent == "RECORD_TRANSACTION":
+                        # Logic continues to Step 8 (Extraction) with refined text/scope
+                        
+                        # PRE-EMPTIVE CONFIRMATION FOR AMBIGUOUS SCOPE
+                        # If AI is unsure (AMBIGUOUS) or UNKNOWN, ask user before extraction/saving
+                        if layer_category_scope in ['UNKNOWN', 'AMBIGUOUS']:
+                            # Extract temporarily to show context
+                            temp_txs = extract_financial_data(text, input_type, sender_name, [media_url] if media_url else None, text if input_type=='image' else None)
+                            
+                            if temp_txs:
+                                from utils.formatters import format_mention
+                                set_pending_confirmation(
+                                    user_id=sender_number,
+                                    chat_id=chat_jid,
+                                    data={
+                                        'type': 'category_scope',
+                                        'transactions': temp_txs,
+                                        'raw_text': text,
+                                        'original_message_id': message_id
+                                    }
+                                )
+                                
+                                mention = format_mention(sender_name, is_group)
+                                response = f"""{mention}🤔 Ini untuk Operational Kantor atau Project?
+
+1️⃣ Operational Kantor
+   (Gaji staff, listrik, wifi, ATK, dll)
+
+2️⃣ Project  
+   (Material, upah tukang, transport ke site)
+
+Balas 1 atau 2"""
+                                send_reply(response)
+                                return jsonify({'status': 'asking_scope'}), 200
             
             # Check visual link
             if input_type == 'text':
@@ -696,18 +803,25 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     
                     input_type = 'image'
                     clear_visual_buffer(sender_number, chat_jid)
-            
-            # Legacy Filter Check
-            if not USE_LAYERS:
-                should, clean = should_respond_in_group(text, is_group, media_url is not None, False, False)
-                if not should: return jsonify({'status': 'ignored'}), 200
-                text = clean or text
 
-        # 5. REVISION HANDLER
-        if quoted_msg_id and is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):
-            # ... (Revision logic omitted for brevity - standard implementation) ...
-            # Assume standard revision logic is here
-            pass
+        # 5. REVISION HANDLER (New)
+        if quoted_msg_id or is_command_match(text, Commands.UNDO, is_group) or is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):
+            from handlers.revision_handler import handle_revision_command, handle_undo_command
+            
+            revision_result = None
+            
+            # Check for standard commands
+            if is_command_match(text, Commands.UNDO, is_group):
+                 revision_result = handle_undo_command(sender_number, chat_jid)
+            
+            # Check for /revisi command or reply revision
+            elif quoted_msg_id or is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):
+                 revision_result = handle_revision_command(sender_number, chat_jid, text, quoted_msg_id)
+
+            if revision_result:
+                if revision_result.get('action') == 'REPLY':
+                    send_reply(revision_result.get('response'))
+                    return jsonify({'status': 'handled_revision'}), 200
 
         # 6. PENDING STATE MACHINE
         if has_pending:
@@ -804,6 +918,21 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     send_reply("❌ Dibatalkan.")
                     return jsonify({'status': 'cancelled'}), 200
 
+            # F. Undo Confirmation
+            if ptype == 'undo_confirmation':
+                if text.lower().strip() in ['1', 'ya', 'yes', 'hapus']:
+                    from handlers.revision_handler import process_undo_deletion
+                    
+                    result = process_undo_deletion(pending.get('transactions', []))
+                    
+                    _pending_transactions.pop(pending_pkey, None)
+                    send_reply(result.get('response'))
+                    return jsonify({'status': 'undo_completed'}), 200
+                else:
+                    _pending_transactions.pop(pending_pkey, None)
+                    send_reply("❌ Batal hapus.")
+                    return jsonify({'status': 'undo_cancelled'}), 200
+
         # 7. COMMANDS (PRIORITY - Execute BEFORE layer processing)
         # This ensures /start, /help, etc. work properly instead of triggering layers
         if is_command_match(text, Commands.START, is_group):
@@ -866,7 +995,14 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             }
             
             # Check for Needs Project (Manual override from AI)
-            if any(t.get('needs_project') for t in transactions):
+            if layer_category_scope == 'TRANSFER':
+                # Force "Saldo Umum" for transfers
+                for t in transactions:
+                    t['nama_projek'] = 'Saldo Umum'
+                    t['company'] = 'UMUM'
+                    t['needs_project'] = False
+            
+            elif any(t.get('needs_project') for t in transactions):
                 # Only if NOT operational
                 ctx = detect_transaction_context(text, transactions, layer_category_scope)
                 if ctx['mode'] == 'PROJECT':

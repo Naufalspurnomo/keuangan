@@ -258,10 +258,21 @@ def check_conversation_continuity(
     return result
 
 
+
+from utils.groq_analyzer import (
+    is_casual_bot_mention, 
+    is_command_to_human, 
+    is_likely_past_tense, 
+    is_likely_future_plan, 
+    has_amount_pattern,
+    detect_operational_keyword
+)
+
 def calculate_addressed_score(
     reply_context: Dict = None,
     mention_context: Dict = None,
     conversation_context: Dict = None,
+    text: str = "",
     has_media: bool = False,
     has_pending: bool = False,
     has_visual: bool = False
@@ -270,45 +281,75 @@ def calculate_addressed_score(
     Calculate overall "addressed to bot" score (0-100).
     
     Higher score = more likely the message is intended for bot.
-    
-    Args:
-        reply_context: Result from analyze_reply_context()
-        mention_context: Result from detect_mention()
-        conversation_context: Result from check_conversation_continuity()
-        has_media: Whether message has image/document
-        has_pending: Whether user has pending transaction
-        
-    Returns:
-        Score 0-100
+    UPDATED: Stricter rules for casual mentions and negative signals.
     """
     score = 0
+    text_lower = text.lower() if text else ""
     
-    # Reply context boost
-    if reply_context:
-        score += reply_context.get('confidence_boost', 0)
+    # --- HIGH CONFIDENCE (100 points) ---
     
-    # Mention boost
-    if mention_context:
-        score += mention_context.get('confidence_boost', 0)
+    # 1. Reply to bot
+    if reply_context and reply_context.get('is_reply_to_bot'):
+        return 100
+        
+    # 2. Explicit triggers
+    if any(trigger in text_lower for trigger in ['+catat', '+bot', '+input', '/catat', '/bot']):
+        return 100
+        
+    # 3. Mention / Command
+    if mention_context and mention_context.get('mentioned'):
+        # Check if this is casual mention
+        if is_casual_bot_mention(text):
+            return 10  # Very low score, likely ignore
+        else:
+            return 100 # Real command/mention
+
+    # --- MEDIUM CONFIDENCE (50-80 points) ---
     
-    # Conversation continuity boost
+    # 4. Conversation continuity
     if conversation_context:
         score += conversation_context.get('confidence_boost', 0)
     
-    # Media boost (images are often for bot)
-    if has_media:
-        score += BOOST_MEDIA
+    # 5. Has media (likely receipt/nota)
+    if has_media or has_visual:
+        score += 60
     
-    # Pending transaction boost (user is in flow with bot)
+    # 6. Has amount pattern (likely transaction)
+    if has_amount_pattern(text):
+        score += 50
+    
+    # 7. Has finance keywords
+    finance_words = ['beli', 'bayar', 'transfer', 'dp', 'gaji', 'lunas', 'bon']
+    if any(w in text_lower for w in finance_words):
+        score += 30
+    
+    # 8. Has operational keywords
+    if detect_operational_keyword(text):
+        score += 30
+    
+    # 9. Past tense indicators
+    if is_likely_past_tense(text):
+        score += 20
+        
+    # 10. Pending transaction boost
     if has_pending:
         score += 40
-        
-    # Visual buffer boost (recent photo uploaded)
-    if has_visual:
-        score += BOOST_VISUAL_BUFFER
     
-    # Cap at 100
-    return min(score, 100)
+    # --- NEGATIVE SIGNALS (PENALTIES) ---
+    
+    # 11. Future tense (likely not for bot)
+    if is_likely_future_plan(text):
+        score -= 50
+    
+    # 12. Casual bot mention
+    if is_casual_bot_mention(text):
+        score -= 80  # Strong negative
+    
+    # 13. Command to human
+    if is_command_to_human(text):
+        score -= 60
+    
+    return max(0, min(100, score))  # Clamp to 0-100
 
 
 def get_full_context(
@@ -337,6 +378,7 @@ def get_full_context(
         reply_context=reply_ctx,
         mention_context=mention_ctx,
         conversation_context=conversation_ctx,
+        text=text,
         has_media=has_media,
         has_pending=has_pending,
         has_visual=has_visual

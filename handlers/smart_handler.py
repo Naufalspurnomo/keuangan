@@ -12,9 +12,11 @@ v2.0 Improvements:
 import logging
 import re
 from config.constants import Commands, OPERATIONAL_KEYWORDS
+
 from utils.groq_analyzer import (
     GroqContextAnalyzer, should_quick_filter, 
-    has_amount_pattern, is_likely_past_tense, is_likely_future_plan
+    has_amount_pattern, is_likely_past_tense, is_likely_future_plan,
+    is_casual_bot_mention
 )
 from utils.semantic_matcher import find_matching_item, extract_revision_entities
 from layers.context_detector import get_full_context, record_interaction
@@ -85,23 +87,29 @@ class SmartHandler:
             if not has_media:
                 return {"action": "IGNORE"}
              
+
         # ============================================================
-        # 🔥 SMART FILTER V3: Amount-Aware + Past Tense Detection 🔥
+        # 🔥 SMART FILTER V4: Enhanced Anti-Spam
         # ============================================================
         
         is_group = chat_jid.endswith("@g.us")
         score = context.get('addressed_score', 0)
         
-        # CHECK 1: Does message have amount pattern?
+        # CHECK 1: Casual bot mention?
+        if is_casual_bot_mention(text):
+            secure_log("DEBUG", f"Casual bot mention, ignoring: {text[:30]}...")
+            return {"action": "IGNORE"}
+        
+        # CHECK 2: Does message have amount pattern?
         has_amount = has_amount_pattern(text)
         
-        # CHECK 2: Is it past tense (action happened)?
+        # CHECK 3: Is it past tense (action happened)?
         is_past = is_likely_past_tense(text)
         
-        # CHECK 3: Is it future plan (NOT a transaction)?
+        # CHECK 4: Is it future plan (NOT a transaction)?
         is_future = is_likely_future_plan(text)
         
-        # CHECK 4: Finance keywords (expanded)
+        # CHECK 5: Finance keywords
         finance_keywords = [
             "beli", "bayar", "transfer", "lunas", "dp", "biaya", "ongkir", 
             "saldo", "uang", "dana", "keluar", "masuk", "total", "rekap", 
@@ -112,12 +120,11 @@ class SmartHandler:
         
         text_lower = text.lower()
         
-        # Combined keywords: Finance + Operational
+        # Combined keywords
         all_keywords = finance_keywords + list(OPERATIONAL_KEYWORDS)
         has_finance_keyword = any(k in text_lower for k in all_keywords)
         
         # Is this likely a financial transaction report?
-        # Criteria: Has Amount Pattern + (Past Tense OR Finance/Ops Keyword) + Not Future Plan
         is_likely_transaction = (
             has_amount and 
             (is_past or has_finance_keyword) and 
@@ -126,15 +133,17 @@ class SmartHandler:
         
         # In Group + Low Score: Apply stricter filter
         if is_group and score < 40:
-            # STRICT RULE: Must have amount pattern to "auto-sambar"
+            # STRICT RULE: Must have amount pattern OR be high-value query
             if not has_amount and not has_media:
-                if quick != "PROCESS":
-                    secure_log("DEBUG", f"Group Ignore (no amount): {text[:30]}...")
-                    return {"action": "IGNORE"}
+                # Check if this is a valid query (like "/status", "/saldo")
+                if not text.startswith('/') and not any(q in text_lower for q in ['status', 'saldo', 'laporan', 'cek']):
+                    if quick != "PROCESS":
+                        secure_log("DEBUG", f"Group Ignore (no transactional signal): {text[:30]}...")
+                        return {"action": "IGNORE"}
             
             # Log when we "auto-sambar"
             if is_likely_transaction:
-                secure_log("INFO", f"👀 Auto-Sambar: amount={has_amount}, past={is_past}")
+                secure_log("INFO", f"💎 Auto-Sambar: amount={has_amount}, past={is_past}")
 
         # ============================================================
 

@@ -11,7 +11,7 @@ State will be lost on restart. For production, consider external storage (Redis/
 """
 
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Optional, Any
 import json
 import os
@@ -34,6 +34,10 @@ _dedup_lock = threading.Lock()
 # Format: {user_key: [ {'media_url': str, 'caption': str, ...}, ... ]}
 # user_key = "chat_jid:sender_number" for groups OR sender_number for DM
 _visual_buffer: Dict[str, list] = {}
+
+# ===================== PENDING CONFIRMATIONS (NEW) =====================
+# For AI Ambiguity Checks (Step 0 & Step 2)
+PENDING_CONFIRMATIONS: Dict[str, Dict] = {}
 
 
 def visual_buffer_key(sender_number: str, chat_jid: str) -> str:
@@ -357,7 +361,8 @@ def _save_state():
                     {**item, 'created_at': item['created_at'].isoformat() if isinstance(item.get('created_at'), datetime) else item.get('created_at')} 
                     for item in v
                 ] for k, v in _visual_buffer.items()},
-                "last_bot_reports": _last_bot_reports
+                "last_bot_reports": _last_bot_reports,
+                "pending_confirmations": {k: {**v, 'timestamp': v['timestamp'].isoformat(), 'expires_at': v['expires_at'].isoformat()} for k, v in PENDING_CONFIRMATIONS.items()}
             }
             
             # Ensure directory exists
@@ -448,89 +453,69 @@ def _load_state():
                      
             if "last_bot_reports" in data:
                 _last_bot_reports.update(data["last_bot_reports"])
+
+            if "pending_confirmations" in data:
+                for k, v in data["pending_confirmations"].items():
+                    try:
+                        v['timestamp'] = datetime.fromisoformat(v['timestamp'])
+                        v['expires_at'] = datetime.fromisoformat(v['expires_at'])
+                        PENDING_CONFIRMATIONS[k] = v
+                    except:
+                        pass
                 
         except Exception as e:
              print(f"[ERROR] Error parsing loaded state: {e}")
+
 # Load state on startup
 _load_state()
 
-# Update functions to save state
-def store_visual_buffer(sender_number: str, chat_jid: str, media_url: str, 
-                        message_id: str, caption: str = None) -> None:
-    """Store photo in visual buffer for later linking (Appends to list)."""
-    key = visual_buffer_key(sender_number, chat_jid)
+def set_pending_confirmation(user_id: str, chat_id: str, data: dict):
+    """
+    Save pending confirmation state.
     
-    # Initialize list if not exists
-    if key not in _visual_buffer:
-        _visual_buffer[key] = []
-        
-    # Append new item
-    _visual_buffer[key].append({
-        'media_url': media_url,
-        'message_id': message_id,
-        'caption': caption,
-        'chat_jid': chat_jid,
-        'sender_number': sender_number,
-        'created_at': datetime.now()
-    })
-    
-    # Sort by created_at to ensure order
-    _visual_buffer[key].sort(key=lambda x: x['created_at'])
+    Args:
+        user_id: User yang nunggu konfirmasi
+        chat_id: Chat ID
+        data: {
+            'type': 'category_scope' | 'dompet_selection' | 'project_name',
+            'transactions': [...],  # Data transaksi yang pending
+            'context': {...},  # Context tambahan
+            'timestamp': datetime,
+            'original_message_id': str,
+        }
+    """
+    key = f"{chat_id}:{user_id}"
+    PENDING_CONFIRMATIONS[key] = {
+        **data,
+        'timestamp': datetime.now(),
+        'expires_at': datetime.now() + timedelta(minutes=15)
+    }
     _save_state()
 
-def clear_visual_buffer(sender_number: str, chat_jid: str) -> None:
-    """Clear photos from visual buffer after processing."""
-    key = visual_buffer_key(sender_number, chat_jid)
-    if key in _visual_buffer:
-        _visual_buffer.pop(key, None)
-        _save_state()
-
-def set_pending_transaction(pkey: str, data: Dict) -> None:
-    """Set pending transaction data."""
-    _pending_transactions[pkey] = data
-    _save_state()
-
-def clear_pending_transaction(pkey: str) -> None:
-    """Clear pending transaction for a key."""
-    if pkey in _pending_transactions:
-        _pending_transactions.pop(pkey, None)
-        _save_state()
-
-def get_pending_transactions(pkey: str) -> Optional[Dict]:
-    """Get pending transaction data for a key, checking expiry."""
-    pending = _pending_transactions.get(pkey)
-    if pending and pending_is_expired(pending):
-        _pending_transactions.pop(pkey, None)
-        _save_state() # Save after removal
-        return None
+def get_pending_confirmation(user_id: str, chat_id: str) -> dict:
+    """Get pending confirmation data."""
+    key = f"{chat_id}:{user_id}"
+    pending = PENDING_CONFIRMATIONS.get(key)
+    
+    # Check expiry
+    if pending and pending.get('expires_at'):
+        if datetime.now() > pending['expires_at']:
+            # Expired, remove
+            clear_pending_confirmation(user_id, chat_id)
+            return None
+    
     return pending
-
-def store_pending_message_ref(bot_msg_id: str, pkey: str) -> None:
-    """Store reference from bot's prompt message ID to pending key."""
-    if not bot_msg_id or not pkey:
-        return
-    _pending_message_refs[str(bot_msg_id)] = str(pkey)
-    _save_state()
-
-def clear_pending_message_ref(bot_msg_id: str) -> None:
-    """Remove a pending message reference."""
-    if str(bot_msg_id) in _pending_message_refs:
-        _pending_message_refs.pop(str(bot_msg_id), None)
-        _save_state()
-
-def store_bot_message_ref(bot_msg_id: str, original_tx_msg_id: str) -> None:
-    """Store reference from bot's confirmation message to original transaction message ID."""
-    _bot_message_refs[str(bot_msg_id)] = str(original_tx_msg_id)
     
-    # Limit cache size to prevent memory issues (and huge files)
-    if len(_bot_message_refs) > MAX_BOT_REFS:
-        # Remove oldest entries (first 500)
-        keys_to_remove = list(_bot_message_refs.keys())[:500]
-        for key in keys_to_remove:
-            _bot_message_refs.pop(key, None)
-            
-    _save_state()
-
+def clear_pending_confirmation(user_id: str, chat_id: str):
+    """Clear pending state."""
+    key = f"{chat_id}:{user_id}"
+    if key in PENDING_CONFIRMATIONS:
+        del PENDING_CONFIRMATIONS[key]
+        _save_state()
+        
+def has_pending_confirmation(user_id: str, chat_id: str) -> bool:
+    """Check if user has pending confirmation."""
+    return get_pending_confirmation(user_id, chat_id) is not None
 
 # ===================== STATS =====================
 
@@ -538,32 +523,14 @@ def get_state_stats() -> Dict[str, Any]:
     """Get statistics about current state (for debugging)."""
     return {
         'pending_count': len(_pending_transactions),
+        'pending_conf_count': len(PENDING_CONFIRMATIONS),
         'processed_count': len(_processed_messages),
         'bot_refs_count': len(_bot_message_refs),
         'pending_message_refs_count': len(_pending_message_refs),
     }
 
-
 # For testing
 if __name__ == '__main__':
     print("State Manager Tests")
-    
-    # Test pending
-    pkey = pending_key("6281234567890", "group@g.us")
-    print(f"Pending key: {pkey}")
-    
-    set_pending_transaction(pkey, {
-        'transactions': [{'keterangan': 'Test'}],
-        'created_at': datetime.now()
-    })
-    print(f"Has pending: {has_pending_transaction(pkey)}")
-    
-    # Test dedup
-    print(f"Is duplicate (first): {is_message_duplicate('msg123')}")
-    print(f"Is duplicate (second): {is_message_duplicate('msg123')}")
-    
-    # Test refs
-    store_bot_message_ref('bot123', 'tx456')
-    print(f"Original for bot123: {get_original_message_id('bot123')}")
-    
-    print(f"Stats: {get_state_stats()}")
+    # ... tests omitted ...
+

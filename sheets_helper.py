@@ -1637,6 +1637,33 @@ def find_all_transactions_by_message_id(message_id: str) -> List[Dict]:
         return []
 
 
+
+def delete_transaction_row(dompet_sheet: str, row: int) -> bool:
+    """
+    Delete a transaction row from a specific sheet.
+    
+    Args:
+        dompet_sheet: Name of the dompet sheet
+        row: Row number (1-based)
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        if dompet_sheet == OPERASIONAL_SHEET_NAME:
+            sheet = get_or_create_operational_sheet()
+        else:
+            sheet = get_dompet_sheet(dompet_sheet)
+        
+        sheet.delete_rows(row)
+        secure_log("INFO", f"Transaction deleted: {dompet_sheet} row {row}")
+        return True
+        
+    except Exception as e:
+        secure_log("ERROR", f"Delete transaction error: {type(e).__name__} - {str(e)}")
+        return False
+
+
 if __name__ == '__main__':
     print("Testing Google Sheets v2.1...\n")
     
