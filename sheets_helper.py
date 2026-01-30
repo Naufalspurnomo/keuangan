@@ -1339,7 +1339,7 @@ def format_report_message(report: Dict) -> str:
     return '\n'.join(lines)
 
 
-def get_wallet_balances() -> str:
+def get_wallet_balances() -> Dict:
     """
     Calculate REAL wallet balances using Virtual Balance formula:
     
@@ -1408,30 +1408,39 @@ def get_wallet_balances() -> str:
     except Exception as e:
         secure_log("ERROR", f"Error parsing operational sheet: {e}")
     
-    # 3. Calculate real balance and format message
-    lines = ["💰 *SALDO DOMPET (Virtual Balance)*", "=" * 30, ""]
+    return balances
+
+
+def format_dashboard_message(summary: Dict) -> str:
+    """Format dashboard summary as chat message."""
+    lines = ["� *DASHBOARD KEUANGAN*", "=" * 25, ""]
     
-    total_all = 0
-    for dompet in DOMPET_SHEETS:
-        b = balances.get(dompet, {'internal_balance': 0, 'operational_debit': 0})
-        real_balance = b['internal_balance'] - b['operational_debit']
-        total_all += real_balance
-        
-        short_name = get_dompet_short_name(dompet)
-        icon = "🟢" if real_balance >= 0 else "🔴"
-        
-        lines.append(f"{icon} *{short_name}*: Rp {real_balance:,}".replace(',', '.'))
-        
-        # Show breakdown if there are operational debits
-        if b['operational_debit'] > 0:
-            lines.append(f"   └─ Internal: Rp {b['internal_balance']:,} | Ops: -Rp {b['operational_debit']:,}".replace(',', '.'))
-    
+    # Global Summary
+    lines.append(f"💰 Income: Rp {summary['total_income']:,}".replace(',', '.'))
+    lines.append(f"💸 Expense: Rp {summary['total_expense']:,}".replace(',', '.'))
+    lines.append(f"📈 Balance: Rp {summary['balance']:,}".replace(',', '.'))
+    lines.append(f"📝 Total Tx: {summary['total_transactions']}")
     lines.append("")
-    lines.append(f"📊 *Total Semua*: Rp {total_all:,}".replace(',', '.'))
-    lines.append("")
-    lines.append("_Ketik /laporan untuk detail projek_")
     
-    return '\n'.join(lines)
+    # Validasi Dompet (Real vs Virtual)
+    lines.append("*Status Dompet (Virtual vs Real)*:")
+    for dompet, stats in summary['dompet_summary'].items():
+        short = get_dompet_short_name(dompet)
+        bal = stats['bal']
+        icon = "🟢" if bal >= 0 else "🔴"
+        lines.append(f"{icon} {short}: Rp {bal:,}".replace(',', '.'))
+        
+    lines.append("")
+    lines.append("*Status Projects (Est)*:")
+    for company, stats in summary['company_summary'].items():
+        bal = stats['bal']
+        icon = "📈" if bal >= 0 else "📉"
+        lines.append(f"{icon} {company}: Rp {bal:,}".replace(',', '.'))
+        
+    lines.append("")
+    lines.append(f"_Last Update: {datetime.now().strftime('%H:%M')}_")
+    
+    return "\n".join(lines)
 
 
 def _parse_amount(value) -> int:
@@ -1472,6 +1481,10 @@ def invalidate_dashboard_cache():
     _dashboard_cache = None
     secure_log("INFO", "Dashboard cache invalidated")
 
+
+def get_dashboard_summary():
+    """Get dashboard summary with caching."""
+    global _dashboard_cache, _dashboard_last_update
 
     try:
         current_time = datetime.now()

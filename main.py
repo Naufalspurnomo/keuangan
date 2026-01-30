@@ -31,7 +31,7 @@ from ai_helper import extract_financial_data, query_data, RateLimitException
 from sheets_helper import (
     append_transactions, append_transaction, test_connection, 
     generate_report, format_report_message,
-    get_all_categories, get_summary,
+    get_all_categories,
     format_data_for_ai, check_budget_alert,
     get_company_sheets, COMPANY_SHEETS,
     format_dashboard_message, get_dashboard_summary,
