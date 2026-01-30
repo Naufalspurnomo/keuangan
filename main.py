@@ -617,6 +617,42 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         # 4. Filter AI Trigger
         text = sanitize_input(text or '')
         
+        # ========== PRIORITY: COMMANDS FIRST (before layer processing) ==========
+        # Must check commands BEFORE layers to prevent IGNORE from blocking them
+        if text.strip().startswith('/'):
+            if is_command_match(text, Commands.START, is_group):
+                send_reply(START_MESSAGE.replace('*', ''))
+                return jsonify({'status': 'command_start'}), 200
+            
+            if is_command_match(text, Commands.HELP, is_group):
+                send_reply(HELP_MESSAGE.replace('*', ''))
+                return jsonify({'status': 'command_help'}), 200
+            
+            if is_command_match(text, Commands.SALDO, is_group):
+                try:
+                    balances = get_wallet_balances()
+                    msg = "💰 SALDO DOMPET\n\n"
+                    for dompet, info in balances.items():
+                        msg += f"📊 {dompet}\n"
+                        msg += f"   Masuk: Rp {info['pemasukan']:,}\n".replace(',', '.')
+                        msg += f"   Keluar: Rp {info['pengeluaran']:,}\n".replace(',', '.')
+                        msg += f"   Saldo: Rp {info['saldo']:,}\n\n".replace(',', '.')
+                    send_reply(msg)
+                    return jsonify({'status': 'command_saldo'}), 200
+                except Exception as e:
+                    send_reply(f"❌ Error: {str(e)}")
+                    return jsonify({'status': 'error'}), 200
+            
+            if is_command_match(text, Commands.STATUS, is_group):
+                try:
+                    dashboard = get_dashboard_summary()
+                    msg = format_dashboard_message(dashboard)
+                    send_reply(msg.replace('*', ''))
+                    return jsonify({'status': 'command_status'}), 200
+                except Exception as e:
+                    send_reply(f"❌ Error: {str(e)}")
+                    return jsonify({'status': 'error'}), 200
+        
         # Initialize category scope (will be updated by AI layer if used)
         layer_category_scope = 'UNKNOWN'
         
