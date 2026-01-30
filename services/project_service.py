@@ -10,27 +10,64 @@ _project_cache = {
     'ttl': 300
 }
 
+from config.wallets import DOMPET_SHEETS
+from config.constants import SPLIT_LAYOUT_DATA_START
+
 def get_existing_projects(force_refresh=False):
-    """Ambil list projek unik dari Sheet."""
+    """
+    Ambil list projek unik dari 3 Sheet Dompet (Split Layout).
+    Source: Column Index 5 (E) inside Pemasukan/Pengeluaran blocks if needed?
+    Actually SPLIT_PEMASUKAN['PROJECT'] = 5, SPLIT_PENGELUARAN['PROJECT'] = 14 (N).
+    We should scan BOTH? Or just assume projects are mentioned in Pengeluaran mostly?
+    Let's scan Pengeluaran (Col N / 14) as mostly costs are project related.
+    """
     global _project_cache
     now = time.time()
     
     if force_refresh or (now - _project_cache['last_updated'] > _project_cache['ttl']):
         try:
-            sh = get_sheet("Data_Agregat") 
-            if sh:
-                # Ambil kolom nama projek
-                raw_values = sh.col_values(COL_NAMA_PROJEK)[1:] 
+            all_projects = set()
+            
+            # Iterate all real sheets
+            for sheet_name in DOMPET_SHEETS:
+                sh = get_sheet(sheet_name)
+                if not sh: continue
                 
-                clean_projects = set()
-                for val in raw_values:
-                    v = val.strip()
-                    # Filter nama yang terlalu pendek (misal "-" atau "A")
-                    if v and len(v) > 2 and v.lower() not in KNOWN_COMPANY_NAMES:
-                        clean_projects.add(v)
+                # Get Column N (Project in Pengeluaran) - Index 14
+                # And maybe Column E (Project in Pemasukan) - Index 5
                 
-                _project_cache['names'] = clean_projects
-                _project_cache['last_updated'] = now
+                # Optimization: Read all values and filter in memory
+                try:
+                    # Get values starting from Row 9
+                    # Assuming max 2000 rows to be safe/fast
+                    # We grab Col E and Col N
+                    # Col E = 5, Col N = 14
+                    
+                    # Reading Col N (Pengeluaran Project)
+                    col_n = sh.col_values(14)[SPLIT_LAYOUT_DATA_START-1:]
+                    for p in col_n:
+                        if p.strip(): all_projects.add(p.strip())
+                        
+                    # Reading Col E (Pemasukan Project)
+                    col_e = sh.col_values(5)[SPLIT_LAYOUT_DATA_START-1:]
+                    for p in col_e:
+                        if p.strip(): all_projects.add(p.strip())
+
+                except Exception as ex:
+                    logging.warning(f"Error reading projects from {sheet_name}: {ex}")
+                    continue
+
+            # Clean and Filter
+            clean_projects = set()
+            for v in all_projects:
+                v_clean = v.strip()
+                if len(v_clean) > 2 and v_clean.lower() not in KNOWN_COMPANY_NAMES:
+                    clean_projects.add(v_clean)
+            
+            _project_cache['names'] = clean_projects
+            _project_cache['last_updated'] = now
+            logging.info(f"[ProjectService] Loaded {len(clean_projects)} projects from Sheets")
+            
         except Exception as e:
             logging.error(f"[ProjectService] Failed: {e}")
             

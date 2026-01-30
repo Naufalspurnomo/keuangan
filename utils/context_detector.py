@@ -175,6 +175,8 @@ OPERATIONAL_PREPOSITIONS = [
     r"(di|untuk|buat) kantor",
     r"(di|untuk) office",
     r"keperluan kantor",
+    r" kantor$",  # "..., kantor" at end of sentence
+    r"^kantor ",  # "kantor ..." at start
 ]
 
 

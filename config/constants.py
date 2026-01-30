@@ -122,15 +122,11 @@ OPERATIONAL_LOCATIONS = ['Surabaya', 'Bali']
 # Daftar nama perusahaan/dompet yang sudah pasti (Hardcoded for efficiency)
 # Digunakan untuk mencegah AI menganggap nama ini sebagai "Nama Projek"
 KNOWN_COMPANY_NAMES = {
-    # Companies
-    "holla", "hojja", "holja",
-    "texturin", "texturin-bali", "texturin bali",
-    "texturin-surabaya", "texturin surabaya", "texturin sby",
-    "kantor", "umum",
-    
-    # Wallets (Agar "Isi Dompet Evan" tidak dianggap Projek "Dompet Evan")
-    "dompet evan", "dompet holja", "dompet holla",
-    "dompet texturin", "dompet texturin sby"
+    # Real Wallets/Sheets (User defined)
+    "tx bali", "087", "tx bali (087)", 
+    "cv hb", "101", "cv hb (101)",
+    "tx sby", "216", "tx sby (216)", "texturin surabaya",
+    "kantor", "umum"
 }
 
 # Daftar kata yang DILARANG menjadi Nama Projek

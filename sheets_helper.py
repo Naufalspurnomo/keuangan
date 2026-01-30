@@ -1460,106 +1460,80 @@ def invalidate_dashboard_cache():
     secure_log("INFO", "Dashboard cache invalidated")
 
 
-def get_dashboard_summary() -> Dict:
-    """
-    Get cached dashboard data or calculate new summary.
-    Aggregates data by Wallet (Dompet) and Company.
-    """
-    global _dashboard_cache, _dashboard_last_update
-    
-    current_time = time.time()
-    
-    # Return cache if valid
-    if _dashboard_cache and (current_time - _dashboard_last_update) < DASHBOARD_CACHE_TTL:
-        secure_log("INFO", "Using cached dashboard")
-        return _dashboard_cache
-    
-    secure_log("INFO", "Calculating fresh dashboard summary...")
-    
     try:
-        # Aggregators
+        current_time = datetime.now()
+        
+        # Cache TTL check (e.g. 5 minutes)
+        if _dashboard_cache and _dashboard_last_update:
+            if (current_time - _dashboard_last_update).total_seconds() < 300:
+                return _dashboard_cache
+        
         total_income = 0
         total_expense = 0
         total_transactions = 0
         
-        # Breakdown
-        dompet_summary = {}     # {dompet_name: {'inc': 0, 'exp': 0, 'bal': 0}}
-        company_summary = {}    # {company_name: {'inc': 0, 'exp': 0, 'bal': 0, 'count': 0}}
-        companies_found = set()
-        
+        dompet_summary = {}
+        company_summary = {}
+
+        # Iterate 3 Split-Layout Wallets
         for dompet in DOMPET_SHEETS:
+            dompet_summary[dompet] = {'inc': 0, 'exp': 0, 'bal': 0}
+            
             try:
-                # Initialize dompet stats
-                dompet_summary[dompet] = {'inc': 0, 'exp': 0, 'bal': 0}
-                
                 sheet = get_dompet_sheet(dompet)
-                all_values = sheet.get_all_values()
                 
-                if len(all_values) < 2:
-                    continue
+                # --- READ PEMASUKAN BLOCK (Left) ---
+                # Col D (4) = Amount, Col C (3) = Date, Col E (5) = Project
+                inc_vals = sheet.col_values(SPLIT_PEMASUKAN['JUMLAH'])
                 
-                for row in all_values[1:]:  # Skip header
-                    if len(row) < 6:  # Minimal columns
-                        continue
-                    
-                    try:
-                        # Parse Fields (0-indexed)
-                        # COL_COMPANY=3 -> idx 2
-                        # COL_JUMLAH=5 -> idx 4
-                        # COL_TIPE=6 -> idx 5
-                        
-                        company = row[2].strip()
-                        if not company: company = "Unknown"
-                        
-                        raw_amount = str(row[4])
-                        amount_clean = raw_amount.replace(',', '').replace('Rp', '').replace('IDR', '').strip()
-                        if not amount_clean:
-                            continue
-                        
-                        amount = int(float(amount_clean))
-                        tipe = row[5].strip().lower()
-                        
-                        companies_found.add(company)
-                        if company not in company_summary:
-                            company_summary[company] = {'inc': 0, 'exp': 0, 'bal': 0, 'count': 0}
-                        
-                        # Fix: Include 'pengeluaran'/'pemasukan' keywords
-                        is_expense = 'pengeluaran' in tipe or 'keluar' in tipe or 'withdraw' in tipe
-                        is_income = 'pemasukan' in tipe or 'masuk' in tipe or 'deposit' in tipe
-                        
+                # We assume if there is an amount, it's a valid transaction
+                for val in inc_vals[SPLIT_LAYOUT_DATA_START-1:]:
+                    amt = _parse_amount(val)
+                    if amt > 0:
+                        total_income += amt
+                        dompet_summary[dompet]['inc'] += amt
                         total_transactions += 1
-                        company_summary[company]['count'] += 1
                         
-                        if is_expense:
-                            total_expense += amount
-                            dompet_summary[dompet]['exp'] += amount
-                            company_summary[company]['exp'] += amount
-                        elif is_income:
-                            total_income += amount
-                            dompet_summary[dompet]['inc'] += amount
-                            company_summary[company]['inc'] += amount
-                            
-                    except (ValueError, IndexError):
-                        continue
+                        # In new layout, map to Wallet Name
+                        c_name = get_dompet_short_name(dompet) 
+                        if c_name not in company_summary:
+                            company_summary[c_name] = {'inc': 0, 'exp': 0, 'bal': 0}
+                        company_summary[c_name]['inc'] += amt
+
+                # --- READ PENGELUARAN BLOCK (Right) ---
+                # Col M (13) = Amount, Col N (14) = Project
+                exp_vals = sheet.col_values(SPLIT_PENGELUARAN['JUMLAH'])
                 
-                # Calc balances
+                for val in exp_vals[SPLIT_LAYOUT_DATA_START-1:]:
+                    amt = _parse_amount(val)
+                    if amt > 0:
+                        total_expense += amt
+                        dompet_summary[dompet]['exp'] += amt
+                        total_transactions += 1
+                        
+                        c_name = get_dompet_short_name(dompet)
+                        if c_name not in company_summary:
+                            company_summary[c_name] = {'inc': 0, 'exp': 0, 'bal': 0}
+                        company_summary[c_name]['exp'] += amt
+
+                # Calc Balance
                 dompet_summary[dompet]['bal'] = dompet_summary[dompet]['inc'] - dompet_summary[dompet]['exp']
                 
             except Exception as e:
-                secure_log("ERROR", f"Error processing {dompet}: {str(e)}")
+                secure_log("ERROR", f"Dashboard error {dompet}: {e}")
                 continue
-        
-        # Calc company balances
+
+        # Calc Company Balances
         for c in company_summary:
             company_summary[c]['bal'] = company_summary[c]['inc'] - company_summary[c]['exp']
-        
+
         # Update Cache
         _dashboard_cache = {
             'total_income': total_income,
             'total_expense': total_expense,
             'balance': total_income - total_expense,
             'total_transactions': total_transactions,
-            'company_count': len(companies_found),
+            'company_count': len(company_summary),
             'dompet_summary': dompet_summary,
             'company_summary': company_summary
         }

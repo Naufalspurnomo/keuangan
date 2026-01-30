@@ -28,34 +28,167 @@ DOMPET_SHORT_NAMES = {
 # Aliases: user input -> canonical sheet name
 # Lowercase for matching
 DOMPET_ALIASES = {
-    # CV HB (101)
+    # ==========================================
+    # CV HB (101) - Holja/Holla Variants
+    # ==========================================
+    # Standard names
     "cv hb": "CV HB (101)",
     "cvhb": "CV HB (101)",
-    "101": "CV HB (101)",
-    "holja": "CV HB (101)",
-    "holla": "CV HB (101)",
-    "dompet holja": "CV HB (101)",
-    "dompet holla": "CV HB (101)",
+    "cv-hb": "CV HB (101)",
+    "cv.hb": "CV HB (101)",
+    "cv hb 101": "CV HB (101)",
     
-    # TX SBY (216)
+    # Rekening number
+    "101": "CV HB (101)",
+    "rek 101": "CV HB (101)",
+    "rekening 101": "CV HB (101)",
+    "no 101": "CV HB (101)",
+    
+    # Holja variants (original spelling)
+    "holja": "CV HB (101)",
+    "hollja": "CV HB (101)",
+    "hojja": "CV HB (101)",  # Common typo
+    "holjawall": "CV HB (101)",
+    "dompet holja": "CV HB (101)",
+    "dompet holjawall": "CV HB (101)",
+    
+    # Holla variants (alternative spelling)
+    "holla": "CV HB (101)",
+    "hollawall": "CV HB (101)",
+    "dompet holla": "CV HB (101)",
+    "dompet hollawall": "CV HB (101)",
+    
+    # Casual mentions
+    "hb": "CV HB (101)",
+    "cv": "CV HB (101)",
+    "dompet cv": "CV HB (101)",
+    "dompet hb": "CV HB (101)",
+    
+    # With spaces/typos
+    "hol ja": "CV HB (101)",
+    "hol la": "CV HB (101)",
+    "ho lja": "CV HB (101)",
+    
+    # ==========================================
+    # TX SBY (216) - Surabaya Variants
+    # ==========================================
+    # Standard names
     "tx sby": "TX SBY(216)",
     "txsby": "TX SBY(216)",
+    "tx-sby": "TX SBY(216)",
+    "tx.sby": "TX SBY(216)",
+    "tx sby 216": "TX SBY(216)",
+    
+    # Rekening number
     "216": "TX SBY(216)",
+    "rek 216": "TX SBY(216)",
+    "rekening 216": "TX SBY(216)",
+    "no 216": "TX SBY(216)",
+    
+    # Texturin variants
+    "texturin": "TX SBY(216)",  # Default to SBY when ambiguous
     "texturin sby": "TX SBY(216)",
     "texturin surabaya": "TX SBY(216)",
+    "dompet texturin": "TX SBY(216)",
     "dompet texturin sby": "TX SBY(216)",
+    "dompet texturin surabaya": "TX SBY(216)",
+    
+    # Location variants
     "surabaya": "TX SBY(216)",
     "sby": "TX SBY(216)",
+    "suraba": "TX SBY(216)",  # Typo
+    "surbaya": "TX SBY(216)",  # Typo
+    "dompet surabaya": "TX SBY(216)",
+    "dompet sby": "TX SBY(216)",
     
-    # TX BALI (087)
+    # Casual mentions
+    "tx": "TX SBY(216)",  # When only "tx" mentioned, default to SBY (more common)
+    "dompet tx": "TX SBY(216)",
+    
+    # With spaces/typos
+    "tx s by": "TX SBY(216)",
+    "tx sb y": "TX SBY(216)",
+    
+    # ==========================================
+    # TX BALI (087) - Bali Variants
+    # ==========================================
+    # Standard names
     "tx bali": "TX BALI(087)",
-    "txbali": "TX BALI(087)", 
+    "txbali": "TX BALI(087)",
+    "tx-bali": "TX BALI(087)",
+    "tx.bali": "TX BALI(087)",
+    "tx bali 087": "TX BALI(087)",
+    
+    # Rekening number
     "087": "TX BALI(087)",
+    "rek 087": "TX BALI(087)",
+    "rekening 087": "TX BALI(087)",
+    "no 087": "TX BALI(087)",
+    "87": "TX BALI(087)",  # Without leading zero
+    
+    # Texturin Bali variants
     "texturin bali": "TX BALI(087)",
-    "dompet bali": "TX BALI(087)",
-    "dompet evan": "TX BALI(087)",
-    "evan": "TX BALI(087)",
+    "dompet texturin bali": "TX BALI(087)",
+    
+    # Location variants
     "bali": "TX BALI(087)",
+    "denpasar": "TX BALI(087)",
+    "dompet bali": "TX BALI(087)",
+    
+    # Person-based (Evan handles Bali)
+    "evan": "TX BALI(087)",
+    "dompet evan": "TX BALI(087)",
+    "evan punya": "TX BALI(087)",
+    "punya evan": "TX BALI(087)",
+    
+    # Casual mentions
+    "bali aja": "TX BALI(087)",
+    "ke bali": "TX BALI(087)",
+    
+    # ==========================================
+    # Common Typos & Abbreviations
+    # ==========================================
+    # Number typos
+    "1o1": "CV HB (101)",  # o instead of 0
+    "1O1": "CV HB (101)",
+    "21e": "TX SBY(216)",  # e instead of 6
+    "o87": "TX BALI(087)",  # o instead of 0
+    "O87": "TX BALI(087)",
+    
+    # Indonesian spelling variants
+    "hojah": "CV HB (101)",
+    "hollah": "CV HB (101)",
+    "texturein": "TX SBY(216)",  # Common typo
+    "textureen": "TX SBY(216)",
+    
+    # Shortened versions
+    "sb": "TX SBY(216)",  # Very casual
+    "bl": "TX BALI(087)",  # Very casual
+    
+    # ==========================================
+    # SPECIAL: Company Selection (1-4)
+    # ==========================================
+    # When user says company numbers instead of dompet
+    # (These map to company selection, not direct dompet)
+    "company 1": "CV HB (101)",  # HOLLA
+    "company 2": "CV HB (101)",  # HOJJA (same dompet)
+    "company 3": "TX SBY(216)",  # TEXTURIN-Surabaya
+    "company 4": "TX BALI(087)",  # TEXTURIN-Bali
+    
+    # ==========================================
+    # CONTEXT-AWARE: Project/Company Names
+    # ==========================================
+    # These should be checked if mentioned WITH transaction
+    "holla project": "CV HB (101)",
+    "hojja project": "CV HB (101)",
+    "projek holla": "CV HB (101)",
+    "projek hojja": "CV HB (101)",
+    
+    "texturin sby project": "TX SBY(216)",
+    "projek texturin": "TX SBY(216)",
+    
+    "texturin bali project": "TX BALI(087)",
+    "projek bali": "TX BALI(087)",
 }
 
 # Company -> Dompet mapping (for backward compatibility)
@@ -73,13 +206,12 @@ WALLET_SELECTION_OPTIONS = [
     {"idx": 3, "dompet": "TX BALI(087)", "short": "TX BALI", "display": "3. TX BALI (087)"},
 ]
 
-# Project company selection (4 options - for project transactions)
-# KANTOR expenses go to Operasional sheet, not here
+# Project company/wallet selection (3 options - matching real wallets)
+# "Company" field will just mirror the Wallet Name (e.g. CV HB, TX SBY, TX BALI)
 SELECTION_OPTIONS = [
-    {"idx": 1, "dompet": "CV HB (101)", "company": "HOLLA"},
-    {"idx": 2, "dompet": "CV HB (101)", "company": "HOJJA"},
-    {"idx": 3, "dompet": "TX SBY(216)", "company": "TEXTURIN-Surabaya"},
-    {"idx": 4, "dompet": "TX BALI(087)", "company": "TEXTURIN-Bali"},
+    {"idx": 1, "dompet": "CV HB (101)", "company": "CV HB"},
+    {"idx": 2, "dompet": "TX SBY(216)", "company": "TX SBY"},
+    {"idx": 3, "dompet": "TX BALI(087)", "company": "TX BALI"},
 ]
 
 # Legacy aliases for backward compatibility
