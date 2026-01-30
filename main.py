@@ -354,8 +354,11 @@ def webhook_wuzapi():
         
         # FILTER: Ignore non-message events
         ignored_types = ['Connected', 'ReadReceipt', 'Receipt', 'Typing', 'TypingStarted', 
-                        'TypingStopped', 'Presence', 'PresenceUpdate', 'ChatState']
-        if event_type in ignored_types:
+                        'TypingStopped', 'Presence', 'PresenceUpdate', 'ChatState',
+                        'Composing', 'Paused']
+        
+        # Also ignore if event_type is empty (often happens during typing/sync)
+        if not event_type or event_type in ignored_types:
             return jsonify({'status': 'ignored_event'}), 200
         
         # FILTER: Ignore own messages
