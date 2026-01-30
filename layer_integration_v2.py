@@ -14,6 +14,7 @@ Version: 2.0 - Ultra-Robust Context Awareness
 """
 
 import os
+import re
 import logging
 from typing import Optional, Dict, Any, Tuple
 
@@ -221,6 +222,78 @@ def get_enhanced_layer_status() -> Dict[str, Any]:
 
 
 # =============================================================================
+# SAFETY GUARDS & HELPERS
+# =============================================================================
+
+# All bot commands (comprehensive list)
+ALL_COMMANDS = [
+    '/start', '/help', '/bantuan',
+    '/status', '/cek', '/saldo', '/list',
+    '/laporan', '/laporan30',
+    '/dompet', '/company', '/project',
+    '/kategori', '/tanya', '/exportpdf',
+    '/link', '/cancel', '/revisi'
+]
+
+CASUAL_GREETINGS = [
+    'haloo', 'halo', 'hai', 'hi', 'hey', 'hello',
+    'test', 'coba', 'tes', 'testing',
+    'selamat pagi', 'selamat siang', 'selamat malam',
+    'pagi', 'siang', 'malam', 'good morning',
+    'assalamualaikum', 'salam', 'permisi'
+]
+
+AMOUNT_PATTERNS = [
+    re.compile(r'rp[\s.]*\d+', re.IGNORECASE),
+    re.compile(r'\d+[\s]*(rb|ribu|k)\b', re.IGNORECASE),
+    re.compile(r'\d+[\s]*(jt|juta|m)\b', re.IGNORECASE),
+    re.compile(r'\d{4,}'),  # 4+ consecutive digits
+]
+
+def has_amount_pattern(text: str) -> bool:
+    """Check if text contains recognizable amount pattern."""
+    if not text:
+        return False
+    for pattern in AMOUNT_PATTERNS:
+        if pattern.search(text):
+            return True
+    return False
+
+def is_command(text: str) -> bool:
+    """Check if text is a bot command."""
+    if not text:
+        return False
+    text_lower = text.strip().lower()
+    
+    # Direct match
+    for cmd in ALL_COMMANDS:
+        if text_lower == cmd or text_lower.startswith(cmd + ' '):
+            return True
+    
+    return False
+
+def is_casual_greeting(text: str) -> bool:
+    """Check if text is just a casual greeting with no financial content."""
+    if not text:
+        return False
+    
+    text_lower = text.lower().strip()
+    
+    # If has amount, not casual
+    if has_amount_pattern(text):
+        return False
+    
+    # Check if it's just greeting
+    for greeting in CASUAL_GREETINGS:
+        if text_lower == greeting or text_lower.startswith(greeting + ' '):
+            # Make sure it's not "Haloo Project" or similar
+            if len(text) < 20:  # Short message
+                return True
+    
+    return False
+
+
+# =============================================================================
 # BACKWARD COMPATIBILITY WRAPPER (for main.py)
 # =============================================================================
 
@@ -241,7 +314,7 @@ def process_with_layers(
     """
     BACKWARD COMPATIBLE wrapper for old process_with_layers signature.
     
-    Now uses Enhanced Context Detection v2.0 under the hood.
+    Now uses Enhanced Context Detection v2.0 with SAFETY GUARDS.
     
     Returns: (action, response, intent, extra_data)
     - action: "IGNORE", "REPLY", "PROCESS" 
@@ -251,6 +324,30 @@ def process_with_layers(
     """
     if not USE_ENHANCED_LAYERS:
         return ("PROCESS", text, "RECORD_TRANSACTION", {})
+    
+    # ========== SAFETY GUARD 1: COMMANDS BYPASS ==========
+    if is_command(text):
+        logger.info(f"[SAFETY] Command detected, bypassing layers: {text[:20]}")
+        return ("IGNORE", text, "COMMAND", {})
+    
+    # ========== SAFETY GUARD 2: CASUAL GREETINGS ==========
+    if is_casual_greeting(text):
+        logger.info(f"[SAFETY] Casual greeting detected, ignoring: {text[:20]}")
+        return ("IGNORE", text, "GREETING", {})
+    
+    # ========== SAFETY GUARD 3: NO AMOUNT = NOT TRANSACTION ==========
+    # (Unless it's group mention or has visual)
+    if not has_amount_pattern(text) and not media_url and not caption:
+        # In groups, maybe it's a mention/command
+        if is_group:
+            # Check if it's really addressing bot
+            if len(text.strip()) < 30:  # Short message in group
+                logger.info(f"[SAFETY] Short group message without amount, ignoring: {text[:20]}")
+                return ("IGNORE", text, "SHORT_MESSAGE", {})
+        else:
+            # Private chat without amount - probably casual
+            logger.info(f"[SAFETY] No amount pattern detected, ignoring: {text[:20]}")
+            return ("IGNORE", text, "NO_AMOUNT", {})
     
     try:
         # Process with enhanced layers

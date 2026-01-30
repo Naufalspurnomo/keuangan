@@ -341,9 +341,15 @@ def webhook_wuzapi():
         # 2. Extract Event Info
         event = event_data.get('event', {})
         info = event.get('Info', event)
+        event_type = event_data.get('type', '')
         
-        if event_data.get('type') in ['Connected', 'ReadReceipt', 'Receipt']:
-            return jsonify({'status': 'ignored'}), 200
+        # FILTER: Ignore non-message events
+        ignored_types = ['Connected', 'ReadReceipt', 'Receipt', 'Typing', 'TypingStarted', 
+                        'TypingStopped', 'Presence', 'PresenceUpdate', 'ChatState']
+        if event_type in ignored_types:
+            return jsonify({'status': 'ignored_event'}), 200
+        
+        # FILTER: Ignore own messages
         if info.get('IsFromMe', False):
             return jsonify({'status': 'own_message'}), 200
             
@@ -370,11 +376,16 @@ def webhook_wuzapi():
         media_url = None
         quoted_msg_id = ''
         
+        # FILTER: Only process actual messages (text or media)
+        msg_type = info.get('Type', '')
+        if msg_type not in ['text', 'media', 'image']:
+            return jsonify({'status': f'ignored_type_{msg_type}'}), 200
+        
         # Text extraction logic
-        if info.get('Type') == 'text':
+        if msg_type == 'text':
             text = message_obj.get('conversation') or \
                    message_obj.get('extendedTextMessage', {}).get('text', '')
-        elif info.get('Type') == 'media':
+        elif msg_type in ['media', 'image']:
             text = message_obj.get('imageMessage', {}).get('caption', '')
             input_type = 'image'
             if event_data.get('base64'):
@@ -753,16 +764,44 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                         _pending_transactions.pop(pending_pkey, None)
                         send_reply("✅ Disimpan (Duplikat).")
                     return jsonify({'status': 'saved_dupe'}), 200
-                else:
                     _pending_transactions.pop(pending_pkey, None)
                     send_reply("❌ Dibatalkan.")
                     return jsonify({'status': 'cancelled'}), 200
 
-        # 7. COMMANDS
+        # 7. COMMANDS (PRIORITY - Execute BEFORE layer processing)
+        # This ensures /start, /help, etc. work properly instead of triggering layers
         if is_command_match(text, Commands.START, is_group):
             send_reply(START_MESSAGE.replace('*', ''))
-            return jsonify({'status': 'ok'}), 200
-        # ... (Add other commands /help /status /saldo here) ...
+            return jsonify({'status': 'command_start'}), 200
+        
+        if is_command_match(text, Commands.HELP, is_group):
+            send_reply(HELP_MESSAGE.replace('*', ''))
+            return jsonify({'status': 'command_help'}), 200
+        
+        if is_command_match(text, Commands.SALDO, is_group):
+            try:
+                balances = get_wallet_balances()
+                msg = "💰 *SALDO DOMPET*\n\n"
+                for dompet, info in balances.items():
+                    msg += f"📊 {dompet}\n"
+                    msg += f"   Masuk: Rp {info['pemasukan']:,}\n"
+                    msg += f"   Keluar: Rp {info['pengeluaran']:,}\n"
+                    msg += f"   Saldo: Rp {info['saldo']:,}\n\n"
+                send_reply(msg.replace(',', '.').replace('*', ''))
+                return jsonify({'status': 'command_saldo'}), 200
+            except Exception as e:
+                send_reply(f"❌ Error: {str(e)}")
+                return jsonify({'status': 'error'}), 200
+        
+        if is_command_match(text, Commands.STATUS, is_group):
+            try:
+                dashboard = get_dashboard_summary()
+                msg = format_dashboard_message(dashboard)
+                send_reply(msg.replace('*', ''))
+                return jsonify({'status': 'command_status'}), 200
+            except Exception as e:
+                send_reply(f"❌ Error: {str(e)}")
+                return jsonify({'status': 'error'}), 200
 
         # 8. PROCESS NEW INPUT (AI)
         transactions = []
