@@ -111,10 +111,13 @@ class SmartHandler:
         ]
         
         text_lower = text.lower()
-        has_finance_keyword = any(k in text_lower for k in finance_keywords)
+        
+        # Combined keywords: Finance + Operational
+        all_keywords = finance_keywords + list(OPERATIONAL_KEYWORDS)
+        has_finance_keyword = any(k in text_lower for k in all_keywords)
         
         # Is this likely a financial transaction report?
-        # Criteria: Has Amount Pattern + (Past Tense OR Finance Keyword) + Not Future Plan
+        # Criteria: Has Amount Pattern + (Past Tense OR Finance/Ops Keyword) + Not Future Plan
         is_likely_transaction = (
             has_amount and 
             (is_past or has_finance_keyword) and 

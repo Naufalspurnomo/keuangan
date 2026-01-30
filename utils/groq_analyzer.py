@@ -11,6 +11,7 @@ import json
 import logging
 import re
 from config.constants import Timeouts, OPERATIONAL_KEYWORDS
+from utils.context_detector import ContextDetector
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ class GroqContextAnalyzer:
     def __init__(self, groq_client):
         self.client = groq_client
         self.model = "llama-3.1-8b-instant"  # Fast & cheap
+        self.context_detector = ContextDetector()  # Multi-layer context engine
 
     def analyze_message(self, message: dict, context: dict) -> dict:
         """
@@ -107,6 +109,13 @@ class GroqContextAnalyzer:
         is_future = is_likely_future_plan(text)
         is_human_cmd = is_command_to_human(text)
         op_keyword = detect_operational_keyword(text)
+        
+        # LAYER 3: Multi-layer context detection
+        context_analysis = self.context_detector.detect_context(text)
+        category_scope = context_analysis.get("category_scope")
+        context_confidence = context_analysis.get("confidence", 0.0)
+        context_signals = context_analysis.get("signals", {})
+        context_reasoning = context_analysis.get("reasoning", "")
         
         # ENHANCED SYSTEM PROMPT WITH NEGATIVE CONSTRAINTS
         system_prompt = f"""You are the intelligent analyzer for "Bot Keuangan" (Finance Bot).
@@ -156,12 +165,29 @@ AVAILABLE INTENTS:
    - Greeting/thanking the BOT directly.
    - E.g.: "Halo bot", "Makasih ya bot".
 
+CONTEXT ANALYSIS (PRE-DETECTED):
+- Category Scope: {category_scope} (Confidence: {context_confidence:.2f})
+- Context Reasoning: {context_reasoning}
+- Detected Signals:
+  * Role: {context_signals.get('role_detected', 'None')}
+  * Project Name: {context_signals.get('project_name', 'None')}
+  * Temporal Pattern: {context_signals.get('temporal_pattern', 'None')}
+  * Keyword Match: {context_signals.get('keyword_match', {}).get('keyword', 'None')} (Type: {context_signals.get('keyword_match', {}).get('type', 'None')})
+
 EXTRACTION RULES FOR TRANSACTIONS:
 When intent is RECORD_TRANSACTION, also extract:
-- "category_scope": Classify the expense type:
-  - "OPERATIONAL": Fixed office costs (Gaji, Listrik, Air, WiFi, Konsumsi kantor, Peralatan ATK).
-  - "PROJECT": Variable costs for client projects (Material, Labor, Transport to site).
-  - "UNKNOWN": Cannot determine.
+- "category_scope": Use the PRE-DETECTED category_scope above as strong guidance.
+  - "OPERATIONAL": Fixed office costs (Gaji staff kantor, Listrik, Air, WiFi, Konsumsi, ATK).
+  - "PROJECT": Variable costs for client projects (Gaji tukang lapangan, Material, Bahan, Transport).
+  - "UNKNOWN": Only if pre-detection is AMBIGUOUS and no clear context.
+  
+CONTEXT DISAMBIGUATION RULES:
+- If pre-detected category has confidence >= 0.85, TRUST IT.
+- If AMBIGUOUS (confidence < 0.60), look for:
+  * Office roles (admin, staff) → OPERATIONAL
+  * Field roles (tukang, pekerja lapangan) → PROJECT
+  * Project names in text → PROJECT
+  * Monthly patterns ("bulan ini", "gaji bulanan") → OPERATIONAL
 
 CRITICAL NEGATIVE CONSTRAINTS:
 - If text is discussing a PLAN or PERMISSION, output IGNORE.
@@ -199,6 +225,14 @@ OUTPUT FORMAT (JSON ONLY):
             )
             
             result = json.loads(response.choices[0].message.content)
+            
+            # Inject context analysis metadata for transparency
+            result['context_analysis'] = {
+                'pre_detected_scope': category_scope,
+                'scope_confidence': context_confidence,
+                'reasoning': context_reasoning,
+                'signals': context_signals
+            }
             
             # Post-processing safety: Apply rule-based overrides
             result = self._apply_safety_overrides(result, text, context, has_amount, is_future, is_human_cmd)
