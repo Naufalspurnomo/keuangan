@@ -6,7 +6,7 @@ Features:
 - SMART ROUTING: Auto-detects context (Salary/Utilities vs Project Expenses).
 - PROJECT LIFECYCLE: Auto-tags projects with (Start) and (Finish).
 - MULTI-CHANNEL: WhatsApp + Telegram support.
-- SECURE: Rate limiting, prompt injection protection.
+- SECURE: Rate limiting, prompt injection protection...
 """
 
 import os
