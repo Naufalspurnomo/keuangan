@@ -576,6 +576,20 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 else:
                     dompet = get_dompet_for_company(detected_company)
             
+            # --- AUTO-RESOLVE COMPANY FROM PROJECT HISTORY (NEW) ---
+            # If we know the project, but not the company, try to find where it was last used
+            if not dompet and pending.get('project_confirmed'):
+                from sheets_helper import find_company_for_project
+                
+                # Check first transaction's project
+                p_name_check = txs[0].get('nama_projek')
+                if p_name_check:
+                    found_dompet, found_comp = find_company_for_project(p_name_check)
+                    if found_dompet:
+                        dompet = found_dompet
+                        detected_company = found_comp
+                        secure_log("INFO", f"Auto-resolved project '{p_name_check}' to {found_company}")
+
             # 2. Save if Resolved
             if detected_company and dompet:
                 # Check Duplicates

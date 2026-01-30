@@ -855,7 +855,7 @@ def append_transactions(transactions: List[Dict], sender_name: str, source: str 
 def get_all_data(days: int = 30) -> List[Dict]:
     """
     Get all transaction data from ALL dompet sheets.
-    Adjusted for new Wallet structure (Company in col 3).
+    Handles SPLIT LAYOUT (Pemasukan Left, Pengeluaran Right) for correct context.
     
     Args:
         days: Optional, only get data from last N days
@@ -864,85 +864,139 @@ def get_all_data(days: int = 30) -> List[Dict]:
         List of transaction dicts with company and nama_projek
     """
     try:
-        spreadsheet = get_spreadsheet()
+        from config.constants import (
+            SPLIT_PEMASUKAN, SPLIT_PENGELUARAN, SPLIT_LAYOUT_DATA_START,
+            OPERASIONAL_SHEET_NAME, OPERASIONAL_COLS, OPERASIONAL_DATA_START,
+            DOMPET_COMPANIES
+        )
         
+        spreadsheet = get_spreadsheet()
         data = []
         
         cutoff_date = None
         if days:
             cutoff_date = datetime.now() - timedelta(days=days)
         
-        # Iterate over Physical Wallets (Dompet Sheets)
+        # 1. PROCESS OPERASIONAL SHEET (Standard Layout)
+        try:
+            op_sheet = spreadsheet.worksheet(OPERASIONAL_SHEET_NAME)
+            op_rows = op_sheet.get_all_values()
+            
+            # Operasional uses standard layout starting at row 2
+            # Indices (0-based): TANGGAL=1, JUMLAH=2, KET=3, OLEH=4, SOURCE=5, KAT=6
+            for row in op_rows[OPERASIONAL_DATA_START-1:]:
+                if len(row) < 3: continue
+                try:
+                    date_str = row[OPERASIONAL_COLS['TANGGAL']-1]
+                    amt_str = row[OPERASIONAL_COLS['JUMLAH']-1]
+                    
+                    if not date_str or not amt_str: continue
+                    
+                    # Parse Date
+                    row_date = None
+                    for fmt in ['%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y']:
+                        try:
+                            row_date = datetime.strptime(date_str, fmt)
+                            break
+                        except ValueError: continue
+                    
+                    if not row_date: continue
+                    if cutoff_date and row_date < cutoff_date: continue
+                    
+                    # Parse Amount
+                    amount = int(float(str(amt_str).replace(',', '').replace('Rp', '').replace('.', '').strip() or 0))
+                    
+                    data.append({
+                        'tanggal': date_str,
+                        'keterangan': row[OPERASIONAL_COLS['KETERANGAN']-1] if len(row) >= OPERASIONAL_COLS['KETERANGAN'] else '',
+                        'jumlah': amount,
+                        'tipe': 'Pengeluaran', # Operasional is always expense
+                        'oleh': row[OPERASIONAL_COLS['OLEH']-1] if len(row) >= OPERASIONAL_COLS['OLEH'] else '',
+                        'kategori': row[OPERASIONAL_COLS['KATEGORI']-1] if len(row) >= OPERASIONAL_COLS['KATEGORI'] else 'Lain-lain',
+                        'company_sheet': 'Operasional Kantor',
+                        'nama_projek': 'Operasional'
+                    })
+                except:
+                    continue
+        except Exception as e:
+            secure_log("WARNING", f"Error reading Operasional: {e}")
+
+        # 2. PROCESS WALLET SHEETS (Split Layout)
         for dompet in DOMPET_SHEETS:
             try:
                 sheet = spreadsheet.worksheet(dompet)
                 all_values = sheet.get_all_values()
                 
-                if len(all_values) < 2:
-                    continue
+                # Get Company Name mapping
+                company_name = next((v for k,v in DOMPET_COMPANIES.items() if k.lower() in dompet.lower()), dompet)
                 
-                for row in all_values[1:]:  # Skip header
-                    if len(row) < 6: # Minimal columns (No, Tgl, Comp, Ket, Jml, Tipe)
-                        continue
+                # Skip up to data start
+                for row in all_values[SPLIT_LAYOUT_DATA_START-1:]:
+                    if not row: continue
                     
+                    # --- A. CHECK PEMASUKAN LEFT BLOCK ---
+                    # Columns A-I (Indices 0-8)
                     try:
-                        # NEW Column indices (0-based from row list): 
-                        # 0:No, 1:Tanggal, 2:Company, 3:Keterangan, 4:Jumlah, 5:Tipe, 
-                        # 6:Oleh, 7:Source, 8:Kategori, 9:Nama Projek
+                        idx_tgl = SPLIT_PEMASUKAN['TANGGAL'] - 1 # Index 2
+                        idx_jml = SPLIT_PEMASUKAN['JUMLAH'] - 1  # Index 3
                         
-                        date_str = row[1] if len(row) > 1 else ''
-                        if not date_str:
-                            continue
+                        if len(row) > idx_jml and row[idx_tgl] and row[idx_jml]:
+                            date_str = row[idx_tgl]
+                            amt_str = row[idx_jml]
+                            
+                            # Parse Date
+                            row_date = None
+                            for fmt in ['%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y']:
+                                try:
+                                    row_date = datetime.strptime(date_str, fmt)
+                                    break
+                                except: continue
+                                
+                            if row_date and (not cutoff_date or row_date >= cutoff_date):
+                                amount = int(float(str(amt_str).replace(',', '').replace('Rp', '').replace('.', '').strip() or 0))
+                                
+                                data.append({
+                                    'tanggal': date_str,
+                                    'keterangan': row[SPLIT_PEMASUKAN['KETERANGAN']-1] if len(row) >= SPLIT_PEMASUKAN['KETERANGAN'] else '',
+                                    'jumlah': amount,
+                                    'tipe': 'Pemasukan',
+                                    'nama_projek': row[SPLIT_PEMASUKAN['PROJECT']-1] if len(row) >= SPLIT_PEMASUKAN['PROJECT'] else '',
+                                    'company_sheet': company_name,
+                                    'kategori': 'Income'
+                                })
+                    except: pass
+                    
+                    # --- B. CHECK PENGELUARAN RIGHT BLOCK ---
+                    # Columns J-R (Indices 9-17)
+                    try:
+                        idx_tgl = SPLIT_PENGELUARAN['TANGGAL'] - 1 # Index 11
+                        idx_jml = SPLIT_PENGELUARAN['JUMLAH'] - 1  # Index 12
                         
-                        # Parse date
-                        row_date = None
-                        for fmt in ['%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y']:
-                            try:
-                                row_date = datetime.strptime(date_str, fmt)
-                                break
-                            except ValueError:
-                                continue
-                        
-                        if not row_date:
-                            continue
-                        
-                        # Filter date
-                        if cutoff_date and row_date < cutoff_date and row_date < datetime.now():
-                            continue
-                        
-                        # Parse amount (Col 4)
-                        amount_str = str(row[4]).replace(',', '').replace('Rp', '').replace('IDR', '').strip()
-                        amount = int(float(amount_str)) if amount_str else 0
-                        
-                        # Parse type (Col 5)
-                        tipe_raw = row[5] if len(row) > 5 else 'Pengeluaran'
-                        tipe = 'Pengeluaran' if 'pengeluaran' in tipe_raw.lower() else 'Pemasukan' if 'pemasukan' in tipe_raw.lower() else tipe_raw
-                        
-                        # Parse Company (Col 2)
-                        company = row[2].strip() if len(row) > 2 else 'Unknown'
-                        if not company: company = 'Unknown'
-                        
-                        # Parse Params
-                        keterangan = row[3] if len(row) > 3 else ''
-                        oleh = row[6] if len(row) > 6 else ''
-                        source = row[7] if len(row) > 7 else ''
-                        kategori = row[8] if len(row) > 8 else 'Lain-lain'
-                        nama_projek = row[9] if len(row) > 9 else ''
-
-                        data.append({
-                            'tanggal': date_str,
-                            'keterangan': keterangan,
-                            'jumlah': amount,
-                            'tipe': tipe,
-                            'oleh': oleh,
-                            'source': source,
-                            'kategori': kategori,
-                            'nama_projek': nama_projek,
-                            'sumber_dana': dompet,      # The physical sheet
-                            'company_sheet': company    # The logical company
-                        })
-                    except Exception:
-                        continue
+                        if len(row) > idx_jml and row[idx_tgl] and row[idx_jml]:
+                            date_str = row[idx_tgl]
+                            amt_str = row[idx_jml]
+                            
+                            # Parse Date
+                            row_date = None
+                            for fmt in ['%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y']:
+                                try:
+                                    row_date = datetime.strptime(date_str, fmt)
+                                    break
+                                except: continue
+                                
+                            if row_date and (not cutoff_date or row_date >= cutoff_date):
+                                amount = int(float(str(amt_str).replace(',', '').replace('Rp', '').replace('.', '').strip() or 0))
+                                
+                                data.append({
+                                    'tanggal': date_str,
+                                    'keterangan': row[SPLIT_PENGELUARAN['KETERANGAN']-1] if len(row) >= SPLIT_PENGELUARAN['KETERANGAN'] else '',
+                                    'jumlah': amount,
+                                    'tipe': 'Pengeluaran',
+                                    'nama_projek': row[SPLIT_PENGELUARAN['PROJECT']-1] if len(row) >= SPLIT_PENGELUARAN['PROJECT'] else '',
+                                    'company_sheet': company_name,
+                                    'kategori': 'Project Expense'
+                                })
+                    except: pass
                         
             except Exception as e:
                 secure_log("WARNING", f"Could not read dompet {dompet}: {type(e).__name__}")
@@ -1662,6 +1716,53 @@ def delete_transaction_row(dompet_sheet: str, row: int) -> bool:
     except Exception as e:
         secure_log("ERROR", f"Delete transaction error: {type(e).__name__} - {str(e)}")
         return False
+
+def find_company_for_project(project_name: str) -> tuple:
+    """
+    Search all wallets to find which company contains the project history.
+    Returns: (dompet_name, company_name) or (None, None)
+    
+    Logic:
+    1. Scan all 3 wallets (Splitted Layout)
+    2. Check 'Pemasukan' (Col E) and 'Pengeluaran' (Col N)
+    3. If match found, return the wallet/company of that sheet.
+    """
+    if not project_name: return None, None
+    
+    clean_target = project_name.strip().lower()
+    # Remove markers like (Start) or (Finish) for matching
+    clean_target = clean_target.replace('(start)', '').replace('(finish)', '').strip()
+    
+    try:
+        from config.wallets import DOMPET_SHEETS, DOMPET_COMPANIES, get_company_name_from_sheet
+        from config.constants import SPLIT_PEMASUKAN, SPLIT_PENGELUARAN, SPLIT_LAYOUT_DATA_START
+
+        for dompet in DOMPET_SHEETS:
+            sheet = get_dompet_sheet(dompet)
+            if not sheet: continue
+            
+            # Optimization: We only need to check if the string exists in the column
+            # Using col_values is efficient enough
+            
+            # 1. Check Pemasukan (Col 5 / E)
+            pemasukan_projects = sheet.col_values(SPLIT_PEMASUKAN['PROJECT'])
+            for p in pemasukan_projects:
+                if p and clean_target in p.strip().lower():
+                    # Found match!
+                    comp = get_company_name_from_sheet(dompet)
+                    return dompet, comp
+            
+            # 2. Check Pengeluaran (Col 14 / N)
+            pengeluaran_projects = sheet.col_values(SPLIT_PENGELUARAN['PROJECT'])
+            for p in pengeluaran_projects:
+                if p and clean_target in p.strip().lower():
+                    comp = get_company_name_from_sheet(dompet)
+                    return dompet, comp
+                    
+    except Exception as e:
+        secure_log("ERROR", f"find_company_for_project error: {e}")
+        
+    return None, None
 
 
 if __name__ == '__main__':
