@@ -45,18 +45,25 @@ def calculate_similarity(a, b):
 
 
 def is_operational_keyword(text: str) -> bool:
-    """Check if text matches any operational keyword."""
+    """
+    Check if text matches any operational keyword.
+    v2.0: Uses word boundary matching for better accuracy.
+    """
+    import re
+    
     if not text:
         return False
     text_lower = text.lower().strip()
     
-    # Direct match
+    # Direct exact match
     if text_lower in OPERATIONAL_KEYWORDS:
         return True
     
-    # Partial match (e.g., "gaji admin" contains "gaji")
+    # Word boundary match (e.g., "bayar gaji" should match "gaji")
     for kw in OPERATIONAL_KEYWORDS:
-        if kw in text_lower:
+        # Use word boundary for more reliable matching
+        pattern = r'\b' + re.escape(kw) + r'\b'
+        if re.search(pattern, text_lower):
             return True
     
     return False

@@ -161,72 +161,132 @@ from services import state_manager as _state
 _pending_transactions = _state._pending_transactions
 
 
-# ===================== LOGIC CORE: SMART ROUTER =====================
+# ===================== LOGIC CORE: SMART ROUTER v2.0 =====================
+# Enhanced with amount pattern detection and AI category_scope integration
 
-def detect_transaction_context(text: str, transactions: list) -> dict:
+import re  # Ensure re is available for pattern matching
+
+# Amount pattern detection (matches groq_analyzer.py)
+AMOUNT_PATTERNS = [
+    re.compile(r'rp[\s.]*\d+', re.IGNORECASE),
+    re.compile(r'\d+[\s]*(rb|ribu|k)', re.IGNORECASE),
+    re.compile(r'\d+[\s]*(jt|juta)', re.IGNORECASE),
+    re.compile(r'\d{4,}'),  # 4+ consecutive digits
+]
+
+def has_amount_pattern(text: str) -> bool:
+    """Check if text contains recognizable amount pattern."""
+    for pattern in AMOUNT_PATTERNS:
+        if pattern.search(text):
+            return True
+    return False
+
+
+def detect_transaction_context(text: str, transactions: list, category_scope: str = 'UNKNOWN') -> dict:
     """
     Detects context: PROJECT vs OPERATIONAL.
     
+    v2.0 Improvements:
+    - Uses category_scope from AI layer when available
+    - Checks for amount patterns in text
+    - Better keyword matching with word boundaries
+    
     Rules:
-    1. Has valid Project Name? -> PROJECT Mode (Priority 1)
-    2. Has Operational Keywords? -> OPERATIONAL Mode (Priority 2)
-    3. Else -> Default to PROJECT Mode (Standard Flow)
+    1. If AI says OPERATIONAL -> OPERATIONAL (Priority 1 - Trust AI)
+    2. Has valid Project Name? -> PROJECT (Priority 2)
+    3. Has Operational Keywords + No valid Project? -> OPERATIONAL (Priority 3)
+    4. Else -> Default to PROJECT
     """
     text_lower = (text or '').lower()
     
-    # Check Keywords
-    detected_keywords = [kw for kw in OPERATIONAL_KEYWORDS if kw in text_lower]
+    # NEW v2.0: Trust AI's category_scope if available
+    if category_scope == 'OPERATIONAL':
+        # Detect which operational category
+        detected_keywords = [kw for kw in OPERATIONAL_KEYWORDS if kw in text_lower]
+        category = map_operational_category(detected_keywords[0]) if detected_keywords else 'Lain Lain'
+        return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
+    
+    if category_scope == 'PROJECT':
+        # AI is confident this is project-related
+        return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
+    
+    # Fallback: Rule-based detection (when AI uncertain or not used)
+    
+    # Check Keywords with better matching
+    detected_keywords = []
+    for kw in OPERATIONAL_KEYWORDS:
+        # Use word boundary matching for better accuracy
+        if re.search(r'\b' + re.escape(kw) + r'\b', text_lower):
+            detected_keywords.append(kw)
     
     # Check Project Name Validity
     from config.constants import PROJECT_STOPWORDS
     
     has_valid_project = False
+    valid_project_name = None
+    
     for t in transactions:
         nama_projek = t.get('nama_projek', '')
         if nama_projek and len(nama_projek) > 2:
-            # Check against stopwords/generic names
-            # Combine explicit generic names with constants
+            # Build comprehensive generic names list
             generic_names = {'umum', 'kantor', 'ops', 'operasional', 'admin', 'gaji', 'finance'}
-            # Add all Operational Keywords (e.g., 'listrik', 'konsumsi') to generic list
             generic_names.update(OPERATIONAL_KEYWORDS)
-            # Add keys from stopwords if they are single words
             generic_names.update(PROJECT_STOPWORDS)
             
             clean_name = nama_projek.lower().strip()
             
-            # Additional logic: Check if name is exactly a generic word
+            # Check if name is exactly a generic word
             if clean_name not in generic_names:
-                # Also check if it partially matches but is just a keyword (e.g. "Biaya Listrik")
-                is_just_keyword = False
-                if clean_name in PROJECT_STOPWORDS or clean_name in OPERATIONAL_KEYWORDS:
-                     is_just_keyword = True
+                # Also check if it's ONLY an operational keyword
+                is_just_keyword = (clean_name in PROJECT_STOPWORDS or clean_name in OPERATIONAL_KEYWORDS)
                 
                 if not is_just_keyword:
                     has_valid_project = True
+                    valid_project_name = nama_projek
                     break
     
     # Decision Tree
-    # Priority: If keywords found AND project name is suspicious (or missing), Force Operational
+    # Priority 1: Keywords found AND NO valid project -> OPERATIONAL
     if detected_keywords and not has_valid_project:
-         category = map_operational_category(detected_keywords[0])
-         return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
+        category = map_operational_category(detected_keywords[0])
+        return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
 
+    # Priority 2: Has valid project name -> PROJECT
     if has_valid_project:
-        return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
+        return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False, 'project_name': valid_project_name}
     
+    # Priority 3: Has keywords (but maybe ambiguous) -> OPERATIONAL
     if detected_keywords:
         category = map_operational_category(detected_keywords[0])
         return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
     
+    # Default: PROJECT mode (standard flow asks for company)
     return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
 
+
 def map_operational_category(keyword: str) -> str:
-    """Maps keywords to standard Operational Categories."""
+    """
+    Maps keywords to standard Operational Categories.
+    v2.0: Expanded keyword matching.
+    """
     k = keyword.lower()
-    if k in ['gaji', 'salary', 'upah', 'honor', 'thr', 'bonus']: return 'Gaji'
-    if k in ['listrik', 'pln', 'air', 'pdam', 'wifi', 'internet', 'listrikair']: return 'ListrikAir'
-    if k in ['konsumsi', 'makan', 'snack', 'minum', 'jamu', 'kopi']: return 'Konsumsi'
-    if k in ['peralatan', 'atk', 'alat', 'perlengkapan']: return 'Peralatan'
+    
+    # Payroll
+    if k in ['gaji', 'salary', 'upah', 'honor', 'thr', 'bonus', 'upah karyawan']:
+        return 'Gaji'
+    
+    # Utilities
+    if k in ['listrik', 'pln', 'air', 'pdam', 'wifi', 'internet', 'listrikair', 'speedy', 'indihome']:
+        return 'ListrikAir'
+    
+    # Consumables
+    if k in ['konsumsi', 'makan', 'snack', 'minum', 'jamu', 'kopi']:
+        return 'Konsumsi'
+    
+    # Equipment
+    if k in ['peralatan', 'atk', 'alat', 'perlengkapan', 'alat tulis', 'perlengkapan kantor']:
+        return 'Peralatan'
+    
     return 'Lain Lain'
 
 def apply_lifecycle_markers(project_name: str, transaction: dict) -> str:
@@ -372,12 +432,15 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             
             # ROUTING CHECK
             original_text = pending.get('original_text', '')
+            category_scope = pending.get('category_scope', 'UNKNOWN')  # From AI layer
+            
             # If already routed/flagged, respect it
             if pending.get('is_operational'):
                 context = {'mode': 'OPERATIONAL', 'needs_wallet': True, 
                            'category': pending.get('operational_category', 'Lain Lain')}
             else:
-                context = detect_transaction_context(original_text, txs)
+                # Pass category_scope from AI layer for smarter routing
+                context = detect_transaction_context(original_text, txs, category_scope)
 
             # === JALUR 1: OPERATIONAL ===
             if context['mode'] == 'OPERATIONAL':
@@ -500,7 +563,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             # 3. Ask Company if Unresolved
             pending['pending_type'] = 'selection'
             reply = build_selection_prompt(txs).replace('*', '')
-            if is_group: reply += "\n\n↩️ Reply angka 1-5"
+            if is_group: reply += "\n\n↩️ Reply angka 1-4"
             sent = send_reply(reply)
             cache_prompt(pkey, pending, sent)
             return jsonify({'status': 'asking_company'}), 200
@@ -535,17 +598,23 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         # 4. Filter AI Trigger
         text = sanitize_input(text or '')
         
+        # Initialize category scope (will be updated by AI layer if used)
+        layer_category_scope = 'UNKNOWN'
+        
         if has_pending:
             # Bypass AI if pending active
             pass 
         else:
             # Smart Handler (AI Layer)
             if USE_LAYERS:
-                action, resp, intent = process_with_layers(
+                action, resp, intent, extra_data = process_with_layers(
                     sender_number, message_id, text, sender_name, media_url,
                     text if input_type == 'image' else None, is_group, chat_jid,
                     quoted_msg_id, quoted_message_text, sender_jid, has_visual
                 )
+                
+                # Store category_scope for later routing
+                layer_category_scope = extra_data.get('category_scope', 'UNKNOWN')
                 
                 if action == "IGNORE": return jsonify({'status': 'ignored'}), 200
                 if action == "REPLY": 
@@ -709,13 +778,14 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 'chat_jid': chat_jid,
                 'requires_reply': is_group,
                 'original_text': text, # Important for Smart Router
-                'prompt_message_ids': []
+                'prompt_message_ids': [],
+                'category_scope': layer_category_scope,  # From AI layer (initialized earlier)
             }
             
             # Check for Needs Project (Manual override from AI)
             if any(t.get('needs_project') for t in transactions):
                 # Only if NOT operational
-                ctx = detect_transaction_context(text, transactions)
+                ctx = detect_transaction_context(text, transactions, layer_category_scope)
                 if ctx['mode'] == 'PROJECT':
                     _pending_transactions[sender_pkey]['pending_type'] = 'needs_project'
                     send_reply("❓ Nama projeknya apa?")

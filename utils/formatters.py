@@ -72,7 +72,7 @@ Bot otomatis baca pesan yang ada *angka* & *kata kerja*.
 • Mention: `@Bot catat ini dong...`
 • Perintah: `/catat ...`
 
-*━━ Pilih Dompet (1-5) ━━*
+*━━ Pilih Company (1-4) ━━*
 {SELECTION_DISPLAY}
 
 *━━ Kategori (Auto Detect) ━━*
