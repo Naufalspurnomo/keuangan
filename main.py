@@ -314,6 +314,14 @@ def apply_lifecycle_markers(project_name: str, transaction: dict) -> str:
     return project_name
 
 
+# ===================== HEALTH CHECK ENDPOINT =====================
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check for monitoring and Docker healthcheck."""
+    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()}), 200
+
+
 # ===================== WUZAPI HANDLER =====================
 
 @app.route('/webhook_wuzapi', methods=['POST'])
