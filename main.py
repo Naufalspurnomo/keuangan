@@ -368,12 +368,15 @@ def webhook_wuzapi():
         sender_number = sender_alt.split('@')[0].split(':')[0] if '@' in sender_alt else \
                        (sender_jid.split('@')[0].split(':')[0] if '@' in sender_jid else '')
                        
-        if not sender_number: return jsonify({'status': 'no_sender'}), 200
+        if not sender_number: 
+            secure_log("WARNING", f"Webhook: No sender number found in {info}")
+            return jsonify({'status': 'no_sender'}), 200
         
         # 4. Access Control
         chat_jid = info.get('Chat', '')
         is_group = '@g.us' in chat_jid
         if not is_sender_allowed([sender_number]):
+            secure_log("WARNING", f"Webhook: Access denied for {sender_number}")
             reply_target = chat_jid if (is_group and chat_jid) else sender_number
             send_wuzapi_reply(reply_target, "❌ Akses Ditolak. Hubungi Admin.")
             return jsonify({'status': 'forbidden'}), 200
@@ -388,6 +391,7 @@ def webhook_wuzapi():
         # FILTER: Only process actual messages (text or media)
         msg_type = info.get('Type', '')
         if msg_type not in ['text', 'media', 'image']:
+            secure_log("INFO", f"Webhook: Ignored message type '{msg_type}'")
             return jsonify({'status': f'ignored_type_{msg_type}'}), 200
         
         # Text extraction logic
@@ -403,6 +407,9 @@ def webhook_wuzapi():
                 # Fallback download logic here if needed
                 pass
 
+        # LOG THE INCOMING MESSAGE
+        secure_log("INFO", f"Webhook: Msg from {sender_number} (Group: {is_group}): {text[:50]}...")
+
         # Quoted info
         ctx_info = message_obj.get('extendedTextMessage', {}).get('contextInfo', {}) or \
                    message_obj.get('contextInfo', {})
@@ -412,6 +419,7 @@ def webhook_wuzapi():
         # 6. Deduplication
         message_id = info.get('ID', '')
         if is_message_duplicate(message_id):
+            secure_log("INFO", f"Webhook: Duplicate message {message_id} ignored")
             return jsonify({'status': 'duplicate'}), 200
 
         # 7. Process
@@ -521,6 +529,36 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     return jsonify({'status': 'error'}), 200
 
             # === JALUR 2: PROJECT (Standard) ===
+            
+            # --- VALIDATION: CHECK PROJECT EXISTENCE ---
+            # Checks if project exists in Spreadsheet/Cache before proceeding
+            if not pending.get('project_confirmed'):
+                for t in txs:
+                    p_name_raw = t.get('nama_projek')
+                    # Skip validation for "Saldo Umum", empty, or "Umum"
+                    if not p_name_raw or p_name_raw.lower() in ['saldo umum', 'umum', 'unknown']:
+                        continue
+                    
+                    # Resolve Name
+                    res = resolve_project_name(p_name_raw)
+                    
+                    if res['status'] == 'AMBIGUOUS':
+                         pending['pending_type'] = 'confirmation_project'
+                         pending['suggested_project'] = res['final_name']
+                         send_reply(f"🤔 Maksudnya **{res['final_name']}**?\n✅ Ya / ❌ Bukan")
+                         return jsonify({'status': 'asking_project_confirm'}), 200
+                    
+                    elif res['status'] == 'NEW':
+                        # Validasi typo / project baru
+                        pending['pending_type'] = 'confirmation_new_project'
+                        pending['new_project_name'] = res['original']
+                        send_reply(f"🆕 Project **{res['original']}** belum ada.\n\nBuat Project Baru?\n✅ Ya / ❌ Ganti Nama")
+                        return jsonify({'status': 'asking_new_project'}), 200
+                    
+                    elif res['status'] in ['EXACT', 'AUTO_FIX']:
+                        # Auto update to canonical name
+                        t['nama_projek'] = res['final_name']
+
             # 1. Resolve Company/Dompet
             detected_company = None
             for t in txs:
@@ -759,7 +797,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                      # In case smart_handler cleaned the text (e.g. from extracted data)
                      if smart_result.get('normalized_text'):
                          text = smart_result.get('normalized_text')
-
+ 
                 if action == "IGNORE": return jsonify({'status': 'ignored'}), 200
                 if action == "REPLY": 
                     send_reply(resp)
@@ -787,7 +825,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                         
                         layer_category_scope = "TRANSFER" 
                         pass 
-
+ 
                     if intent == "RECORD_TRANSACTION":
                         # Logic continues to Step 8 (Extraction) with refined text/scope
                         
@@ -798,7 +836,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                             temp_txs = extract_financial_data(text, input_type, sender_name, [media_url] if media_url else None, text if input_type=='image' else None)
                             
                             if temp_txs:
-                                from utils.formatters import format_mention
+                                # REMOVED local import of format_mention to fix UnboundLocalError
                                 set_pending_confirmation(
                                     user_id=sender_number,
                                     chat_id=chat_jid,
@@ -812,14 +850,14 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                                 
                                 mention = format_mention(sender_name, is_group)
                                 response = f"""{mention}🤔 Ini untuk Operational Kantor atau Project?
-
-1️⃣ Operational Kantor
-   (Gaji staff, listrik, wifi, ATK, dll)
-
-2️⃣ Project  
-   (Material, upah tukang, transport ke site)
-
-Balas 1 atau 2"""
+ 
+ 1️⃣ Operational Kantor
+    (Gaji staff, listrik, wifi, ATK, dll)
+ 
+ 2️⃣ Project  
+    (Material, upah tukang, transport ke site)
+ 
+ Balas 1 atau 2"""
                                 send_reply(response)
                                 return jsonify({'status': 'asking_scope'}), 200
             
@@ -833,7 +871,7 @@ Balas 1 atau 2"""
                     
                     input_type = 'image'
                     clear_visual_buffer(sender_number, chat_jid)
-
+ 
         # 5. REVISION HANDLER (New)
         if quoted_msg_id or is_command_match(text, Commands.UNDO, is_group) or is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):
             from handlers.revision_handler import handle_revision_command, handle_undo_command
@@ -847,12 +885,12 @@ Balas 1 atau 2"""
             # Check for /revisi command or reply revision
             elif quoted_msg_id or is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):
                  revision_result = handle_revision_command(sender_number, chat_jid, text, quoted_msg_id)
-
+ 
             if revision_result:
                 if revision_result.get('action') == 'REPLY':
                     send_reply(revision_result.get('response'))
                     return jsonify({'status': 'handled_revision'}), 200
-
+ 
         # 6. PENDING STATE MACHINE
         if has_pending:
             pending = pending_data
@@ -877,7 +915,7 @@ Balas 1 atau 2"""
                     send_reply("❌ Pilih angka 1-3.")
                     return jsonify({'status': 'invalid'}), 200
             
-            # B. Project Confirmation
+            # B. Project Confirmation (Existing - Ambiguous Name)
             if ptype == 'confirmation_project':
                 clean = text.lower().strip()
                 final_proj = ""
@@ -903,7 +941,31 @@ Balas 1 atau 2"""
                     t['nama_projek'] = final_proj
                     t.pop('needs_project', None)
                 
+                # Set confirmed to true so we don't ask again
+                pending['project_confirmed'] = True
                 return finalize_transaction_workflow(pending, pending_pkey)
+
+            # G. New Project Confirmation (NEW -> Create or Rename)
+            if ptype == 'confirmation_new_project':
+                clean = text.lower().strip()
+                if clean in ['ya', 'y', 'ok', 'siap', 'buat', 'lanjut']:
+                    # User confirmed it is new
+                    pending['project_confirmed'] = True 
+                    add_new_project_to_cache(pending.get('new_project_name'))
+                    return finalize_transaction_workflow(pending, pending_pkey)
+                    
+                elif clean in ['tidak', 'no', 'ganti', 'bukan', 'salah']:
+                    send_reply("Nama projeknya apa?")
+                    pending['pending_type'] = 'needs_project' 
+                    return jsonify({'status': 'asking'}), 200
+                else:
+                    # Treat input as the CORRECT name
+                    final_proj = sanitize_input(text.strip())
+                    add_new_project_to_cache(final_proj)
+                    send_reply(f"👌 Update ke: **{final_proj}**")
+                    for t in pending['transactions']: t['nama_projek'] = final_proj
+                    pending['project_confirmed'] = True
+                    return finalize_transaction_workflow(pending, pending_pkey)
                 
             # C. Needs Project
             if ptype == 'needs_project':
@@ -918,6 +980,8 @@ Balas 1 atau 2"""
                 
                 final = res['final_name']
                 for t in pending['transactions']: t['nama_projek'] = final
+                # Set confirmed to true
+                pending['project_confirmed'] = True
                 return finalize_transaction_workflow(pending, pending_pkey)
                 
             # D. Company Selection
@@ -928,6 +992,10 @@ Balas 1 atau 2"""
                     return jsonify({'status': 'invalid'}), 200
                 
                 opt = get_selection_by_idx(sel)
+                if not opt:
+                    send_reply("❌ Pilihan tidak valid (System Error).")
+                    return jsonify({'status': 'error_opt'}), 200
+                    
                 pending['selected_option'] = opt
                 for t in pending['transactions']: t['company'] = opt['company']
                 
@@ -937,6 +1005,11 @@ Balas 1 atau 2"""
             if ptype == 'confirmation_dupe':
                 if text.lower().strip() == 'y':
                     opt = pending.get('selected_option')
+                    if not opt:
+                         _pending_transactions.pop(pending_pkey, None)
+                         send_reply("❌ Error state. Transaksi dibatalkan.")
+                         return jsonify({'status': 'error_state'}), 200
+
                     # Manual save
                     res = append_transactions(pending['transactions'], pending['sender_name'], 
                                             pending['source'], opt['dompet'], opt['company'])
