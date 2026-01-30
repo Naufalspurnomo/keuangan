@@ -486,8 +486,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     
                     msg = (f"🏢 *Deteksi: Operasional Kantor*\n"
                            f"📝 {item} (Rp {total:,})\n\n"
-                           f"❓ Gunakan uang dari dompet mana?\n{prompt}\n\n"
-                           f"↩️ Balas angka 1-3").replace(',', '.')
+                           f"{prompt}").replace(',', '.')
                            
                     sent = send_reply(msg)
                     cache_prompt(pkey, pending, sent)
