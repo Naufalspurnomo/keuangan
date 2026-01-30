@@ -39,14 +39,27 @@ from security import (
     MAX_INPUT_LENGTH,
     MAX_TRANSACTIONS_PER_MESSAGE,
 )
-from utils.parsers import parse_revision_amount
+from utils.parsers import parse_revision_amount, extract_project_name_from_text
 from config.constants import KNOWN_COMPANY_NAMES, PROJECT_STOPWORDS
 
 def extract_project_from_description(description: str) -> str:
     """
     Extract project name from description text.
-    Skips stopwords and known company names to find the actual project.
+    Uses robust regex strategies first, then falls back to token scanning.
     """
+    if not description:
+        return ""
+        
+    # 1. Try robust regex extraction
+    extracted = extract_project_name_from_text(description)
+    if extracted:
+        # Validate against known companies/stopwords just in case
+        clean_ext = extracted.strip()
+        if clean_ext.casefold() not in KNOWN_COMPANY_NAMES and \
+           clean_ext.casefold() not in PROJECT_STOPWORDS:
+            return clean_ext
+
+    # 2. Fallback: Token scanning (Legacy)
     cleaned = sanitize_input(description or "")
     tokens = [t for t in cleaned.replace("/", " ").split() if t]
     for token in tokens:

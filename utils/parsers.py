@@ -314,6 +314,53 @@ def parse_revision_amount(text: str) -> int:
         return 0
 
 
+
+def extract_project_name_from_text(text: str) -> str:
+    """
+    Extract project name from text using multiple strategies.
+    
+    Examples:
+    - "DP projek Ririyan 20jt" → "Ririyan"
+    - "Material buat Wooftopia" → "Wooftopia"
+    - "untuk project Taman Indah" → "Taman Indah"
+    """
+    if not text:
+        return None
+        
+    # Strategy 1: After "projek/project/untuk/buat" + capitalized word
+    patterns = [
+        r'(?:projek|project)\s+([A-Z][a-zA-Z\s]+?)(?:\s+\d|\s*$|,)',
+        r'(?:untuk|buat)\s+(?:projek\s+)?([A-Z][a-zA-Z\s]+?)(?:\s+\d|\s*$|,)',
+        r'(?:dp|pelunasan)\s+(?:projek\s+)?([A-Z][a-zA-Z\s]+?)(?:\s+\d|\s*$|,)',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            project_name = match.group(1).strip()
+            # Clean up (remove trailing numbers, etc)
+            project_name = re.sub(r'\s+\d+.*$', '', project_name).strip()
+            if len(project_name) >= 3:  # Min 3 chars
+                return project_name
+    
+    # Strategy 2: Any capitalized word (2+ words)
+    # Example: "Taman Indah Puncak"
+    capitalized_phrase = re.search(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b', text)
+    if capitalized_phrase:
+        return capitalized_phrase.group(1).strip()
+    
+    # Strategy 3: Single capitalized word (not at sentence start)
+    words = text.split()
+    for i, word in enumerate(words):
+        # Skip first word usually (might be action like 'Beli')
+        if i > 0 and word[0].isupper() and len(word) >= 4:
+            # Check if it's not a common stopword or month
+            # (Basic heuristic, improved by list check later)
+            return word
+    
+    return None
+
+
 # For testing
 if __name__ == '__main__':
     print("Parser Tests")

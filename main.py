@@ -661,40 +661,70 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         text = sanitize_input(text or '')
         
         # ========== PRIORITY: COMMANDS FIRST (before layer processing) ==========
-        # Must check commands BEFORE layers to prevent IGNORE from blocking them
-        if text.strip().startswith('/'):
-            if is_command_match(text, Commands.START, is_group):
-                send_reply(START_MESSAGE.replace('*', ''))
-                return jsonify({'status': 'command_start'}), 200
+     if text.strip().startswith('/'):
+    if is_command_match(text, Commands.START, is_group):
+        send_reply(START_MESSAGE.replace('*', ''))
+        return jsonify({'status': 'command_start'}), 200
+    
+    if is_command_match(text, Commands.HELP, is_group):
+        send_reply(HELP_MESSAGE.replace('*', ''))
+        return jsonify({'status': 'command_help'}), 200
+    
+    if is_command_match(text, Commands.SALDO, is_group):
+        try:
+            balances = get_wallet_balances()
+            msg = "💰 SALDO DOMPET\n\n"
+            for dompet, info in balances.items():
+                msg += f"📊 {dompet}\n"
+                msg += f"   Masuk: Rp {info['pemasukan']:,}\n".replace(',', '.')
+                msg += f"   Keluar: Rp {info['pengeluaran']:,}\n".replace(',', '.')
+                msg += f"   Saldo: Rp {info['saldo']:,}\n\n".replace(',', '.')
+            send_reply(msg)
+            return jsonify({'status': 'command_saldo'}), 200
+        except Exception as e:
+            send_reply(f"❌ Error: {str(e)}")
+            return jsonify({'status': 'error'}), 200
+    
+    if is_command_match(text, Commands.STATUS, is_group):
+        try:
+            dashboard = get_dashboard_summary()
+            msg = format_dashboard_message(dashboard)
+            send_reply(msg.replace('*', ''))
+            return jsonify({'status': 'command_status'}), 200
+        except Exception as e:
+            send_reply(f"❌ Error: {str(e)}")
+            return jsonify({'status': 'error'}), 200
+    
+    # ========================================
+    # NEW: /tanya Command - AI Query dengan Real Data
+    # ========================================
+    if text.startswith('/tanya '):
+        query = text.replace('/tanya ', '').strip()
+        
+        if not query:
+            send_reply("💡 Contoh: /tanya cek keuangan hari ini")
+            return jsonify({'status': 'command_tanya_empty'}), 200
+        
+        try:
+            from handlers.query_handler import handle_query_command
             
-            if is_command_match(text, Commands.HELP, is_group):
-                send_reply(HELP_MESSAGE.replace('*', ''))
-                return jsonify({'status': 'command_help'}), 200
+            # Send "analyzing" message first
+            mention = format_mention(sender_name, is_group)
+            send_reply(f"{mention}🤔 Menganalisis data...")
             
-            if is_command_match(text, Commands.SALDO, is_group):
-                try:
-                    balances = get_wallet_balances()
-                    msg = "💰 SALDO DOMPET\n\n"
-                    for dompet, info in balances.items():
-                        msg += f"📊 {dompet}\n"
-                        msg += f"   Masuk: Rp {info['pemasukan']:,}\n".replace(',', '.')
-                        msg += f"   Keluar: Rp {info['pengeluaran']:,}\n".replace(',', '.')
-                        msg += f"   Saldo: Rp {info['saldo']:,}\n\n".replace(',', '.')
-                    send_reply(msg)
-                    return jsonify({'status': 'command_saldo'}), 200
-                except Exception as e:
-                    send_reply(f"❌ Error: {str(e)}")
-                    return jsonify({'status': 'error'}), 200
+            # Get answer with real data
+            answer = handle_query_command(query, sender_number, chat_jid)
             
-            if is_command_match(text, Commands.STATUS, is_group):
-                try:
-                    dashboard = get_dashboard_summary()
-                    msg = format_dashboard_message(dashboard)
-                    send_reply(msg.replace('*', ''))
-                    return jsonify({'status': 'command_status'}), 200
-                except Exception as e:
-                    send_reply(f"❌ Error: {str(e)}")
-                    return jsonify({'status': 'error'}), 200
+            # Send answer
+            response = f"{mention}{answer}"
+            send_reply(response)
+            
+            return jsonify({'status': 'command_tanya_success'}), 200
+            
+        except Exception as e:
+            logger.error(f"/tanya command failed: {e}")
+            send_reply(f"{mention}❌ Maaf, terjadi kesalahan saat menganalisis data.")
+            return jsonify({'status': 'command_tanya_error'}), 200
         
         # Initialize category scope (will be updated by AI layer if used)
         layer_category_scope = 'UNKNOWN'

@@ -140,6 +140,7 @@ class GroqContextAnalyzer:
         is_future = is_likely_future_plan(text)
         is_human_cmd = is_command_to_human(text)
         op_keyword = detect_operational_keyword(text)
+        is_saldo = is_saldo_update(text)
         
         # LAYER 3: Multi-layer context detection
         context_analysis = self.context_detector.detect_context(text)
@@ -163,6 +164,7 @@ PRE-ANALYSIS HINTS:
 - Likely Future Plan: {is_future}
 - Command to Human: {is_human_cmd}
 - Operational Keyword Detected: {op_keyword or 'None'}
+- Saldo Update Detected: {is_saldo}
 
 ===========================================
 CRITICAL: OPERATIONAL vs PROJECT CLASSIFICATION
@@ -273,7 +275,14 @@ AVAILABLE INTENTS:
    
 3. **TRANSFER_FUNDS**
    - Moving money BETWEEN internal wallets.
-   - Examples: "Topup Gopay dari BCA 100rb", "Transfer ke TX SBY 1jt"
+   - WALLET BALANCE UPDATES (Isi dompet, isi saldo dompet, topup dompet).
+   - Examples: "Transfer ke TX SBY 1jt", "Update saldo dompet TX Bali 10jt", "Update saldo dompet TX SBY 10jt", "Update saldo dompet CV HB (101) 10jt", "Isi dompet"
+
+    CRITICAL: If "Saldo Update Detected: True", ALWAYS classify as TRANSFER_FUNDS!
+
+    CRITICAL RULES:
+    - If Saldo Update Detected = True → MUST be TRANSFER_FUNDS
+    - "update saldo", "isi dompet" → TRANSFER_FUNDS (NOT OPERATIONAL!)
 
 4. **QUERY_STATUS**
    - Asking about financial data, balance, reports.
@@ -444,19 +453,52 @@ REMEMBER:
             )
             
             result = json.loads(response.choices[0].message.content)
+
+        # ===== POST-PROCESSING: Intent Boosting =====
+        # If pre-analysis shows strong signals, boost confidence
+
+        # 1. Saldo update MUST be TRANSFER_FUNDS
+        if is_saldo:
+            if result.get('intent') != 'TRANSFER_FUNDS':
+                logger.warning(f"AI misclassified saldo update. Forcing TRANSFER_FUNDS.")
+                result['intent'] = 'TRANSFER_FUNDS'
+                result['should_respond'] = True
+                result['confidence'] = 0.95
+                result['category_scope'] = 'TRANSFER'  # Special marker
+
+        # 2. DP/Project keywords MUST be RECORD_TRANSACTION
+            if result.get('intent') == 'IGNORE':
+                logger.warning(f"AI ignored DP transaction. Forcing RECORD_TRANSACTION.")
+                result['intent'] = 'RECORD_TRANSACTION'
+                result['should_respond'] = True
+                result['confidence'] = 0.90
+                result['category_scope'] = 'PROJECT'
+
+        # 3. Project name detected MUST respond
+        if has_amount and any(word[0].isupper() for word in text.split()):
+            # Has amount + capitalized word (likely project name)
+            if result.get('intent') == 'IGNORE':
+                logger.warning(f"AI ignored project transaction. Forcing RECORD_TRANSACTION.")
+                result['intent'] = 'RECORD_TRANSACTION'
+                result['should_respond'] = True
+                result['confidence'] = 0.85
+                result['category_scope'] = 'PROJECT'
+
+        # Apply rule-based safety overrides
+        result = self._apply_safety_overrides(result, text, context, has_amount, is_future, is_human_cmd)
             
-            # Inject context analysis metadata for transparency
-            result['context_analysis'] = {
-                'pre_detected_scope': category_scope,
+        # Inject context analysis metadata for transparency
+        result['context_analysis'] = {
+            'pre_detected_scope': category_scope,
                 'scope_confidence': context_confidence,
                 'reasoning': context_reasoning,
                 'signals': context_signals
             }
             
-            # Post-processing safety: Apply rule-based overrides
-            result = self._apply_safety_overrides(result, text, context, has_amount, is_future, is_human_cmd)
+        # Post-processing safety: Apply rule-based overrides
+        result = self._apply_safety_overrides(result, text, context, has_amount, is_future, is_human_cmd)
             
-            return result
+        return result
             
         except Exception as e:
             logger.error(f"Groq Analyzer Failed: {e}")
@@ -531,3 +573,33 @@ def should_quick_filter(message: dict) -> str:
         return "PROCESS"
         
     return "PROCESS"
+
+
+def is_saldo_update(text: str) -> bool:
+    """
+    Detect if this is a wallet balance update (not operational expense).
+    
+    Examples:
+    - "Update saldo dompet TX Bali 10jt" → True
+    - "Isi dompet holja 5jt" → True
+    - "Tarik tunai 2jt" → True
+    """
+    text_lower = text.lower()
+    
+    # Keywords yang JELAS ini update saldo
+    saldo_update_keywords = [
+        "update saldo",
+        "update dompet",
+        "update saldo dompet",
+        "isi saldo",
+        "isi dompet",
+        "topup dompet",
+        "top up dompet",
+        "masuk dompet",
+        "tambah saldo",
+        "tarik tunai",
+        "tarik dompet",
+        "ambil dompet",
+    ]
+    
+    return any(kw in text_lower for kw in saldo_update_keywords)
