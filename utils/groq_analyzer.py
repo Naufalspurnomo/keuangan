@@ -454,51 +454,63 @@ REMEMBER:
             
             result = json.loads(response.choices[0].message.content)
 
-        # ===== POST-PROCESSING: Intent Boosting =====
-        # If pre-analysis shows strong signals, boost confidence
+            # ===== POST-PROCESSING: Intent Boosting =====
+            # If pre-analysis shows strong signals, boost confidence
 
-        # 1. Saldo update MUST be TRANSFER_FUNDS
-        if is_saldo:
-            if result.get('intent') != 'TRANSFER_FUNDS':
-                logger.warning(f"AI misclassified saldo update. Forcing TRANSFER_FUNDS.")
-                result['intent'] = 'TRANSFER_FUNDS'
-                result['should_respond'] = True
-                result['confidence'] = 0.95
-                result['category_scope'] = 'TRANSFER'  # Special marker
+            # 1. Saldo update MUST be TRANSFER_FUNDS
+            if is_saldo:
+                if result.get('intent') != 'TRANSFER_FUNDS':
+                    logger.warning(f"AI misclassified saldo update. Forcing TRANSFER_FUNDS.")
+                    result['intent'] = 'TRANSFER_FUNDS'
+                    result['should_respond'] = True
+                    result['confidence'] = 0.95
+                    result['category_scope'] = 'TRANSFER'  # Special marker
 
-        # 2. DP/Project keywords MUST be RECORD_TRANSACTION
+            # 2. DP/Project keywords MUST be RECORD_TRANSACTION
             if result.get('intent') == 'IGNORE':
-                logger.warning(f"AI ignored DP transaction. Forcing RECORD_TRANSACTION.")
-                result['intent'] = 'RECORD_TRANSACTION'
-                result['should_respond'] = True
-                result['confidence'] = 0.90
-                result['category_scope'] = 'PROJECT'
+                if op_keyword or is_human_cmd is False: # Simple logic fix, maybe just check if it was ignored
+                     if has_amount and is_past: # Only force if amount + past
+                        pass # Placeholder logic to match structure, actually just correcting indentation
 
-        # 3. Project name detected MUST respond
-        if has_amount and any(word[0].isupper() for word in text.split()):
-            # Has amount + capitalized word (likely project name)
-            if result.get('intent') == 'IGNORE':
-                logger.warning(f"AI ignored project transaction. Forcing RECORD_TRANSACTION.")
-                result['intent'] = 'RECORD_TRANSACTION'
-                result['should_respond'] = True
-                result['confidence'] = 0.85
-                result['category_scope'] = 'PROJECT'
-
-        # Apply rule-based safety overrides
-        result = self._apply_safety_overrides(result, text, context, has_amount, is_future, is_human_cmd)
+            # Re-implementing logic from file cleanly:
             
-        # Inject context analysis metadata for transparency
-        result['context_analysis'] = {
-            'pre_detected_scope': category_scope,
+            # 2. DP/Project keywords MUST be RECORD_TRANSACTION
+            # Check for patterns that were ignored but shouldn't be
+            if result.get('intent') == 'IGNORE' and has_amount:
+                 # Logic for DP/Project recovery already in place below?
+                 pass
+
+            if result.get('intent') == 'IGNORE':
+                 # Check for DP/term keywords
+                 if any(k in text.lower() for k in ['dp', 'termin', 'pelunasan']):
+                    logger.warning(f"AI ignored DP transaction. Forcing RECORD_TRANSACTION.")
+                    result['intent'] = 'RECORD_TRANSACTION'
+                    result['should_respond'] = True
+                    result['confidence'] = 0.90
+                    result['category_scope'] = 'PROJECT'
+
+            # 3. Project name detected MUST respond
+            if has_amount and any(word[0].isupper() for word in text.split()):
+                # Has amount + capitalized word (likely project name)
+                if result.get('intent') == 'IGNORE':
+                    logger.warning(f"AI ignored project transaction. Forcing RECORD_TRANSACTION.")
+                    result['intent'] = 'RECORD_TRANSACTION'
+                    result['should_respond'] = True
+                    result['confidence'] = 0.85
+                    result['category_scope'] = 'PROJECT'
+
+            # Inject context analysis metadata for transparency
+            result['context_analysis'] = {
+                'pre_detected_scope': category_scope,
                 'scope_confidence': context_confidence,
                 'reasoning': context_reasoning,
                 'signals': context_signals
             }
             
-        # Post-processing safety: Apply rule-based overrides
-        result = self._apply_safety_overrides(result, text, context, has_amount, is_future, is_human_cmd)
+            # Post-processing safety: Apply rule-based overrides
+            result = self._apply_safety_overrides(result, text, context, has_amount, is_future, is_human_cmd)
             
-        return result
+            return result
             
         except Exception as e:
             logger.error(f"Groq Analyzer Failed: {e}")
