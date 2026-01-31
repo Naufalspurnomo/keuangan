@@ -166,6 +166,34 @@ PRE-ANALYSIS HINTS:
 - Operational Keyword Detected: {op_keyword or 'None'}
 - Saldo Update Detected: {is_saldo}
 
+CRITICAL QUERY DETECTION:
+
+**Questions/Queries (NOT transactions):**
+Words that indicate QUERY, not transaction:
+- "berapa", "how much", "cek", "check"
+- "laporan", "report", "ringkasan", "summary"
+- "total", "jumlah total", "saldo"
+- "gimana", "bagaimana", "how"
+
+Examples:
+- "Bot berapa pengeluaran dari ketiga dompet" → QUERY_STATUS (NOT transaction!)
+- "Berapa saldo holja?" → QUERY_STATUS
+- "Total pengeluaran hari ini?" → QUERY_STATUS
+
+If text is asking a QUESTION (contains question words), classify as QUERY_STATUS, NOT RECORD_TRANSACTION!
+
+**Transaction Reports (actual records):**
+Must have:
+- Past tense action ("bayar", "beli", "transfer")
+- Clear amount
+- Clear item/purpose
+
+Examples:
+- "Bayar listrik 200rb" → RECORD_TRANSACTION
+- "Beli material 500k" → RECORD_TRANSACTION
+
+CRITICAL: Do NOT classify questions as transactions!
+
 ===========================================
 CRITICAL: OPERATIONAL vs PROJECT CLASSIFICATION
 ===========================================
@@ -453,6 +481,30 @@ REMEMBER:
             )
             
             result = json.loads(response.choices[0].message.content)
+
+            # ==== POST-PROCESSING: Query Detection Override ====
+            # If text contains question words, MUST be query
+            question_words = ['berapa', 'gimana', 'bagaimana', 'apa', 'kapan', 'kenapa', 
+                              'how much', 'how many', 'what', 'when', 'why',
+                              'cek', 'check', 'lihat', 'tunjukkan']
+
+            if any(qw in text.lower() for qw in question_words):
+                # This is a question, not a transaction
+                if result.get('intent') == 'RECORD_TRANSACTION':
+                    logger.warning(f"AI misclassified question as transaction. Forcing QUERY_STATUS.")
+                    result['intent'] = 'QUERY_STATUS'
+                    result['should_respond'] = True
+                    result['confidence'] = 0.90
+
+            # ==== POST-PROCESSING: Zero Amount Filter ====
+            # Never allow 0 amount transactions
+            extracted = result.get('extracted_data', {})
+            if result.get('intent') == 'RECORD_TRANSACTION':
+                amount = extracted.get('amount', 0)
+                if amount == 0:
+                    logger.warning(f"AI detected transaction with 0 amount. Forcing IGNORE.")
+                    result['intent'] = 'IGNORE'
+                    result['should_respond'] = False
 
             # ===== POST-PROCESSING: Intent Boosting =====
             # If pre-analysis shows strong signals, boost confidence

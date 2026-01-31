@@ -29,23 +29,17 @@ from ai_helper import extract_financial_data, query_data, RateLimitException
 
 # Google Sheets Integration
 from sheets_helper import (
-    append_transactions, append_transaction, test_connection, 
-    generate_report, format_report_message,
-    get_all_categories,
-    format_data_for_ai, check_budget_alert,
-    get_company_sheets, COMPANY_SHEETS,
+    append_transactions, append_transaction, 
+    format_data_for_ai,
     format_dashboard_message, get_dashboard_summary,
     get_wallet_balances,
     invalidate_dashboard_cache,
     DOMPET_SHEETS, DOMPET_COMPANIES, SELECTION_OPTIONS,
     get_selection_by_idx, get_dompet_for_company,
-    find_transaction_by_message_id, update_transaction_amount,
-    normalize_project_display_name,
     check_duplicate_transaction,
     # New Split Layout Functions
     append_project_transaction,
     append_operational_transaction,
-    get_or_create_operational_sheet,
 )
 
 # Services
@@ -53,17 +47,15 @@ from services.retry_service import process_retry_queue
 from services.project_service import resolve_project_name, add_new_project_to_cache
 from services.state_manager import (
     pending_key, pending_is_expired,
-    get_pending_transactions, set_pending_transaction,
-    clear_pending_transaction, has_pending_transaction,
     is_message_duplicate, store_bot_message_ref,
-    get_original_message_id, store_pending_message_ref,
-    get_pending_key_from_message, clear_pending_message_ref,
+    store_pending_message_ref,
+    get_pending_key_from_message,
     store_visual_buffer, get_visual_buffer,
     clear_visual_buffer, has_visual_buffer,
-    record_bot_interaction, store_last_bot_report,
+    store_last_bot_report,
     # New Pending Confirmations
     get_pending_confirmation, set_pending_confirmation,
-    clear_pending_confirmation, has_pending_confirmation
+    store_user_message, get_user_last_message, clear_user_last_message
 )
 
 # Layer Integration - Superseded by SmartHandler
@@ -789,6 +781,23 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             # Bypass AI if pending active
             pass 
         else:
+            # ==== Context Enhancement: Combine with last message if applicable ====
+            last_message = get_user_last_message(sender_number, chat_jid, max_age_seconds=60)
+
+            if last_message:
+                # Check if current message is just an amount
+                if has_amount_pattern(text) and len(text.strip()) < 20:
+                    # Likely continuing previous message
+                    # Combine context
+                    combined_text = f"{last_message} {text}"
+                    secure_log("INFO", f"Combined with last message: {combined_text}")
+                    text = combined_text
+                    # Clear buffer after use
+                    clear_user_last_message(sender_number, chat_jid)
+
+            # Store current message for next time
+            store_user_message(sender_number, chat_jid, text)
+
             # Smart Handler (AI Layer)
             if USE_LAYERS:
                 # Use the initialized smart_handler instance
@@ -1144,7 +1153,36 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         secure_log("ERROR", f"Flow Error: {e}")
         return jsonify({'status': 'error'}), 500
 
+def run_retry_service():
+    """Background loop to process retry queue."""
+    import time
+    from sheets_helper import append_transaction
+    
+    def retry_handler(transaction, metadata):
+        try:
+            res = append_transaction(
+                transaction=transaction,
+                sender_name=metadata.get('sender_name', 'System'),
+                source=metadata.get('source', 'Retry'),
+                dompet_sheet=metadata.get('dompet_sheet'),
+                company=metadata.get('company'),
+                nama_projek=metadata.get('nama_projek'),
+                allow_queue=False
+            )
+            return res > 0
+        except Exception as e:
+            secure_log("ERROR", f"Retry handler failed: {e}")
+            return False
+
+    while True:
+        try:
+            processed = process_retry_queue(retry_handler)
+            time.sleep(10 if processed > 0 else 60)
+        except Exception as e:
+            secure_log("ERROR", f"Retry service crashed: {e}")
+            time.sleep(60)
+
 if __name__ == '__main__':
-    retry_thread = threading.Thread(target=process_retry_queue, daemon=True) # Check args
+    retry_thread = threading.Thread(target=run_retry_service, daemon=True)
     retry_thread.start()
     app.run(host='0.0.0.0', port=5000, debug=DEBUG, use_reloader=False)

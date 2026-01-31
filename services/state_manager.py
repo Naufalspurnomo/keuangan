@@ -517,6 +517,46 @@ def has_pending_confirmation(user_id: str, chat_id: str) -> bool:
     """Check if user has pending confirmation."""
     return get_pending_confirmation(user_id, chat_id) is not None
 
+
+# ===================== USER MESSAGE CONTEXT =====================
+# Store user's last message for multi-message context (e.g. split text)
+# Format: {key: {'text': str, 'timestamp': datetime}}
+# key = "chat_id:user_id"
+USER_LAST_MESSAGES = {}
+
+def store_user_message(user_id: str, chat_id: str, text: str):
+    """Store user's last message for context."""
+    from datetime import datetime
+    
+    key = f"{chat_id}:{user_id}"
+    USER_LAST_MESSAGES[key] = {
+        'text': text,
+        'timestamp': datetime.now()
+    }
+
+def get_user_last_message(user_id: str, chat_id: str, max_age_seconds: int = 60) -> str:
+    """Get user's last message if recent enough."""
+    from datetime import datetime, timedelta
+    
+    key = f"{chat_id}:{user_id}"
+    last_msg = USER_LAST_MESSAGES.get(key)
+    
+    if not last_msg:
+        return None
+    
+    # Check age
+    if datetime.now() - last_msg['timestamp'] > timedelta(seconds=max_age_seconds):
+        return None
+    
+    return last_msg['text']
+
+def clear_user_last_message(user_id: str, chat_id: str):
+    """Clear user's message buffer."""
+    key = f"{chat_id}:{user_id}"
+    if key in USER_LAST_MESSAGES:
+        del USER_LAST_MESSAGES[key]
+
+
 # ===================== STATS =====================
 
 def get_state_stats() -> Dict[str, Any]:
