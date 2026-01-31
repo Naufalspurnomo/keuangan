@@ -206,12 +206,12 @@ WALLET_SELECTION_OPTIONS = [
     {"idx": 3, "dompet": "TX BALI(087)", "short": "TX BALI", "display": "3. TX BALI (087)"},
 ]
 
-# Project company/wallet selection (3 options - matching real wallets)
-# "Company" field will just mirror the Wallet Name (e.g. CV HB, TX SBY, TX BALI)
+# Project company/wallet selection (4 options - matching prompt)
 SELECTION_OPTIONS = [
-    {"idx": 1, "dompet": "CV HB (101)", "company": "CV HB"},
-    {"idx": 2, "dompet": "TX SBY(216)", "company": "TX SBY"},
-    {"idx": 3, "dompet": "TX BALI(087)", "company": "TX BALI"},
+    {"idx": 1, "dompet": "CV HB (101)", "company": "HOLLA"},
+    {"idx": 2, "dompet": "CV HB (101)", "company": "HOJJA"},
+    {"idx": 3, "dompet": "TX SBY(216)", "company": "TEXTURIN-Surabaya"},
+    {"idx": 4, "dompet": "TX BALI(087)", "company": "TEXTURIN-Bali"},
 ]
 
 # Legacy aliases for backward compatibility

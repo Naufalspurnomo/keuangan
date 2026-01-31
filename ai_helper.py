@@ -167,6 +167,7 @@ DOMPET_UPDATE_REGEX = re.compile(
 DOMPET_PATTERNS = [
     (re.compile(r"\b(dompet\s*holja|holja|dompet\s*cv\s*hb|cv\s*hb)\b", re.IGNORECASE), "Dompet CV HB"),
     (re.compile(r"\b(dompet\s*texturin\s*sby|texturin\s*sby|texturin\s*surabaya)\b", re.IGNORECASE), "Dompet Texturin Sby"),
+    (re.compile(r"\b(dompet\s*tx\s*bali|dompet\s*bali|tx\s*bali|texturin\s*bali)\b", re.IGNORECASE), "Dompet TX Bali"),
     (re.compile(r"\b(dompet\s*evan|evan)\b", re.IGNORECASE), "Dompet Evan"),
 ]
 
@@ -212,9 +213,16 @@ def detect_wallet_from_text(text: str) -> Optional[str]:
             r'\bdompet\s+texturin\s*(surabaya|sby)?\b',
             r'\btexturin\s+surabaya\b',
             r'\btexturin\s+sby\b',
-            r'\bsaldo\s+texturin\b',
-            r'\bsaldo\s+texturin\b',
+            r'\bsaldo\s+texturin\s*sby\b',
             r'\btexturin\b'  # Handled by context check below
+        ],
+        "Dompet TX Bali": [
+             r'\bdompet\s+tx\s*bali\b',
+             r'\bdompet\s+bali\b',
+             r'\btx\s*bali\b',
+             r'\btexturin\s*bali\b',
+             r'\bsaldo\s+tx\s*bali\b',
+             r'\bsaldo\s+bali\b'
         ],
         "Dompet Evan": [
             r'\bdompet\s+evan\b',
@@ -581,7 +589,10 @@ WALLET_DETECTION_RULES = """
    - "dompet texturin", "texturin surabaya", "texturin sby", "saldo texturin"
    - "texturin" (ONLY if context is wallet operation like "isi saldo", "transfer ke")
 
-3. Dompet Evan:
+3. Dompet TX Bali:
+   - "dompet tx bali", "tx bali", "texturin bali", "dompet bali"
+
+4. Dompet Evan:
    - "dompet evan", "evan", "saldo evan", "wallet evan"
    - "evan" (ONLY if context is wallet operation)
 
@@ -698,6 +709,7 @@ COMPANY NAMES (CASE-INSENSITIVE MATCHING):
 - "Dompet CV HB" -> "CV HB"
 - "Dompet Evan" -> "KANTOR"
 - "Dompet Texturin" -> "TEXTURIN-Surabaya"
+- "Dompet TX Bali" -> "TEXTURIN-Bali"
 
 MANDATORY NORMALIZATION RULES:
 1. CURRENCY:
