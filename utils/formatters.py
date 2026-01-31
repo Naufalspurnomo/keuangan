@@ -109,8 +109,10 @@ def build_selection_prompt(transactions: list, mention: str = "") -> str:
     """Build the selection prompt message with dompet/company options."""
     tx_lines = []
     for t in transactions:
-        emoji = "💰" if t.get('tipe') == 'Pemasukan' else "💸"
-        tx_lines.append(f"   {emoji} {t.get('keterangan', '-')}: Rp {t.get('jumlah', 0):,}".replace(',', '.'))
+        is_in = t.get('tipe') == 'Pemasukan'
+        emoji = "💰" if is_in else "💸"
+        label = "PEMASUKAN" if is_in else "PENGELUARAN"
+        tx_lines.append(f"   {emoji} {label} {t.get('keterangan', '-')}: Rp {t.get('jumlah', 0):,}".replace(',', '.'))
     tx_preview = '\n'.join(tx_lines)
     
     total = sum(t.get('jumlah', 0) for t in transactions)
@@ -177,8 +179,11 @@ def format_success_reply_new(transactions: list, dompet_sheet: str, company: str
     for t in transactions:
         amount = t.get('jumlah', 0)
         total += amount
-        tipe_icon = "💰" if t.get('tipe') == 'Pemasukan' else "💸"
-        lines.append(f"{tipe_icon} {t.get('keterangan', '-')}: Rp {amount:,}".replace(',', '.'))
+        is_in = t.get('tipe') == 'Pemasukan'
+        tipe_icon = "💰" if is_in else "💸"
+        label = "PEMASUKAN" if is_in else "PENGELUARAN"
+        
+        lines.append(f"{tipe_icon} {label} {t.get('keterangan', '-')}: Rp {amount:,}".replace(',', '.'))
         
         if t.get('nama_projek'):
             display_name = normalize_project_display_name(t['nama_projek'])

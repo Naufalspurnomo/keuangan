@@ -727,8 +727,12 @@ MANDATORY NORMALIZATION RULES:
    - Format dd/mm/yyyy.
 
 4. TRANSACTION TYPE:
-   - "Pemasukan": DP, Transfer Masuk, Terima, Tambah Saldo, Isi Dompet, Deposit.
-   - "Pengeluaran": Beli, Bayar, Lunas, Struk, Nota.
+   - "Pemasukan": DP, Down Payment, Termin, Pelunasan, Pembayaran Client, Transfer Masuk, Terima, Tambah Saldo, Deposit.
+   - "Pengeluaran": Beli, Bayar, Belanja, Struk, Nota, Lunas Tagihan.
+   
+   IMPORTANT: 
+   - "Pelunasan Projek" or "Pelunasan dari Client" = PEMASUKAN
+   - "Bayar Pelunasan Hutang" or "Pelunasan Tagihan ke Vendor" = PENGELUARAN
 
 CRITICAL LOGIC RULES:
 
