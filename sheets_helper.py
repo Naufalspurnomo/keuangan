@@ -956,7 +956,9 @@ def get_all_data(days: int = 30) -> List[Dict]:
                 all_values = sheet.get_all_values()
                 
                 # Get Company Name mapping
-                company_name = next((v for k,v in DOMPET_COMPANIES.items() if k.lower() in dompet.lower()), dompet)
+                # Use the canonical Dompet Name (key) as the Company Name
+                # DOMPET_COMPANIES values are lists, so we must use 'k' (string) not 'v' (list)
+                company_name = next((k for k,v in DOMPET_COMPANIES.items() if k.lower() in dompet.lower()), dompet)
                 
                 # Skip up to data start
                 for row in all_values[SPLIT_LAYOUT_DATA_START-1:]:
