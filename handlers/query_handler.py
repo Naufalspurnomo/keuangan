@@ -1,46 +1,63 @@
 """
 Smart Query Handler - AI dengan akses ke data Spreadsheet
-Version: Simplified & Robust
+Version: Robust (Using Centralized Helper)
 """
 
 import logging
-from datetime import datetime, timedelta
-from sheets_helper import get_sheet
+from sheets_helper import format_data_for_ai
 from ai_helper import groq_client
-from security import now_wib
 
 logger = logging.getLogger(__name__)
-
 
 def handle_query_command(query: str, user_id: str, chat_id: str) -> str:
     """
     Handle /tanya command dengan inject data dari Spreadsheet.
+    
+    Args:
+        query: User's question
+        user_id: Sender ID
+        chat_id: Chat ID
+    
+    Returns:
+        AI's answer based on real data
     """
     
     try:
-        # 1. Fetch data
-        context_data = fetch_financial_summary()
+        # 1. Fetch relevant data dari Spreadsheet via centralized helper
+        # Uses 30 days default context
+        formatted_context = format_data_for_ai(days=30)
         
-        if not context_data:
-            return "📊 Belum ada data transaksi yang bisa dianalisis."
+        # Check if helper returned nothing
+        if not formatted_context or "Tidak ada data transaksi" in formatted_context:
+            # Fallback check - maybe data exists but older than 30 days?
+            # Trying 60 days if empty
+            formatted_context = format_data_for_ai(days=60)
+            if not formatted_context or "Tidak ada data transaksi" in formatted_context:
+               return "📊 Belum ada data transaksi yang ditemukan dalam 60 hari terakhir."
         
-        # 2. Build AI prompt
+        # 2. Build context-rich prompt
         system_prompt = """Anda adalah asisten keuangan untuk perusahaan seni/mural.
-Jawab pertanyaan user tentang keuangan berdasarkan data yang diberikan.
+Anda memiliki akses ke data transaksi real-time dari Google Spreadsheet.
 
-Gunakan:
-- Emoji untuk readability
-- Format angka dengan titik sebagai separator ribuan
-- Bahasa yang friendly tapi profesional
+Tugas Anda:
+- Jawab pertanyaan user tentang keuangan BERDASARKAN DATA yang diberikan.
+- Jika data mencantumkan "Dompet CV HB", "TX SBY", dll, itu adalah sumber dana.
+- JANGAN menyimpulkan "0 pengeluaran" jika di data teks jelas-jelas ada list transaksi.
+- Berikan analisis yang jelas dan ringkas.
+- Gunakan emoji untuk readability.
+- Format angka dengan ribuan separator (titik).
 
-Jangan mengarang data yang tidak tersedia."""
+Jangan:
+- Mengarang data yang tidak ada.
+- Mengatakan "tidak ada pengeluaran" padahal di list data ada baris pengeluaran.
+"""
 
         user_prompt = f"""Pertanyaan: {query}
 
-DATA KEUANGAN:
-{context_data}
+DATA KEUANGAN (REALTIME):
+{formatted_context}
 
-Jawab pertanyaan berdasarkan data di atas."""
+Jawab pertanyaan user secara spesifik berdasarkan data di atas."""
 
         # 3. Call AI
         response = groq_client.chat.completions.create(
@@ -57,97 +74,5 @@ Jawab pertanyaan berdasarkan data di atas."""
         return answer.strip()
         
     except Exception as e:
-        logger.error(f"Query handler error: {e}", exc_info=True)
-        raise  # Re-raise untuk di-catch di main.py
-
-
-def fetch_financial_summary() -> str:
-    """
-    Fetch simplified financial summary dari semua dompet.
-    Returns formatted string untuk AI context.
-    """
-    
-    dompet_names = ['CV HB (101)', 'TX SBY(216)', 'TX BALI(087)']
-    
-    summary_lines = []
-    summary_lines.append("💼 RINGKASAN KEUANGAN\n")
-    
-    total_all_pemasukan = 0
-    total_all_pengeluaran = 0
-    
-    for dompet_name in dompet_names:
-        try:
-            sh = get_sheet(dompet_name)
-            if not sh:
-                summary_lines.append(f"❌ {dompet_name}: Data tidak tersedia\n")
-                continue
-            
-            # Strategy: Cari section PEMASUKAN dan PENGELUARAN
-            # Lalu sum semua angka di kolom Jumlah
-            
-            all_values = sh.get_all_values()
-            
-            pemasukan_total = 0
-            pengeluaran_total = 0
-            in_pemasukan_section = False
-            in_pengeluaran_section = False
-            
-            for row in all_values:
-                # Detect section headers
-                if len(row) > 0:
-                    first_cell = str(row[0]).upper()
-                    
-                    if 'PEMASUKAN' in first_cell:
-                        in_pemasukan_section = True
-                        in_pengeluaran_section = False
-                        continue
-                    
-                    if 'PENGELUARAN' in first_cell:
-                        in_pengeluaran_section = True
-                        in_pemasukan_section = False
-                        continue
-                
-                # Parse jumlah from row
-                # Usually column 3 or 4 (index 2 or 3)
-                for i, cell in enumerate(row):
-                    if i < 2:  # Skip No and Waktu columns
-                        continue
-                    
-                    # Try to parse as number
-                    cell_str = str(cell).replace('Rp', '').replace('.', '').replace(',', '').replace(' ', '').strip()
-                    
-                    if cell_str.isdigit():
-                        amount = int(cell_str)
-                        
-                        if amount > 0:  # Valid amount
-                            if in_pemasukan_section:
-                                pemasukan_total += amount
-                            elif in_pengeluaran_section:
-                                pengeluaran_total += amount
-                        
-                        break  # Only parse first valid number in row
-            
-            saldo = pemasukan_total - pengeluaran_total
-            
-            summary_lines.append(f"📊 {dompet_name}:")
-            summary_lines.append(f"  💰 Pemasukan: Rp {pemasukan_total:,}".replace(',', '.'))
-            summary_lines.append(f"  💸 Pengeluaran: Rp {pengeluaran_total:,}".replace(',', '.'))
-            summary_lines.append(f"  💵 Saldo: Rp {saldo:,}".replace(',', '.'))
-            summary_lines.append("")
-            
-            total_all_pemasukan += pemasukan_total
-            total_all_pengeluaran += pengeluaran_total
-            
-        except Exception as e:
-            logger.error(f"Error processing {dompet_name}: {e}")
-            summary_lines.append(f"⚠️ {dompet_name}: Error membaca data\n")
-    
-    # Grand total
-    grand_saldo = total_all_pemasukan - total_all_pengeluaran
-    summary_lines.append("=" * 40)
-    summary_lines.append("📈 TOTAL KESELURUHAN:")
-    summary_lines.append(f"  💰 Total Pemasukan: Rp {total_all_pemasukan:,}".replace(',', '.'))
-    summary_lines.append(f"  💸 Total Pengeluaran: Rp {total_all_pengeluaran:,}".replace(',', '.'))
-    summary_lines.append(f"  💵 Saldo Akhir: Rp {grand_saldo:,}".replace(',', '.'))
-    
-    return '\n'.join(summary_lines)
+        logger.error(f"Query AI failed: {e}", exc_info=True)
+        return "❌ Maaf, terjadi kesalahan saat menganalisis data AI."
