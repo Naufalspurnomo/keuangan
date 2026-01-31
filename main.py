@@ -301,16 +301,20 @@ def apply_lifecycle_markers(project_name: str, transaction: dict) -> str:
     desc = (transaction.get('keterangan', '') or '').lower()
     
     # Rule 1: Finish
-    if any(k in desc for k in ['pelunasan', 'lunas', 'final payment']):
+    finish_keywords = ['pelunasan', 'lunas', 'final payment', 'penyelesaian', 'selesai', 'kelar', 'beres']
+    if any(k in desc for k in finish_keywords):
         return f"{project_name} (Finish)"
         
-    # Rule 2: Start (Only if New Project)
-    if any(k in desc for k in ['dp', 'down payment', 'uang muka', 'termin 1']):
-        from services.project_service import get_existing_projects
-        existing = get_existing_projects()
-        # Check if project exists (case insensitive)
-        if not any(e.lower() == project_name.lower() for e in existing):
-            return f"{project_name} (Start)"
+    # Rule 2: Start (New Project Auto-Detect)
+    # If this is a New Project (not in cache) AND it is Pemasukan (checked above),
+    # then we assume this is the Project Start / DP.
+    from services.project_service import get_existing_projects
+    existing = get_existing_projects()
+    
+    # Check if project exists (case insensitive)
+    # If NOT found in existing, tag as (Start)
+    if not any(e.lower() == project_name.lower() for e in existing):
+        return f"{project_name} (Start)"
             
     return project_name
 
