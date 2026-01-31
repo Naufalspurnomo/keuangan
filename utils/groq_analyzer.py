@@ -9,20 +9,12 @@ Major Improvements:
 """
 import json
 import logging
-import re
 from config.constants import Timeouts, OPERATIONAL_KEYWORDS
 from utils.context_detector import ContextDetector
+from utils.amounts import has_amount_pattern
 
 logger = logging.getLogger(__name__)
 
-
-# Pre-AI number pattern detection
-AMOUNT_PATTERNS = [
-    re.compile(r'rp[\s.]*\d+', re.IGNORECASE),           # Rp 50.000, rp50000
-    re.compile(r'\d+[\s]*(rb|ribu|k)', re.IGNORECASE),   # 50rb, 50 ribu, 50k
-    re.compile(r'\d+[\s]*(jt|juta)', re.IGNORECASE),     # 1jt, 1 juta
-    re.compile(r'\d{4,}'),                                 # 50000 (4+ digits)
-]
 
 # Past tense indicators (action already happened)
 PAST_TENSE_INDICATORS = [
@@ -45,14 +37,6 @@ COMMAND_TO_HUMAN = [
     'tolong', 'dong', 'donk', 'ya', 'yuk', 'aja', 'deh',
     'beliin', 'bayarin', 'transferin', 'ambilin', 'kirim ke'
 ]
-
-
-def has_amount_pattern(text: str) -> bool:
-    """Check if text contains recognizable amount pattern."""
-    for pattern in AMOUNT_PATTERNS:
-        if pattern.search(text):
-            return True
-    return False
 
 
 def is_likely_past_tense(text: str) -> bool:
