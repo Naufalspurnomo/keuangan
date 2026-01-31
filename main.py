@@ -165,22 +165,7 @@ import services.state_manager as state_manager_module
 # Initialize SmartHandler
 smart_handler = SmartHandler(state_manager_module)
 
-import re  # Ensure re is available for pattern matching
-
-# Amount pattern detection (matches groq_analyzer.py)
-AMOUNT_PATTERNS = [
-    re.compile(r'rp[\s.]*\d+', re.IGNORECASE),
-    re.compile(r'\d+[\s]*(rb|ribu|k)', re.IGNORECASE),
-    re.compile(r'\d+[\s]*(jt|juta)', re.IGNORECASE),
-    re.compile(r'\d{4,}'),  # 4+ consecutive digits
-]
-
-def has_amount_pattern(text: str) -> bool:
-    """Check if text contains recognizable amount pattern."""
-    for pattern in AMOUNT_PATTERNS:
-        if pattern.search(text):
-            return True
-    return False
+from utils.amounts import has_amount_pattern
 
 
 def detect_transaction_context(text: str, transactions: list, category_scope: str = 'UNKNOWN') -> dict:
