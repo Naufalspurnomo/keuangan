@@ -41,6 +41,7 @@ from security import (
 )
 from utils.parsers import parse_revision_amount, extract_project_name_from_text
 from config.constants import KNOWN_COMPANY_NAMES, PROJECT_STOPWORDS
+from config.wallets import resolve_dompet_from_text
 
 def extract_project_from_description(description: str) -> str:
     """
@@ -181,88 +182,24 @@ def _is_wallet_update_context(clean_text: str) -> bool:
 
 def detect_wallet_from_text(text: str) -> Optional[str]:
     """
-    Detect wallet name from user input using comprehensive keyword matching.
-    Returns transaction-ready wallet name (e.g., 'Dompet Evan') or None.
+    Detect wallet/dompet name from user input using centralized aliases.
+    Returns canonical dompet sheet name (e.g., "TX BALI(087)") or None.
     """
     if not text:
         return None
-        
+
     text_lower = text.lower()
-    
-    # Define wallet patterns with priority (more specific first)
-    # These map to the 'company' field value expected by the system
-    wallet_patterns = {
-        "Dompet CV HB": [
-            r'\bdompet\s+cv\s*hb\b',
-            r'\bcv\s*hb\b',
-            r'\bdompet\s+holja\b',  # Alias
-            r'\bdompet\s+holla\b',  # Alias
-            r'\bsaldo\s+cv\s*hb\b',
-            r'\bsaldo\s+holja\b',   # Alias
-            r'\bsaldo\s+holla\b',   # Alias
-            r'\bwallet\s+cv\s*hb\b',
-            r'\bwallet\s+holja\b',  # Alias
-            r'\bwallet\s+holla\b',  # Alias
-            r'\bisi\s+cv\s*hb\b',
-            r'\bisi\s+holja\b',     # Alias
-            r'\bisi\s+holla\b',     # Alias
-            r'\bholja\b',  # Last priority (standalone) check context later if needed
-            r'\bholla\b'   # Alias standalone
-        ],
-        "Dompet Texturin Sby": [
-            r'\bdompet\s+texturin\s*(surabaya|sby)?\b',
-            r'\btexturin\s+surabaya\b',
-            r'\btexturin\s+sby\b',
-            r'\bsaldo\s+texturin\s*sby\b',
-            r'\btexturin\b'  # Handled by context check below
-        ],
-        "Dompet TX Bali": [
-             r'\bdompet\s+tx\s*bali\b',
-             r'\bdompet\s+bali\b',
-             r'\btx\s*bali\b',
-             r'\btexturin\s*bali\b',
-             r'\bsaldo\s+tx\s*bali\b',
-             r'\bsaldo\s+bali\b'
-        ],
-        "Dompet Evan": [
-            r'\bdompet\s+evan\b',
-            r'\bsaldo\s+evan\b',
-            r'\bwallet\s+evan\b',
-            r'\bisi\s+evan\b',
-            r'\bisi\s+evan\b',
-            r'\bevan\b'  # Handled by context check below
-        ]
-    }
-    
-    # Check for wallet operation context first
-    # This helps distinguish "Bayar Evan" (Person) from "Isi Evan" (Wallet)
     wallet_operations = [
         'tambah', 'tarik', 'isi', 'cek',
         'transfer', 'pindah', 'top', 'withdraw', 'deposit',
         'saldo', 'wallet', 'dompet'
     ]
-    
     has_wallet_context = any(op in text_lower for op in wallet_operations)
-    
-    # Match patterns
-    for wallet_name, patterns in wallet_patterns.items():
-        for pattern in patterns:
-            if re.search(pattern, text_lower):
-                # AMBIGUITY HANDLING
-                
-                # "evan" / "holja" / "texturin" standalone -> Require wallet context
-                # This prevents "Bayar Evan" from becoming a wallet transaction
-                if any(k in pattern for k in [r'\bholja\b', r'\bholla\b', r'\bevan\b', r'texturin']):
-                    if not has_wallet_context:
-                        continue
-                        
-                # "Texturin-Bali" is explicitly a COMPANY, never a wallet
-                if "texturin" in pattern and "bali" in text_lower:
-                    continue
-                    
-                return wallet_name
-    
-    return None
+
+    if not has_wallet_context:
+        return None
+
+    return resolve_dompet_from_text(text_lower)
 
 def _extract_dompet_from_text(clean_text: str) -> str:
     """Legacy wrapper for backward compatibility, prefers new robust detection."""
@@ -383,10 +320,25 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
             
             if regex_wallet:
                  # Regex takes precedence if AI missed it or matches "UMUM"
-                if not sanitized.get('company') or sanitized.get('company') == "UMUM" or not detected:
-                    sanitized['company'] = regex_wallet
+                if not detected:
                     sanitized['detected_dompet'] = regex_wallet
                     secure_log("INFO", f"Regex fallback applied: {regex_wallet}")
+
+            # 3b. If AI set company but it's not mentioned in text, clear it
+            if sanitized.get("company") and not wallet_update:
+                company_lower = sanitized["company"].lower()
+                if company_lower not in clean_text.lower() and company_lower not in {"umum", "kantor"}:
+                    secure_log("WARNING", f"Company '{sanitized['company']}' not in text; clearing for safety")
+                    sanitized["company"] = None
+
+            # 3c. Ensure keterangan aligns with original text to avoid hallucination
+            keterangan = sanitized.get("keterangan", "") or ""
+            if keterangan:
+                from difflib import SequenceMatcher
+                similarity = SequenceMatcher(None, keterangan.lower(), clean_text.lower()).ratio()
+                if keterangan.lower() not in clean_text.lower() and similarity < 0.35:
+                    secure_log("WARNING", f"Keterangan mismatch ('{keterangan[:30]}...'), fallback to original text")
+                    sanitized["keterangan"] = clean_text[:200]
 
             # 4. DETERMINISTIC FALLBACK: Check if AI confused company with project
             # If nama_projek matches a known company name, re-extract from description

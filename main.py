@@ -165,22 +165,7 @@ import services.state_manager as state_manager_module
 # Initialize SmartHandler
 smart_handler = SmartHandler(state_manager_module)
 
-import re  # Ensure re is available for pattern matching
-
-# Amount pattern detection (matches groq_analyzer.py)
-AMOUNT_PATTERNS = [
-    re.compile(r'rp[\s.]*\d+', re.IGNORECASE),
-    re.compile(r'\d+[\s]*(rb|ribu|k)', re.IGNORECASE),
-    re.compile(r'\d+[\s]*(jt|juta)', re.IGNORECASE),
-    re.compile(r'\d{4,}'),  # 4+ consecutive digits
-]
-
-def has_amount_pattern(text: str) -> bool:
-    """Check if text contains recognizable amount pattern."""
-    for pattern in AMOUNT_PATTERNS:
-        if pattern.search(text):
-            return True
-    return False
+from utils.amounts import has_amount_pattern
 
 
 def detect_transaction_context(text: str, transactions: list, category_scope: str = 'UNKNOWN') -> dict:
@@ -577,6 +562,12 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     break
             
             dompet = None
+            detected_dompet = next((t.get('detected_dompet') for t in txs if t.get('detected_dompet')), None)
+            if detected_dompet:
+                from config.wallets import get_company_name_from_sheet
+                dompet = detected_dompet
+                detected_company = get_company_name_from_sheet(dompet)
+
             if detected_company:
                 if detected_company == "UMUM":
                     dompet = pending.get('override_dompet')
@@ -595,7 +586,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     if found_dompet:
                         dompet = found_dompet
                         detected_company = found_comp
-                        secure_log("INFO", f"Auto-resolved project '{p_name_check}' to {found_company}")
+                        secure_log("INFO", f"Auto-resolved project '{p_name_check}' to {found_comp}")
 
             # 2. Save if Resolved
             if detected_company and dompet:
@@ -846,6 +837,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 intent = smart_result.get('intent', 'UNKNOWN')
                 
                 # Store extra data
+                transfer_dompet = None
                 layer_category_scope = smart_result.get('category_scope', 'UNKNOWN')
                 if intent == "RECORD_TRANSACTION":
                      # In case smart_handler cleaned the text (e.g. from extracted data)
@@ -878,8 +870,10 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                              text = smart_result.get('layer_response')
                         
                         layer_category_scope = "TRANSFER" 
-                        pass 
- 
+                        # Try to resolve dompet directly from text to avoid extra prompts
+                        from config.wallets import resolve_dompet_from_text
+                        transfer_dompet = resolve_dompet_from_text(text)
+
                     if intent == "RECORD_TRANSACTION":
                         # Logic continues to Step 8 (Extraction) with refined text/scope
                         
@@ -952,12 +946,22 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             
             # NEW: Merge concurrent transactions (e.g. multiple images)
             # If user sends another image/transaction while one is pending, ADD to it.
-            # NEW: Merge concurrent transactions (e.g. multiple images)
-            # If user sends another image/transaction while one is pending, ADD to it.
             # Support Text Merge (heuristic: has digits) when AI is bypassed (intent=UNKNOWN)
             is_potential_text_tx = (intent == 'UNKNOWN' and text and re.search(r'\d', text))
+            expects_selection_reply = ptype in {
+                'selection',
+                'select_source_wallet',
+                'confirmation_project',
+                'confirmation_new_project',
+                'confirmation_dupe',
+                'needs_project',
+            }
             
-            if input_type == 'image' or (intent == 'RECORD_TRANSACTION' and not is_reply_to_bot) or is_potential_text_tx:
+            if not expects_selection_reply and (
+                input_type == 'image'
+                or (intent == 'RECORD_TRANSACTION' and not is_reply_to_bot)
+                or is_potential_text_tx
+            ):
                 new_txs = extract_financial_data(text, input_type, sender_name, [media_url] if media_url else None, text if input_type=='image' else None)
                 
                 if new_txs:
@@ -971,7 +975,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     pending['transactions'] = list(unique)
                     
                     # Update pending state
-                    state_manager.set_pending_transaction(pending_key, pending)
+                    state_manager_module.set_pending_transaction(pending_key, pending)
                     
                     # Re-send updated prompt
                     reply = build_selection_prompt(pending['transactions'])
@@ -1188,7 +1192,11 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 'original_text': text, # Important for Smart Router
                 'prompt_message_ids': [],
                 'category_scope': layer_category_scope,  # From AI layer (initialized earlier)
+                'override_dompet': transfer_dompet if layer_category_scope == 'TRANSFER' else None,
             }
+
+            if all(t.get('nama_projek') and not t.get('needs_project') for t in transactions):
+                _pending_transactions[sender_pkey]['project_confirmed'] = True
             
             # Check for Needs Project (Manual override from AI)
             if layer_category_scope == 'TRANSFER':

@@ -232,12 +232,34 @@ def resolve_dompet_name(user_input: str) -> Optional[str]:
     return DOMPET_ALIASES.get(clean)
 
 
+def resolve_dompet_from_text(text: str) -> Optional[str]:
+    """
+    Resolve dompet name from a longer text (substring match).
+    Prioritizes longer aliases to avoid partial collisions.
+    """
+    if not text:
+        return None
+    clean = text.lower()
+    for alias in sorted(DOMPET_ALIASES.keys(), key=len, reverse=True):
+        if alias in clean:
+            return DOMPET_ALIASES[alias]
+    return None
+
+
 def get_dompet_for_company(company_name: str) -> str:
     """Get the dompet (wallet) sheet name for a given company."""
     for dompet, companies in DOMPET_COMPANIES.items():
         if company_name in companies:
             return dompet
     return "CV HB (101)"  # Fallback
+
+
+def get_company_name_from_sheet(dompet_sheet: str) -> str:
+    """Get default company name for a dompet sheet."""
+    companies = DOMPET_COMPANIES.get(dompet_sheet)
+    if companies:
+        return companies[0]
+    return "UMUM"
 
 
 def get_selection_by_idx(idx: int) -> Optional[Dict]:

@@ -13,9 +13,10 @@ import logging
 import re
 from config.constants import Commands, OPERATIONAL_KEYWORDS
 
+from utils.amounts import has_amount_pattern
 from utils.groq_analyzer import (
-    GroqContextAnalyzer, should_quick_filter, 
-    has_amount_pattern, is_likely_past_tense, is_likely_future_plan,
+    GroqContextAnalyzer, should_quick_filter,
+    is_likely_past_tense, is_likely_future_plan,
     is_casual_bot_mention
 )
 from utils.semantic_matcher import find_matching_item, extract_revision_entities
@@ -145,6 +146,12 @@ class SmartHandler:
             # Log when we "auto-sambar"
             if is_likely_transaction:
                 secure_log("INFO", f"💎 Auto-Sambar: amount={has_amount}, past={is_past}")
+        else:
+            # Private or addressed chat: still ignore low-signal chatter
+            if not has_amount and not has_media and not has_finance_keyword and not text.startswith('/'):
+                if quick != "PROCESS" and score < 20:
+                    secure_log("DEBUG", f"Ignore low-signal message: {text[:30]}...")
+                    return {"action": "IGNORE"}
 
         # ============================================================
 
