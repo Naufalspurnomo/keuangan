@@ -799,11 +799,14 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     send_reply(f"❌ Maaf, terjadi kesalahan saat menganalisis data.")
                     return jsonify({'status': 'command_tanya_error'}), 200
         
-        # Initialize category scope (will be updated by AI layer if used)
+        # Initialize category scope and intent variables (prevent UnboundLocalError)
         layer_category_scope = 'UNKNOWN'
+        intent = 'UNKNOWN'
+        action = 'IGNORE'
+        is_reply_to_bot = False
         
         if has_pending:
-            # Bypass AI if pending active
+            # Bypass AI if pending active to reach state machine below
             pass 
         else:
             # ==== Context Enhancement: Combine with last message if applicable ====
@@ -949,11 +952,16 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             
             # NEW: Merge concurrent transactions (e.g. multiple images)
             # If user sends another image/transaction while one is pending, ADD to it.
-            if input_type == 'image' or (intent == 'RECORD_TRANSACTION' and not is_reply_to_bot):
-                send_reply("➕ Menambahkan ke antrian transaksi...")
+            # NEW: Merge concurrent transactions (e.g. multiple images)
+            # If user sends another image/transaction while one is pending, ADD to it.
+            # Support Text Merge (heuristic: has digits) when AI is bypassed (intent=UNKNOWN)
+            is_potential_text_tx = (intent == 'UNKNOWN' and text and re.search(r'\d', text))
+            
+            if input_type == 'image' or (intent == 'RECORD_TRANSACTION' and not is_reply_to_bot) or is_potential_text_tx:
                 new_txs = extract_financial_data(text, input_type, sender_name, [media_url] if media_url else None, text if input_type=='image' else None)
                 
                 if new_txs:
+                    send_reply("➕ Menambahkan ke antrian transaksi...")
                     # Merge with existing
                     pending['transactions'].extend(new_txs)
                     
@@ -970,6 +978,11 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     if is_group: reply += "\n\n↩️ Reply angka 1-4"
                     send_reply(reply)
                     return jsonify({'status': 'merged'}), 200
+                
+                # If image provided no transaction data during pending state, IGNORE it.
+                # Don't let it fall through to 'selection' validation which would error.
+                if input_type == 'image':
+                    return jsonify({'status': 'ignored_image'}), 200
 
             # Cancel
             if is_command_match(text, Commands.CANCEL, is_group):
