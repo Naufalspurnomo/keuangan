@@ -851,6 +851,33 @@ def append_transactions(transactions: List[Dict], sender_name: str, source: str 
         'company_error': company_error
     }
 
+# --- Helper Functions untuk Safe Parsing ---
+
+def _parse_date_safe(date_str):
+    """Parse date safely with multiple formats."""
+    if not date_str: return None
+    for fmt in ['%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y']:
+        try:
+            return datetime.strptime(str(date_str).strip(), fmt)
+        except ValueError:
+            continue
+    return None
+
+def _safe_get(lst, idx, default=''):
+    """Safely get from list or return default."""
+    try:
+        if 0 <= idx < len(lst):
+            return lst[idx]
+    except:
+        pass
+    return default
+
+def _parse_amount(amt_str):
+    """Parse amount safely."""
+    try:
+        return int(float(str(amt_str).replace(',', '').replace('Rp', '').replace('.', '').strip() or 0))
+    except:
+        return 0
 
 def get_all_data(days: int = 30) -> List[Dict]:
     """
@@ -863,7 +890,6 @@ def get_all_data(days: int = 30) -> List[Dict]:
     Returns:
         List of transaction dicts with company and nama_projek
     """
-    try:
     try:
         from config.constants import (
             SPLIT_PEMASUKAN, SPLIT_PENGELUARAN, SPLIT_LAYOUT_DATA_START,
