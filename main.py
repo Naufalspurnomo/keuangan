@@ -562,6 +562,12 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     break
             
             dompet = None
+            detected_dompet = next((t.get('detected_dompet') for t in txs if t.get('detected_dompet')), None)
+            if detected_dompet:
+                from config.wallets import get_company_name_from_sheet
+                dompet = detected_dompet
+                detected_company = get_company_name_from_sheet(dompet)
+
             if detected_company:
                 if detected_company == "UMUM":
                     dompet = pending.get('override_dompet')
@@ -580,7 +586,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     if found_dompet:
                         dompet = found_dompet
                         detected_company = found_comp
-                        secure_log("INFO", f"Auto-resolved project '{p_name_check}' to {found_company}")
+                        secure_log("INFO", f"Auto-resolved project '{p_name_check}' to {found_comp}")
 
             # 2. Save if Resolved
             if detected_company and dompet:
@@ -1188,6 +1194,9 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 'category_scope': layer_category_scope,  # From AI layer (initialized earlier)
                 'override_dompet': transfer_dompet if layer_category_scope == 'TRANSFER' else None,
             }
+
+            if all(t.get('nama_projek') and not t.get('needs_project') for t in transactions):
+                _pending_transactions[sender_pkey]['project_confirmed'] = True
             
             # Check for Needs Project (Manual override from AI)
             if layer_category_scope == 'TRANSFER':

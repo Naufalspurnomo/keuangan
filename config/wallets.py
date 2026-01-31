@@ -254,6 +254,14 @@ def get_dompet_for_company(company_name: str) -> str:
     return "CV HB (101)"  # Fallback
 
 
+def get_company_name_from_sheet(dompet_sheet: str) -> str:
+    """Get default company name for a dompet sheet."""
+    companies = DOMPET_COMPANIES.get(dompet_sheet)
+    if companies:
+        return companies[0]
+    return "UMUM"
+
+
 def get_selection_by_idx(idx: int) -> Optional[Dict]:
     """Get selection option by 1-based index (from SELECTION_OPTIONS)."""
     for opt in SELECTION_OPTIONS:
