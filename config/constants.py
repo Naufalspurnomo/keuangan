@@ -137,6 +137,9 @@ PROJECT_STOPWORDS = {
     "terima", "lunasin", "ganti", "revisi", "ubah", "koreksi", 
     "update", "cancel", "batal", "hapus", "catat", "input", "simpan",
     
+    # Job Titles (Job names are NOT project names)
+    "tukang", "mandor", "kuli", "staff", "karyawan", "pegawai", "helper",
+    
     # Istilah Keuangan
     "fee", "gaji", "pajak", "kas", "uang", "lunas", "dp", "pelunasan",
     "cicil", "cicilan", "admin", "tunai", "cash", "debt", "hutang",

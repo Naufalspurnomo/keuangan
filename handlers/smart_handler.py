@@ -115,7 +115,8 @@ class SmartHandler:
             "saldo", "uang", "dana", "keluar", "masuk", "total", "rekap", 
             "hutang", "tagihan", "invoice", "nota", "struk", "jajan",
             "catat", "tulis", "input", "rekam", "masukin", "simpan",
-            "cek", "lihat", "tanya", "info", "help"
+            "cek", "lihat", "tanya", "info", "help",
+            "fee", "gaji", "honor", "upah", "project", "projek", "anggaran"
         ]
         
         text_lower = text.lower()

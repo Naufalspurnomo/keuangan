@@ -222,6 +222,10 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
     
     # Check Project Name Validity
     from config.constants import PROJECT_STOPWORDS
+    from services.project_service import get_existing_projects
+    
+    # Get cache of existing projects for validation
+    existing_projects_cache = [p.lower() for p in get_existing_projects()]
     
     has_valid_project = False
     valid_project_name = None
@@ -229,12 +233,17 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
     for t in transactions:
         nama_projek = t.get('nama_projek', '')
         if nama_projek and len(nama_projek) > 2:
+            clean_name = nama_projek.lower().strip()
+
+            # 1. DATABASE CHECK: Is this a known project?
+            # If yes, this is definitely a PROJECT transaction (Override everything)
+            if clean_name in existing_projects_cache:
+                return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False, 'project_name': nama_projek}
+
             # Build comprehensive generic names list
             generic_names = {'umum', 'kantor', 'ops', 'operasional', 'admin', 'gaji', 'finance'}
             generic_names.update(OPERATIONAL_KEYWORDS)
             generic_names.update(PROJECT_STOPWORDS)
-            
-            clean_name = nama_projek.lower().strip()
             
             # Check if name is exactly a generic word
             if clean_name not in generic_names:
