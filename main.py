@@ -290,7 +290,7 @@ def map_operational_category(keyword: str) -> str:
     
     return 'Lain Lain'
 
-def apply_lifecycle_markers(project_name: str, transaction: dict) -> str:
+def apply_lifecycle_markers(project_name: str, transaction: dict, is_new_project: bool = False) -> str:
     """
     Applies (Start) or (Finish) markers to project names.
     Only for 'Pemasukan' transactions.
@@ -306,8 +306,10 @@ def apply_lifecycle_markers(project_name: str, transaction: dict) -> str:
         return f"{project_name} (Finish)"
         
     # Rule 2: Start (New Project Auto-Detect)
-    # If this is a New Project (not in cache) AND it is Pemasukan (checked above),
-    # then we assume this is the Project Start / DP.
+    # If explicitly flagged as new OR not in existing check
+    if is_new_project:
+        return f"{project_name} (Start)"
+
     from services.project_service import get_existing_projects
     existing = get_existing_projects()
     
@@ -609,7 +611,8 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     tx['message_id'] = tx_msg_id
                     # Apply Lifecycle (Start/Finish)
                     p_name = tx.get('nama_projek', '') or 'Umum'
-                    p_name = apply_lifecycle_markers(p_name, tx)
+                    is_new = pending.get('is_new_project', False)
+                    p_name = apply_lifecycle_markers(p_name, tx, is_new_project=is_new)
                     
                     res = append_project_transaction(
                         transaction=tx,
@@ -632,7 +635,16 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                         store_bot_message_ref(bid, tx_msg_id)
                         store_last_bot_report(chat_jid, bid)
                         
+                        
                     _pending_transactions.pop(pkey, None)
+                    
+                    # UPDATE CACHE AFTER SUCCESS
+                    if pending.get('is_new_project'):
+                        # Add the raw project name to cache (without Start/Finish tag)
+                        raw_proj = txs[0].get('nama_projek')
+                        if raw_proj:
+                            add_new_project_to_cache(raw_proj)
+
                     return jsonify({'status': 'processed'}), 200
                 else:
                     send_reply(f"❌ Gagal: {results[0].get('error')}")
@@ -980,8 +992,9 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 clean = text.lower().strip()
                 if clean in ['ya', 'y', 'ok', 'siap', 'buat', 'lanjut']:
                     # User confirmed it is new
-                    pending['project_confirmed'] = True 
-                    add_new_project_to_cache(pending.get('new_project_name'))
+                    pending['project_confirmed'] = True
+                    pending['is_new_project'] = True  # Flag for lifecycle marker
+                    # Delayed cache update until save success
                     return finalize_transaction_workflow(pending, pending_pkey)
                     
                 elif clean in ['tidak', 'no', 'ganti', 'bukan', 'salah']:
@@ -989,9 +1002,13 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                     pending['pending_type'] = 'needs_project' 
                     return jsonify({'status': 'asking'}), 200
                 else:
-                    # Treat input as the CORRECT name
+                    # Treat input as the CORRECT name (and implicitly NEW if not resolved previously)
                     final_proj = sanitize_input(text.strip())
-                    add_new_project_to_cache(final_proj)
+                    # Check if actually exists now
+                    res_check = resolve_project_name(final_proj)
+                    if res_check['status'] == 'NEW':
+                         pending['is_new_project'] = True
+                    
                     send_reply(f"👌 Update ke: **{final_proj}**")
                     for t in pending['transactions']: t['nama_projek'] = final_proj
                     pending['project_confirmed'] = True
