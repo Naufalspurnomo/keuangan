@@ -12,6 +12,7 @@ _project_cache = {
 
 from config.wallets import DOMPET_SHEETS
 from config.constants import SPLIT_LAYOUT_DATA_START
+import re
 
 def get_existing_projects(force_refresh=False):
     """
@@ -61,6 +62,10 @@ def get_existing_projects(force_refresh=False):
             clean_projects = set()
             for v in all_projects:
                 v_clean = v.strip()
+                # Remove (Start) or (Finish) markers using regex
+                # Matches " (Start)" or " (Finish)" at end of string, case insensitive
+                v_clean = re.sub(r'\s*\((Start|Finish)\)$', '', v_clean, flags=re.IGNORECASE)
+                
                 if len(v_clean) > 2 and v_clean.lower() not in KNOWN_COMPANY_NAMES:
                     clean_projects.add(v_clean)
             

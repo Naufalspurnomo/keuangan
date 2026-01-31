@@ -947,6 +947,30 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             pending = pending_data
             ptype = pending.get('pending_type')
             
+            # NEW: Merge concurrent transactions (e.g. multiple images)
+            # If user sends another image/transaction while one is pending, ADD to it.
+            if input_type == 'image' or (intent == 'RECORD_TRANSACTION' and not is_reply_to_bot):
+                send_reply("➕ Menambahkan ke antrian transaksi...")
+                new_txs = extract_financial_data(text, input_type, sender_name, [media_url] if media_url else None, text if input_type=='image' else None)
+                
+                if new_txs:
+                    # Merge with existing
+                    pending['transactions'].extend(new_txs)
+                    
+                    # Deduplicate based on exact content to avoid double-processing same webhook
+                    # Simple hash check on amount + desc
+                    unique = {f"{t['jumlah']}_{t['keterangan']}": t for t in pending['transactions']}.values()
+                    pending['transactions'] = list(unique)
+                    
+                    # Update pending state
+                    state_manager.set_pending_transaction(pending_key, pending)
+                    
+                    # Re-send updated prompt
+                    reply = build_selection_prompt(pending['transactions'])
+                    if is_group: reply += "\n\n↩️ Reply angka 1-4"
+                    send_reply(reply)
+                    return jsonify({'status': 'merged'}), 200
+
             # Cancel
             if is_command_match(text, Commands.CANCEL, is_group):
                 _pending_transactions.pop(pending_pkey, None)
