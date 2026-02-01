@@ -523,6 +523,14 @@ REMEMBER:
                     result['category_scope'] = 'PROJECT'
 
             # Inject context analysis metadata for transparency
+            # If LLM unsure about scope, fallback to pre-detected scope
+            if result.get('category_scope') in [None, 'UNKNOWN'] and category_scope in ['OPERATIONAL', 'PROJECT', 'AMBIGUOUS']:
+                result['category_scope'] = category_scope
+            
+            # If pre-detected scope is ambiguous and confidence low, force AMBIGUOUS
+            if category_scope == 'AMBIGUOUS' and result.get('confidence', 0) < 0.75:
+                result['category_scope'] = 'AMBIGUOUS'
+
             result['context_analysis'] = {
                 'pre_detected_scope': category_scope,
                 'scope_confidence': context_confidence,

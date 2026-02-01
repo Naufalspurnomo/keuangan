@@ -124,6 +124,13 @@ AMBIGUOUS_KEYWORDS = {
     "fee": "AMBIGUOUS_FEE",
     "upah": "AMBIGUOUS_WAGE",
     "bayar": "AMBIGUOUS_PAYMENT",
+    "cicilan": "AMBIGUOUS_INSTALLMENT",
+    "angsuran": "AMBIGUOUS_INSTALLMENT",
+    "kredit": "AMBIGUOUS_INSTALLMENT",
+    "leasing": "AMBIGUOUS_INSTALLMENT",
+    "asuransi": "AMBIGUOUS_INSURANCE",
+    "pajak": "AMBIGUOUS_TAX",
+    "sewa": "AMBIGUOUS_RENT",
 }
 
 # ===================== LAYER 2: CONTEXT CLUE EXTRACTION =====================
@@ -221,6 +228,10 @@ class ContextDetector:
         temporal_type = self._detect_temporal_pattern(text_lower)
         prep_context = self._detect_preposition_context(text_lower)
         
+        # Soft bias keywords (non-absolute)
+        has_project_word = bool(re.search(r"\b(projek|project|proyek|prj)\b", text_lower))
+        has_kantor_word = bool(re.search(r"\b(kantor|office)\b", text_lower))
+
         # Build signals dict
         signals = {
             "keyword_match": keyword_result,
@@ -228,11 +239,23 @@ class ContextDetector:
             "project_name": project_name,
             "temporal_pattern": temporal_type,
             "preposition_context": prep_context,
+            "has_project_word": has_project_word,
+            "has_kantor_word": has_kantor_word,
         }
-        
+
         # DECISION LOGIC
+        # If both project + kantor words exist, treat as ambiguous
+        if has_project_word and has_kantor_word:
+            return {
+                "category_scope": "AMBIGUOUS",
+                "confidence": 0.40,
+                "signals": signals,
+                "reasoning": "Both 'projek' and 'kantor' detected; needs clarification"
+            }
+
         category_scope, confidence, reasoning = self._make_decision(
-            keyword_result, role_type, project_name, temporal_type, prep_context
+            keyword_result, role_type, project_name, temporal_type, prep_context,
+            has_project_word, has_kantor_word
         )
         
         return {
@@ -349,7 +372,9 @@ class ContextDetector:
         role_type: Optional[str],
         project_name: Optional[str],
         temporal_type: Optional[str],
-        prep_context: Optional[str]
+        prep_context: Optional[str],
+        has_project_word: bool = False,
+        has_kantor_word: bool = False
     ) -> Tuple[str, float, str]:
         """
         Make final decision based on all signals.
@@ -448,9 +473,22 @@ class ContextDetector:
             
             # No clues
             reasons.append("No contextual signals detected")
+            # Soft bias: explicit word "projek"/"kantor"
+            if has_project_word:
+                reasons.append("Soft bias: word 'projek' found")
+                return ("PROJECT", 0.60, "; ".join(reasons))
+            if has_kantor_word:
+                reasons.append("Soft bias: word 'kantor' found")
+                return ("OPERATIONAL", 0.60, "; ".join(reasons))
             return ("AMBIGUOUS", 0.30, "; ".join(reasons))
         
         # Default fallback
+        if has_project_word and not has_kantor_word:
+            reasons.append("Soft bias: word 'projek' found")
+            return ("PROJECT", 0.60, "; ".join(reasons))
+        if has_kantor_word and not has_project_word:
+            reasons.append("Soft bias: word 'kantor' found")
+            return ("OPERATIONAL", 0.60, "; ".join(reasons))
         return ("AMBIGUOUS", 0.30, "Insufficient information")
 
 

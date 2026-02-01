@@ -333,6 +333,14 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
 
             # 3c. Ensure keterangan aligns with original text to avoid hallucination
             keterangan = sanitized.get("keterangan", "") or ""
+            # Extract user note (caption) if present in clean_text to avoid dumping OCR
+            user_note = ""
+            if clean_text.lower().startswith("note:"):
+                try:
+                    first_line = clean_text.split("\n", 1)[0]
+                    user_note = first_line.replace("Note:", "").strip()
+                except Exception:
+                    user_note = ""
             if keterangan:
                 from difflib import SequenceMatcher
                 similarity = SequenceMatcher(None, keterangan.lower(), clean_text.lower()).ratio()
@@ -352,7 +360,7 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                     and (similarity < 0.5 or not has_overlap)
                 ):
                     secure_log("WARNING", f"Keterangan mismatch ('{keterangan[:30]}...'), fallback to original text")
-                    sanitized["keterangan"] = clean_text[:200]
+                    sanitized["keterangan"] = (user_note or clean_text[:200])
 
             # 4. DETERMINISTIC FALLBACK: Check if AI confused company with project
             # If nama_projek matches a known company name, re-extract from description

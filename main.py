@@ -14,6 +14,7 @@ import traceback
 import requests
 import re
 import threading
+import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -56,7 +57,8 @@ from services.state_manager import (
     store_last_bot_report,
     # New Pending Confirmations
     get_pending_confirmation, set_pending_confirmation,
-    store_user_message, get_user_last_message, clear_user_last_message
+    store_user_message, get_user_last_message, clear_user_last_message,
+    get_project_lock
 )
 
 # Layer Integration - Superseded by SmartHandler
@@ -83,6 +85,7 @@ from utils.parsers import (
 )
 from utils.formatters import (
     format_success_reply, format_success_reply_new,
+    format_draft_summary_operational, format_draft_summary_project,
     format_mention, build_selection_prompt,
     START_MESSAGE, HELP_MESSAGE,
     CATEGORIES_DISPLAY, SELECTION_DISPLAY,
@@ -234,6 +237,8 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
     4. Else -> Default to PROJECT
     """
     text_lower = (text or '').lower()
+    has_project_word = bool(re.search(r"\b(projek|project|proyek|prj)\b", text_lower))
+    has_kantor_word = bool(re.search(r"\b(kantor|office)\b", text_lower))
     
     # NEW v2.0: Trust AI's category_scope if available
     if category_scope == 'OPERATIONAL':
@@ -246,6 +251,13 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
         # AI is confident this is project-related
         return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
     
+    if category_scope == 'AMBIGUOUS':
+        return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
+
+    # Conflict: both "projek" and "kantor"
+    if has_project_word and has_kantor_word:
+        return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
+    
     # Fallback: Rule-based detection (when AI uncertain or not used)
     
     # Check Keywords with better matching
@@ -254,6 +266,14 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
         # Use word boundary matching for better accuracy
         if re.search(r'\b' + re.escape(kw) + r'\b', text_lower):
             detected_keywords.append(kw)
+    
+    # Ambiguous keyword detection (e.g., gaji/fee/cicilan)
+    try:
+        from utils.context_detector import AMBIGUOUS_KEYWORDS as _AMBIGUOUS
+        ambiguous_keywords = set(_AMBIGUOUS.keys())
+    except Exception:
+        ambiguous_keywords = set()
+    has_ambiguous_keyword = any(re.search(r'\b' + re.escape(k) + r'\b', text_lower) for k in ambiguous_keywords)
     
     # Check Project Name Validity
     from config.constants import PROJECT_STOPWORDS
@@ -291,8 +311,14 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
                     break
     
     # Decision Tree
-    # Priority 1: Keywords found AND NO valid project -> OPERATIONAL
+    detected_ambiguous = [kw for kw in detected_keywords if kw in ambiguous_keywords]
+    all_ambiguous = bool(detected_keywords) and len(detected_ambiguous) == len(detected_keywords)
+    
+    # Priority 1: Keywords found AND NO valid project
     if detected_keywords and not has_valid_project:
+        # If all keywords are ambiguous, ask user
+        if all_ambiguous or has_ambiguous_keyword:
+            return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
         category = map_operational_category(detected_keywords[0])
         return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
 
@@ -300,11 +326,23 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
     if has_valid_project:
         return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False, 'project_name': valid_project_name}
     
-    # Priority 3: Has keywords (but maybe ambiguous) -> OPERATIONAL
+    # Priority 3: Has keywords (but maybe ambiguous)
     if detected_keywords:
+        if all_ambiguous or has_ambiguous_keyword:
+            return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
         category = map_operational_category(detected_keywords[0])
         return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
     
+    # If ambiguous keyword exists without project context, ask user
+    if has_ambiguous_keyword and not has_valid_project:
+        return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
+    
+    # Soft bias if explicit word exists
+    if has_project_word and not has_kantor_word:
+        return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
+    if has_kantor_word and not has_project_word:
+        return {'mode': 'OPERATIONAL', 'category': 'Lain Lain', 'needs_wallet': True}
+
     # Default: PROJECT mode (standard flow asks for company)
     return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
 
@@ -334,35 +372,6 @@ def map_operational_category(keyword: str) -> str:
     
     return 'Lain Lain'
 
-def apply_lifecycle_markers(project_name: str, transaction: dict, is_new_project: bool = False) -> str:
-    """
-    Applies (Start) or (Finish) markers to project names.
-    Only for 'Pemasukan' transactions.
-    """
-    if not project_name or transaction.get('tipe') != 'Pemasukan':
-        return project_name
-        
-    desc = (transaction.get('keterangan', '') or '').lower()
-    
-    # Rule 1: Finish
-    finish_keywords = ['pelunasan', 'lunas', 'final payment', 'penyelesaian', 'selesai', 'kelar', 'beres']
-    if any(k in desc for k in finish_keywords):
-        return f"{project_name} (Finish)"
-        
-    # Rule 2: Start (New Project Auto-Detect)
-    # If explicitly flagged as new OR not in existing check
-    if is_new_project:
-        return f"{project_name} (Start)"
-
-    from services.project_service import get_existing_projects
-    existing = get_existing_projects()
-    
-    # Check if project exists (case insensitive)
-    # If NOT found in existing, tag as (Start)
-    if not any(e.lower() == project_name.lower() for e in existing):
-        return f"{project_name} (Start)"
-            
-    return project_name
 
 
 # ===================== HEALTH CHECK ENDPOINT =====================
@@ -431,6 +440,7 @@ def webhook_wuzapi():
         text = ''
         input_type = 'text'
         media_url = None
+        local_media_path = None
         quoted_msg_id = ''
         
         # FILTER: Only process actual messages (text or media)
@@ -449,8 +459,11 @@ def webhook_wuzapi():
             if event_data.get('base64'):
                 media_url = f"data:image/jpeg;base64,{event_data['base64']}"
             elif info.get('ID'):
-                # Fallback download logic here if needed
-                pass
+                # Fallback: try download via WuzAPI
+                try:
+                    local_media_path = download_wuzapi_image(info.get('ID'), chat_jid)
+                except Exception:
+                    local_media_path = None
 
         # LOG THE INCOMING MESSAGE
         secure_log("INFO", f"Webhook: Msg from {sender_number} (Group: {is_group}): {text[:50]}...")
@@ -470,7 +483,7 @@ def webhook_wuzapi():
         # 7. Process
         return process_wuzapi_message(
             sender_number, info.get('PushName', 'User'), text,
-            input_type, media_url, quoted_msg_id, message_id,
+            input_type, media_url, local_media_path, quoted_msg_id, message_id,
             is_group, chat_jid, sender_alt
         )
 
@@ -571,6 +584,7 @@ def webhook_telegram():
 
 def process_wuzapi_message(sender_number: str, sender_name: str, text: str, 
                            input_type: str = 'text', media_url: str = None,
+                           local_media_path: str = None,
                            quoted_msg_id: str = None, message_id: str = None,
                            is_group: bool = False, chat_jid: str = None,
                            sender_jid: str = None, quoted_message_text: str = None):
@@ -591,6 +605,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             text=text,
             input_type=input_type,
             media_url=media_url,
+            local_media_path=local_media_path,
             quoted_msg_id=quoted_msg_id,
             message_id=message_id,
             is_group=is_group,
@@ -609,6 +624,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
 
 def process_incoming_message(sender_number: str, sender_name: str, text: str, 
                              input_type: str = 'text', media_url: str = None,
+                             local_media_path: str = None,
                              quoted_msg_id: str = None, message_id: str = None,
                              is_group: bool = False, chat_jid: str = None,
                              sender_jid: str = None, quoted_message_text: str = None,
@@ -625,6 +641,29 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             if bid:
                 store_pending_message_ref(bid, pkey)
                 pending.setdefault('prompt_message_ids', []).append(str(bid))
+        
+        def build_extraction_inputs(current_text: str, current_input_type: str,
+                                    current_media_url: str, current_media_path: str):
+            """Prepare input_data/media list/caption for extract_financial_data."""
+            if current_input_type == 'image' and current_media_path:
+                # Local file path, pass as input_data and no media URLs
+                return current_media_path, None, current_text
+            media_list = [current_media_url] if current_media_url else None
+            caption = current_text if current_input_type == 'image' else None
+            return current_text, media_list, caption
+
+        def is_explicit_bot_call(msg: str) -> bool:
+            if not msg:
+                return False
+            t = msg.strip().lower()
+            if t.startswith('/catat') or t.startswith('+catat') or t.startswith('+bot'):
+                return True
+            if t.startswith('bot') or '@bot' in t:
+                return True
+            return False
+
+        # Event envelope
+        event_id = str(message_id) if message_id else f"evt_{uuid.uuid4().hex[:12]}"
 
         # --- CORE WORKFLOW: FINALIZE TRANSACTION ---
         def finalize_transaction_workflow(pending: dict, pkey: str):
@@ -642,6 +681,31 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             else:
                 # Pass category_scope from AI layer for smarter routing
                 context = detect_transaction_context(original_text, txs, category_scope)
+
+            # If still ambiguous, ask user to choose scope
+            if context.get('mode') == 'AMBIGUOUS':
+                set_pending_confirmation(
+                    user_id=pending.get('sender_number', sender_number),
+                    chat_id=pending.get('chat_jid', chat_jid),
+                    data={
+                        'type': 'category_scope',
+                        'transactions': txs,
+                        'raw_text': original_text,
+                        'original_message_id': pending.get('message_id')
+                    }
+                )
+                mention = format_mention(pending.get('sender_name', sender_name), is_group)
+                response = f"""{mention}🤔 Ini untuk Operational Kantor atau Project?
+
+1️⃣ Operational Kantor
+   (Gaji staff, listrik, wifi, ATK, dll)
+
+2️⃣ Project
+   (Material, upah tukang, transport ke site)
+
+Balas 1 atau 2"""
+                send_reply(response)
+                return jsonify({'status': 'asking_scope'}), 200
 
             # === JALUR 1: OPERATIONAL ===
             if context['mode'] == 'OPERATIONAL':
@@ -666,32 +730,28 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                     return jsonify({'status': 'asking_wallet'}), 200
                 
                 # Step 2: Save to Operational Sheet
-                results = []
-                for tx in txs:
-                    res = append_operational_transaction(
-                        transaction=tx,
-                        sender_name=pending['sender_name'],
-                        source=pending['source'],
-                        source_wallet=source_wallet,
-                        category=context['category']
-                    )
-                    results.append(res)
-                
-                if all(r.get('success') for r in results):
-                    _pending_transactions.pop(pkey, None)
-                    # Clear prompt refs logic here
-                    invalidate_dashboard_cache()
-                    
-                    short_wallet = get_dompet_short_name(source_wallet)
-                    reply = (f"✅ *Tersimpan di Operasional Kantor*\n"
-                             f"💰 Sumber: {short_wallet}\n"
-                             f"📂 Kategori: {context['category']}").replace('*', '')
-                    send_reply(reply)
-                    return jsonify({'status': 'saved_operational'}), 200
-                else:
-                    err = results[0].get('error', 'Unknown')
-                    send_reply(f"❌ Gagal simpan: {err}")
-                    return jsonify({'status': 'error'}), 200
+                # Step 2: Draft → Confirm → Commit
+                set_pending_confirmation(
+                    user_id=sender_number,
+                    chat_id=chat_jid,
+                    data={
+                        'type': 'confirm_commit_operational',
+                        'transactions': txs,
+                        'source_wallet': source_wallet,
+                        'category': context['category'],
+                        'sender_name': pending.get('sender_name'),
+                        'source': pending.get('source'),
+                        'original_message_id': pending.get('message_id'),
+                        'event_id': pending.get('event_id'),
+                        'pending_key': pkey
+                    }
+                )
+                mention = format_mention(pending.get('sender_name', sender_name), is_group)
+                draft_msg = format_draft_summary_operational(
+                    txs, source_wallet, context.get('category'), mention
+                )
+                send_reply(draft_msg)
+                return jsonify({'status': 'draft_operational'}), 200
 
             # === JALUR 2: PROJECT (Standard) ===
             
@@ -772,53 +832,96 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                     pending['selected_option'] = {'dompet': dompet, 'company': detected_company}
                     send_reply(warn)
                     return jsonify({'status': 'dupe_warning'}), 200
-                
-                # Save Logic (Split Layout)
-                tx_msg_id = pending.get('message_id', '')
-                results = []
-                
-                for tx in txs:
-                    tx['message_id'] = tx_msg_id
-                    # Apply Lifecycle (Start/Finish)
-                    p_name = tx.get('nama_projek', '') or 'Umum'
-                    is_new = pending.get('is_new_project', False)
-                    p_name = apply_lifecycle_markers(p_name, tx, is_new_project=is_new)
-                    
-                    res = append_project_transaction(
-                        transaction=tx,
-                        sender_name=pending['sender_name'],
-                        source=pending['source'],
-                        dompet_sheet=dompet,
-                        project_name=p_name
-                    )
-                    results.append(res)
-                
-                if all(r.get('success') for r in results):
-                    invalidate_dashboard_cache()
-                    # Rich Reply
-                    reply = format_success_reply_new(txs, dompet, detected_company).replace('*', '')
-                    sent = send_reply(reply)
-                    
-                    # Store Bot Ref for Revision
-                    bid = extract_bot_msg_id(sent)
-                    if bid and tx_msg_id:
-                        store_bot_message_ref(bid, tx_msg_id)
-                        store_last_bot_report(chat_jid, bid)
-                        
-                        
-                    _pending_transactions.pop(pkey, None)
-                    
-                    # UPDATE CACHE AFTER SUCCESS
-                    if pending.get('is_new_project'):
-                        # Add the raw project name to cache (without Start/Finish tag)
-                        raw_proj = txs[0].get('nama_projek')
-                        if raw_proj:
-                            add_new_project_to_cache(raw_proj)
 
-                    return jsonify({'status': 'processed'}), 200
-                else:
-                    send_reply(f"❌ Gagal: {results[0].get('error')}")
-                    return jsonify({'status': 'error'}), 200
+                # Project lock check (consistency across dompet)
+                p_name_check = t0.get('nama_projek', '')
+                if p_name_check and p_name_check.lower() not in ['saldo umum', 'operasional kantor', 'umum', 'unknown']:
+                    locked_dompet = get_project_lock(p_name_check)
+                    if locked_dompet and locked_dompet != dompet:
+                        from config.wallets import get_company_name_from_sheet
+                        locked_company = get_company_name_from_sheet(locked_dompet)
+                        # Ask user to confirm locked dompet or move project
+                        set_pending_confirmation(
+                            user_id=sender_number,
+                            chat_id=chat_jid,
+                            data={
+                                'type': 'project_dompet_mismatch',
+                                'transactions': txs,
+                                'dompet_input': dompet,
+                                'company_input': detected_company,
+                                'dompet_locked': locked_dompet,
+                                'company_locked': locked_company,
+                                'sender_name': pending.get('sender_name'),
+                                'source': pending.get('source'),
+                                'original_message_id': pending.get('message_id'),
+                                'event_id': pending.get('event_id'),
+                                'is_new_project': pending.get('is_new_project', False),
+                                'pending_key': pkey
+                            }
+                        )
+                        msg = (
+                            f"⚠️ Project **{p_name_check}** sudah terdaftar di dompet **{locked_dompet}**.\n\n"
+                            "Pilih tindakan:\n"
+                            f"1️⃣ Gunakan dompet terdaftar ({locked_dompet})\n"
+                            f"2️⃣ Pindahkan project ke dompet baru ({dompet})\n"
+                            "3️⃣ Batal"
+                        )
+                        send_reply(msg.replace('*', ''))
+                        return jsonify({'status': 'project_lock_mismatch'}), 200
+
+                # New project but first tx is expense → confirm
+                if pending.get('is_new_project'):
+                    has_income = any(t.get('tipe') == 'Pemasukan' for t in txs)
+                    if not has_income:
+                        set_pending_confirmation(
+                            user_id=sender_number,
+                            chat_id=chat_jid,
+                            data={
+                                'type': 'new_project_first_expense',
+                                'transactions': txs,
+                                'dompet': dompet,
+                                'company': detected_company,
+                                'sender_name': pending.get('sender_name'),
+                                'source': pending.get('source'),
+                                'original_message_id': pending.get('message_id'),
+                                'event_id': pending.get('event_id'),
+                                'pending_key': pkey
+                            }
+                        )
+                        msg = (
+                            f"⚠️ Project baru **{p_name_check}** tetapi transaksi pertama *Pengeluaran*.\n"
+                            "Biasanya project baru dimulai dari DP (Pemasukan).\n\n"
+                            "Pilih tindakan:\n"
+                            "1️⃣ Lanjutkan sebagai project baru\n"
+                            "2️⃣ Ubah jadi Operasional Kantor\n"
+                            "3️⃣ Batal"
+                        )
+                        send_reply(msg.replace('*', ''))
+                        return jsonify({'status': 'new_project_first_expense'}), 200
+                
+                # Draft → Confirm → Commit
+                set_pending_confirmation(
+                    user_id=sender_number,
+                    chat_id=chat_jid,
+                    data={
+                        'type': 'confirm_commit_project',
+                        'transactions': txs,
+                        'dompet': dompet,
+                        'company': detected_company,
+                        'sender_name': pending.get('sender_name'),
+                        'source': pending.get('source'),
+                        'original_message_id': pending.get('message_id'),
+                        'event_id': pending.get('event_id'),
+                        'is_new_project': pending.get('is_new_project', False),
+                        'pending_key': pkey
+                    }
+                )
+                mention = format_mention(pending.get('sender_name', sender_name), is_group)
+                draft_msg = format_draft_summary_project(
+                    txs, dompet, detected_company, mention
+                )
+                send_reply(draft_msg)
+                return jsonify({'status': 'draft_project'}), 200
             
             # 3. Ask Company if Unresolved
             pending['pending_type'] = 'selection'
@@ -834,12 +937,21 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
         allowed, wait = rate_limit_check(sender_number)
         if not allowed: return jsonify({'status': 'rate_limit'}), 200
         
-        # 2. Visual Buffer
-        if input_type == 'image' and not text.strip():
-            store_visual_buffer(sender_number, chat_jid, media_url, message_id)
-            return jsonify({'status': 'buffered'}), 200
+        # 2. Visual Buffer (store all images for "catat diatas" binding)
+        if input_type == 'image':
+            store_visual_buffer(
+                sender_number, chat_jid, media_url, message_id,
+                caption=text, media_path=local_media_path
+            )
         
         has_visual = has_visual_buffer(sender_number, chat_jid)
+        
+        # If user says "catat diatas" but no buffered image, ask to reply/attach
+        if input_type == 'text':
+            ref_phrase = re.search(r'\b(catat\s+(di\s+)?(atas|tadi|sebelumnya)|catat\s+itu)\b', (text or '').lower())
+            if ref_phrase and not has_visual and not quoted_msg_id:
+                send_reply("❗ Belum ada gambar/struk sebelumnya. Tolong reply struknya atau kirim ulang.")
+                return jsonify({'status': 'missing_reference'}), 200
 
         # ========================================
         # STEP 0: CHECK PENDING CONFIRMATION (New Logic)
@@ -862,7 +974,13 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             
             if result:
                 if result.get('response'):
-                    send_reply(result['response'])
+                    sent = send_reply(result['response'])
+                    # Store bot message ref for revision tracking if provided
+                    if result.get('bot_ref_event_id'):
+                        bid = extract_bot_msg_id(sent)
+                        if bid:
+                            store_bot_message_ref(bid, result.get('bot_ref_event_id'))
+                            store_last_bot_report(chat_jid, bid)
                 
                 if result.get('completed'):
                     # Flow finished (saved or cancelled)
@@ -892,9 +1010,15 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
         
         # 4. Filter AI Trigger
         text = sanitize_input(text or '')
+        force_record = False
         
         # ========== PRIORITY: COMMANDS FIRST (before layer processing) ==========
         if text.strip().startswith('/'):
+            # /catat -> force transaction, strip command
+            if text.lower().startswith('/catat'):
+                force_record = True
+                text = text[len('/catat'):].strip()
+
             if is_command_match(text, Commands.START, is_group):
                 send_reply(START_MESSAGE.replace('*', ''))
                 return jsonify({'status': 'command_start'}), 200
@@ -965,6 +1089,9 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
         intent = 'UNKNOWN'
         action = 'IGNORE'
         is_reply_to_bot = False
+        transfer_dompet = None
+        smart_result = {}
+        processing_ack_sent = False
         
         if has_pending:
             # Bypass AI if pending active to reach state machine below
@@ -989,36 +1116,46 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
 
             # Smart Handler (AI Layer)
             if USE_LAYERS:
-                # Use the initialized smart_handler instance
-                # It returns a dict with action, intent, normalized_text, etc.
-                smart_result = smart_handler.process(
-                    text=text,
-                    chat_jid=chat_jid,
-                    sender_number=sender_number,
-                    reply_message_id=quoted_msg_id,
-                    has_media=(input_type == 'image' or media_url is not None),
-                    sender_name=sender_name,
-                    quoted_message_text=quoted_message_text,
-                    has_visual=has_visual
-                )
-                
-                action = smart_result.get('action', 'IGNORE')
-                resp = smart_result.get('response') # For REPLY
-                intent = smart_result.get('intent', 'UNKNOWN')
-                
-                # Store extra data
-                transfer_dompet = None
-                layer_category_scope = smart_result.get('category_scope', 'UNKNOWN')
-                if intent == "RECORD_TRANSACTION":
-                     # In case smart_handler cleaned the text (e.g. from extracted data)
-                     if smart_result.get('normalized_text'):
-                         text = smart_result.get('normalized_text')
+                if force_record:
+                    action = "PROCESS"
+                    intent = "RECORD_TRANSACTION"
+                    layer_category_scope = "UNKNOWN"
+                else:
+                    # Use the initialized smart_handler instance
+                    # It returns a dict with action, intent, normalized_text, etc.
+                    smart_result = smart_handler.process(
+                        text=text,
+                        chat_jid=chat_jid,
+                        sender_number=sender_number,
+                        reply_message_id=quoted_msg_id,
+                        has_media=(input_type == 'image' or media_url is not None),
+                        sender_name=sender_name,
+                        quoted_message_text=quoted_message_text,
+                        has_visual=has_visual
+                    )
+                    
+                    action = smart_result.get('action', 'IGNORE')
+                    resp = smart_result.get('response') # For REPLY
+                    intent = smart_result.get('intent', 'UNKNOWN')
+                    
+                    # Store extra data
+                    layer_category_scope = smart_result.get('category_scope', 'UNKNOWN')
+                    if intent == "RECORD_TRANSACTION":
+                         # In case smart_handler cleaned the text (e.g. from extracted data)
+                         if smart_result.get('normalized_text'):
+                             text = smart_result.get('normalized_text')
  
                 if action == "IGNORE": return jsonify({'status': 'ignored'}), 200
                 if action == "REPLY": 
                     send_reply(resp)
                     return jsonify({'status': 'replied'}), 200
                 if action == "PROCESS":
+                    if intent == "RECORD_TRANSACTION":
+                        # Send quick ack only when explicitly addressed or private chat
+                        if (force_record or (not is_group) or is_explicit_bot_call(text)) and not processing_ack_sent:
+                            send_reply("⏳ Memproses...")
+                            processing_ack_sent = True
+
                     if intent == "QUERY_STATUS":
                         send_reply("🤔 Menganalisis...")
                         try:
@@ -1051,7 +1188,12 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                         # If AI is unsure (AMBIGUOUS) or UNKNOWN, ask user before extraction/saving
                         if layer_category_scope in ['UNKNOWN', 'AMBIGUOUS']:
                             # Extract temporarily to show context
-                            temp_txs = extract_financial_data(text, input_type, sender_name, [media_url] if media_url else None, text if input_type=='image' else None)
+                            inp, media_list, caption = build_extraction_inputs(
+                                text, input_type, media_url, local_media_path
+                            )
+                            temp_txs = extract_financial_data(
+                                inp, input_type, sender_name, media_list, caption
+                            )
                             
                             if temp_txs:
                                 # REMOVED local import of format_mention to fix UnboundLocalError
@@ -1062,7 +1204,8 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                                         'type': 'category_scope',
                                         'transactions': temp_txs,
                                         'raw_text': text,
-                                        'original_message_id': message_id
+                                        'original_message_id': event_id,
+                                        'event_id': event_id
                                     }
                                 )
                                 
@@ -1084,8 +1227,15 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 buf = get_visual_buffer(sender_number, chat_jid)
                 if buf:
                     # Handle both list and dict format from buffer
-                    if isinstance(buf, list): media_url = buf[0].get('media_url')
-                    else: media_url = buf.get('media_url')
+                    item = buf[0] if isinstance(buf, list) else buf
+                    media_url = item.get('media_url')
+                    local_media_path = item.get('media_path')
+                    buf_caption = item.get('caption') or ''
+                    
+                    # If user says "catat diatas" and caption exists, use caption as text
+                    ref_phrase = re.search(r'\b(catat\s+(di\s+)?(atas|tadi|sebelumnya)|catat\s+itu)\b', text.lower())
+                    if ref_phrase and buf_caption.strip():
+                        text = buf_caption.strip()
                     
                     input_type = 'image'
                     clear_visual_buffer(sender_number, chat_jid)
@@ -1132,7 +1282,12 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 or (intent == 'RECORD_TRANSACTION' and not is_reply_to_bot)
                 or is_potential_text_tx
             ):
-                new_txs = extract_financial_data(text, input_type, sender_name, [media_url] if media_url else None, text if input_type=='image' else None)
+                inp, media_list, caption = build_extraction_inputs(
+                    text, input_type, media_url, local_media_path
+                )
+                new_txs = extract_financial_data(
+                    inp, input_type, sender_name, media_list, caption
+                )
                 
                 if new_txs:
                     send_reply("➕ Menambahkan ke antrian transaksi...")
@@ -1163,6 +1318,24 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 _pending_transactions.pop(pending_pkey, None)
                 send_reply(UserErrors.CANCELLED)
                 return jsonify({'status': 'cancelled'}), 200
+            
+            # Z. Needs Amount
+            if ptype == 'needs_amount':
+                try:
+                    amt = parse_revision_amount(text)
+                except Exception:
+                    amt = 0
+                if not amt:
+                    send_reply("❗ Nominalnya berapa? (contoh: 150rb)")
+                    return jsonify({'status': 'asking_amount'}), 200
+                
+                for t in pending.get('transactions', []):
+                    if t.get('needs_amount') or int(t.get('jumlah', 0) or 0) <= 0:
+                        t['jumlah'] = int(amt)
+                        t.pop('needs_amount', None)
+                
+                pending.pop('pending_type', None)
+                return finalize_transaction_workflow(pending, pending_pkey)
                 
             # A. Select Source Wallet (Operational)
             if ptype == 'select_source_wallet':
@@ -1420,14 +1593,21 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
         # 8. PROCESS NEW INPUT (AI)
         transactions = []
         try:
-            send_reply("🔍 Scan...")
+            if not processing_ack_sent:
+                send_reply("🔍 Scan...")
             
-            final_media = [media_url] if media_url else []
-            transactions = extract_financial_data(text, input_type, sender_name, final_media, text if input_type=='image' else None)
+            inp, media_list, caption = build_extraction_inputs(
+                text, input_type, media_url, local_media_path
+            )
+            transactions = extract_financial_data(inp, input_type, sender_name, media_list, caption)
             
             if not transactions:
                 if input_type == 'image': send_reply("❓ Tidak terbaca.")
                 return jsonify({'status': 'no_tx'}), 200
+            
+            # Clear visual buffer on successful extraction to avoid double-binding
+            if input_type == 'image':
+                clear_visual_buffer(sender_number, chat_jid)
             
             # Setup New Pending State
             _pending_transactions[sender_pkey] = {
@@ -1435,14 +1615,33 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 'sender_name': sender_name,
                 'source': source_label,
                 'created_at': datetime.now(),
-                'message_id': message_id,
+                'message_id': event_id,
+                'event_id': event_id,
                 'chat_jid': chat_jid,
+                'quoted_message_id': quoted_msg_id,
                 'requires_reply': is_group,
                 'original_text': text, # Important for Smart Router
+                'normalized_text': text,
+                'input_type': input_type,
+                'caption': text if input_type == 'image' else None,
+                'attachments': {
+                    'media_url': media_url,
+                    'media_path': local_media_path
+                },
                 'prompt_message_ids': [],
                 'category_scope': layer_category_scope,  # From AI layer (initialized earlier)
                 'override_dompet': transfer_dompet if layer_category_scope == 'TRANSFER' else None,
             }
+
+            # If amount missing/zero, ask user before proceeding
+            missing_amount = [t for t in transactions if int(t.get('jumlah', 0) or 0) <= 0]
+            if missing_amount:
+                for t in missing_amount:
+                    t['needs_amount'] = True
+                _pending_transactions[sender_pkey]['pending_type'] = 'needs_amount'
+                item = missing_amount[0].get('keterangan', 'Transaksi')
+                send_reply(f"❗ Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
+                return jsonify({'status': 'asking_amount'}), 200
 
             if all(t.get('nama_projek') and not t.get('needs_project') for t in transactions):
                 _pending_transactions[sender_pkey]['project_confirmed'] = True

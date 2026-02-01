@@ -150,7 +150,8 @@ def handle_revision_command(user_id: str, chat_id: str, text: str,
                 data={
                     'type': 'revision_move_to_operational',
                     'transactions': items,
-                    'original_message_id': original_tx_id
+                    'original_message_id': original_tx_id,
+                    'event_id': original_tx_id
                 }
             )
             
@@ -168,7 +169,8 @@ def handle_revision_command(user_id: str, chat_id: str, text: str,
                     'type': 'revision_move_to_project',
                     'transactions': items,
                     'current_dompet': first_item.get('dompet'), # Suggest keeping same dompet?
-                    'original_message_id': original_tx_id
+                    'original_message_id': original_tx_id,
+                    'event_id': original_tx_id
                 }
             )
             

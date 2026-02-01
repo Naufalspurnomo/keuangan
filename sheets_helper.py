@@ -769,10 +769,32 @@ def update_transaction_amount(dompet_sheet: str, row: int, new_amount: int) -> b
         True if successful, False otherwise
     """
     try:
+        # Operational sheet
+        if dompet_sheet == OPERASIONAL_SHEET_NAME:
+            sheet = get_or_create_operational_sheet()
+            sheet.update_cell(row, OPERASIONAL_COLS['JUMLAH'], new_amount)
+            secure_log("INFO", f"Operational TX updated: {dompet_sheet} row {row} -> {new_amount}")
+            return True
+        
         sheet = get_dompet_sheet(dompet_sheet)
         
-        # Update the Jumlah column (column E, index 5)
-        sheet.update_cell(row, COL_JUMLAH, new_amount)
+        # Split layout: detect which block has amount
+        try:
+            in_val = sheet.cell(row, SPLIT_PEMASUKAN['JUMLAH']).value
+            out_val = sheet.cell(row, SPLIT_PENGELUARAN['JUMLAH']).value
+        except Exception:
+            in_val = None
+            out_val = None
+        
+        if in_val:
+            target_col = SPLIT_PEMASUKAN['JUMLAH']
+        elif out_val:
+            target_col = SPLIT_PENGELUARAN['JUMLAH']
+        else:
+            # Fallback to pengeluaran column
+            target_col = SPLIT_PENGELUARAN['JUMLAH']
+        
+        sheet.update_cell(row, target_col, new_amount)
         
         secure_log("INFO", f"Transaction updated: {dompet_sheet} row {row} -> {new_amount}")
         return True
@@ -1561,7 +1583,7 @@ def test_connection() -> bool:
 # Dashboard Cache
 _dashboard_cache = None
 _dashboard_last_update = 0
-DASHBOARD_CACHE_TTL = 300  # 5 minutes
+DASHBOARD_CACHE_TTL = 60  # 60 seconds
 
 def invalidate_dashboard_cache():
     """Invalidate dashboard cache (call this after adding transactions)."""
@@ -1579,7 +1601,7 @@ def get_dashboard_summary():
         
         # Cache TTL check (e.g. 5 minutes)
         if _dashboard_cache and _dashboard_last_update:
-            if (current_time - _dashboard_last_update).total_seconds() < 300:
+            if (current_time - _dashboard_last_update).total_seconds() < DASHBOARD_CACHE_TTL:
                 return _dashboard_cache
         
         total_income = 0
@@ -1727,44 +1749,85 @@ def find_all_transactions_by_message_id(message_id: str) -> List[Dict]:
         return []
     
     results = []
+
+    def _match_message_id(cell_value: str, target: str) -> bool:
+        if not cell_value or not target:
+            return False
+        if cell_value == target:
+            return True
+        # Support combined format: event_id|idx
+        if '|' in cell_value:
+            parts = [p.strip() for p in cell_value.split('|') if p.strip()]
+            if target in parts:
+                return True
+            if cell_value.startswith(f"{target}|"):
+                return True
+        return False
     
     try:
+        # Search dompet sheets (split layout)
         for dompet in DOMPET_SHEETS:
             try:
                 sheet = get_dompet_sheet(dompet)
-                
-                # Check if column exists
-                if sheet.col_count < COL_MESSAGE_ID:
-                    secure_log("WARNING", f"Sheet {dompet} has only {sheet.col_count} columns, expected at least {COL_MESSAGE_ID}. Skipping.")
+                if not sheet:
                     continue
 
-                # Get MessageID column
-                message_ids = sheet.col_values(COL_MESSAGE_ID)
+                in_ids = sheet.col_values(SPLIT_PEMASUKAN['MESSAGE_ID'])
+                out_ids = sheet.col_values(SPLIT_PENGELUARAN['MESSAGE_ID'])
+                max_len = max(len(in_ids), len(out_ids))
                 
-                # Search for ALL matches of message_id
-                for row_idx, mid in enumerate(message_ids):
-                    if mid == message_id:
-                        row_number = row_idx + 1  # 1-based row number
-                        
-                        # Get the row data
+                for row_idx in range(SPLIT_LAYOUT_DATA_START - 1, max_len):
+                    row_number = row_idx + 1
+                    mid_in = in_ids[row_idx] if row_idx < len(in_ids) else ""
+                    mid_out = out_ids[row_idx] if row_idx < len(out_ids) else ""
+                    
+                    if _match_message_id(mid_in, message_id):
                         row_data = sheet.row_values(row_number)
-                        
-                        # Pad row_data safety
-                        while len(row_data) < 12:
-                            row_data.append('')
-                        
                         results.append({
                             'dompet': dompet,
                             'row': row_number,
-                            'amount': int(row_data[COL_JUMLAH - 1]) if row_data[COL_JUMLAH - 1] else 0,
-                            'keterangan': row_data[COL_KETERANGAN - 1],
-                            'user_id': row_data[COL_OLEH - 1],
-                            'nama_projek': row_data[COL_NAMA_PROJEK - 1] if len(row_data) >= COL_NAMA_PROJEK else '',
+                            'amount': int(row_data[SPLIT_PEMASUKAN['JUMLAH'] - 1]) if len(row_data) >= SPLIT_PEMASUKAN['JUMLAH'] and row_data[SPLIT_PEMASUKAN['JUMLAH'] - 1] else 0,
+                            'keterangan': row_data[SPLIT_PEMASUKAN['KETERANGAN'] - 1] if len(row_data) >= SPLIT_PEMASUKAN['KETERANGAN'] else '',
+                            'user_id': row_data[SPLIT_PEMASUKAN['OLEH'] - 1] if len(row_data) >= SPLIT_PEMASUKAN['OLEH'] else '',
+                            'nama_projek': row_data[SPLIT_PEMASUKAN['PROJECT'] - 1] if len(row_data) >= SPLIT_PEMASUKAN['PROJECT'] else '',
+                            'tipe': 'Pemasukan'
+                        })
+                    
+                    if _match_message_id(mid_out, message_id):
+                        row_data = sheet.row_values(row_number)
+                        results.append({
+                            'dompet': dompet,
+                            'row': row_number,
+                            'amount': int(row_data[SPLIT_PENGELUARAN['JUMLAH'] - 1]) if len(row_data) >= SPLIT_PENGELUARAN['JUMLAH'] and row_data[SPLIT_PENGELUARAN['JUMLAH'] - 1] else 0,
+                            'keterangan': row_data[SPLIT_PENGELUARAN['KETERANGAN'] - 1] if len(row_data) >= SPLIT_PENGELUARAN['KETERANGAN'] else '',
+                            'user_id': row_data[SPLIT_PENGELUARAN['OLEH'] - 1] if len(row_data) >= SPLIT_PENGELUARAN['OLEH'] else '',
+                            'nama_projek': row_data[SPLIT_PENGELUARAN['PROJECT'] - 1] if len(row_data) >= SPLIT_PENGELUARAN['PROJECT'] else '',
+                            'tipe': 'Pengeluaran'
                         })
                         
             except Exception as e:
                 secure_log("WARNING", f"Error searching {dompet}: {type(e).__name__} - {str(e)}")
                 continue
+        
+        # Search operational sheet
+        try:
+            op_sheet = get_or_create_operational_sheet()
+            op_ids = op_sheet.col_values(OPERASIONAL_COLS['MESSAGE_ID'])
+            for row_idx, mid in enumerate(op_ids):
+                if _match_message_id(mid, message_id):
+                    row_number = row_idx + 1
+                    row_data = op_sheet.row_values(row_number)
+                    results.append({
+                        'dompet': OPERASIONAL_SHEET_NAME,
+                        'row': row_number,
+                        'amount': int(row_data[OPERASIONAL_COLS['JUMLAH'] - 1]) if len(row_data) >= OPERASIONAL_COLS['JUMLAH'] and row_data[OPERASIONAL_COLS['JUMLAH'] - 1] else 0,
+                        'keterangan': row_data[OPERASIONAL_COLS['KETERANGAN'] - 1] if len(row_data) >= OPERASIONAL_COLS['KETERANGAN'] else '',
+                        'user_id': row_data[OPERASIONAL_COLS['OLEH'] - 1] if len(row_data) >= OPERASIONAL_COLS['OLEH'] else '',
+                        'nama_projek': 'Operasional Kantor',
+                        'tipe': 'Pengeluaran'
+                    })
+        except Exception as e:
+            secure_log("WARNING", f"Error searching operational: {type(e).__name__} - {str(e)}")
         
         return results
         

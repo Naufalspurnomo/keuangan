@@ -51,6 +51,13 @@ Contoh: `Bayar listrik 500rb` (Bot langsung respon)
 `/list` Riwayat  •  `/laporan` Report 7 hari
 `/tanya ...` Tanya AI  •  `/link` Buka Sheets
 
+*━━ Tips Akurasi ━━*
+- Jika transaksi *project*, tulis kata **projek/project** + nama projek  
+  contoh: `bayar fee Nopal projek Taman Cafe Bali`
+- Jika *operasional*, tulis kata **kantor**  
+  contoh: `bayar gaji Nopal kantor`
+- Jika ambigu, bot akan tanya dulu
+
 💡 Reply transaksi + `/revisi` buat koreksi
 """
 
@@ -77,6 +84,11 @@ Bot otomatis baca pesan yang ada *angka* & *kata kerja*.
 
 *━━ Kategori (Auto Detect) ━━*
 {', '.join(ALLOWED_CATEGORIES)}
+
+*━━ Tips Akurasi ━━*
+- Project: selalu tulis **projek/project** + nama projek
+- Operasional: tulis **kantor** untuk biaya kantor
+- Jika sinyal bentrok, bot akan minta konfirmasi
 
 *━━ Menu Lengkap ━━*
 📊 `/status` - Dashboard
@@ -208,6 +220,53 @@ def format_success_reply_new(transactions: list, dompet_sheet: str, company: str
     lines.append("📊 Cek ringkas: /status | /saldo")
     
     return '\n'.join(lines)
+
+
+def format_draft_summary_operational(transactions: list, dompet_sheet: str, category: str, mention: str = "") -> str:
+    """Format draft confirmation for operational transactions."""
+    total = sum(int(t.get('jumlah', 0) or 0) for t in transactions)
+    item = transactions[0].get('keterangan', '-') if transactions else '-'
+    short_dompet = dompet_sheet or "-"
+    
+    lines = [
+        f"{mention}🧾 Draft Operasional",
+        f"📝 {item}",
+        f"💰 Nominal: Rp {total:,}".replace(',', '.'),
+        f"💼 Dompet: {short_dompet}",
+        f"📂 Kategori: {category or 'Lain Lain'}",
+        "",
+        "Konfirmasi simpan?",
+        "1️⃣ Simpan",
+        "2️⃣ Ganti dompet",
+        "3️⃣ Ubah kategori",
+        "4️⃣ Batal"
+    ]
+    return "\n".join(lines)
+
+
+def format_draft_summary_project(transactions: list, dompet_sheet: str, company: str, mention: str = "") -> str:
+    """Format draft confirmation for project transactions."""
+    total = sum(int(t.get('jumlah', 0) or 0) for t in transactions)
+    item = transactions[0].get('keterangan', '-') if transactions else '-'
+    project_names = sorted({t.get('nama_projek') for t in transactions if t.get('nama_projek')})
+    proj_display = ", ".join(project_names) if project_names else "-"
+    short_dompet = dompet_sheet or "-"
+    
+    lines = [
+        f"{mention}🧾 Draft Project",
+        f"📝 {item}",
+        f"💰 Nominal: Rp {total:,}".replace(',', '.'),
+        f"💼 Dompet: {short_dompet}",
+        f"🏢 Company: {company or '-'}",
+        f"📋 Projek: {proj_display}",
+        "",
+        "Konfirmasi simpan?",
+        "1️⃣ Simpan",
+        "2️⃣ Ganti dompet",
+        "3️⃣ Ubah projek",
+        "4️⃣ Batal"
+    ]
+    return "\n".join(lines)
 
 
 # For testing

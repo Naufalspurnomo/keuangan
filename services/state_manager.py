@@ -47,8 +47,9 @@ def visual_buffer_key(sender_number: str, chat_jid: str) -> str:
     return sender_number
 
 
-def store_visual_buffer(sender_number: str, chat_jid: str, media_url: str, 
-                        message_id: str, caption: str = None) -> None:
+def store_visual_buffer(sender_number: str, chat_jid: str, media_url: str,
+                        message_id: str, caption: str = None,
+                        media_path: str = None) -> None:
     """Store photo in visual buffer for later linking (Appends to list)."""
     key = visual_buffer_key(sender_number, chat_jid)
     
@@ -59,6 +60,7 @@ def store_visual_buffer(sender_number: str, chat_jid: str, media_url: str,
     # Append new item
     _visual_buffer[key].append({
         'media_url': media_url,
+        'media_path': media_path,
         'message_id': message_id,
         'caption': caption,
         'chat_jid': chat_jid,
@@ -226,6 +228,9 @@ def clear_pending_message_ref(bot_msg_id: str) -> None:
 # ===================== MESSAGE DEDUP =====================
 # Format: {message_id: timestamp}
 _processed_messages: Dict[str, datetime] = {}
+_project_registry: Dict[str, str] = {}  # project_name(lower) -> dompet_sheet
+_audit_log: list = []
+_last_state_save: Optional[datetime] = None
 
 
 def is_message_duplicate(message_id: str) -> bool:
@@ -247,6 +252,11 @@ def is_message_duplicate(message_id: str) -> bool:
         
         # Mark as processed
         _processed_messages[message_id] = now
+        # Persist occasionally to survive restarts (idempotency)
+        global _last_state_save
+        if _last_state_save is None or (now - _last_state_save).total_seconds() > 30:
+            _last_state_save = now
+            _save_state()
         return False
 
 
@@ -356,6 +366,9 @@ def _save_state():
                 "pending_transactions": _pending_transactions,
                 "bot_message_refs": _bot_message_refs,
                 "pending_message_refs": _pending_message_refs,
+                "processed_messages": {k: v.isoformat() for k, v in _processed_messages.items()},
+                "project_registry": _project_registry,
+                "audit_log": _audit_log,
                 "bot_interactions": {k: {**v, 'timestamp': v['timestamp'].isoformat()} for k, v in _bot_interactions.items()},
                 "visual_buffer": {k: [
                     {**item, 'created_at': item['created_at'].isoformat() if isinstance(item.get('created_at'), datetime) else item.get('created_at')} 
@@ -430,6 +443,24 @@ def _load_state():
                 
             if "pending_message_refs" in data:
                 _pending_message_refs.update(data["pending_message_refs"])
+
+            if "processed_messages" in data:
+                for k, v in data["processed_messages"].items():
+                    try:
+                        ts = datetime.fromisoformat(v)
+                        # Skip expired to keep idempotency store small
+                        if (datetime.now() - ts).total_seconds() <= DEDUP_TTL_SECONDS:
+                            _processed_messages[k] = ts
+                    except Exception:
+                        pass
+
+            if "project_registry" in data:
+                if isinstance(data["project_registry"], dict):
+                    _project_registry.update(data["project_registry"])
+
+            if "audit_log" in data:
+                if isinstance(data["audit_log"], list):
+                    _audit_log.extend(data["audit_log"][:500])
                 
             if "bot_interactions" in data:
                  for k, v in data["bot_interactions"].items():
@@ -516,6 +547,76 @@ def clear_pending_confirmation(user_id: str, chat_id: str):
 def has_pending_confirmation(user_id: str, chat_id: str) -> bool:
     """Check if user has pending confirmation."""
     return get_pending_confirmation(user_id, chat_id) is not None
+
+
+# ===================== PROJECT REGISTRY =====================
+def _normalize_project_key(name: str) -> str:
+    if not name:
+        return ""
+    clean = name.strip()
+    # Remove (Start)/(Finish) markers
+    clean = clean.replace("(Start)", "").replace("(Finish)", "")
+    clean = clean.replace("(start)", "").replace("(finish)", "")
+    return clean.strip().lower()
+
+
+def get_project_lock(project_name: str) -> Optional[str]:
+    """Get locked dompet for a project. If missing, try resolve from sheets."""
+    key = _normalize_project_key(project_name)
+    if not key:
+        return None
+    if key in _project_registry:
+        return _project_registry.get(key)
+    # Lazy resolve from sheets if exists
+    try:
+        from sheets_helper import find_company_for_project
+        found_dompet, _ = find_company_for_project(project_name)
+        if found_dompet:
+            _project_registry[key] = found_dompet
+            _save_state()
+            return found_dompet
+    except Exception:
+        pass
+    return None
+
+
+def add_audit_event(event: dict) -> None:
+    """Append audit event (bounded)."""
+    try:
+        event['ts'] = datetime.now().isoformat()
+        _audit_log.append(event)
+        # Keep last 500 events
+        if len(_audit_log) > 500:
+            _audit_log[:] = _audit_log[-500:]
+        _save_state()
+    except Exception:
+        pass
+
+
+def set_project_lock(project_name: str, dompet_sheet: str, actor: str = None,
+                     reason: str = None, previous_dompet: str = None) -> None:
+    """Lock project to a dompet (persisted) and write audit log if changed."""
+    key = _normalize_project_key(project_name)
+    if not key or not dompet_sheet:
+        return
+    prev = _project_registry.get(key)
+    _project_registry[key] = dompet_sheet
+    _save_state()
+    
+    if prev != dompet_sheet:
+        add_audit_event({
+            "type": "project_lock",
+            "project": key,
+            "from": previous_dompet or prev,
+            "to": dompet_sheet,
+            "actor": actor,
+            "reason": reason or ("new" if not prev else "move")
+        })
+
+
+def get_project_registry() -> Dict[str, str]:
+    """Get full project registry mapping."""
+    return _project_registry.copy()
 
 
 # ===================== USER MESSAGE CONTEXT =====================
