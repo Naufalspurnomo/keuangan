@@ -336,7 +336,21 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
             if keterangan:
                 from difflib import SequenceMatcher
                 similarity = SequenceMatcher(None, keterangan.lower(), clean_text.lower()).ratio()
-                if keterangan.lower() not in clean_text.lower() and similarity < 0.35:
+                clean_tokens = {
+                    t.strip(".,:-").lower()
+                    for t in clean_text.split()
+                    if len(t.strip(".,:-")) >= 4
+                }
+                keterangan_tokens = {
+                    t.strip(".,:-").lower()
+                    for t in keterangan.split()
+                    if len(t.strip(".,:-")) >= 4
+                }
+                has_overlap = bool(clean_tokens & keterangan_tokens)
+                if (
+                    keterangan.lower() not in clean_text.lower()
+                    and (similarity < 0.5 or not has_overlap)
+                ):
                     secure_log("WARNING", f"Keterangan mismatch ('{keterangan[:30]}...'), fallback to original text")
                     sanitized["keterangan"] = clean_text[:200]
 
