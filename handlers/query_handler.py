@@ -354,23 +354,26 @@ def _fallback_ai(query: str, days: int) -> str:
         return "Maaf, terjadi kesalahan saat menganalisis data."
 
 
-def handle_query_command(query: str, user_id: str, chat_id: str) -> str:
+def handle_query_command(query: str, user_id: str, chat_id: str, raw_query: str = None) -> str:
     try:
         clean_query = sanitize_input(query)
         if not clean_query:
             return "Pertanyaan tidak valid."
 
+        raw_clean = sanitize_input(raw_query) if raw_query else None
         is_injection, _ = detect_prompt_injection(clean_query)
         if is_injection:
             return "Pertanyaan tidak valid. Mohon tanya tentang data keuangan."
 
-        norm = normalize_nyeleneh_text(clean_query)
+        detect_query = raw_clean or clean_query
+        norm = normalize_nyeleneh_text(detect_query)
+        raw_norm = _normalize_text(detect_query)
         days, period_label = _extract_days(norm)
 
-        dompet = resolve_dompet_from_text(norm)
+        dompet = resolve_dompet_from_text(raw_norm)
         wants_operational = any(k in norm for k in ["operasional", "kantor", "overhead"])
         wants_project = any(k in norm for k in ["projek", "project", "proyek"]) or bool(
-            extract_project_name_from_text(clean_query)
+            extract_project_name_from_text(detect_query)
         )
 
         if dompet:
@@ -380,7 +383,7 @@ def handle_query_command(query: str, user_id: str, chat_id: str) -> str:
             return _handle_operational_query(norm, days, period_label)
 
         if wants_project:
-            return _handle_project_query(clean_query, norm, days, period_label)
+            return _handle_project_query(detect_query, norm, days, period_label)
 
         return _handle_general_query(norm, days, period_label)
 

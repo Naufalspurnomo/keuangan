@@ -1160,7 +1160,7 @@ Balas 1 atau 2"""
                         try:
                             from handlers.query_handler import handle_query_command
                             query_text = smart_result.get('layer_response', text)
-                            ans = handle_query_command(query_text, sender_number, chat_jid)
+                            ans = handle_query_command(query_text, sender_number, chat_jid, raw_query=text)
                             send_reply(ans.replace('*', ''))
                             return jsonify({'status': 'queried'}), 200
                         except Exception as e:
