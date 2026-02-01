@@ -29,14 +29,15 @@ USER botuser
 EXPOSE 8000
 
 # Health check (optional, helps Koyeb detect issues faster)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/health', timeout=5)" || exit 1
+# Health check (relaxed for heavy AI/Sheet operations)
+HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=5 \
+    CMD python -c "import requests; requests.get('http://localhost:8000/health', timeout=10)" || exit 1
 
-# Run with optimized gunicorn settings
+# Run with optimized gunicorn settings (Increased threads for IO-bound work)
 CMD ["gunicorn", "main:app", \
      "--bind", "0.0.0.0:8000", \
      "--workers", "1", \
-     "--threads", "2", \
+     "--threads", "4", \
      "--timeout", "120", \
      "--access-logfile", "-", \
      "--error-logfile", "-", \
