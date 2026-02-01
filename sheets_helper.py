@@ -1510,8 +1510,8 @@ def format_dashboard_message(summary: Dict) -> str:
     lines.append(f"📝 Total Tx: {summary['total_transactions']}")
     lines.append("")
     
-    # Validasi Dompet (Real vs Virtual)
-    lines.append("*Status Dompet (Virtual vs Real)*:")
+    # Validasi Dompet (Real vs Virtual) -> Update: Just say Real
+    lines.append("*Status Saldo Dompet (Real)*:")
     for dompet, stats in summary['dompet_summary'].items():
         short = get_dompet_short_name(dompet)
         bal = stats['bal']
@@ -1678,9 +1678,16 @@ def get_dashboard_summary():
         except Exception as e:
             secure_log("WARNING", f"Dashboard operational calc failed: {e}")
 
+        except Exception as e:
+            secure_log("WARNING", f"Dashboard operational calc failed: {e}")
+
         # Calc Company Balances
         for c in company_summary:
             company_summary[c]['bal'] = company_summary[c]['inc'] - company_summary[c]['exp']
+            
+        # RE-CALCULATE Dompet Balances (Critical: Update balance after Operational Debits)
+        for d in dompet_summary:
+            dompet_summary[d]['bal'] = dompet_summary[d]['inc'] - dompet_summary[d]['exp']
 
         # Update Cache
         _dashboard_cache = {
