@@ -9,6 +9,7 @@ Contains:
 """
 
 from typing import Dict, List, Optional
+import re
 
 # ===================== DOMPET SHEETS (Split Layout) =====================
 # These are the actual sheet names in Google Sheets
@@ -235,15 +236,38 @@ def resolve_dompet_name(user_input: str) -> Optional[str]:
 def resolve_dompet_from_text(text: str) -> Optional[str]:
     """
     Resolve dompet name from a longer text (substring match).
-    Prioritizes longer aliases to avoid partial collisions.
+    Prioritizes more specific aliases to avoid partial collisions
+    like "dompet tx" vs "tx bali".
     """
     if not text:
         return None
     clean = text.lower()
-    for alias in sorted(DOMPET_ALIASES.keys(), key=len, reverse=True):
+
+    candidates = []
+    for alias, dompet in DOMPET_ALIASES.items():
         if alias in clean:
-            return DOMPET_ALIASES[alias]
-    return None
+            candidates.append((alias, dompet))
+
+    if not candidates:
+        return None
+
+    generic_tokens = {"dompet", "wallet", "dompetnya", "dompetku"}
+    location_tokens = {"bali", "sby", "surabaya", "denpasar"}
+
+    def _alias_score(alias: str) -> tuple:
+        # Remove generic tokens to measure specificity
+        norm = alias
+        for token in generic_tokens:
+            norm = re.sub(rf"\b{token}\b", "", norm)
+        norm = " ".join(norm.split())
+
+        score = len(norm)
+        if any(loc in norm for loc in location_tokens):
+            score += 5
+        return (score, len(alias))
+
+    best_alias, best_dompet = max(candidates, key=lambda item: _alias_score(item[0]))
+    return best_dompet
 
 
 def get_dompet_for_company(company_name: str) -> str:
