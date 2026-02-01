@@ -1492,6 +1492,10 @@ def get_wallet_balances() -> Dict:
     except Exception as e:
         secure_log("ERROR", f"Error parsing operational sheet: {e}")
     
+    # 3. Calculate Final REAL Balance
+    for dompet in balances:
+        balances[dompet]['saldo'] = balances[dompet]['internal_balance'] - balances[dompet]['operational_debit']
+        
     return balances
 
 
@@ -1632,6 +1636,47 @@ def get_dashboard_summary():
             except Exception as e:
                 secure_log("ERROR", f"Dashboard error {dompet}: {e}")
                 continue
+
+        # --- PROCESS OPERATIONAL DEBITS FOR DASHBOARD ---
+        try:
+            from config.wallets import get_dompet_short_name
+            import re
+            
+            # Re-use logic from get_wallet_balances to find operational debits
+            op_sheet = get_or_create_operational_sheet()
+            # Get values - checking existence first
+            op_data = op_sheet.get_all_values()
+            
+            if len(op_data) >= OPERASIONAL_DATA_START:
+                for row in op_data[OPERASIONAL_DATA_START-1:]:
+                    if not row or len(row) < OPERASIONAL_COLS['JUMLAH']: continue
+                    
+                    try:
+                        # Parse amount
+                        amt_str = row[OPERASIONAL_COLS['JUMLAH']-1]
+                        amount = _parse_amount(amt_str)
+                        if amount <= 0: continue
+                        
+                        # Add to global expense
+                        total_expense += amount
+                        
+                        # Check source
+                        keterangan = row[OPERASIONAL_COLS['KETERANGAN']-1] if len(row) >= OPERASIONAL_COLS['KETERANGAN'] else ""
+                        match = re.search(r'\[Sumber:\s*([^\]]+)\]', keterangan)
+                        if match:
+                            source_short = match.group(1).strip()
+                            # Find matching dompet in summary
+                            for dompet in DOMPET_SHEETS:
+                                d_short = get_dompet_short_name(dompet)
+                                if source_short.lower() == d_short.lower():
+                                    # DEBIT the wallet balance directly
+                                    dompet_summary[dompet]['exp'] += amount # Add to expense tracking for that wallet
+                                    # Note: Balances are calculated in next step
+                                    break
+                    except:
+                        continue
+        except Exception as e:
+            secure_log("WARNING", f"Dashboard operational calc failed: {e}")
 
         # Calc Company Balances
         for c in company_summary:
