@@ -26,12 +26,11 @@ load_dotenv()
 
 # ===================== GLOBAL IMPORTS =====================
 # AI & Data Processing
-from ai_helper import extract_financial_data, query_data, RateLimitException
+from ai_helper import extract_financial_data, RateLimitException
 
 # Google Sheets Integration
 from sheets_helper import (
     append_transactions, append_transaction, 
-    format_data_for_ai,
     format_dashboard_message, get_dashboard_summary,
     get_wallet_balances,
     invalidate_dashboard_cache,
@@ -1159,13 +1158,13 @@ Balas 1 atau 2"""
                     if intent == "QUERY_STATUS":
                         send_reply("🤔 Menganalisis...")
                         try:
-                            # Use the standardized search query from smart handler if available
+                            from handlers.query_handler import handle_query_command
                             query_text = smart_result.get('layer_response', text)
-                            ctx = format_data_for_ai(days=30)
-                            ans = query_data(query_text, ctx)
-                            send_reply(ans.replace('*',''))
+                            ans = handle_query_command(query_text, sender_number, chat_jid)
+                            send_reply(ans.replace('*', ''))
                             return jsonify({'status': 'queried'}), 200
-                        except: pass
+                        except Exception as e:
+                            secure_log("ERROR", f"Query handler failed: {e}")
                     
                     # ========================================
                     # STEP 2: HANDLE SPECIAL INTENTS
