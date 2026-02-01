@@ -11,6 +11,7 @@ v2.0 Improvements:
 
 import logging
 import re
+from difflib import SequenceMatcher
 from config.constants import Commands, OPERATIONAL_KEYWORDS
 
 from utils.amounts import has_amount_pattern
@@ -210,6 +211,14 @@ class SmartHandler:
             
         elif intent == "RECORD_TRANSACTION":
             clean_text = extracted.get('clean_text', text)
+            if clean_text:
+                similarity = SequenceMatcher(None, clean_text.lower(), text.lower()).ratio()
+                if clean_text.lower() not in text.lower() and similarity < 0.35:
+                    secure_log(
+                        "WARNING",
+                        f"Clean text mismatch ('{clean_text[:30]}...'), fallback to original text"
+                    )
+                    clean_text = text
             
             return {
                 "action": "PROCESS",
