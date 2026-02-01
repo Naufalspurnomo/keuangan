@@ -153,6 +153,55 @@ def send_telegram_reply(chat_id: int, message: str, parse_mode: str = 'Markdown'
         secure_log("ERROR", f"Telegram send failed: {type(e).__name__}")
         return None
 
+
+def get_telegram_file_url(file_id: str) -> Optional[str]:
+    """Resolve a Telegram file_id to a downloadable URL."""
+    try:
+        api_url = get_telegram_api_url()
+        if not api_url or not file_id:
+            return None
+
+        session = get_telegram_session()
+        response = session.get(
+            f"{api_url}/getFile",
+            params={'file_id': file_id},
+            timeout=10
+        )
+        if response.status_code != 200:
+            secure_log("ERROR", f"Telegram getFile failed: {response.status_code}")
+            return None
+
+        payload = response.json()
+        file_path = payload.get('result', {}).get('file_path')
+        if not file_path:
+            return None
+
+        return f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+    except Exception as e:
+        secure_log("ERROR", f"Telegram getFile exception: {type(e).__name__}: {e}")
+        return None
+
+
+def send_telegram_document(chat_id: int, file_path: str, caption: str = None) -> Optional[Dict]:
+    """Send a document to Telegram."""
+    try:
+        api_url = get_telegram_api_url()
+        if not api_url or not file_path:
+            return None
+
+        session = get_telegram_session()
+        with open(file_path, "rb") as f:
+            response = session.post(
+                f"{api_url}/sendDocument",
+                data={'chat_id': chat_id, 'caption': caption or ''},
+                files={'document': f},
+                timeout=30
+            )
+        return response.json()
+    except Exception as e:
+        secure_log("ERROR", f"Telegram sendDocument failed: {type(e).__name__}: {e}")
+        return None
+
 # Import legacy pending dict (now managed via state_manager proxy)
 from services import state_manager as _state
 _pending_transactions = _state._pending_transactions
@@ -430,6 +479,96 @@ def webhook_wuzapi():
         return jsonify({'status': 'error'}), 500
 
 
+# ===================== TELEGRAM HANDLER =====================
+
+@app.route('/telegram', methods=['POST'])
+def webhook_telegram():
+    try:
+        update = request.get_json(silent=True) or {}
+        message = update.get('message') or update.get('edited_message')
+        if not message:
+            return jsonify({'status': 'no_message'}), 200
+
+        sender = message.get('from', {})
+        if sender.get('is_bot'):
+            return jsonify({'status': 'own_message'}), 200
+
+        chat = message.get('chat', {})
+        chat_id = chat.get('id')
+        if chat_id is None:
+            return jsonify({'status': 'no_chat'}), 200
+
+        chat_type = chat.get('type', 'private')
+        is_group = chat_type in ('group', 'supergroup')
+
+        sender_id = sender.get('id')
+        sender_name = " ".join(filter(None, [sender.get('first_name'), sender.get('last_name')])).strip()
+        if not sender_name:
+            sender_name = sender.get('username', 'User')
+        sender_number = str(sender_id) if sender_id is not None else sender.get('username', '')
+        sender_username = sender.get('username')
+
+        if not is_sender_allowed([sender_number, sender_username, sender_name]):
+            secure_log("WARNING", f"Telegram: Access denied for {sender_number}")
+            send_telegram_reply(chat_id, "❌ Akses Ditolak. Hubungi Admin.")
+            return jsonify({'status': 'forbidden'}), 200
+
+        text = message.get('text') or ''
+        input_type = 'text'
+        media_url = None
+
+        if message.get('photo'):
+            photo = message['photo'][-1]
+            file_id = photo.get('file_id')
+            media_url = get_telegram_file_url(file_id)
+            input_type = 'image'
+            if not text:
+                text = message.get('caption', '') or ''
+
+        quoted_msg_id = None
+        quoted_message_text = None
+        reply_msg = message.get('reply_to_message')
+        if reply_msg:
+            reply_message_id = reply_msg.get('message_id')
+            if reply_message_id is not None:
+                quoted_msg_id = f"tg:{chat_id}:{reply_message_id}"
+            quoted_message_text = reply_msg.get('text') or reply_msg.get('caption')
+
+        message_id = message.get('message_id')
+        if message_id is not None:
+            message_key = f"tg:{chat_id}:{message_id}"
+        else:
+            message_key = f"tg:{chat_id}:{update.get('update_id', '')}"
+
+        if is_message_duplicate(message_key):
+            secure_log("INFO", f"Telegram: Duplicate message {message_key} ignored")
+            return jsonify({'status': 'duplicate'}), 200
+
+        def send_reply(body: str, mention: bool = True):
+            return send_telegram_reply(chat_id, body)
+
+        return process_incoming_message(
+            sender_number=sender_number,
+            sender_name=sender_name,
+            text=text,
+            input_type=input_type,
+            media_url=media_url,
+            quoted_msg_id=quoted_msg_id,
+            message_id=message_key,
+            is_group=is_group,
+            chat_jid=str(chat_id),
+            sender_jid=None,
+            quoted_message_text=quoted_message_text,
+            send_reply=send_reply,
+            send_document=send_telegram_document,
+            source_label='Telegram',
+            reply_to=chat_id,
+        )
+    except Exception as e:
+        secure_log("ERROR", f"Telegram Webhook Error: {traceback.format_exc()}")
+        return jsonify({'status': 'error'}), 500
+
+
 def process_wuzapi_message(sender_number: str, sender_name: str, text: str, 
                            input_type: str = 'text', media_url: str = None,
                            quoted_msg_id: str = None, message_id: str = None,
@@ -446,6 +585,36 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                 return send_wuzapi_reply(reply_to, body_fmt, clean_jid)
             return send_wuzapi_reply(reply_to, body)
 
+        return process_incoming_message(
+            sender_number=sender_number,
+            sender_name=sender_name,
+            text=text,
+            input_type=input_type,
+            media_url=media_url,
+            quoted_msg_id=quoted_msg_id,
+            message_id=message_id,
+            is_group=is_group,
+            chat_jid=chat_jid,
+            sender_jid=sender_jid,
+            quoted_message_text=quoted_message_text,
+            send_reply=send_reply,
+            send_document=send_wuzapi_document,
+            source_label='WhatsApp',
+            reply_to=reply_to,
+        )
+    except Exception as e:
+        secure_log("ERROR", f"WuzAPI processing failed: {type(e).__name__}: {e}")
+        return jsonify({'status': 'error'}), 500
+
+
+def process_incoming_message(sender_number: str, sender_name: str, text: str, 
+                             input_type: str = 'text', media_url: str = None,
+                             quoted_msg_id: str = None, message_id: str = None,
+                             is_group: bool = False, chat_jid: str = None,
+                             sender_jid: str = None, quoted_message_text: str = None,
+                             send_reply=None, send_document=None,
+                             source_label: str = 'WhatsApp', reply_to=None):
+    try:
         # --- Helper: State Management ---
         def extract_bot_msg_id(sent):
             if not sent or not isinstance(sent, dict): return None
@@ -1233,7 +1402,10 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                  fpath = generate_pdf_from_input(arg)
                  
                  if fpath and os.path.exists(fpath):
-                     send_wuzapi_document(reply_to, fpath, caption=f"Laporan {arg}")
+                     if send_document:
+                         send_document(reply_to, fpath, caption=f"Laporan {arg}")
+                     else:
+                         send_reply("❌ Fitur kirim PDF belum tersedia di channel ini.")
                  else:
                      send_reply("❌ Gagal membuat PDF (Data kosong/Format salah).")
                  return jsonify({'status': 'command_pdf'}), 200
@@ -1261,7 +1433,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             _pending_transactions[sender_pkey] = {
                 'transactions': transactions,
                 'sender_name': sender_name,
-                'source': "WhatsApp",
+                'source': source_label,
                 'created_at': datetime.now(),
                 'message_id': message_id,
                 'chat_jid': chat_jid,
