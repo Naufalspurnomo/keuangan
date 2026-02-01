@@ -40,6 +40,7 @@ from sheets_helper import (
     # New Split Layout Functions
     append_project_transaction,
     append_operational_transaction,
+    get_all_data,
 )
 
 # Services
@@ -66,7 +67,7 @@ USE_LAYERS = True # Enable SmartHandler logic by default
 from wuzapi_helper import (
     send_wuzapi_reply, format_mention_body,
     get_clean_jid, download_wuzapi_media,
-    download_wuzapi_image
+    download_wuzapi_image, send_wuzapi_document
 )
 from security import (
     sanitize_input, detect_prompt_injection,
@@ -1167,6 +1168,82 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             except Exception as e:
                 send_reply(f"❌ Error: {str(e)}")
                 return jsonify({'status': 'error'}), 200
+    
+        if is_command_match(text, Commands.LIST, is_group):
+            try:
+                data = get_all_data(days=7)
+                if not data:
+                    send_reply("📭 Belum ada transaksi 7 hari terakhir.")
+                else:
+                    data.sort(key=lambda x: x.get('tanggal', ''), reverse=True)
+                    msg = "📜 *Riwayat Transaksi (7 Hari)*\n\n"
+                    # Limit to 15
+                    for tx in data[:15]:
+                        try:
+                            t_amt = tx.get('jumlah', 0) or 0
+                            amt = int(t_amt)
+                        except: amt = 0
+                        
+                        icon = "🔴" if str(tx.get('tipe', 'Pengeluaran')) == 'Pengeluaran' else "🟢"
+                        src = tx.get('nama_projek') or tx.get('company_sheet') or "?"
+                        msg += f"{icon} {tx['tanggal']} - Rp {amt:,}\n"
+                        msg += f"   _{tx['keterangan']}_ [{src}]\n"
+                    
+                    msg = msg.replace(',', '.')
+                    send_reply(msg)
+                return jsonify({'status': 'command_list'}), 200
+            except Exception as e:
+                send_reply(f"❌ Error: {str(e)}")
+                return jsonify({'status': 'error'}), 200
+
+        if is_command_match(text, Commands.LAPORAN, is_group) or is_command_match(text, Commands.LAPORAN_30, is_group):
+            try:
+                is_30 = '30' in text
+                days = 30 if is_30 else 7
+                data = get_all_data(days=days)
+                
+                income = sum(int(t.get('jumlah',0) or 0) for t in data if str(t.get('tipe')) == 'Pemasukan')
+                expense = sum(int(t.get('jumlah',0) or 0) for t in data if str(t.get('tipe')) == 'Pengeluaran')
+                profit = income - expense
+                
+                msg = f"📊 *Laporan {'Bulanan (30 Hari)' if days==30 else 'Mingguan (7 Hari)'}*\n\n"
+                msg += f"💰 Pemasukan: Rp {income:,}\n"
+                msg += f"💸 Pengeluaran: Rp {expense:,}\n"
+                msg += f"📈 Profit: Rp {profit:,}\n\n"
+                msg += f"Jumlah Transaksi: {len(data)}\n"
+                msg = msg.replace(',', '.')
+                send_reply(msg)
+                return jsonify({'status': 'command_laporan'}), 200
+            except Exception as e:
+                send_reply(f"❌ Error: {str(e)}")
+                return jsonify({'status': 'error'}), 200
+
+        if is_command_match(text, Commands.LINK, is_group):
+            url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
+            send_reply(f"🔗 *Google Sheets Link:*\n{url}")
+            return jsonify({'status': 'command_link'}), 200
+            
+        if is_prefix_match(text, Commands.EXPORT_PDF_PREFIXES, is_group) or is_command_match(text, Commands.EXPORT_PDF_PREFIXES, is_group):
+             try:
+                 parts = text.strip().split(' ', 1)
+                 arg = parts[1] if len(parts) > 1 else now_wib().strftime("%Y-%m")
+                 
+                 send_reply(f"⏳ Mengenerate PDF {arg}...")
+                 from pdf_report import generate_pdf_from_input
+                 fpath = generate_pdf_from_input(arg)
+                 
+                 if fpath and os.path.exists(fpath):
+                     send_wuzapi_document(reply_to, fpath, caption=f"Laporan {arg}")
+                 else:
+                     send_reply("❌ Gagal membuat PDF (Data kosong/Format salah).")
+                 return jsonify({'status': 'command_pdf'}), 200
+             except ValueError as ve:
+                 send_reply(f"❌ Format salah. Cth: /exportpdf 2026-01")
+                 return jsonify({'status': 'error_pdf'}), 200
+             except Exception as e:
+                 secure_log("ERROR", f"PDF Error: {e}")
+                 send_reply(f"❌ Gagal export PDF: {str(e)}")
+                 return jsonify({'status': 'error'}), 200
 
         # 8. PROCESS NEW INPUT (AI)
         transactions = []

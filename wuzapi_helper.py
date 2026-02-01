@@ -272,3 +272,77 @@ def download_wuzapi_image(message_id: str, chat_jid: str) -> Optional[str]:
     except Exception as e:
         secure_log("ERROR", f"WuzAPI Download Image Except: {type(e).__name__}: {str(e)}")
         return None
+
+def send_wuzapi_document(to: str, file_path: str, caption: str = None) -> Optional[Dict]:
+    """Send document/media via WuzAPI (Base64 method)."""
+    try:
+        if not WUZAPI_DOMAIN or not WUZAPI_TOKEN:
+            secure_log("ERROR", "WuzAPI params missing")
+            return None
+            
+        if not os.path.exists(file_path):
+            secure_log("ERROR", f"File not found: {file_path}")
+            return None
+
+        import base64
+        # Check file size (max 10MB approx for safety)
+        if os.path.getsize(file_path) > 10 * 1024 * 1024:
+             secure_log("WARNING", "File too large for WuzAPI base64 send")
+        
+        with open(file_path, "rb") as f:
+            b64_data = base64.b64encode(f.read()).decode('utf-8')
+
+        base = _normalize_base(WUZAPI_DOMAIN)
+        is_group = _is_group_jid(to)
+        session = get_wuzapi_session()
+        filename = os.path.basename(file_path)
+
+        # Payload construction
+        payload = {
+            "Instance": WUZAPI_INSTANCE,
+            "Caption": caption or filename,
+            "Media": b64_data,
+            "FileName": filename
+        }
+        
+        if is_group:
+            payload["JID"] = to
+        else:
+            # Handle both Phone and JID formats for private
+            if "@" in to:
+                payload["JID"] = to
+                payload["Phone"] = to.split("@")[0]
+            else:
+                payload["Phone"] = to
+
+        # Endpoints to try
+        endpoints = [
+            f"{base}/chat/send/media",
+            f"{base}/send/media",
+            f"{base}/message/send/media"
+        ]
+
+        last_err = ""
+        for url in endpoints:
+            try:
+                # Need to increase timeout for media upload
+                resp = session.post(url, json=payload, timeout=60)
+                if resp.status_code in (200, 201):
+                    secure_log("INFO", f"WuzAPI Media Sent via {url.split('/')[-1]}")
+                    return resp.json()
+                
+                last_err = f"{resp.status_code} on {url}: {resp.text[:200]}"
+                if resp.status_code == 413: # Payload too large
+                    secure_log("ERROR", "File too large for server config")
+                    break
+
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {str(e)[:200]}"
+                continue
+        
+        secure_log("ERROR", f"WuzAPI Media Send Failed: {last_err}")
+        return None
+
+    except Exception as e:
+        secure_log("ERROR", f"send_wuzapi_document exception: {e}")
+        return None
