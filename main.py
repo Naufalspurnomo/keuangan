@@ -272,7 +272,29 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
         ambiguous_keywords = set(_AMBIGUOUS.keys())
     except Exception:
         ambiguous_keywords = set()
-    has_ambiguous_keyword = any(re.search(r'\b' + re.escape(k) + r'\b', text_lower) for k in ambiguous_keywords)
+    matched_ambiguous = [
+        k for k in ambiguous_keywords
+        if re.search(r'\b' + re.escape(k) + r'\b', text_lower)
+    ]
+    has_ambiguous_keyword = bool(matched_ambiguous)
+    generic_ambiguous = {'bayar'}
+    has_generic_ambiguous_only = bool(matched_ambiguous) and all(
+        k in generic_ambiguous for k in matched_ambiguous
+    )
+
+    # Role-based bias (office vs field roles)
+    office_roles = set()
+    field_roles = set()
+    try:
+        from utils.context_detector import OFFICE_ROLES as _OFFICE, FIELD_ROLES as _FIELD
+        office_roles = set(_OFFICE)
+        field_roles = set(_FIELD)
+    except Exception:
+        office_roles = set()
+        field_roles = set()
+
+    has_office_role = any(re.search(r'\b' + re.escape(r) + r'\b', text_lower) for r in office_roles)
+    has_field_role = any(re.search(r'\b' + re.escape(r) + r'\b', text_lower) for r in field_roles)
     
     # Check Project Name Validity
     from config.constants import PROJECT_STOPWORDS
@@ -313,10 +335,22 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
     detected_ambiguous = [kw for kw in detected_keywords if kw in ambiguous_keywords]
     all_ambiguous = bool(detected_keywords) and len(detected_ambiguous) == len(detected_keywords)
     
+    # Explicit bias: "kantor" or "project" keywords should win
+    if has_kantor_word and not has_project_word:
+        category = map_operational_category(detected_keywords[0]) if detected_keywords else 'Lain Lain'
+        return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
+    if has_project_word and not has_kantor_word:
+        return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
+    if has_office_role and not has_project_word:
+        category = map_operational_category(detected_keywords[0]) if detected_keywords else 'Lain Lain'
+        return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
+    if has_field_role and not has_kantor_word:
+        return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
+
     # Priority 1: Keywords found AND NO valid project
     if detected_keywords and not has_valid_project:
         # If all keywords are ambiguous, ask user
-        if all_ambiguous or has_ambiguous_keyword:
+        if all_ambiguous or (has_ambiguous_keyword and not has_generic_ambiguous_only):
             return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
         category = map_operational_category(detected_keywords[0])
         return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
@@ -327,7 +361,7 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
     
     # Priority 3: Has keywords (but maybe ambiguous)
     if detected_keywords:
-        if all_ambiguous or has_ambiguous_keyword:
+        if all_ambiguous or (has_ambiguous_keyword and not has_generic_ambiguous_only):
             return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
         category = map_operational_category(detected_keywords[0])
         return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
@@ -335,12 +369,6 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
     # If ambiguous keyword exists without project context, ask user
     if has_ambiguous_keyword and not has_valid_project:
         return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
-    
-    # Soft bias if explicit word exists
-    if has_project_word and not has_kantor_word:
-        return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
-    if has_kantor_word and not has_project_word:
-        return {'mode': 'OPERATIONAL', 'category': 'Lain Lain', 'needs_wallet': True}
 
     # Default: PROJECT mode (standard flow asks for company)
     return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
