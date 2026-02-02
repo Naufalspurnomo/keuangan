@@ -1146,19 +1146,34 @@ def _draw_project_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
     draw_pair(0, "Pengeluaran", f"Rp {format_number(int(metrics.get('total_expense',0) or 0))}", y_r2)
     draw_pair(1, "Gaji", f"Rp {format_number(int(metrics.get('total_salary',0) or 0))}", y_r2)
 
-    max_exp = proj.get("max_expense")
+max_exp = proj.get("max_expense")
     if max_exp:
-        desc = _fit_ellipsis(max_exp.get("keterangan", ""), ui.fonts["regular"], 10, col_w * 2 - 10)
+        desc = max_exp.get("keterangan", "")
         amt = int(max_exp.get("jumlah", 0) or 0)
-        cx = col1_x + 2 * col_w
-        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_r2 + 16, "Pengeluaran Terbesar")
-        _draw_text(c, ui.fonts["regular"], 10, THEME["text"], cx, y_r2, desc)
-        _draw_text(c, ui.fonts["bold"], 12, THEME["text"], cx + col_w * 2 - 6, y_r2, f"Rp {format_number(amt)}", align="right")
-    else:
-        cx = col1_x + 2 * col_w
-        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_r2 + 16, "Pengeluaran Terbesar")
-        _draw_text(c, ui.fonts["regular"], 10, THEME["muted2"], cx, y_r2, "-")
         
+        # Koordinat mulai (kolom ke-3)
+        cx = col1_x + 2 * col_w
+        
+        # 1. Gambar Label (Muted)
+        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_row2 + 14, "Pengeluaran Terbesar")
+        
+        # 2. Gambar Nominal (BOLD & DANGER COLOR) - Di kiri agar rapi
+        amt_str = f"Rp {format_number(amt)}"
+        # Kita hitung lebar teks harga agar nama barang bisa ditaruh tepat di sebelahnya
+        amt_w = stringWidth(amt_str, ui.fonts["bold"], 12)
+        _draw_text(c, ui.fonts["bold"], 12, THEME["danger"], cx, y_row2, amt_str)
+        
+        # 3. Gambar Nama Barang - Tepat di sebelah nominal (beri jarak 8pt)
+        avail_w = (col_w * 2) - amt_w - 10
+        desc_fit = _fit_ellipsis(desc, ui.fonts["regular"], 11, avail_w)
+        _draw_text(c, ui.fonts["regular"], 11, THEME["text"], cx + amt_w + 8, y_row2, desc_fit)
+        
+    else:
+        # Tampilan jika tidak ada pengeluaran
+        cx = col1_x + 2 * col_w
+        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_row2 + 14, "Pengeluaran Terbesar")
+        _draw_text(c, ui.fonts["regular"], 10, THEME["muted2"], cx, y_row2, "-")
+           
     c.saveState()
     c.setStrokeColor(THEME["border_light"])
     c.setLineWidth(1)
