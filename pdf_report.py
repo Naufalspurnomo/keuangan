@@ -122,11 +122,16 @@ THEME = {
 # =========================
 
 THEME_V2 = {
-    "text": colors.HexColor("#231F20"),
+    "text": colors.HexColor("#1F2933"),
+    "muted": colors.HexColor("#6B7280"),
+    "border": colors.HexColor("#E5E7EB"),
+    "bg": colors.HexColor("#F8FAFC"),
+    "card": colors.white,
+    "track": colors.HexColor("#E5E7EB"),
     "teal": colors.HexColor("#1DB7C5"),
     "teal_soft": colors.HexColor("#18B0C0"),
     "pink": colors.HexColor("#EE396D"),
-    "black": colors.HexColor("#231F20"),
+    "black": colors.HexColor("#1F2933"),
 }
 
 COMPANY_THEME_V2 = {
@@ -1906,14 +1911,14 @@ def _draw_header_monthly(c: canvas.Canvas, ctx: Dict, page_w: float, page_h: flo
 
     c.setFillColor(colors.white)
     c.setFont("Helvetica-Oblique", 9)
-    c.drawString(130, page_h - 25, f"Generated on {ctx['generated_on']}")
+    c.drawString(130, page_h - 28, f"Generated on {ctx['generated_on']}")
 
-    c.setFont("Helvetica-Bold", 24)
-    c.drawString(130, page_h - 60, "Financial")
-    c.drawString(130, page_h - 90, "Report")
+    c.setFont("Helvetica-Bold", 26)
+    c.drawString(130, page_h - 62, "Financial")
+    c.drawString(130, page_h - 94, "Report")
 
     c.setFillColor(THEME_V2["teal"])
-    c.setFont("Helvetica-Bold", 28)
+    c.setFont("Helvetica-Bold", 30)
     month_part, year_part = ctx["period_label"].split()
     c.drawString(left_w + 15, page_h - 60, month_part)
     c.drawString(left_w + 15, page_h - 95, year_part)
@@ -1930,17 +1935,17 @@ def _draw_header_range(c: canvas.Canvas, ctx: Dict, page_w: float, page_h: float
 
     c.setFillColor(colors.white)
     c.setFont("Helvetica-Oblique", 9)
-    c.drawString(130, page_h - 25, f"Generated on {ctx['generated_on']}")
+    c.drawString(130, page_h - 28, f"Generated on {ctx['generated_on']}")
 
-    c.setFont("Helvetica-Bold", 24)
-    c.drawString(130, page_h - 60, "Financial")
-    c.drawString(130, page_h - 90, "Report")
+    c.setFont("Helvetica-Bold", 26)
+    c.drawString(130, page_h - 62, "Financial")
+    c.drawString(130, page_h - 94, "Report")
 
     c.setFillColor(THEME_V2["teal"])
     c.setFont("Helvetica-Bold", 18)
-    c.drawString(left_w + 15, page_h - 55, "Periodical Audit")
+    c.drawString(left_w + 15, page_h - 58, "Periodical Audit")
     c.setFont("Helvetica", 9)
-    c.drawString(left_w + 15, page_h - 75, "Dalam rentang waktu")
+    c.drawString(left_w + 15, page_h - 78, "Dalam rentang waktu")
 
     c.setFont("Helvetica", 9)
     start_text = ctx["start_dt"].strftime("%d-%m-%y")
@@ -1950,56 +1955,138 @@ def _draw_header_range(c: canvas.Canvas, ctx: Dict, page_w: float, page_h: float
     c.drawString(left_w + 15, page_h - 125, f"{end_text} (00:00)")
 
 
-def _draw_kpi_block(c: canvas.Canvas, x: float, y_top: float, label: str, amount: int, color, subnote: Optional[str] = None):
-    c.setFillColor(THEME_V2["text"])
-    c.setFont("Helvetica-Oblique", 9)
-    c.drawString(x, y_top, label)
-
-    c.setFont("Helvetica", 8)
-    c.drawString(x, y_top - 16, "Rp")
+def _draw_kpi_block(
+    c: canvas.Canvas,
+    x: float,
+    y_top: float,
+    label: str,
+    amount: int,
+    color,
+    subnote: Optional[str] = None,
+    width: float = 230,
+    height: float = 72,
+):
+    y = y_top - height
+    c.setFillColor(THEME_V2["card"])
+    c.setStrokeColor(THEME_V2["border"])
+    c.setLineWidth(1)
+    c.rect(x, y, width, height, fill=1, stroke=1)
 
     c.setFillColor(color)
-    c.setFont("Helvetica-Bold", 20)
-    c.drawString(x + 18, y_top - 20, format_number(amount))
+    c.rect(x, y, 4, height, fill=1, stroke=0)
+
+    c.setFillColor(THEME_V2["muted"])
+    c.setFont("Helvetica-Oblique", 8)
+    c.drawString(x + 10, y + height - 14, label)
+
+    c.setFillColor(THEME_V2["text"])
+    c.setFont("Helvetica", 7)
+    c.drawString(x + 10, y + height - 32, "Rp")
+
+    c.setFillColor(color)
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(x + 26, y + height - 36, format_number(amount))
 
     if subnote:
         c.setFillColor(color)
-        c.setFont("Helvetica", 8)
-        c.drawString(x, y_top - 38, subnote)
-
-    c.setStrokeColor(THEME_V2["black"])
-    c.setLineWidth(2.5)
-    c.line(x, y_top - 46, x + 210, y_top - 46)
+        c.setFont("Helvetica", 7)
+        c.drawString(x + 10, y + 10, subnote[:70])
 
 
 def _draw_comparison_column(c: canvas.Canvas, x: float, y_top: float, curr: int, prev: int, label: str):
-    c.setFillColor(THEME_V2["text"])
-    c.setFont("Helvetica", 8)
+    c.setFillColor(THEME_V2["muted"])
+    c.setFont("Helvetica", 7)
     c.drawString(x, y_top, "Bulan lalu")
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(x, y_top - 16, format_number(prev))
-    c.setFont("Helvetica", 8)
-    c.drawString(x, y_top - 32, _insight_text(label, curr, prev))
-
-
-def _draw_simple_list(c: canvas.Canvas, x: float, y_top: float, title: str, items: List[Dict], max_items: int = 3):
     c.setFillColor(THEME_V2["text"])
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(x, y_top, title)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(x, y_top - 14, format_number(prev))
+    c.setFillColor(THEME_V2["muted"])
+    c.setFont("Helvetica", 7)
+    c.drawString(x, y_top - 28, _insight_text(label, curr, prev))
+
+
+def _draw_comparison_block(
+    c: canvas.Canvas,
+    x: float,
+    y_top: float,
+    width: float,
+    height: float,
+    curr: Dict,
+    prev: Dict,
+):
+    y = y_top - height
+    c.setFillColor(THEME_V2["card"])
+    c.setStrokeColor(THEME_V2["border"])
+    c.setLineWidth(1)
+    c.rect(x, y, width, height, fill=1, stroke=1)
+
+    c.setFillColor(THEME_V2["text"])
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(x + 10, y + height - 14, "Bulan lalu")
+
+    rows = [
+        ("Omset", "income_total", "income"),
+        ("Pengeluaran", "expense_total", "expense"),
+        ("Profit", "profit", "profit"),
+    ]
+    for idx, (label, key, insight_key) in enumerate(rows):
+        y_line = y + height - 34 - (idx * 22)
+        c.setFillColor(THEME_V2["muted"])
+        c.setFont("Helvetica", 7)
+        c.drawString(x + 10, y_line + 6, label)
+        c.setFillColor(THEME_V2["text"])
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(x + 80, y_line + 6, format_number(prev.get(key, 0)))
+        c.setFillColor(THEME_V2["muted"])
+        c.setFont("Helvetica", 7)
+        c.drawString(x + 10, y_line - 4, _insight_text(insight_key, curr.get(key, 0), prev.get(key, 0)))
+
+
+def _draw_simple_list(
+    c: canvas.Canvas,
+    x: float,
+    y_top: float,
+    width: float,
+    title: str,
+    items: List[Dict],
+    max_items: int = 3,
+):
+    height = 64 + (max_items * 12)
+    y = y_top - height
+    c.setFillColor(THEME_V2["card"])
+    c.setStrokeColor(THEME_V2["border"])
+    c.setLineWidth(1)
+    c.rect(x, y, width, height, fill=1, stroke=1)
+
+    c.setFillColor(THEME_V2["text"])
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(x + 10, y + height - 14, title)
     c.setFont("Helvetica", 8)
     if not items:
-        c.drawString(x, y_top - 14, "Tidak ada data")
+        c.setFillColor(THEME_V2["muted"])
+        c.drawString(x + 10, y + height - 30, "Tidak ada data")
         return
     for i, tx in enumerate(items[:max_items], start=1):
         desc = (tx.get("keterangan") or "")[:24]
         amount = format_number(tx.get("jumlah", 0))
-        c.drawString(x, y_top - 14 - ((i - 1) * 12), f"{i}. {desc} Rp {amount}")
+        y_line = y + height - 30 - ((i - 1) * 12)
+        c.setFillColor(THEME_V2["text"])
+        c.drawString(x + 10, y_line, f"{i}. {desc}")
+        c.setFillColor(THEME_V2["text"])
+        c.drawRightString(x + width - 10, y_line, f"Rp {amount}")
 
 
-def _draw_insights_block(c: canvas.Canvas, x: float, y_top: float, insights: Dict):
+def _draw_insights_block(c: canvas.Canvas, x: float, y_top: float, width: float, insights: Dict):
+    height = 86
+    y = y_top - height
+    c.setFillColor(THEME_V2["card"])
+    c.setStrokeColor(THEME_V2["border"])
+    c.setLineWidth(1)
+    c.rect(x, y, width, height, fill=1, stroke=1)
+
     c.setFillColor(THEME_V2["text"])
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(x, y_top, "Insight")
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(x + 10, y + height - 14, "Insight")
 
     c.setFont("Helvetica", 8)
     lines = []
@@ -2035,15 +2122,28 @@ def _draw_insights_block(c: canvas.Canvas, x: float, y_top: float, insights: Dic
         lines.append("Proyek paling tidak profitable setahun terakhir: Tidak ada data")
 
     for i, line in enumerate(lines):
-        c.drawString(x, y_top - 14 - (i * 12), line[:90])
+        y_line = y + height - 30 - (i * 12)
+        c.drawString(x + 10, y_line, line[:90])
 
 
-def _draw_delta_chart(c: canvas.Canvas, x: float, y_top: float, curr: Dict, prev: Dict):
-    chart_w = 200
-    chart_h = 90
-    c.setStrokeColor(THEME_V2["black"])
+def _draw_delta_chart(
+    c: canvas.Canvas,
+    x: float,
+    y_top: float,
+    curr: Dict,
+    prev: Dict,
+    width: float = 230,
+    height: float = 100,
+):
+    y = y_top - height
+    c.setFillColor(THEME_V2["card"])
+    c.setStrokeColor(THEME_V2["border"])
     c.setLineWidth(1)
-    c.rect(x, y_top - chart_h, chart_w, chart_h, stroke=1, fill=0)
+    c.rect(x, y, width, height, stroke=1, fill=1)
+
+    c.setFillColor(THEME_V2["text"])
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(x + 10, y + height - 14, "Grafik terhadap bulan lalu")
 
     metrics = [
         ("Omset", curr["income_total"], prev["income_total"], THEME_V2["teal"]),
@@ -2052,91 +2152,136 @@ def _draw_delta_chart(c: canvas.Canvas, x: float, y_top: float, curr: Dict, prev
     ]
     max_val = max([abs(m[1]) for m in metrics] + [abs(m[2]) for m in metrics] + [1])
     for idx, (label, curr_val, prev_val, color) in enumerate(metrics):
-        y = y_top - 15 - (idx * 28)
-        c.setFillColor(THEME_V2["text"])
+        y_line = y + height - 32 - (idx * 22)
+        c.setFillColor(THEME_V2["muted"])
         c.setFont("Helvetica", 7)
-        c.drawString(x + 5, y + 8, label)
+        c.drawString(x + 10, y_line + 6, label)
 
-        prev_len = int((abs(prev_val) / max_val) * 80)
-        curr_len = int((abs(curr_val) / max_val) * 80)
-        c.setFillColor(colors.HexColor("#C0C0C0"))
-        c.rect(x + 60, y + 3, prev_len, 6, fill=1, stroke=0)
+        track_x = x + 70
+        track_w = width - 90
+        prev_len = int((abs(prev_val) / max_val) * (track_w - 2))
+        curr_len = int((abs(curr_val) / max_val) * (track_w - 2))
+
+        c.setFillColor(THEME_V2["track"])
+        c.rect(track_x, y_line + 4, track_w, 6, fill=1, stroke=0)
+        c.setFillColor(colors.HexColor("#BFC7D1"))
+        c.rect(track_x, y_line + 4, prev_len, 3, fill=1, stroke=0)
         c.setFillColor(color)
-        c.rect(x + 60, y - 5, curr_len, 6, fill=1, stroke=0)
-def _draw_finished_projects_section(c: canvas.Canvas, ctx: Dict, page_w: float, page_h: float, title: str, note: str):
+        c.rect(track_x, y_line + 1, curr_len, 3, fill=1, stroke=0)
+def _draw_finished_projects_section(
+    c: canvas.Canvas,
+    ctx: Dict,
+    page_w: float,
+    page_h: float,
+    title: str,
+    note: str,
+    y_top: Optional[float] = None,
+):
+    if y_top is None:
+        y_top = page_h - 520
+
+    section_x = 30
+    section_w = page_w - 60
     c.setFillColor(THEME_V2["teal"])
-    c.rect(18, page_h - 535, 26, 18, fill=1, stroke=0)
+    c.rect(section_x, y_top - 8, 20, 14, fill=1, stroke=0)
 
     c.setFillColor(THEME_V2["text"])
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(50, page_h - 520, title)
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(section_x + 26, y_top + 2, title)
     c.setFont("Helvetica", 8)
-    c.drawString(260, page_h - 520, note)
+    c.setFillColor(THEME_V2["muted"])
+    c.drawString(section_x + 220, y_top + 2, note)
 
-    column_x = [30, 160, 290, 420]
+    columns_area_w = section_w - 140
+    col_w = columns_area_w / 4
+    col_start_y = y_top - 28
     max_items = 6
+
     for idx, comp in enumerate(COMPANY_ORDER_V2):
-        x = column_x[idx]
+        x = section_x + (idx * col_w)
+        if idx > 0:
+            c.setStrokeColor(THEME_V2["teal_soft"])
+            c.setLineWidth(0.8)
+            c.line(x, col_start_y - 10, x, col_start_y - 190)
+
         c.setFillColor(THEME_V2["text"])
         c.setFont("Helvetica-Oblique", 9)
-        c.drawString(x, page_h - 560, comp)
+        c.drawString(x + 8, col_start_y, comp)
         c.setFillColor(THEME_V2["teal"])
         c.setFont("Helvetica-Bold", 20)
         count = len(ctx["finished_projects"].get(comp, []))
-        c.drawString(x, page_h - 585, str(count))
+        c.drawString(x + 8, col_start_y - 24, str(count))
 
         c.setFillColor(THEME_V2["text"])
         c.setFont("Helvetica", 8)
         projects = ctx["finished_projects"].get(comp, [])
         display = [_project_display_name(p) or p for p in projects]
         if not display:
-            c.drawString(x, page_h - 605, "Tidak ada project")
+            c.setFillColor(THEME_V2["muted"])
+            c.drawString(x + 8, col_start_y - 44, "Tidak ada project")
             continue
         for i, name in enumerate(display[:max_items]):
-            c.drawString(x, page_h - 605 - (i * 12), f"• {name}")
+            c.drawString(x + 8, col_start_y - 44 - (i * 12), f"• {name[:22]}")
         if len(display) > max_items:
-            c.drawString(x, page_h - 605 - (max_items * 12), f"+{len(display) - max_items} lainnya")
+            c.setFillColor(THEME_V2["muted"])
+            c.drawString(x + 8, col_start_y - 44 - (max_items * 12), f"+{len(display) - max_items} lainnya")
 
     # Income share chart
-    chart_x = 460
-    chart_y = page_h - 610
+    chart_x = section_x + columns_area_w + 10
+    chart_y_top = col_start_y
     c.setFillColor(THEME_V2["text"])
     c.setFont("Helvetica-Bold", 9)
-    c.drawString(chart_x, page_h - 560, "Grafik Pemasukkan")
-    bar_max = 100
+    c.drawString(chart_x, chart_y_top, "Grafik Pemasukkan")
+    bar_w = 100
     for i, comp in enumerate(COMPANY_ORDER_V2):
         pct = ctx["income_share"].get(comp, 0)
+        y = chart_y_top - 18 - (i * 18)
+        c.setFillColor(THEME_V2["track"])
+        c.rect(chart_x, y, bar_w, 8, fill=1, stroke=0)
         c.setFillColor(COMPANY_THEME_V2.get(comp, THEME_V2["teal"]))
-        c.rect(chart_x, chart_y - (i * 18), bar_max * (pct / 100), 8, fill=1, stroke=0)
+        c.rect(chart_x, y, bar_w * (pct / 100), 8, fill=1, stroke=0)
         c.setFillColor(THEME_V2["text"])
         c.setFont("Helvetica", 7)
-        c.drawString(chart_x + bar_max + 5, chart_y - (i * 18) + 1, f"{pct:.0f}%")
+        c.drawString(chart_x + bar_w + 6, y + 1, f"{pct:.0f}%")
 
 
 def draw_cover_monthly(c: canvas.Canvas, ctx: Dict, logo_path: Optional[str] = None):
     page_w, page_h = A4
+    c.setFillColor(THEME_V2["bg"])
+    c.rect(0, 0, page_w, page_h, fill=1, stroke=0)
     _draw_header_monthly(c, ctx, page_w, page_h, logo_path=logo_path)
 
     summary = ctx["summary"]
+    kpi_x = 30
+    kpi_w = 250
+    kpi_h = 72
+    kpi_gap = 14
+    kpi_y1 = page_h - 230
+    kpi_y2 = kpi_y1 - (kpi_h + kpi_gap)
+    kpi_y3 = kpi_y2 - (kpi_h + kpi_gap)
+
     _draw_kpi_block(
-        c, 30, page_h - 230, "OMSET TOTAL", summary["income_total"], THEME_V2["text"]
+        c, kpi_x, kpi_y1, "OMSET TOTAL", summary["income_total"], THEME_V2["text"], width=kpi_w, height=kpi_h
     )
     _draw_kpi_block(
-        c, 30, page_h - 310, "PENGELUARAN TOTAL", summary["expense_total"], THEME_V2["pink"],
-        subnote=f"(Pengeluaran Kantor Rp {format_number(summary['office_expense'])})"
+        c, kpi_x, kpi_y2, "PENGELUARAN TOTAL", summary["expense_total"], THEME_V2["pink"],
+        subnote=f"(Pengeluaran Kantor Rp {format_number(summary['office_expense'])})",
+        width=kpi_w, height=kpi_h
     )
     _draw_kpi_block(
-        c, 30, page_h - 390, "PROFIT", summary["profit"], THEME_V2["teal"]
+        c, kpi_x, kpi_y3, "PROFIT", summary["profit"], THEME_V2["teal"], width=kpi_w, height=kpi_h
     )
 
-    c.setStrokeColor(THEME_V2["black"])
-    c.setLineWidth(3)
-    c.line(320, page_h - 220, 320, page_h - 430)
+    divider_x = 300
+    c.setStrokeColor(THEME_V2["border"])
+    c.setLineWidth(2)
+    c.line(divider_x, kpi_y1 + 6, divider_x, kpi_y3 - kpi_h - 6)
 
     prev = ctx["prev_summary"]
-    _draw_comparison_column(c, 340, page_h - 240, summary["income_total"], prev["income_total"], "income")
-    _draw_comparison_column(c, 340, page_h - 300, summary["expense_total"], prev["expense_total"], "expense")
-    _draw_comparison_column(c, 340, page_h - 360, summary["profit"], prev["profit"], "profit")
+    comp_x = 320
+    _draw_comparison_column(c, comp_x, kpi_y1 - 4, summary["income_total"], prev["income_total"], "income")
+    _draw_comparison_column(c, comp_x, kpi_y2 - 4, summary["expense_total"], prev["expense_total"], "expense")
+    _draw_comparison_column(c, comp_x, kpi_y3 - 4, summary["profit"], prev["profit"], "profit")
 
     _draw_finished_projects_section(
         c,
@@ -2145,28 +2290,41 @@ def draw_cover_monthly(c: canvas.Canvas, ctx: Dict, logo_path: Optional[str] = N
         page_h,
         "Project yang Selesai Bulan ini",
         "Adalah Project, yang telah tuntas pada bulan ini. Untuk mulainya tidak harus bulan ini.",
+        y_top=page_h - 520,
     )
 
 
 def draw_cover_periodical(c: canvas.Canvas, ctx: Dict, logo_path: Optional[str] = None):
     page_w, page_h = A4
+    c.setFillColor(THEME_V2["bg"])
+    c.rect(0, 0, page_w, page_h, fill=1, stroke=0)
     _draw_header_range(c, ctx, page_w, page_h, logo_path=logo_path)
 
     summary = ctx["summary"]
+    kpi_x = 30
+    kpi_w = 250
+    kpi_h = 72
+    kpi_gap = 14
+    kpi_y1 = page_h - 230
+    kpi_y2 = kpi_y1 - (kpi_h + kpi_gap)
+    kpi_y3 = kpi_y2 - (kpi_h + kpi_gap)
+
     _draw_kpi_block(
-        c, 30, page_h - 230, "OMSET TOTAL", summary["income_total"], THEME_V2["text"]
+        c, kpi_x, kpi_y1, "OMSET TOTAL", summary["income_total"], THEME_V2["text"], width=kpi_w, height=kpi_h
     )
     _draw_kpi_block(
-        c, 30, page_h - 310, "PENGELUARAN TOTAL", summary["expense_total"], THEME_V2["pink"],
-        subnote=f"(Pengeluaran Kantor Rp {format_number(summary['office_expense'])})"
+        c, kpi_x, kpi_y2, "PENGELUARAN TOTAL", summary["expense_total"], THEME_V2["pink"],
+        subnote=f"(Pengeluaran Kantor Rp {format_number(summary['office_expense'])})",
+        width=kpi_w, height=kpi_h
     )
     _draw_kpi_block(
-        c, 30, page_h - 390, "PROFIT", summary["profit"], THEME_V2["teal"]
+        c, kpi_x, kpi_y3, "PROFIT", summary["profit"], THEME_V2["teal"], width=kpi_w, height=kpi_h
     )
 
-    c.setStrokeColor(THEME_V2["black"])
-    c.setLineWidth(3)
-    c.line(320, page_h - 220, 320, page_h - 430)
+    divider_x = 300
+    c.setStrokeColor(THEME_V2["border"])
+    c.setLineWidth(2)
+    c.line(divider_x, kpi_y1 + 6, divider_x, kpi_y3 - kpi_h - 6)
 
     _draw_finished_projects_section(
         c,
@@ -2175,11 +2333,14 @@ def draw_cover_periodical(c: canvas.Canvas, ctx: Dict, logo_path: Optional[str] 
         page_h,
         "Project Selesai",
         "Adalah Project, yang telah tuntas pada periode ini.",
+        y_top=page_h - 520,
     )
 
 
 def draw_company_page(c: canvas.Canvas, ctx: Dict, company: str):
     page_w, page_h = (A4[0], 1621)
+    c.setFillColor(THEME_V2["bg"])
+    c.rect(0, 0, page_w, page_h, fill=1, stroke=0)
     color = COMPANY_THEME_V2.get(company, THEME_V2["teal"])
     c.setFillColor(color)
     c.rect(0, page_h - 130, page_w, 130, fill=1, stroke=0)
@@ -2196,69 +2357,89 @@ def draw_company_page(c: canvas.Canvas, ctx: Dict, company: str):
     summary = details["summary"]
     prev = details["prev_summary"]
 
-    _draw_kpi_block(c, 30, page_h - 180, "OMSET TOTAL", summary["income_total"], THEME_V2["text"])
-    _draw_kpi_block(c, 30, page_h - 260, "PENGELUARAN TOTAL", summary["expense_total"], THEME_V2["pink"])
-    _draw_kpi_block(c, 30, page_h - 340, "PROFIT", summary["profit"], THEME_V2["teal"])
+    margin_x = 30
+    content_w = page_w - (margin_x * 2)
 
-    c.setStrokeColor(THEME_V2["black"])
-    c.setLineWidth(2)
-    c.line(260, page_h - 180, 260, page_h - 340)
+    kpi_top = page_h - 160
+    kpi_h = 72
+    kpi_gap = 16
+    kpi_w = (content_w - (kpi_gap * 2)) / 3
 
-    _draw_comparison_column(c, 280, page_h - 200, summary["income_total"], prev["income_total"], "income")
-    _draw_comparison_column(c, 280, page_h - 260, summary["expense_total"], prev["expense_total"], "expense")
-    _draw_comparison_column(c, 280, page_h - 320, summary["profit"], prev["profit"], "profit")
-    _draw_delta_chart(c, 370, page_h - 180, summary, prev)
+    _draw_kpi_block(c, margin_x, kpi_top, "OMSET TOTAL", summary["income_total"], THEME_V2["text"], width=kpi_w, height=kpi_h)
+    _draw_kpi_block(c, margin_x + kpi_w + kpi_gap, kpi_top, "PENGELUARAN TOTAL", summary["expense_total"], THEME_V2["pink"], width=kpi_w, height=kpi_h)
+    _draw_kpi_block(c, margin_x + (kpi_w + kpi_gap) * 2, kpi_top, "PROFIT", summary["profit"], THEME_V2["teal"], width=kpi_w, height=kpi_h)
 
-    # Lists
-    list_y = page_h - 430
-    _draw_simple_list(c, 30, list_y, "List Pemasukan", details["income_txs"], max_items=3)
-    _draw_simple_list(c, 210, list_y, "List Pengeluaran", details["expense_txs"], max_items=3)
-    _draw_simple_list(c, 390, list_y, "List Gaji", details["salary_txs"], max_items=3)
+    comp_top = kpi_top - kpi_h - 24
+    comp_w = 210
+    comp_h = 100
+    _draw_comparison_block(c, margin_x, comp_top, comp_w, comp_h, summary, prev)
+    _draw_delta_chart(c, margin_x + comp_w + 16, comp_top, summary, prev, width=content_w - comp_w - 16, height=100)
 
-    insights_y = list_y - 80
-    _draw_insights_block(c, 30, insights_y, details["insights"])
+    list_top = comp_top - comp_h - 24
+    list_w = (content_w - (kpi_gap * 2)) / 3
+    _draw_simple_list(c, margin_x, list_top, list_w, "List Pemasukan", details["income_txs"], max_items=3)
+    _draw_simple_list(c, margin_x + list_w + kpi_gap, list_top, list_w, "List Pengeluaran", details["expense_txs"], max_items=3)
+    _draw_simple_list(c, margin_x + (list_w + kpi_gap) * 2, list_top, list_w, "List Gaji", details["salary_txs"], max_items=3)
 
-    # Finished projects
-    section_y = insights_y - 110
-    c.setStrokeColor(THEME_V2["black"])
-    c.setLineWidth(3)
-    c.line(30, section_y, page_w - 30, section_y)
+    insights_top = list_top - 110
+    _draw_insights_block(c, margin_x, insights_top, content_w, details["insights"])
+
+    # Finished projects table
+    section_y = insights_top - 120
+    c.setStrokeColor(THEME_V2["border"])
+    c.setLineWidth(1)
+    c.line(margin_x, section_y, page_w - margin_x, section_y)
 
     c.setFillColor(THEME_V2["text"])
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(30, section_y - 25, "Finished Projects")
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(margin_x, section_y - 20, "Finished Projects")
+
+    table_top = section_y - 30
+    header_h = 16
+    row_h = 16
+    table_w = content_w
+
+    c.setFillColor(THEME_V2["track"])
+    c.rect(margin_x, table_top - header_h, table_w, header_h, fill=1, stroke=0)
+    c.setFillColor(THEME_V2["text"])
+    c.setFont("Helvetica", 7)
 
     headers = ["Project", "Nilai", "DP", "DP2", "Pelunasan", "Pengeluaran", "Gaji", "Profit"]
-    cols = [30, 260, 320, 360, 410, 470, 530, 580]
-    c.setFont("Helvetica", 7)
+    cols = [margin_x, margin_x + 210, margin_x + 270, margin_x + 310, margin_x + 360, margin_x + 430, margin_x + 500, margin_x + 565]
     for h, x in zip(headers, cols):
         if h == "Project":
-            c.drawString(x, section_y - 40, h)
+            c.drawString(x + 4, table_top - 12, h)
         else:
-            c.drawRightString(x, section_y - 40, h)
+            c.drawRightString(x, table_top - 12, h)
 
-    row_y = section_y - 55
-    c.setFont("Helvetica", 7)
     items = details["finished_projects"]
     if not items:
-        c.drawString(30, row_y - 10, "Tidak ada project selesai bulan ini")
+        c.setFillColor(THEME_V2["muted"])
+        c.drawString(margin_x + 4, table_top - header_h - 12, "Tidak ada project selesai bulan ini")
         return
 
-    for idx, item in enumerate(items[:6], start=1):
+    max_rows = 10
+    for idx, item in enumerate(items[:max_rows], start=1):
         metrics = item["metrics"]
-        y = row_y - (idx * 14)
-        c.drawString(30, y, f"{idx}. {item['name'][:30]}")
-        c.drawRightString(260, y, format_number(metrics['total_income']))
-        c.drawRightString(320, y, format_number(metrics['dp']))
-        c.drawRightString(360, y, format_number(metrics['dp2']))
-        c.drawRightString(410, y, format_number(metrics['pelunasan']))
-        c.drawRightString(470, y, format_number(metrics['total_expense']))
-        c.drawRightString(530, y, format_number(metrics['total_salary']))
+        y = table_top - header_h - (idx * row_h)
+        if idx % 2 == 0:
+            c.setFillColor(colors.HexColor("#F3F4F6"))
+            c.rect(margin_x, y + 2, table_w, row_h, fill=1, stroke=0)
+        c.setFillColor(THEME_V2["text"])
+        c.setFont("Helvetica", 7)
+        c.drawString(margin_x + 4, y + 6, f"{idx}. {item['name'][:28]}")
+        c.drawRightString(cols[1], y + 6, format_number(metrics["total_income"]))
+        c.drawRightString(cols[2], y + 6, format_number(metrics["dp"]))
+        c.drawRightString(cols[3], y + 6, format_number(metrics["dp2"]))
+        c.drawRightString(cols[4], y + 6, format_number(metrics["pelunasan"]))
+        c.drawRightString(cols[5], y + 6, format_number(metrics["total_expense"]))
+        c.drawRightString(cols[6], y + 6, format_number(metrics["total_salary"]))
         profit_text = f"{format_number(metrics['profit'])} ({metrics['margin_pct']}%)"
-        c.drawRightString(580, y, profit_text)
+        c.drawRightString(cols[7], y + 6, profit_text)
 
-    if len(items) > 6:
-        c.drawString(30, row_y - (7 * 14), f"+{len(items) - 6} lainnya")
+    if len(items) > max_rows:
+        c.setFillColor(THEME_V2["muted"])
+        c.drawString(margin_x + 4, table_top - header_h - ((max_rows + 1) * row_h), f"+{len(items) - max_rows} lainnya")
 
 
 def generate_pdf_report_v2_monthly(year: int, month: int, output_dir: Optional[str] = None) -> str:
