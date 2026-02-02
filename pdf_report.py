@@ -1133,119 +1133,129 @@ def _draw_prev_inline(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float
 
 def _draw_income_share_chart(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, items: List[Tuple[str, float, int]]):
     """
-    Professional horizontal bars with percent + amount.
-    items: (company_key, percent, income_amount)
-    Features: Thicker bars, better spacing, cleaner typography.
+    Horizontal bars with percent + amount (all content stays inside box).
     """
-    title_h = 24
-    bar_h = 14           # Thicker bars (was 10)
-    gap = 18             # More spacing (was 12)
+    title_h = 18
+    bar_h = 12
+    gap = 14
 
-    _draw_text(c, ui.fonts["bold"], 12, THEME["text"], x, y_top - 4, "Grafik Pemasukkan")
+    _draw_text(c, ui.fonts["bold"], 11, THEME["text"], x, y_top - 2, "Grafik Pemasukkan")
     y = y_top - title_h
 
-    # Scale bar width
-    bar_w = w - 90
+    label_w = 90
+    value_w = 42
+    amount_w = 92
+    bar_w = max(60, w - label_w - value_w - amount_w - 12)
+    bar_x = x + label_w
+    value_x = x + w - 4
 
     for i, (comp, pct, amt) in enumerate(items):
         yy = y - (i * (bar_h + gap))
         label = COMPANY_DISPLAY_COVER.get(comp, comp)
-        _draw_text(c, ui.fonts["semibold"], 9.5, THEME["text"], x, yy + 2, label)
+        _draw_text(c, ui.fonts["semibold"], 9.5, THEME["text"], x, yy + 1, label)
 
-        bx = x + 80
         # Track background
         c.setFillColor(THEME["track"])
-        c.roundRect(bx, yy, bar_w, bar_h, 7, stroke=0, fill=1)
+        c.roundRect(bar_x, yy, bar_w, bar_h, 6, stroke=0, fill=1)
 
         # Fill bar with company color
         fill_w = bar_w * (pct / 100.0)
         c.setFillColor(COMPANY_COLOR.get(comp, THEME["accent"]))
-        c.roundRect(bx, yy, max(6, fill_w), bar_h, 7, stroke=0, fill=1)
+        c.roundRect(bar_x, yy, max(4, fill_w), bar_h, 6, stroke=0, fill=1)
 
-        # Percentage - bold, right of bar
-        _draw_text(c, ui.fonts["bold"], 10, THEME["text"], bx + bar_w + 10, yy + 3, f"{pct:.0f}%", align="left")
+        # Percentage - right aligned inside box
+        _draw_text(c, ui.fonts["bold"], 9.5, THEME["text"], value_x, yy + 1, f"{pct:.0f}%", align="right")
         # Amount - below percentage
-        _draw_text(c, ui.fonts["regular"], 8.5, THEME["muted2"], bx + bar_w + 10, yy - 7, f"Rp {format_number(amt)}", align="left")
+        _draw_text(c, ui.fonts["regular"], 8.5, THEME["muted2"], value_x, yy - 9, f"Rp {format_number(amt)}", align="right")
 
 
 def _draw_finished_projects_cover(c: canvas.Canvas, ui: UI, ctx: Dict,
                                  page_w: float, y_top: float, title: str, note: str):
     """
-    Cover section with professional styling:
-    - Title + note
-    - 4 columns: per-company finished list
-    - Right: income share chart
+    Cover section:
+    - Title + note (stacked, no overlap)
+    - 4 columns: per-company finished list (full width)
+    - Chart below columns (full width)
     """
     card_x = ui.margin
     card_w = page_w - ui.margin * 2
-    card_h = 300         # Slightly taller for better spacing
+    card_h = 320
     y = y_top - card_h
 
     _draw_card(c, ui, card_x, y, card_w, card_h, shadow=True)
 
-    # Header row with professional accent
-    accent_size = 16
+    pad = 16
+    accent_size = 14
     c.setFillColor(THEME["accent"])
-    c.roundRect(card_x + 18, y + card_h - 32, accent_size, accent_size, 5, stroke=0, fill=1)
+    c.roundRect(card_x + pad, y + card_h - pad - accent_size, accent_size, accent_size, 4, stroke=0, fill=1)
+    _draw_text(c, ui.fonts["bold"], 14, THEME["text"], card_x + pad + accent_size + 10, y + card_h - pad - 2, title)
 
-    _draw_text(c, ui.fonts["bold"], 15, THEME["text"], card_x + 18 + accent_size + 12, y + card_h - 29, title)
-
-    # Note (wrapped, right side)
-    note_w = 260
-    note_lines = _wrap_lines(note, ui.fonts["regular"], 9.5, note_w, max_lines=3)
-    ny = y + card_h - 24
+    # Note (stacked under title, full width)
+    note_lines = _wrap_lines(note, ui.fonts["regular"], 9.5, card_w - 2 * pad, max_lines=2)
+    note_y = y + card_h - pad - 20
     for i, line in enumerate(note_lines):
-        _draw_text(c, ui.fonts["regular"], 9.5, THEME["muted"], card_x + card_w - 18 - note_w, ny - (i * 12), line)
+        _draw_text(c, ui.fonts["regular"], 9.5, THEME["muted"], card_x + pad, note_y - (i * 12), line)
 
-    # Body split: columns + chart
-    chart_w = 220
-    body_top = y + card_h - 50
-    body_bottom = y + 20
-    body_h = body_top - body_bottom
+    # Reserve chart area at bottom
+    chart_h = 88
+    chart_y0 = y + pad
+    chart_top = chart_y0 + chart_h
 
-    cols_w = card_w - chart_w - 28
-    col_w = cols_w / 4.0
-    col_x0 = card_x + 18
-    col_y0 = body_top - 10
+    # Divider above chart
+    c.setStrokeColor(THEME["border"])
+    c.setLineWidth(1)
+    c.line(card_x + pad, chart_top + 6, card_x + card_w - pad, chart_top + 6)
 
-    max_items = 7
+    # Columns area (full width)
+    body_top = note_y - (len(note_lines) * 12) - 10
+    body_bottom = chart_top + 12
+    col_w = (card_w - 2 * pad) / 4.0
+    col_x0 = card_x + pad
+    col_y0 = body_top - 6
+
     for idx, comp in enumerate(COMPANY_KEYS):
         cx = col_x0 + idx * col_w
 
-        # separators - subtle
         if idx > 0:
-            c.saveState()
             c.setStrokeColor(THEME["border"])
-            c.setLineWidth(0.5)
-            c.line(cx, body_bottom + 16, cx, body_top - 16)
-            c.restoreState()
+            c.setLineWidth(1)
+            c.line(cx, body_bottom, cx, body_top)
 
-        # company label - better styling
-        _draw_text(c, ui.fonts["semibold"], 11, THEME["text"], cx + 12, col_y0, COMPANY_DISPLAY_COVER.get(comp, comp))
-        
-        # count - larger, bolder
+        _draw_text(c, ui.fonts["semibold"], 10.5, THEME["text"], cx + 8, col_y0, COMPANY_DISPLAY_COVER.get(comp, comp))
         count = len(ctx["finished_projects"].get(comp, []))
-        _draw_text(c, ui.fonts["bold"], 26, COMPANY_COLOR.get(comp, THEME["accent"]), cx + 12, col_y0 - 30, str(count))
+        _draw_text(c, ui.fonts["bold"], 22, COMPANY_COLOR.get(comp, THEME["accent"]), cx + 8, col_y0 - 24, str(count))
 
-        # list items
         projects = ctx["finished_projects"].get(comp, []) or []
         display = [_project_display_name(p) or p for p in projects]
 
-        yy = col_y0 - 58
+        yy = col_y0 - 46
+        line_h = 11
         if not display:
-            _draw_text(c, ui.fonts["regular"], 9.5, THEME["muted2"], cx + 12, yy, "Tidak ada project")
+            _draw_text(c, ui.fonts["regular"], 9, THEME["muted2"], cx + 8, yy, "Tidak ada project")
         else:
-            for i, name in enumerate(display[:max_items]):
-                line = _fit_ellipsis(f"• {name}", ui.fonts["regular"], 9.5, col_w - 24)
-                _draw_text(c, ui.fonts["regular"], 9.5, THEME["text"], cx + 12, yy - (i * 13), line)
-            if len(display) > max_items:
-                _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], cx + 12, yy - (max_items * 13), f"+{len(display)-max_items} lainnya")
+            drawn = 0
+            for name in display:
+                lines = _wrap_lines(name, ui.fonts["regular"], 9, col_w - 16, max_lines=2)
+                if not lines:
+                    lines = ["-"]
+                needed_h = len(lines) * line_h + 4
+                if yy - needed_h < body_bottom:
+                    break
+                _draw_text(c, ui.fonts["regular"], 9, THEME["text"], cx + 8, yy, f"• {lines[0]}")
+                if len(lines) > 1:
+                    _draw_text(c, ui.fonts["regular"], 9, THEME["text"], cx + 18, yy - line_h, lines[1])
+                    yy -= (line_h * 2)
+                else:
+                    yy -= line_h
+                yy -= 4
+                drawn += 1
 
-    # Chart area (right)
-    chart_x = card_x + card_w - chart_w - 18
-    chart_top = body_top - 6
+            remaining = len(display) - drawn
+            if remaining > 0 and yy - 12 > body_bottom:
+                _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], cx + 8, yy - 4, f"+{remaining} lainnya")
+
     chart_items = [(c, ctx["income_share"].get(c, 0.0), ctx.get("income_by_company", {}).get(c, 0)) for c in COMPANY_KEYS]
-    _draw_income_share_chart(c, ui, chart_x, chart_top, chart_w, chart_items)
+    _draw_income_share_chart(c, ui, card_x + pad, chart_y0 + chart_h - 6, card_w - 2 * pad, chart_items)
 
 
 
@@ -1288,91 +1298,59 @@ def _draw_two_value_row(c: canvas.Canvas, ui: UI, x: float, y: float, label: str
 def _draw_comparison_chart(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h: float,
                            curr: Dict, prev: Dict):
     """
-    Professional visual comparison: grouped horizontal bars (Prev vs Now) for Revenue/Expense/Profit.
-    Features: Thicker bars, cleaner legends, subtle styling.
+    Clean comparison panel (no overflow).
     """
     y = y_top - h
     _draw_card(c, ui, x, y, w, h, shadow=True)
 
-    # Title with subtle styling
-    _draw_text(c, ui.fonts["bold"], 12, THEME["text"], x + 16, y + h - 20, "Grafik terhadap bulan lalu")
-    
-    # Cleaner legend - right aligned
-    legend_y = y + h - 20
-    legend_x = x + w - 16
-    
-    # Current month legend (right side)
-    c.setFillColor(THEME["accent"])
-    c.roundRect(legend_x - 100, legend_y - 2, 12, 12, 3, stroke=0, fill=1)
-    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], legend_x - 84, legend_y, "Bulan ini")
-    
-    # Previous month legend
-    c.setFillColor(THEME["muted2"])
-    c.roundRect(legend_x - 190, legend_y - 2, 12, 12, 3, stroke=0, fill=1)
-    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], legend_x - 174, legend_y, "Bulan lalu")
+    _draw_text(c, ui.fonts["bold"], 12, THEME["text"], x + 16, y + h - 20, "Perbandingan Bulan Lalu")
 
-    # Data rows with professional colors
+    # Column widths
+    col_label = 90
+    col_prev = 110
+    col_now = 110
+    col_delta = w - (col_label + col_prev + col_now) - 32
+    if col_delta < 70:
+        col_prev = 95
+        col_now = 95
+        col_delta = w - (col_label + col_prev + col_now) - 32
+
+    header_y = y + h - 38
+    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + 16, header_y, "Item")
+    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + 16 + col_label + col_prev - 4, header_y, "Bulan lalu", align="right")
+    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + 16 + col_label + col_prev + col_now - 4, header_y, "Bulan ini", align="right")
+    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + 16 + col_label + col_prev + col_now + col_delta - 4, header_y, "Selisih", align="right")
+
     rows = [
         ("Omset", "income_total", THEME["accent"], "income"),
         ("Pengeluaran", "expense_total", THEME["warning"], "expense"),
         ("Profit", "profit", THEME["success"], "profit"),
     ]
-    values = []
-    for _, k, _, _ in rows:
-        values.append(abs(int(curr.get(k, 0) or 0)))
-        values.append(abs(int(prev.get(k, 0) or 0)))
-    vmax = max(values) if values else 1
-    vmax = max(vmax, 1)
 
-    # Layout constants - THICKER bars
-    bar_x = x + 100
-    bar_w = w - 100 - 140
-    bar_h = 14           # Thicker bars (was 8)
-    prev_bar_h = 6       # Thinner prev bar for contrast
-    row_gap = 36         # More spacing (was 26)
-    start_y = y + h - 58
-
+    row_h = 26
+    start_y = header_y - 16
     for idx, (label, key, color_now, delta_key) in enumerate(rows):
-        cy = start_y - idx * row_gap
-
+        cy = start_y - idx * row_h
         curr_val = int(curr.get(key, 0) or 0)
         prev_val = int(prev.get(key, 0) or 0)
 
-        # Label with better typography
-        _draw_text(c, ui.fonts["semibold"], 10, THEME["text"], x + 16, cy + 2, label)
+        _draw_text(c, ui.fonts["semibold"], 9.5, THEME["text"], x + 16, cy, label)
 
-        # Track background - subtle rounded
-        c.setFillColor(THEME["track"])
-        c.roundRect(bar_x, cy - 2, bar_w, bar_h, 6, stroke=0, fill=1)
+        _draw_text_fit(c, ui.fonts["regular"], 9.5, 8, THEME["muted"], x + 16 + col_label + col_prev - 4, cy, format_currency(prev_val), col_prev - 6, align="right")
+        _draw_text_fit(c, ui.fonts["semibold"], 9.5, 8, THEME["text"], x + 16 + col_label + col_prev + col_now - 4, cy, format_currency(curr_val), col_now - 6, align="right")
 
-        # Previous month bar (thinner, above current)
-        prev_len = max(4, bar_w * (abs(prev_val) / vmax)) if prev_val else 4
-        c.setFillColor(THEME["muted2"])
-        c.roundRect(bar_x, cy + bar_h - prev_bar_h + 2, prev_len, prev_bar_h - 2, 3, stroke=0, fill=1)
-
-        # Current month bar (thicker, main bar)
-        now_len = max(6, bar_w * (abs(curr_val) / vmax)) if curr_val else 6
-        now_color = color_now
-        if key == "profit" and curr_val < 0:
-            now_color = THEME["danger"]
-        c.setFillColor(now_color)
-        c.roundRect(bar_x, cy - 2, now_len, bar_h - prev_bar_h, 6, stroke=0, fill=1)
-
-        # Values - cleaner layout on right
-        vx = bar_x + bar_w + 12
-        _draw_text(c, ui.fonts["regular"], 8.5, THEME["muted2"], vx, cy + 8, f"Prev {format_number(prev_val)}")
-        _draw_text(c, ui.fonts["bold"], 11, THEME["text"], vx, cy - 4, f"Now {format_number(curr_val)}")
-
-        # Delta pill - cleaner, more subtle
         pill_text, pill_color = _delta_pill(delta_key, curr_val, prev_val)
-        pw = max(42, stringWidth(pill_text, ui.fonts["bold"], 9) + 16)
-        ph = 18
-        pill_y = cy - 18
+        pw = max(42, stringWidth(pill_text, ui.fonts["bold"], 8.5) + 16)
+        ph = 16
+        px = x + 16 + col_label + col_prev + col_now + col_delta - pw - 4
         c.setFillColor(pill_color)
-        c.roundRect(vx, pill_y, pw, ph, 9, stroke=0, fill=1)
-        _draw_text(c, ui.fonts["bold"], 9, THEME["white"], vx + pw / 2, pill_y + 4.5, pill_text, align="center")
+        c.roundRect(px, cy - 6, pw, ph, 8, stroke=0, fill=1)
+        _draw_text(c, ui.fonts["bold"], 8.5, THEME["white"], px + pw / 2, cy - 2, pill_text, align="center")
 
-
+        # Row divider
+        c.setStrokeColor(THEME["border"])
+        c.setLineWidth(0.6)
+        c.line(x + 16, cy - 10, x + w - 16, cy - 10)
 def _draw_tx_list_card(
     c: canvas.Canvas,
     ui: UI,
