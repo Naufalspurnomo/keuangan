@@ -502,6 +502,11 @@ def webhook_wuzapi():
                 except Exception:
                     local_media_path = None
 
+        # Ignore empty text payloads (avoid typing/presence noise)
+        if msg_type == 'text' and not (text or '').strip():
+            secure_log("INFO", f"Webhook: Empty text ignored from {sender_number}")
+            return jsonify({'status': 'empty_text'}), 200
+
         # LOG THE INCOMING MESSAGE
         secure_log("INFO", f"Webhook: Msg from {sender_number} (Group: {is_group}): {text[:50]}...")
 
@@ -1050,6 +1055,26 @@ Balas 1 atau 2"""
             pending_data = None
             
         has_pending = pending_data is not None
+
+        # If user replies with a selection number but no pending is found,
+        # try to resolve a single active pending in the same group chat.
+        if not has_pending:
+            clean_sel = (text or "").strip()
+            if clean_sel.isdigit() and len(clean_sel) <= 2:
+                if is_group and chat_jid:
+                    candidates = []
+                    for pkey, pval in _pending_transactions.items():
+                        if pkey.startswith(chat_jid) and pval and not pending_is_expired(pval):
+                            candidates.append((pkey, pval))
+                    if len(candidates) == 1:
+                        pending_pkey, pending_data = candidates[0]
+                        has_pending = True
+                    else:
+                        send_reply("⚠️ Tidak ada pertanyaan aktif atau sesi sudah kedaluwarsa.\nBalas (reply) pesan bot yang sesuai atau kirim ulang transaksi.")
+                        return jsonify({'status': 'no_pending_selection'}), 200
+                else:
+                    send_reply("⚠️ Tidak ada pertanyaan aktif atau sesi sudah kedaluwarsa.\nKirim ulang transaksi ya.")
+                    return jsonify({'status': 'no_pending_selection'}), 200
         
         # 4. Filter AI Trigger
         text = sanitize_input(text or '')

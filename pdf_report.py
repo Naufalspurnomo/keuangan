@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-pdf_report_redesigned.py - Finance Bot PDF Export (FIXED LAYOUT v5)
+pdf_report_redesigned_v6.py - Finance Bot PDF Export (CHART & LAYOUT FIX)
 
 FIXES APPLIED:
-1. Perbandingan Chart: Columns are now proportional (%) to fit narrow spaces.
-2. Cover Chart: Increased height to prevent "Texturin Bali" from being cut off.
-3. Project Cards: Increased height (150px) and adjusted Y-offsets to stop text collisions.
+1. Perbandingan: Changed from Table to Bar Chart visualization.
+2. Finished Projects: Fixed layout alignment (Labels directly above values).
+3. KPI Office Expense: Better formatting for the subnote.
 """
 
 from __future__ import annotations
@@ -80,6 +80,7 @@ THEME = {
     "teal2": colors.HexColor("#0284C7"),
     "pink": colors.HexColor("#EF4444"),
     "green": colors.HexColor("#10B981"),
+    "chart_prev": colors.HexColor("#E5E7EB"), # Gray for previous month bar
 }
 
 COMPANY_KEYS = ["Hollawall", "Hojja", "Texturin Surabaya", "Texturin Bali"]
@@ -184,6 +185,20 @@ def format_number(amount: int) -> str:
 
 def format_currency(amount: int) -> str:
     return f"Rp {format_number(amount)}"
+
+def format_currency_short(amount: int) -> str:
+    """Format cleaner for charts (e.g. 1.2M, 500rb)"""
+    abs_amt = abs(amount)
+    if abs_amt >= 1_000_000_000:
+        val = amount / 1_000_000_000
+        return f"{val:.1f}M".replace(".0M", "M")
+    if abs_amt >= 1_000_000:
+        val = amount / 1_000_000
+        return f"{val:.1f}jt".replace(".0jt", "jt")
+    if abs_amt >= 1_000:
+        val = amount / 1_000
+        return f"{val:.0f}rb"
+    return str(amount)
 
 def _safe_filename(name: str) -> str:
     name = re.sub(r"[^a-zA-Z0-9_\-]+", "_", (name or "").strip())
@@ -780,7 +795,10 @@ def _draw_header_range(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: float, page_
     _draw_text(c, ui.fonts["regular"], 10.5, THEME["muted"], left_w + 18, page_h - 122, "hingga")
     _draw_text(c, ui.fonts["regular"], 10.5, THEME["text"], left_w + 18, page_h - 138, f"{end_text} (00:00)")
 
-def _draw_kpi_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h: float, label: str, amount: int, accent, subnote: Optional[str] = None):
+def _draw_kpi_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h: float, label: str, amount: int, accent, subnote_val: Optional[str] = None):
+    """
+    FIXED: Subnote is now rendered as a clean footer text if present.
+    """
     y = y_top - h
     _draw_card(c, ui, x, y, w, h, shadow=True)
     accent_h = 5
@@ -790,75 +808,92 @@ def _draw_kpi_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h
     c.setFillColor(THEME["card"])
     c.rect(x, y + h - accent_h, w, 1, stroke=0, fill=1)
     c.restoreState()
+    
     _draw_text(c, ui.fonts["semibold"], 11, THEME["muted"], x + 20, y + h - 28, label.upper())
     num_color = accent if accent != THEME["text"] else THEME["text"]
     if label.lower().startswith("profit") and amount < 0: num_color = THEME["danger"]
+    
     _draw_text(c, ui.fonts["regular"], 12, THEME["muted2"], x + 20, y + h - 52, "Rp")
     _draw_text_fit(c, ui.fonts["bold"], 28, 18, num_color, x + 44, y + h - 58, format_number(amount), w - 64, align="left")
-    if subnote:
-        lines = _wrap_lines(subnote, ui.fonts["regular"], 10, w - 40, max_lines=2)
-        yy = y + 16
-        for i, line in enumerate(lines):
-            _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], x + 20, yy + (i * 14), line)
+    
+    if subnote_val:
+        # Draw as footer note
+        _draw_text(c, ui.fonts["regular"], 9.5, THEME["muted"], x + 20, y + 16, "Termasuk Ops. Kantor:")
+        _draw_text(c, ui.fonts["semibold"], 9.5, THEME["text"], x + 20, y + 6, subnote_val)
 
 def _draw_comparison_chart(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h: float, curr: Dict, prev: Dict):
     """
-    FIXED: Uses proportional layout to prevent overlaps in narrow columns.
+    FIXED: Implemented grouped bar chart for visual comparison.
     """
     y = y_top - h
     _draw_card(c, ui, x, y, w, h, shadow=True)
     _draw_text(c, ui.fonts["bold"], 14, THEME["text"], x + 20, y + h - 24, "Perbandingan Bulan Lalu")
     
-    padding = 20
-    # Use Percentage-based widths instead of fixed to fit narrow cards
-    # W is available width. Layout: Label (Left), Prev (Right), Delta (Right), Now (Right)
-    # Actually, layout is: Item | Bulan lalu | Selisih | Bulan ini
+    # Legend
+    leg_y = y + h - 24
+    c.setFillColor(THEME["chart_prev"])
+    c.roundRect(x + w - 140, leg_y, 10, 10, 2, stroke=0, fill=1)
+    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + w - 125, leg_y + 2, "Bulan lalu")
     
-    # Calculate column centers/ends based on width 'w'
-    col1_w = w * 0.30  # Item
-    col2_w = w * 0.25  # Prev
-    col3_w = w * 0.20  # Delta (approx)
-    col4_w = w * 0.25  # Now (remainder)
+    c.setFillColor(THEME["teal"]) # Generic active color for legend
+    c.roundRect(x + w - 70, leg_y, 10, 10, 2, stroke=0, fill=1)
+    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + w - 55, leg_y + 2, "Bulan ini")
+
+    # Chart Area
+    chart_h = h - 60
+    chart_y = y + 20
+    chart_w = w - 40
+    chart_x = x + 20
     
-    # X positions (for right aligned text, these are the right edges)
-    x_prev = x + padding + col1_w + col2_w - 5
-    x_delta = x + padding + col1_w + col2_w + col3_w - 5
-    x_now = x + w - padding
-
-    header_y = y + h - 46
-    _draw_text(c, ui.fonts["semibold"], 10, THEME["muted"], x + padding, header_y, "Item")
-    _draw_text(c, ui.fonts["semibold"], 10, THEME["muted"], x_prev, header_y, "Bulan lalu", align="right")
-    _draw_text(c, ui.fonts["semibold"], 10, THEME["muted"], x_delta, header_y, "Selisih", align="right")
-    _draw_text(c, ui.fonts["semibold"], 10, THEME["muted"], x_now, header_y, "Bulan ini", align="right")
-
-    rows = [
-        ("Omset", "income_total", THEME["accent"], "income"),
-        ("Pengeluaran", "expense_total", THEME["warning"], "expense"),
-        ("Profit", "profit", THEME["success"], "profit"),
+    # Data preparation
+    groups = [
+        ("Omset", "income_total", THEME["accent"]),
+        ("Pengeluaran", "expense_total", THEME["warning"]),
+        ("Profit", "profit", THEME["success"]),
     ]
-    row_h = 30
-    start_y = header_y - 20
-    for idx, (label, key, color_now, delta_key) in enumerate(rows):
-        cy = start_y - idx * row_h
-        curr_val = int(curr.get(key, 0) or 0)
-        prev_val = int(prev.get(key, 0) or 0)
+    
+    # Calculate max value for scaling
+    max_val = 0
+    for _, key, _ in groups:
+        max_val = max(max_val, abs(int(curr.get(key, 0) or 0)), abs(int(prev.get(key, 0) or 0)))
+    if max_val == 0: max_val = 1
+    
+    # Bar geometry
+    group_width = chart_w / len(groups)
+    bar_width = (group_width * 0.6) / 2
+    gap = 4
+    
+    for i, (label, key, color) in enumerate(groups):
+        cx = chart_x + i * group_width + (group_width * 0.2)
         
-        _draw_text(c, ui.fonts["semibold"], 11, THEME["text"], x + padding, cy, label)
-        _draw_text_fit(c, ui.fonts["regular"], 10.5, 9, THEME["muted"], x_prev, cy, format_currency(prev_val), col2_w, align="right")
-        _draw_text_fit(c, ui.fonts["bold"], 11, 9, THEME["text"], x_now, cy, format_currency(curr_val), col4_w, align="right")
+        val_prev = int(prev.get(key, 0) or 0)
+        val_curr = int(curr.get(key, 0) or 0)
         
-        pill_text, pill_color = _delta_pill(delta_key, curr_val, prev_val)
-        pw = max(42, stringWidth(pill_text, ui.fonts["bold"], 9.5) + 16)
-        ph = 18
-        px = x_delta - pw
-        c.setFillColor(pill_color)
-        c.roundRect(px, cy - 7, pw, ph, 9, stroke=0, fill=1)
-        _draw_text(c, ui.fonts["bold"], 9.5, THEME["white"], px + pw / 2, cy - 2.5, pill_text, align="center")
+        # Determine bar colors
+        c_prev = THEME["chart_prev"]
+        c_curr = color if val_curr >= 0 else THEME["danger"]
+        if label == "Profit" and val_curr < 0: c_curr = THEME["danger"]
         
-        if idx < len(rows) - 1:
-            c.setStrokeColor(THEME["border_light"])
-            c.setLineWidth(1)
-            c.line(x + padding, cy - 14, x + w - padding, cy - 14)
+        # Height calculation (relative to max_val)
+        # Using simple normalization, ignoring negative split axis for simplicity in this mini-chart
+        # (Assuming mostly positive, or visualizing magnitude)
+        h_prev = (abs(val_prev) / max_val) * (chart_h - 20)
+        h_curr = (abs(val_curr) / max_val) * (chart_h - 20)
+        
+        # Draw Prev Bar
+        c.setFillColor(c_prev)
+        c.roundRect(cx, chart_y + 15, bar_width, max(2, h_prev), 3, stroke=0, fill=1)
+        # Label Prev
+        _draw_text(c, ui.fonts["regular"], 8, THEME["muted2"], cx + bar_width/2, chart_y + 15 + h_prev + 2, format_currency_short(val_prev), align="center")
+        
+        # Draw Curr Bar
+        c.setFillColor(c_curr)
+        c.roundRect(cx + bar_width + gap, chart_y + 15, bar_width, max(2, h_curr), 3, stroke=0, fill=1)
+        # Label Curr
+        _draw_text(c, ui.fonts["bold"], 8, THEME["text"], cx + bar_width + gap + bar_width/2, chart_y + 15 + h_curr + 2, format_currency_short(val_curr), align="center")
+        
+        # Group Label
+        _draw_text(c, ui.fonts["semibold"], 10, THEME["text"], cx + bar_width + gap/2, chart_y, label, align="center")
 
 def _draw_income_share_chart(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, items: List[Tuple[str, float, int]]):
     title_h = 22
@@ -885,12 +920,9 @@ def _draw_income_share_chart(c: canvas.Canvas, ui: UI, x: float, y_top: float, w
         _draw_text(c, ui.fonts["regular"], 9.5, THEME["muted2"], value_x, yy - 10, f"Rp {format_number(amt)}", align="right")
 
 def _draw_finished_projects_cover(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: float, y_top: float, title: str, note: str):
-    """
-    FIXED: Increased card height to prevent cut-off for "Texturin Bali"
-    """
     card_x = ui.margin
     card_w = page_w - ui.margin * 2
-    card_h = 380  # INCREASED from 340 to fit 4 chart items
+    card_h = 380  
     y = y_top - card_h
     _draw_card(c, ui, card_x, y, card_w, card_h, shadow=True)
     
@@ -905,7 +937,7 @@ def _draw_finished_projects_cover(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: f
     for i, line in enumerate(note_lines):
         _draw_text(c, ui.fonts["regular"], 10.5, THEME["muted"], card_x + pad, note_y - (i * 14), line)
     
-    chart_h = 140 # INCREASED from 92 to fit 4 items
+    chart_h = 140 
     chart_y0 = y + pad
     chart_top = chart_y0 + chart_h
     
@@ -1051,7 +1083,7 @@ def _draw_insight_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
 
 def _draw_project_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h: float, idx: int, company: str, proj: Dict):
     """
-    FIXED: Adjusted Y-coordinates to separate Mulai/Selesai and metric rows.
+    FIXED: Layout alignment issues. Labels are now strictly aligned with values.
     """
     y = y_top - h
     _draw_card(c, ui, x, y, w, h, shadow=True)
@@ -1072,6 +1104,7 @@ def _draw_project_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
     profit = int(metrics.get("profit", 0) or 0)
     margin = int(metrics.get("margin_pct", 0) or 0)
     profit_color = THEME["success"] if profit >= 0 else THEME["danger"]
+    
     _draw_text(c, ui.fonts["semibold"], 11, THEME["muted"], x + w - 22, y + h - 28, "Profit Kotor", align="right")
     profit_text = f"Rp {format_number(profit)}  ({margin}%)"
     _draw_text_fit(c, ui.fonts["bold"], 14, 10, profit_color, x + w - 22, y + h - 46, profit_text, 190, align="right")
@@ -1082,47 +1115,50 @@ def _draw_project_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
     start_txt = start_dt.strftime("%d %b %Y") if isinstance(start_dt, datetime) else "-"
     finish_txt = finish_dt.strftime("%d %b %Y") if isinstance(finish_dt, datetime) else "-"
     
-    # Adjusted Spacing for Dates
+    # Dates
     _draw_text(c, ui.fonts["regular"], 10.5, THEME["muted"], x + 22, y + h - 55, f"Mulai: {start_txt}")
     _draw_text(c, ui.fonts["regular"], 10.5, THEME["muted"], x + 22, y + h - 70, f"Selesai: {finish_txt}")
 
+    # Layout Grid
     col1_x = x + 22
     col_w = (w - 44) / 4.0
 
-    def metric_cell(ix: int, label: str, value: int, y0: float):
+    def draw_pair(ix: int, label: str, val_text: str, y_base: float, val_color=THEME["text"]):
         cx = col1_x + ix * col_w
-        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y0, label)
-        val_text = f"Rp {format_number(value)}"
-        _draw_text_fit(c, ui.fonts["bold"], 12, 9.5, THEME["text"], cx + col_w - 2, y0 - 16, val_text, col_w - 6, align="right")
+        # Label above value
+        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_base + 14, label)
+        # Value
+        _draw_text_fit(c, ui.fonts["bold"], 12, 9.5, val_color, cx, y_base, val_text, col_w - 6, align="left")
 
-    # Adjusted Spacing for Metric Rows
-    y_row1 = y + 70  # Was y+62
-    metric_cell(0, "Nilai", int(metrics.get("total_income", 0) or 0), y_row1)
-    metric_cell(1, "DP", int(metrics.get("dp", 0) or 0), y_row1)
-    metric_cell(2, "DP 2", int(metrics.get("dp2", 0) or 0), y_row1)
-    metric_cell(3, "Pelunasan", int(metrics.get("pelunasan", 0) or 0), y_row1)
+    # Row 1 (Income side)
+    y_r1 = y + 55
+    draw_pair(0, "Nilai", f"Rp {format_number(int(metrics.get('total_income',0) or 0))}", y_r1)
+    draw_pair(1, "DP", f"Rp {format_number(int(metrics.get('dp',0) or 0))}", y_r1)
+    draw_pair(2, "DP 2", f"Rp {format_number(int(metrics.get('dp2',0) or 0))}", y_r1)
+    draw_pair(3, "Pelunasan", f"Rp {format_number(int(metrics.get('pelunasan',0) or 0))}", y_r1)
 
-    y_row2 = y + 30  # Was y+32
-    metric_cell(0, "Pengeluaran", int(metrics.get("total_expense", 0) or 0), y_row2)
-    metric_cell(1, "Gaji", int(metrics.get("total_salary", 0) or 0), y_row2)
+    # Row 2 (Expense side)
+    y_r2 = y + 15
+    draw_pair(0, "Pengeluaran", f"Rp {format_number(int(metrics.get('total_expense',0) or 0))}", y_r2)
+    draw_pair(1, "Gaji", f"Rp {format_number(int(metrics.get('total_salary',0) or 0))}", y_r2)
 
     max_exp = proj.get("max_expense")
     if max_exp:
-        desc = _fit_ellipsis(max_exp.get("keterangan", ""), ui.fonts["regular"], 10, col_w * 2 - 12)
+        desc = _fit_ellipsis(max_exp.get("keterangan", ""), ui.fonts["regular"], 10, col_w * 2 - 10)
         amt = int(max_exp.get("jumlah", 0) or 0)
         cx = col1_x + 2 * col_w
-        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_row2, "Pengeluaran Terbesar")
-        _draw_text(c, ui.fonts["regular"], 10, THEME["text"], cx, y_row2 - 14, desc)
-        _draw_text(c, ui.fonts["bold"], 12, THEME["text"], cx + col_w * 2 - 10, y_row2 - 16, f"Rp {format_number(amt)}", align="right")
+        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_r2 + 14, "Pengeluaran Terbesar")
+        _draw_text(c, ui.fonts["regular"], 10, THEME["text"], cx, y_r2, desc)
+        _draw_text(c, ui.fonts["bold"], 12, THEME["text"], cx + col_w * 2 - 6, y_r2, f"Rp {format_number(amt)}", align="right")
     else:
         cx = col1_x + 2 * col_w
-        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_row2, "Pengeluaran Terbesar")
-        _draw_text(c, ui.fonts["regular"], 10, THEME["muted2"], cx, y_row2 - 16, "-")
+        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_r2 + 14, "Pengeluaran Terbesar")
+        _draw_text(c, ui.fonts["regular"], 10, THEME["muted2"], cx, y_r2, "-")
         
     c.saveState()
     c.setStrokeColor(THEME["border_light"])
     c.setLineWidth(1)
-    c.line(x + 22, y + h - 85, x + w - 22, y + h - 85)
+    c.line(x + 22, y + h - 82, x + w - 22, y + h - 82)
     c.restoreState()
 
 
@@ -1143,9 +1179,9 @@ def draw_cover_monthly(c: canvas.Canvas, ui: UI, ctx: Dict, logo_path: Optional[
     kpi_w = (content_w - 2 * gap) / 3.0
     summary = ctx["summary"]
     prev = ctx["prev_summary"]
-    office_note = f"(Pengeluaran Kantor Rp {format_number(int(summary['office_expense']))})"
+    office_val = f"Rp {format_number(int(summary['office_expense']))}"
     _draw_kpi_card(c, ui, content_x + 0 * (kpi_w + gap), y, kpi_w, kpi_h, "Omset Total", int(summary["income_total"]), THEME["text"])
-    _draw_kpi_card(c, ui, content_x + 1 * (kpi_w + gap), y, kpi_w, kpi_h, "Pengeluaran Total", int(summary["expense_total"]), THEME["pink"], subnote=office_note)
+    _draw_kpi_card(c, ui, content_x + 1 * (kpi_w + gap), y, kpi_w, kpi_h, "Pengeluaran Total", int(summary["expense_total"]), THEME["pink"], subnote_val=office_val)
     _draw_kpi_card(c, ui, content_x + 2 * (kpi_w + gap), y, kpi_w, kpi_h, "Profit", int(summary["profit"]), THEME["teal"])
     y -= (kpi_h + 28)
     pill_y = y
@@ -1177,9 +1213,9 @@ def draw_cover_periodical(c: canvas.Canvas, ui: UI, ctx: Dict, logo_path: Option
     content_w = page_w - 2 * ui.margin
     kpi_w = (content_w - 2 * gap) / 3.0
     summary = ctx["summary"]
-    office_note = f"(Pengeluaran Kantor Rp {format_number(int(summary['office_expense']))})"
+    office_val = f"Rp {format_number(int(summary['office_expense']))}"
     _draw_kpi_card(c, ui, content_x + 0 * (kpi_w + gap), y, kpi_w, kpi_h, "Omset Total", int(summary["income_total"]), THEME["text"])
-    _draw_kpi_card(c, ui, content_x + 1 * (kpi_w + gap), y, kpi_w, kpi_h, "Pengeluaran Total", int(summary["expense_total"]), THEME["pink"], subnote=office_note)
+    _draw_kpi_card(c, ui, content_x + 1 * (kpi_w + gap), y, kpi_w, kpi_h, "Pengeluaran Total", int(summary["expense_total"]), THEME["pink"], subnote_val=office_val)
     _draw_kpi_card(c, ui, content_x + 2 * (kpi_w + gap), y, kpi_w, kpi_h, "Profit", int(summary["profit"]), THEME["teal"])
     y -= (kpi_h + 28)
     _draw_finished_projects_cover(c, ui, ctx, page_w, y, "Project yang Selesai dalam Periode ini", "Adalah Project yang tuntas dalam rentang waktu yang dipilih.")
@@ -1187,7 +1223,7 @@ def draw_cover_periodical(c: canvas.Canvas, ui: UI, ctx: Dict, logo_path: Option
 
 def _estimate_company_page_height(ui: UI, company_details: Dict, base_h: float = 1700) -> float:
     cards = company_details.get("finished_cards") or []
-    card_h = 150 # INCREASED from 128
+    card_h = 150 
     card_gap = 14
     n_cards = len(cards)
     if n_cards == 0: return base_h
@@ -1245,7 +1281,7 @@ def draw_company_page(c: canvas.Canvas, ui: UI, ctx: Dict, company: str, page_h:
         _draw_footer(c, ui, page_w)
         return
     card_gap = 14
-    card_h = 150 # INCREASED from 128
+    card_h = 150 
     footer_space = 30
     available_h = y - (ui.margin + footer_space)
     max_cards = max(1, int((available_h + card_gap) // (card_h + card_gap)))
@@ -1267,7 +1303,7 @@ def generate_pdf_report_v4_monthly(year: int, month: int, output_dir: Optional[s
     ui = UI(fonts=fonts)
     out_dir = output_dir or tempfile.gettempdir()
     os.makedirs(out_dir, exist_ok=True)
-    fname = _safe_filename(f"Laporan_Keuangan_{ctx['period_label']}") + ".pdf"
+    fname = _safe_filename(f"Laporan_Keuangan_{ctx['period_label']}_REDESIGNED") + ".pdf"
     output_path = os.path.join(out_dir, fname)
     logo_path = os.getenv("HOLLAWALL_LOGO_PATH")
     c = canvas.Canvas(output_path, pagesize=A4)
