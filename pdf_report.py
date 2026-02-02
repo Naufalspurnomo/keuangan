@@ -806,77 +806,93 @@ def _draw_kpi_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h
     c.rect(x, y + h - accent_h, w, 1, stroke=0, fill=1)
     c.restoreState()
     
-    _draw_text(c, ui.fonts["semibold"], 11, THEME["muted"], x + 20, y + h - 28, label.upper())
+    # Label at top
+    _draw_text(c, ui.fonts["semibold"], 11, THEME["muted"], x + 20, y + h - 26, label.upper())
+    
+    # Amount color
     num_color = accent if accent != THEME["text"] else THEME["text"]
     if label.lower().startswith("profit") and amount < 0: num_color = THEME["danger"]
     
-    _draw_text(c, ui.fonts["regular"], 12, THEME["muted2"], x + 20, y + h - 52, "Rp")
-    _draw_text_fit(c, ui.fonts["bold"], 28, 18, num_color, x + 44, y + h - 58, format_number(amount), w - 64, align="left")
+    # Rp and amount on same line, properly aligned
+    _draw_text(c, ui.fonts["regular"], 14, THEME["muted2"], x + 20, y + h - 50, "Rp")
+    _draw_text_fit(c, ui.fonts["bold"], 26, 18, num_color, x + 46, y + h - 50, format_number(amount), w - 66, align="left")
     
+    # Subnote for operational costs (only on PENGELUARAN card)
     if subnote_val:
-        _draw_text(c, ui.fonts["regular"], 9.5, THEME["muted"], x + 20, y + 16, "Termasuk Ops. Kantor:")
-        _draw_text(c, ui.fonts["semibold"], 9.5, THEME["text"], x + 20, y + 6, subnote_val)
+        _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + 20, y + 18, "Termasuk Ops. Kantor:")
+        _draw_text(c, ui.fonts["semibold"], 9, THEME["text"], x + 130, y + 18, subnote_val)
 
 def _draw_comparison_chart(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h: float, curr: Dict, prev: Dict):
     """
-    FIXED: Moved Legend below title to prevent overlap.
+    FIXED: Legend repositioned, colors consistent for each metric.
     """
     y = y_top - h
     _draw_card(c, ui, x, y, w, h, shadow=True)
     _draw_text(c, ui.fonts["bold"], 14, THEME["text"], x + 20, y + h - 24, "Perbandingan Bulan Lalu")
-    
-    # Legend - Positioned explicitly below title
-    leg_y = y + h - 42 
-    c.setFillColor(THEME["chart_prev"])
-    c.roundRect(x + 20, leg_y, 10, 10, 2, stroke=0, fill=1)
-    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + 35, leg_y + 2, "Bulan lalu")
-    
-    c.setFillColor(THEME["teal"]) 
-    c.roundRect(x + 90, leg_y, 10, 10, 2, stroke=0, fill=1)
-    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + 105, leg_y + 2, "Bulan ini")
 
-    # Chart Area
-    chart_h = h - 60
-    chart_y = y + 20
+    # Chart Area - Adjusted to give more space
+    chart_h = h - 55
+    chart_y = y + 18
     chart_w = w - 40
     chart_x = x + 20
     
+    # Color configuration with lighter shade for previous month
     groups = [
-        ("Omset", "income_total", THEME["accent"]),
-        ("Pengeluaran", "expense_total", THEME["warning"]),
-        ("Profit", "profit", THEME["success"]),
+        ("Omset", "income_total", THEME["accent"], THEME["accent_light"]),
+        ("Pengeluaran", "expense_total", THEME["warning"], THEME["warning_light"]),
+        ("Profit", "profit", THEME["success"], THEME["success_light"]),
     ]
     
     max_val = 0
-    for _, key, _ in groups:
+    for _, key, _, _ in groups:
         max_val = max(max_val, abs(int(curr.get(key, 0) or 0)), abs(int(prev.get(key, 0) or 0)))
     if max_val == 0: max_val = 1
     
     group_width = chart_w / len(groups)
-    bar_width = (group_width * 0.6) / 2
-    gap = 4
+    bar_width = (group_width * 0.55) / 2
+    gap = 5
     
-    for i, (label, key, color) in enumerate(groups):
-        cx = chart_x + i * group_width + (group_width * 0.2)
+    for i, (label, key, color_curr, color_prev) in enumerate(groups):
+        cx = chart_x + i * group_width + (group_width * 0.22)
         val_prev = int(prev.get(key, 0) or 0)
         val_curr = int(curr.get(key, 0) or 0)
         
-        c_prev = THEME["chart_prev"]
-        c_curr = color if val_curr >= 0 else THEME["danger"]
+        # Use consistent color per metric - lighter for prev, solid for current
+        c_prev = color_prev
+        c_curr = color_curr
         if label == "Profit" and val_curr < 0: c_curr = THEME["danger"]
+        if label == "Profit" and val_prev < 0: c_prev = THEME["danger_light"]
         
-        h_prev = (abs(val_prev) / max_val) * (chart_h - 20)
-        h_curr = (abs(val_curr) / max_val) * (chart_h - 20)
+        h_prev = (abs(val_prev) / max_val) * (chart_h - 35)
+        h_curr = (abs(val_curr) / max_val) * (chart_h - 35)
         
-        c.setFillColor(c_prev)
-        c.roundRect(cx, chart_y + 15, bar_width, max(2, h_prev), 3, stroke=0, fill=1)
-        _draw_text(c, ui.fonts["regular"], 8, THEME["muted2"], cx + bar_width/2, chart_y + 15 + h_prev + 2, format_currency_short(val_prev), align="center")
-        
-        c.setFillColor(c_curr)
-        c.roundRect(cx + bar_width + gap, chart_y + 15, bar_width, max(2, h_curr), 3, stroke=0, fill=1)
-        _draw_text(c, ui.fonts["bold"], 8, THEME["text"], cx + bar_width + gap + bar_width/2, chart_y + 15 + h_curr + 2, format_currency_short(val_curr), align="center")
-        
+        # Draw label at bottom first
         _draw_text(c, ui.fonts["semibold"], 10, THEME["text"], cx + bar_width + gap/2, chart_y, label, align="center")
+        
+        # Draw bars with value labels on top
+        bar_base_y = chart_y + 18
+        
+        # Previous month bar (left, lighter color)
+        c.setFillColor(c_prev)
+        c.roundRect(cx, bar_base_y, bar_width, max(2, h_prev), 3, stroke=0, fill=1)
+        _draw_text(c, ui.fonts["regular"], 8, THEME["muted"], cx + bar_width/2, bar_base_y + h_prev + 4, format_currency_short(val_prev), align="center")
+        
+        # Current month bar (right, solid color)  
+        c.setFillColor(c_curr)
+        c.roundRect(cx + bar_width + gap, bar_base_y, bar_width, max(2, h_curr), 3, stroke=0, fill=1)
+        _draw_text(c, ui.fonts["bold"], 8, THEME["text"], cx + bar_width + gap + bar_width/2, bar_base_y + h_curr + 4, format_currency_short(val_curr), align="center")
+    
+    # Legend at bottom right of card to avoid overlap
+    leg_y = y + 8
+    leg_x = x + w - 20
+    
+    _draw_text(c, ui.fonts["regular"], 8, THEME["muted"], leg_x, leg_y, "Bulan ini", align="right")
+    c.setFillColor(THEME["accent"])
+    c.roundRect(leg_x - 50, leg_y - 2, 8, 8, 2, stroke=0, fill=1)
+    
+    _draw_text(c, ui.fonts["regular"], 8, THEME["muted"], leg_x - 70, leg_y, "Bulan lalu", align="right")
+    c.setFillColor(THEME["accent_light"])
+    c.roundRect(leg_x - 120, leg_y - 2, 8, 8, 2, stroke=0, fill=1)
 
 def _draw_income_share_chart(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, items: List[Tuple[str, float, int]]):
     """
@@ -1087,7 +1103,7 @@ def _draw_insight_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
 
 def _draw_project_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h: float, idx: int, company: str, proj: Dict):
     """
-    FIXED: Improved vertical rhythm.
+    FIXED: Improved layout - project name closer to values, better spacing.
     """
     y = y_top - h
     _draw_card(c, ui, x, y, w, h, shadow=True)
@@ -1101,17 +1117,19 @@ def _draw_project_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
     c.restoreState()
 
     name = proj.get("name", "Project")
-    name = _fit_ellipsis(f"{idx}. {name}", ui.fonts["bold"], 14, w - 200)
-    _draw_text(c, ui.fonts["bold"], 14, THEME["text"], x + 22, y + h - 30, name)
+    # Project name - positioned closer to profit info
+    name_display = _fit_ellipsis(f"{idx}. {name}", ui.fonts["bold"], 14, w - 180)
+    _draw_text(c, ui.fonts["bold"], 14, THEME["text"], x + 22, y + h - 28, name_display)
 
     metrics = proj.get("metrics", {}) or {}
     profit = int(metrics.get("profit", 0) or 0)
     margin = int(metrics.get("margin_pct", 0) or 0)
     profit_color = THEME["success"] if profit >= 0 else THEME["danger"]
     
-    _draw_text(c, ui.fonts["semibold"], 11, THEME["muted"], x + w - 22, y + h - 28, "Profit Kotor", align="right")
+    # Profit info - positioned on same line as project name
+    _draw_text(c, ui.fonts["semibold"], 10, THEME["muted"], x + w - 22, y + h - 18, "Profit Kotor", align="right")
     profit_text = f"Rp {format_number(profit)}  ({margin}%)"
-    _draw_text_fit(c, ui.fonts["bold"], 14, 10, profit_color, x + w - 22, y + h - 46, profit_text, 190, align="right")
+    _draw_text_fit(c, ui.fonts["bold"], 13, 10, profit_color, x + w - 22, y + h - 33, profit_text, 170, align="right")
 
     timeline = proj.get("timeline", {}) or {}
     start_dt = timeline.get("start")
@@ -1119,66 +1137,63 @@ def _draw_project_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
     start_txt = start_dt.strftime("%d %b %Y") if isinstance(start_dt, datetime) else "-"
     finish_txt = finish_dt.strftime("%d %b %Y") if isinstance(finish_dt, datetime) else "-"
     
-    # Dates
-    _draw_text(c, ui.fonts["regular"], 10.5, THEME["muted"], x + 22, y + h - 55, f"Mulai: {start_txt}")
-    _draw_text(c, ui.fonts["regular"], 10.5, THEME["muted"], x + 22, y + h - 70, f"Selesai: {finish_txt}")
+    # Dates - positioned right below project name
+    _draw_text(c, ui.fonts["regular"], 9.5, THEME["muted"], x + 22, y + h - 45, f"Mulai: {start_txt}")
+    _draw_text(c, ui.fonts["regular"], 9.5, THEME["muted"], x + 22, y + h - 58, f"Selesai: {finish_txt}")
 
-    # Layout Grid
+    # Divider line
+    c.saveState()
+    c.setStrokeColor(THEME["border_light"])
+    c.setLineWidth(1)
+    c.line(x + 22, y + h - 68, x + w - 22, y + h - 68)
+    c.restoreState()
+
+    # Layout Grid for values
     col1_x = x + 22
     col_w = (w - 44) / 4.0
 
     def draw_pair(ix: int, label: str, val_text: str, y_base: float, val_color=THEME["text"]):
         cx = col1_x + ix * col_w
-        # Label above value with more spacing
-        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_base + 16, label)
+        # Label directly above value
+        _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], cx, y_base + 14, label)
         # Value
-        _draw_text_fit(c, ui.fonts["bold"], 12, 9.5, val_color, cx, y_base, val_text, col_w - 6, align="left")
+        _draw_text_fit(c, ui.fonts["bold"], 11, 9, val_color, cx, y_base, val_text, col_w - 8, align="left")
 
-    # Row 1 (Income side)
-    y_r1 = y + 55
+    # Row 1 (Income side) - positioned closer to dates
+    y_r1 = y + 48
     draw_pair(0, "Nilai", f"Rp {format_number(int(metrics.get('total_income',0) or 0))}", y_r1)
     draw_pair(1, "DP", f"Rp {format_number(int(metrics.get('dp',0) or 0))}", y_r1)
     draw_pair(2, "DP 2", f"Rp {format_number(int(metrics.get('dp2',0) or 0))}", y_r1)
     draw_pair(3, "Pelunasan", f"Rp {format_number(int(metrics.get('pelunasan',0) or 0))}", y_r1)
 
     # Row 2 (Expense side)
-    y_r2 = y + 15
-    draw_pair(0, "Pengeluaran", f"Rp {format_number(int(metrics.get('total_expense',0) or 0))}", y_r2)
+    y_r2 = y + 14
+    draw_pair(0, "Pengeluaran", f"Rp {format_number(int(metrics.get('total_expense',0) or 0))}", y_r2, THEME["danger"])
     draw_pair(1, "Gaji", f"Rp {format_number(int(metrics.get('total_salary',0) or 0))}", y_r2)
 
-max_exp = proj.get("max_expense")
+    # Max expense - in columns 3 & 4
+    max_exp = proj.get("max_expense")
     if max_exp:
         desc = max_exp.get("keterangan", "")
         amt = int(max_exp.get("jumlah", 0) or 0)
         
-        # Koordinat mulai (kolom ke-3)
+        # Position at column 3
         cx = col1_x + 2 * col_w
         
-        # 1. Gambar Label (Muted)
-        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_row2 + 14, "Pengeluaran Terbesar")
+        # Label
+        _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], cx, y_r2 + 14, "Pengeluaran Terbesar")
         
-        # 2. Gambar Nominal (BOLD & DANGER COLOR) - Di kiri agar rapi
+        # Item name first, then amount
+        desc_fit = _fit_ellipsis(desc, ui.fonts["regular"], 9.5, col_w * 1.5)
+        _draw_text(c, ui.fonts["regular"], 9.5, THEME["text"], cx, y_r2, desc_fit)
+        
+        # Amount at column 4
         amt_str = f"Rp {format_number(amt)}"
-        # Kita hitung lebar teks harga agar nama barang bisa ditaruh tepat di sebelahnya
-        amt_w = stringWidth(amt_str, ui.fonts["bold"], 12)
-        _draw_text(c, ui.fonts["bold"], 12, THEME["danger"], cx, y_row2, amt_str)
-        
-        # 3. Gambar Nama Barang - Tepat di sebelah nominal (beri jarak 8pt)
-        avail_w = (col_w * 2) - amt_w - 10
-        desc_fit = _fit_ellipsis(desc, ui.fonts["regular"], 11, avail_w)
-        _draw_text(c, ui.fonts["regular"], 11, THEME["text"], cx + amt_w + 8, y_row2, desc_fit)
-        
+        _draw_text(c, ui.fonts["bold"], 11, THEME["danger"], x + w - 22, y_r2, amt_str, align="right")
     else:
-        # Tampilan jika tidak ada pengeluaran
         cx = col1_x + 2 * col_w
-        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_row2 + 14, "Pengeluaran Terbesar")
-        _draw_text(c, ui.fonts["regular"], 10, THEME["muted2"], cx, y_row2, "-")
-           
-    c.saveState()
-    c.setStrokeColor(THEME["border_light"])
-    c.setLineWidth(1)
-    c.line(x + 22, y + h - 82, x + w - 22, y + h - 82)
-    c.restoreState()
+        _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], cx, y_r2 + 14, "Pengeluaran Terbesar")
+        _draw_text(c, ui.fonts["regular"], 9.5, THEME["muted2"], cx, y_r2, "-")
 
 
 # =============================================================================
