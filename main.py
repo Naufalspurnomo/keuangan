@@ -80,8 +80,11 @@ try:
     from pdf_report import generate_pdf_from_input, PDFNoDataError
 except ImportError:
     from pdf_report import generate_pdf_from_input
+
     class PDFNoDataError(Exception):
-        pass
+        def __init__(self, period: str = "periode tersebut"):
+            self.period = period
+            super().__init__(f"No data for period: {period}")
 from utils.parsers import (
     parse_selection, parse_revision_amount,
     should_respond_in_group, is_command_match,
@@ -1639,14 +1642,26 @@ Balas 1 atau 2"""
                      send_reply("❌ Gagal membuat PDF (Data kosong/Format salah).")
                  return jsonify({'status': 'command_pdf'}), 200
              except PDFNoDataError as nde:
-                 send_reply(UserErrors.PDF_NO_DATA.format(period=nde.period))
+                 period = getattr(nde, "period", arg or "periode tersebut")
+                 send_reply(UserErrors.PDF_NO_DATA.format(period=period))
                  return jsonify({'status': 'error_pdf_no_data'}), 200
              except ValueError as ve:
-                 send_reply("❌ Format salah. Contoh: /exportpdf 2026-01 atau /exportpdf 2025-09-22 2025-10-22")
+                 msg = str(ve).lower()
+                 if "tidak ada data" in msg:
+                     send_reply(UserErrors.PDF_NO_DATA.format(period=arg or "periode tersebut"))
+                     return jsonify({'status': 'error_pdf_no_data'}), 200
+                 send_reply(UserErrors.PDF_FORMAT_ERROR)
                  return jsonify({'status': 'error_pdf'}), 200
              except Exception as e:
+                 msg = str(e).lower()
                  secure_log("ERROR", f"PDF Error: {e}")
-                 send_reply(f"❌ Gagal export PDF: {str(e)}")
+                 if "tidak ada data" in msg:
+                     send_reply(UserErrors.PDF_NO_DATA.format(period=arg or "periode tersebut"))
+                     return jsonify({'status': 'error_pdf_no_data'}), 200
+                 if "tahun tidak valid" in msg or "bulan tidak valid" in msg or "format tidak" in msg:
+                     send_reply(UserErrors.PDF_FORMAT_ERROR)
+                     return jsonify({'status': 'error_pdf'}), 200
+                 send_reply("❌ Gagal export PDF. Coba lagi beberapa saat.")
                  return jsonify({'status': 'error'}), 200
 
         # 8. PROCESS NEW INPUT (AI)

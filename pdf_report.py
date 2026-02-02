@@ -1256,9 +1256,18 @@ def _draw_comparison_chart(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: 
         c.roundRect(vx, cy - 16, pw, 14, 7, stroke=0, fill=1)
         _draw_text(c, ui.fonts["bold"], 8.5, THEME["white"], vx + pw / 2, cy - 13, pill_text, align="center")
 
-def _draw_tx_list_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, title: str,
-                       items: List[Dict], kind_color, max_items: int = 4):
-    h = 170
+def _draw_tx_list_card(
+    c: canvas.Canvas,
+    ui: UI,
+    x: float,
+    y_top: float,
+    w: float,
+    title: str,
+    items: List[Dict],
+    kind_color,
+    max_items: Optional[int] = None,
+    h: float = 190,
+):
     y = y_top - h
     _draw_card(c, ui, x, y, w, h, shadow=True)
     _draw_text(c, ui.fonts["bold"], 11, THEME["text"], x + 12, y + h - 18, title)
@@ -1271,27 +1280,68 @@ def _draw_tx_list_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
         _draw_text(c, ui.fonts["regular"], 9.5, THEME["muted2"], x + 12, y + h - 44, "Tidak ada data")
         return
 
-    yy = y + h - 46
-    for i, tx in enumerate(items[:max_items], start=1):
-        desc = (tx.get("keterangan") or "").strip()
-        desc = _fit_ellipsis(desc, ui.fonts["regular"], 9.5, w - 150)
-        amt = int(tx.get("jumlah", 0) or 0)
+    font_name = ui.fonts["regular"]
+    font_size = 9.5
+    amount_font = ui.fonts["semibold"]
+    amount_size = 9.5
 
-        line_y = yy - (i * 26)
-        _draw_text(c, ui.fonts["regular"], 9.5, THEME["text"], x + 12, line_y + 8, f"{i}. {desc}")
-        _draw_text(c, ui.fonts["semibold"], 10, THEME["text"], x + w - 12, line_y + 8, f"Rp {format_number(amt)}", align="right")
+    # compute amount column width based on visible items
+    sample_limit = max_items or min(len(items), 20)
+    sample = items[:sample_limit]
+    amount_w = 0
+    for tx in sample:
+        amt = int(tx.get("jumlah", 0) or 0)
+        label = f"Rp {format_number(amt)}"
+        amount_w = max(amount_w, stringWidth(label, amount_font, amount_size))
+    amount_w = max(amount_w, 60)
+
+    padding_x = 12
+    desc_max_w = max(40, w - padding_x * 2 - amount_w - 8)
+
+    yy = y + h - 46
+    drawn = 0
+    for i, tx in enumerate(sample, start=1):
+        desc = (tx.get("keterangan") or "").strip() or "-"
+        prefix = f"{i}."
+        prefix_w = stringWidth(prefix + " ", font_name, font_size)
+        wrapped = _wrap_lines(desc, font_name, font_size, max(30, desc_max_w - prefix_w), max_lines=2)
+        if not wrapped:
+            wrapped = ["-"]
+
+        line_h = 12
+        row_h = line_h * len(wrapped) + 8
+        line_y = yy - row_h
+
+        if line_y < y + 12:
+            break
+
+        # line 1
+        _draw_text(c, font_name, font_size, THEME["text"], x + padding_x, line_y + row_h - 16, f"{prefix} {wrapped[0]}")
+        # line 2 (if any)
+        if len(wrapped) > 1:
+            _draw_text(c, font_name, font_size, THEME["text"], x + padding_x + prefix_w, line_y + row_h - 28, wrapped[1])
+
+        # amount aligned right (on first line)
+        amt = int(tx.get("jumlah", 0) or 0)
+        _draw_text(c, amount_font, amount_size, THEME["text"], x + w - padding_x, line_y + row_h - 16, f"Rp {format_number(amt)}", align="right")
+
+        drawn += 1
+        yy = line_y
 
         # divider
-        if i < max_items and i < len(items):
+        if i < len(sample):
             c.setStrokeColor(THEME["border"])
             c.setLineWidth(1)
-            c.line(x + 12, line_y + 2, x + w - 12, line_y + 2)
+            c.line(x + padding_x, yy + 4, x + w - padding_x, yy + 4)
 
-def _draw_insight_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, company_details: Dict):
+    remaining = len(items) - drawn
+    if remaining > 0 and yy - 16 > y + 10:
+        _draw_text(c, font_name, 9, THEME["muted"], x + padding_x, yy - 8, f"+{remaining} lainnya")
+
+def _draw_insight_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, company_details: Dict, h: float = 170):
     """
     Compact insights for readability (avoid tiny text).
     """
-    h = 120
     y = y_top - h
     _draw_card(c, ui, x, y, w, h, shadow=True)
     _draw_text(c, ui.fonts["bold"], 11, THEME["text"], x + 12, y + h - 18, "Insight")
@@ -1328,7 +1378,8 @@ def _draw_insight_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
 
     # draw lines
     yy = y + h - 42
-    for i, line in enumerate(lines[:4], start=0):  # keep readable (max 4 lines)
+    max_lines = 5 if h >= 170 else 4
+    for i, line in enumerate(lines[:max_lines], start=0):
         _draw_text(c, ui.fonts["regular"], 9.5, THEME["text"], x + 12, yy - i * 20, _fit_ellipsis(line, ui.fonts["regular"], 9.5, w - 24))
 
 def _draw_project_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h: float,
@@ -1486,8 +1537,48 @@ def draw_cover_periodical(c: canvas.Canvas, ui: UI, ctx: Dict, logo_path: Option
 
     _draw_footer(c, ui, page_w)
 
-def draw_company_page(c: canvas.Canvas, ui: UI, ctx: Dict, company: str):
-    page_w, page_h = (A4[0], 1621)  # match client PDF tall page
+def _estimate_company_page_height(ui: UI, details: Dict, base_h: float = 1621) -> float:
+    """
+    Estimate required page height so finished project cards never overflow.
+    Keeps top layout identical; only extends page downward if needed.
+    """
+    header_h = 150
+    top_gap = 24
+    kpi_h = 92
+    kpi_gap = 18
+    row_h = 132
+    row_gap = 18
+    list_h = 190
+    list_gap = 16
+    list2_gap = 22
+    title_gap = 32
+    footer_space = 26
+
+    fixed = (
+        header_h + top_gap +
+        kpi_h + kpi_gap +
+        row_h + row_gap +
+        list_h + list_gap +
+        list_h + list2_gap +
+        title_gap +
+        ui.margin + footer_space
+    )
+
+    cards = details.get("finished_cards") or []
+    if not cards:
+        return base_h
+
+    card_h = 118
+    card_gap = 12
+    card_space = len(cards) * (card_h + card_gap) - card_gap
+
+    needed = fixed + card_space
+    return float(max(base_h, needed))
+
+
+def draw_company_page(c: canvas.Canvas, ui: UI, ctx: Dict, company: str, page_h: Optional[float] = None):
+    page_w = A4[0]
+    page_h = page_h or 1621  # default tall page
     c.setFillColor(THEME["bg"])
     c.rect(0, 0, page_w, page_h, fill=1, stroke=0)
 
@@ -1535,17 +1626,32 @@ def draw_company_page(c: canvas.Canvas, ui: UI, ctx: Dict, company: str):
 
     y -= (row_h + 18)
 
-    # Lists row
-    list_w = (content_w - 2 * gap) / 3.0
-    _draw_tx_list_card(c, ui, content_x + 0 * (list_w + gap), y, list_w, "List Pemasukan", details["income_txs"], THEME["teal"], max_items=4)
-    _draw_tx_list_card(c, ui, content_x + 1 * (list_w + gap), y, list_w, "List Pengeluaran", details["expense_txs"], THEME["pink"], max_items=4)
-    _draw_tx_list_card(c, ui, content_x + 2 * (list_w + gap), y, list_w, "List Gaji", details["salary_txs"], COMPANY_COLOR.get(company, THEME["teal"]), max_items=4)
+    # Lists row (2 columns for better readability)
+    col_gap = 16
+    col_w = (content_w - col_gap) / 2.0
+    list_h = 190
 
-    y -= (170 + 18)
+    _draw_tx_list_card(
+        c, ui, content_x, y, col_w,
+        "List Pemasukan", details["income_txs"], THEME["teal"],
+        max_items=None, h=list_h
+    )
+    _draw_tx_list_card(
+        c, ui, content_x + col_w + col_gap, y, col_w,
+        "List Pengeluaran", details["expense_txs"], THEME["pink"],
+        max_items=None, h=list_h
+    )
 
-    # Insight
-    _draw_insight_card(c, ui, content_x, y, content_w, details)
-    y -= (120 + 22)
+    y -= (list_h + 16)
+
+    _draw_tx_list_card(
+        c, ui, content_x, y, col_w,
+        "List Gaji", details["salary_txs"], COMPANY_COLOR.get(company, THEME["teal"]),
+        max_items=None, h=list_h
+    )
+    _draw_insight_card(c, ui, content_x + col_w + col_gap, y, col_w, details, h=list_h)
+
+    y -= (list_h + 22)
 
     # Finished projects section
     _draw_text(c, ui.fonts["bold"], 14, THEME["text"], content_x, y, "Finished Projects")
@@ -1559,9 +1665,11 @@ def draw_company_page(c: canvas.Canvas, ui: UI, ctx: Dict, company: str):
         _draw_footer(c, ui, page_w)
         return
 
+    card_gap = 12
     card_h = 118
-    card_gap = 14
-    max_cards = 6
+    footer_space = 26
+    available_h = y - (ui.margin + footer_space)
+    max_cards = max(1, int((available_h + card_gap) // (card_h + card_gap)))
 
     for i, proj in enumerate(cards[:max_cards], start=1):
         _draw_project_card(c, ui, content_x, y, content_w, card_h, i, company, proj)
@@ -1598,9 +1706,10 @@ def generate_pdf_report_v3_monthly(year: int, month: int, output_dir: Optional[s
     draw_cover_monthly(c, ui, ctx, logo_path=logo_path)
     c.showPage()
 
-    c.setPageSize((A4[0], 1621))
     for comp in COMPANY_KEYS:
-        draw_company_page(c, ui, ctx, comp)
+        page_h = _estimate_company_page_height(ui, ctx["company_details"][comp], base_h=1621)
+        c.setPageSize((A4[0], page_h))
+        draw_company_page(c, ui, ctx, comp, page_h=page_h)
         c.showPage()
 
     c.save()

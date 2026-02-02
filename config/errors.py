@@ -73,7 +73,7 @@ class UserErrors:
     
     # PDF errors
     PDF_NO_DATA = (
-        "❌ Tidak ada transaksi untuk {period}\n\n"
+        "❌ Tanggal ini tidak ada di database untuk periode {period}.\n\n"
         "PDF tidak dibuat karena tidak ada data.\n\n"
         "💡 Tips:\n"
         "• Cek periode yang benar\n"
