@@ -99,6 +99,8 @@ from config.wallets import (
     get_wallet_selection_by_idx,
     WALLET_SELECTION_OPTIONS,
     get_dompet_short_name,
+    apply_company_prefix,
+    strip_company_prefix,
 )
 
 # Initialize Flask app
@@ -792,7 +794,8 @@ Balas 1 atau 2"""
                         continue
                     
                     # Resolve Name
-                    res = resolve_project_name(p_name_raw)
+                    lookup_name = strip_company_prefix(p_name_raw)
+                    res = resolve_project_name(lookup_name)
                     
                     if res['status'] == 'AMBIGUOUS':
                          pending['pending_type'] = 'confirmation_project'
@@ -925,7 +928,12 @@ Balas 1 atau 2"""
                         )
                         send_reply(msg.replace('*', ''))
                         return jsonify({'status': 'new_project_first_expense'}), 200
-                
+
+                for t in txs:
+                    pname = t.get('nama_projek')
+                    if pname:
+                        t['nama_projek'] = apply_company_prefix(pname, dompet, detected_company)
+
                 # Draft → Confirm → Commit
                 set_pending_confirmation(
                     user_id=sender_number,
@@ -1425,7 +1433,7 @@ Balas 1 atau 2"""
                     # Treat input as the CORRECT name (and implicitly NEW if not resolved previously)
                     final_proj = sanitize_input(text.strip())
                     # Check if actually exists now
-                    res_check = resolve_project_name(final_proj)
+                    res_check = resolve_project_name(strip_company_prefix(final_proj))
                     if res_check['status'] == 'NEW':
                          pending['is_new_project'] = True
                     
@@ -1437,7 +1445,7 @@ Balas 1 atau 2"""
             # C. Needs Project
             if ptype == 'needs_project':
                 proj = sanitize_input(text.strip())
-                res = resolve_project_name(proj)
+                res = resolve_project_name(strip_company_prefix(proj))
                 
                 if res['status'] == 'AMBIGUOUS':
                     pending['pending_type'] = 'confirmation_project'

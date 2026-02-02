@@ -1879,8 +1879,9 @@ def find_company_for_project(project_name: str) -> tuple:
     clean_target = clean_target.replace('(start)', '').replace('(finish)', '').strip()
     
     try:
-        from config.wallets import DOMPET_SHEETS, DOMPET_COMPANIES, get_company_name_from_sheet
+        from config.wallets import DOMPET_SHEETS, DOMPET_COMPANIES, get_company_name_from_sheet, strip_company_prefix
         from config.constants import SPLIT_PEMASUKAN, SPLIT_PENGELUARAN, SPLIT_LAYOUT_DATA_START
+        clean_target = strip_company_prefix(clean_target) or clean_target
 
         for dompet in DOMPET_SHEETS:
             sheet = get_dompet_sheet(dompet)

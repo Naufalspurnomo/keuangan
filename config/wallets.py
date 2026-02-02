@@ -322,6 +322,49 @@ def format_wallet_selection_prompt() -> str:
     return "\n".join(lines)
 
 
+PROJECT_PREFIX_DOMPETS = {"CV HB (101)"}
+PROJECT_PREFIX_COMPANIES = {"HOLLA", "HOJJA"}
+PROJECT_PREFIX_EXCLUDE = {"operasional kantor", "saldo umum", "umum", "unknown"}
+
+
+def extract_company_prefix(project_name: str) -> Optional[str]:
+    """Return HOLLA/HOJJA if project name starts with a company prefix."""
+    if not project_name:
+        return None
+    match = re.match(r"^\s*(HOLLA|HOJJA)\s*[-:]\s*", project_name, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    return None
+
+
+def strip_company_prefix(project_name: str) -> str:
+    """Remove HOLLA/HOJJA prefix from project name if present."""
+    if not project_name:
+        return project_name
+    return re.sub(r"^\s*(HOLLA|HOJJA)\s*[-:]\s*", "", project_name, flags=re.IGNORECASE).strip()
+
+
+def apply_company_prefix(project_name: str, dompet_sheet: str, company: str) -> str:
+    """
+    Add HOLLA/HOJJA prefix for CV HB projects, if not already prefixed.
+    Keeps the original name if prefix is already present.
+    """
+    if not project_name:
+        return project_name
+    if dompet_sheet not in PROJECT_PREFIX_DOMPETS:
+        return project_name
+    if not company:
+        return project_name
+    company_clean = str(company).strip().upper()
+    if company_clean not in PROJECT_PREFIX_COMPANIES:
+        return project_name
+    if project_name.strip().lower() in PROJECT_PREFIX_EXCLUDE:
+        return project_name
+    if extract_company_prefix(project_name):
+        return project_name
+    return f"{company_clean} - {project_name.strip()}"
+
+
 # For testing
 if __name__ == '__main__':
     print("Wallet Configuration Test (v2 - Cost Accounting)")

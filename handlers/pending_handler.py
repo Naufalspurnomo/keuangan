@@ -24,7 +24,10 @@ from config.wallets import (
     get_selection_by_idx,
     get_wallet_selection_by_idx,
     format_wallet_selection_prompt,
-    get_company_name_from_sheet
+    get_company_name_from_sheet,
+    apply_company_prefix,
+    extract_company_prefix,
+    strip_company_prefix
 )
 
 def extract_project_name_from_text(text: str) -> str:
@@ -65,6 +68,13 @@ def _assign_tx_ids(transactions: list, event_id: str) -> list:
         tx['tx_id'] = tx_id
         tx_ids.append(tx_id)
     return tx_ids
+
+
+def _apply_project_prefix(transactions: list, dompet_sheet: str, company: str) -> None:
+    for tx in transactions:
+        pname = tx.get('nama_projek')
+        if pname:
+            tx['nama_projek'] = apply_company_prefix(pname, dompet_sheet, company)
 
 
 def _detect_operational_category(keterangan: str) -> str:
@@ -408,6 +418,8 @@ Atau ketik /cancel untuk batal total"""
                 for t in transactions:
                     if not t.get('nama_projek'):
                         t['nama_projek'] = project_name
+        
+        _apply_project_prefix(transactions, dompet_sheet, company)
                         
         # Draft → Confirm → Commit
         set_pending_confirmation(
@@ -441,6 +453,8 @@ Atau ketik /cancel untuk batal total"""
     elif pending_type == 'project_name_input':
         
         project_name = text.strip()
+        dompet_sheet = pending_data.get('dompet_sheet')
+        company = pending_data.get('company')
         
         if text_lower in ['/cancel', 'batal']:
             clear_pending_confirmation(user_id, chat_id)
@@ -456,37 +470,46 @@ Atau ketik /cancel untuk batal total"""
              # If it's pure operational, it should go to Operational Sheet + Dompet Sheet (Pengeluaran).
              pass 
         
-        res = resolve_project_name(project_name)
+        prefix = extract_company_prefix(project_name)
+        lookup_name = strip_company_prefix(project_name) if prefix else project_name
+        res = resolve_project_name(lookup_name)
         
         # If ambiguous, ask confirmation
         if res.get('status') == 'AMBIGUOUS':
+            suggested = res.get('final_name')
+            if prefix:
+                suggested = f"{prefix} - {suggested}".strip()
+            else:
+                suggested = apply_company_prefix(suggested, dompet_sheet, company)
             set_pending_confirmation(
                 user_id=user_id,
                 chat_id=chat_id,
                 data={
                     'type': 'project_name_confirm',
-                    'suggested_project': res.get('final_name'),
+                    'suggested_project': suggested,
                     'transactions': pending_data.get('transactions', []),
-                    'dompet_sheet': pending_data.get('dompet_sheet'),
-                    'company': pending_data.get('company'),
+                    'dompet_sheet': dompet_sheet,
+                    'company': company,
                     'original_message_id': pending_data.get('original_message_id'),
                     'event_id': pending_data.get('event_id')
                 }
             )
             return {
-                'response': f"🤔 Maksudnya **{res.get('final_name')}**?\n✅ Ya / ❌ Bukan".replace('*', ''),
+                'response': f"🤔 Maksudnya **{suggested}**?\n✅ Ya / ❌ Bukan".replace('*', ''),
                 'completed': False
             }
         
-        final_name = res.get('final_name') or project_name
+        final_base = res.get('final_name') or lookup_name
+        if prefix:
+            final_name = f"{prefix} - {final_base}".strip()
+        else:
+            final_name = apply_company_prefix(final_base, dompet_sheet, company)
         is_new_project = (res.get('status') == 'NEW')
         
         transactions = pending_data.get('transactions', [])
-        dompet_sheet = pending_data.get('dompet_sheet')
-        company = pending_data.get('company')
         
         for tx in transactions:
-            tx['nama_projek'] = final_name
+            tx['nama_projek'] = apply_company_prefix(final_name, dompet_sheet, company)
         
         # If new project but first tx is expense → ask
         if is_new_project and not any(t.get('tipe') == 'Pemasukan' for t in transactions):
@@ -760,6 +783,7 @@ Atau ketik /cancel untuk batal total"""
             for tx in transactions:
                 # Apply lifecycle markers
                 p_name = tx.get('nama_projek', '') or 'Umum'
+                p_name = apply_company_prefix(p_name, dompet_sheet, company)
                 p_name = apply_lifecycle_markers(p_name, tx, is_new_project=is_new_project)
                 
                 append_project_transaction(
@@ -1033,7 +1057,7 @@ Atau ketik /cancel untuk batal total"""
                 'jumlah': item.get('amount', 0),
                 'keterangan': item.get('keterangan', ''),
                 'tipe': item.get('tipe', 'Pengeluaran'),
-                'nama_projek': project_name
+                'nama_projek': apply_company_prefix(project_name, dompet_sheet, company)
             })
         
         set_pending_confirmation(
