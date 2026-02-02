@@ -11,7 +11,13 @@ import argparse
 import random
 from datetime import datetime, timedelta
 
-from config.constants import SPLIT_PEMASUKAN, SPLIT_PENGELUARAN, OPERASIONAL_COLS
+from config.constants import (
+    SPLIT_PEMASUKAN,
+    SPLIT_PENGELUARAN,
+    OPERASIONAL_COLS,
+    SPLIT_LAYOUT_DATA_START,
+    OPERASIONAL_DATA_START,
+)
 from config.wallets import DOMPET_SHEETS
 from sheets_helper import (
     get_dompet_sheet,
@@ -79,35 +85,49 @@ def _apply_prefix(prefix: str, base: str) -> str:
     return base
 
 
-def _count_existing(sheet, col_idx: int) -> int:
+def _count_existing(sheet, col_idx: int, start_row: int = 1) -> int:
     values = sheet.col_values(col_idx)
     if not values:
         return 0
-    return len([v for v in values if str(v).strip()]) - 1
+    count = 0
+    for i in range(start_row - 1, len(values)):
+        if str(values[i]).strip():
+            count += 1
+    return count
+
+
+def _first_empty_row(sheet, col_idx: int, start_row: int) -> int:
+    values = sheet.col_values(col_idx)
+    if not values:
+        return start_row
+    for i in range(start_row - 1, len(values)):
+        if not str(values[i]).strip():
+            return i + 1
+    return len(values) + 1
 
 
 def _build_split_row(tipe: str, no_val: int, dt: datetime, project_name: str, desc: str, amount: int, tx_id: str):
-    base = [""] * 18
+    base = [""] * 9
     if tipe == "Pemasukan":
-        base[SPLIT_PEMASUKAN["NO"] - 1] = no_val
-        base[SPLIT_PEMASUKAN["WAKTU"] - 1] = _format_time(dt)
-        base[SPLIT_PEMASUKAN["TANGGAL"] - 1] = _format_date(dt)
-        base[SPLIT_PEMASUKAN["JUMLAH"] - 1] = amount
-        base[SPLIT_PEMASUKAN["PROJECT"] - 1] = project_name
-        base[SPLIT_PEMASUKAN["KETERANGAN"] - 1] = desc
-        base[SPLIT_PEMASUKAN["OLEH"] - 1] = "Seeder"
-        base[SPLIT_PEMASUKAN["SOURCE"] - 1] = "Seeder"
-        base[SPLIT_PEMASUKAN["MESSAGE_ID"] - 1] = tx_id
+        base[0] = no_val
+        base[1] = _format_time(dt)
+        base[2] = _format_date(dt)
+        base[3] = amount
+        base[4] = project_name
+        base[5] = desc
+        base[6] = "Seeder"
+        base[7] = "Seeder"
+        base[8] = tx_id
     else:
-        base[SPLIT_PENGELUARAN["NO"] - 1] = no_val
-        base[SPLIT_PENGELUARAN["WAKTU"] - 1] = _format_time(dt)
-        base[SPLIT_PENGELUARAN["TANGGAL"] - 1] = _format_date(dt)
-        base[SPLIT_PENGELUARAN["JUMLAH"] - 1] = amount
-        base[SPLIT_PENGELUARAN["PROJECT"] - 1] = project_name
-        base[SPLIT_PENGELUARAN["KETERANGAN"] - 1] = desc
-        base[SPLIT_PENGELUARAN["OLEH"] - 1] = "Seeder"
-        base[SPLIT_PENGELUARAN["SOURCE"] - 1] = "Seeder"
-        base[SPLIT_PENGELUARAN["MESSAGE_ID"] - 1] = tx_id
+        base[0] = no_val
+        base[1] = _format_time(dt)
+        base[2] = _format_date(dt)
+        base[3] = amount
+        base[4] = project_name
+        base[5] = desc
+        base[6] = "Seeder"
+        base[7] = "Seeder"
+        base[8] = tx_id
     return base
 
 
@@ -134,13 +154,18 @@ def seed_data(start_dt: datetime, end_dt: datetime, projects_per_company: int, s
     # Track NO for income/expense blocks
     no_in = {}
     no_out = {}
+    start_row_in = {}
+    start_row_out = {}
     for dompet, sheet in dompet_sheets.items():
-        no_in[dompet] = max(_count_existing(sheet, SPLIT_PEMASUKAN["NO"]), 0)
-        no_out[dompet] = max(_count_existing(sheet, SPLIT_PENGELUARAN["NO"]), 0)
+        no_in[dompet] = _count_existing(sheet, SPLIT_PEMASUKAN["NO"], start_row=SPLIT_LAYOUT_DATA_START)
+        no_out[dompet] = _count_existing(sheet, SPLIT_PENGELUARAN["NO"], start_row=SPLIT_LAYOUT_DATA_START)
+        start_row_in[dompet] = _first_empty_row(sheet, SPLIT_PEMASUKAN["NO"], SPLIT_LAYOUT_DATA_START)
+        start_row_out[dompet] = _first_empty_row(sheet, SPLIT_PENGELUARAN["NO"], SPLIT_LAYOUT_DATA_START)
 
-    op_no = max(_count_existing(op_sheet, OPERASIONAL_COLS["NO"]), 0)
+    op_no = max(_count_existing(op_sheet, OPERASIONAL_COLS["NO"], start_row=OPERASIONAL_DATA_START), 0)
 
-    rows_by_sheet = {dompet: [] for dompet in DOMPET_SHEETS}
+    rows_by_sheet_in = {dompet: [] for dompet in DOMPET_SHEETS}
+    rows_by_sheet_out = {dompet: [] for dompet in DOMPET_SHEETS}
     op_rows = []
 
     for company in COMPANIES:
@@ -162,7 +187,7 @@ def seed_data(start_dt: datetime, end_dt: datetime, projects_per_company: int, s
 
             # Income: DP
             no_in[dompet] += 1
-            rows_by_sheet[dompet].append(
+            rows_by_sheet_in[dompet].append(
                 _build_split_row(
                     "Pemasukan",
                     no_in[dompet],
@@ -177,7 +202,7 @@ def seed_data(start_dt: datetime, end_dt: datetime, projects_per_company: int, s
             # Income: DP2
             mid_date = _random_date(start_date + timedelta(days=7), finish_date)
             no_in[dompet] += 1
-            rows_by_sheet[dompet].append(
+            rows_by_sheet_in[dompet].append(
                 _build_split_row(
                     "Pemasukan",
                     no_in[dompet],
@@ -192,7 +217,7 @@ def seed_data(start_dt: datetime, end_dt: datetime, projects_per_company: int, s
             # Income: Pelunasan (finish)
             if is_finished:
                 no_in[dompet] += 1
-                rows_by_sheet[dompet].append(
+                rows_by_sheet_in[dompet].append(
                     _build_split_row(
                         "Pemasukan",
                         no_in[dompet],
@@ -209,7 +234,7 @@ def seed_data(start_dt: datetime, end_dt: datetime, projects_per_company: int, s
                 exp_date = _random_date(start_date, finish_date)
                 desc = random.choice(EXPENSE_DESCS)
                 no_out[dompet] += 1
-                rows_by_sheet[dompet].append(
+                rows_by_sheet_out[dompet].append(
                     _build_split_row(
                         "Pengeluaran",
                         no_out[dompet],
@@ -226,7 +251,7 @@ def seed_data(start_dt: datetime, end_dt: datetime, projects_per_company: int, s
                 sal_date = _random_date(start_date, finish_date)
                 desc = random.choice(SALARY_DESCS)
                 no_out[dompet] += 1
-                rows_by_sheet[dompet].append(
+                rows_by_sheet_out[dompet].append(
                     _build_split_row(
                         "Pengeluaran",
                         no_out[dompet],
@@ -260,12 +285,25 @@ def seed_data(start_dt: datetime, end_dt: datetime, projects_per_company: int, s
 
     # Batch append to reduce API calls
     for dompet, sheet in dompet_sheets.items():
-        rows = rows_by_sheet.get(dompet, [])
-        if not rows:
-            continue
-        chunk = 200
-        for i in range(0, len(rows), chunk):
-            sheet.append_rows(rows[i:i + chunk], value_input_option="USER_ENTERED")
+        rows_in = rows_by_sheet_in.get(dompet, [])
+        if rows_in:
+            start_row = start_row_in[dompet]
+            end_row = start_row + len(rows_in) - 1
+            sheet.update(
+                f"A{start_row}:I{end_row}",
+                rows_in,
+                value_input_option="USER_ENTERED",
+            )
+
+        rows_out = rows_by_sheet_out.get(dompet, [])
+        if rows_out:
+            start_row = start_row_out[dompet]
+            end_row = start_row + len(rows_out) - 1
+            sheet.update(
+                f"J{start_row}:R{end_row}",
+                rows_out,
+                value_input_option="USER_ENTERED",
+            )
 
     if op_rows:
         chunk = 200
