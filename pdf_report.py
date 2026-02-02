@@ -23,7 +23,7 @@ import re
 import math
 import calendar
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 
@@ -130,19 +130,18 @@ THEME_V2 = {
 }
 
 COMPANY_THEME_V2 = {
-    "Hollawall Mural": colors.HexColor("#1DB7C5"),
+    "Hollawall": colors.HexColor("#1DB7C5"),
     "Hojja": colors.HexColor("#7A9572"),
     "Texturin Surabaya": colors.HexColor("#8C5637"),
     "Texturin Bali": colors.HexColor("#DFB281"),
 }
 
-COMPANY_ORDER_V2 = ["Hollawall Mural", "Hojja", "Texturin Surabaya", "Texturin Bali"]
+COMPANY_ORDER_V2 = ["Hollawall", "Hojja", "Texturin Surabaya", "Texturin Bali"]
 
 OFFICE_SHEET_NAME = "Operasional Kantor"
 
-FINISH_KEYWORDS = [
-    "pelunasan", "lunas", "final payment", "penyelesaian", "selesai", "kelar", "beres", "closing"
-]
+PELUNASAN_KEYWORDS = ["pelunasan", "lunas", "final payment", "penyelesaian", "closing"]
+PROJECT_EXCLUDE_NAMES = {"operasional", "operasional kantor", "saldo umum", "umum", "unknown"}
 
 # =========================
 # SAFE HELPERS
@@ -486,17 +485,45 @@ def _is_salary(tx: Dict) -> bool:
     return "gaji" in category or "gaji" in desc
 
 
+def _strip_project_markers(name: str) -> str:
+    if not name:
+        return ""
+    clean = re.sub(r"\s*\((start|finish)\)\s*$", "", name.strip(), flags=re.IGNORECASE)
+    return clean.strip()
+
+
+def _has_finish_marker(name: str) -> bool:
+    return "(finish)" in (name or "").lower()
+
+
+def _project_key(name: str) -> str:
+    return _strip_project_markers(name)
+
+
+def _project_display_name(name: str) -> str:
+    base = _strip_project_markers(name)
+    return strip_company_prefix(base) or base
+
+
 def _company_from_tx(tx: Dict) -> Optional[str]:
     dompet = tx.get("company_sheet")
+    if dompet == OFFICE_SHEET_NAME:
+        return None
     if dompet == "TX SBY(216)":
         return "Texturin Surabaya"
     if dompet == "TX BALI(087)":
         return "Texturin Bali"
     if dompet == "CV HB (101)":
-        prefix = extract_company_prefix(tx.get("nama_projek", ""))
+        project_name = tx.get("nama_projek", "") or ""
+        prefix = extract_company_prefix(project_name)
         if prefix == "HOJJA":
             return "Hojja"
-        return "Hollawall Mural"
+        if prefix == "HOLLA":
+            return "Hollawall"
+        base = _strip_project_markers(project_name).lower()
+        if base in PROJECT_EXCLUDE_NAMES:
+            return None
+        return "Hollawall"
     return None
 
 
@@ -506,12 +533,14 @@ def _summarize_period(transactions: List[Dict]) -> Dict:
     office_expense = 0
     for tx in transactions:
         amt = tx.get("jumlah", 0)
+        if tx.get("company_sheet") == OFFICE_SHEET_NAME:
+            if _is_expense(tx):
+                office_expense += amt
+            continue
         if _is_income(tx):
             income_total += amt
         else:
             expense_total += amt
-            if tx.get("company_sheet") == OFFICE_SHEET_NAME:
-                office_expense += amt
     return {
         "income_total": income_total,
         "expense_total": expense_total,
@@ -550,17 +579,14 @@ def _insight_text(label: str, curr: int, prev: int) -> str:
 def _finished_projects_by_company(period_txs: List[Dict]) -> Dict[str, List[str]]:
     finished = {c: set() for c in COMPANY_ORDER_V2}
     for tx in period_txs:
-        if not _is_income(tx):
-            continue
-        desc = (tx.get("keterangan") or "").lower()
-        if not any(k in desc for k in FINISH_KEYWORDS):
-            continue
         proj = tx.get("nama_projek", "").strip()
         if not proj:
             continue
+        if not _has_finish_marker(proj):
+            continue
         comp = _company_from_tx(tx)
         if comp in finished:
-            finished[comp].add(proj)
+            finished[comp].add(_project_key(proj))
     return {k: sorted(list(v)) for k, v in finished.items()}
 
 
@@ -578,12 +604,14 @@ def _project_metrics(project_txs: List[Dict]) -> Dict:
                 dp2 += amt
             elif "dp" in desc:
                 dp += amt
-            elif any(k in desc for k in FINISH_KEYWORDS):
+            elif any(k in desc for k in PELUNASAN_KEYWORDS):
                 pelunasan += amt
         else:
             total_expense += amt
             if _is_salary(tx):
                 total_salary += amt
+    profit = total_income - total_expense
+    margin_pct = int(round((profit / total_income) * 100)) if total_income else 0
     return {
         "total_income": total_income,
         "total_expense": total_expense,
@@ -591,7 +619,66 @@ def _project_metrics(project_txs: List[Dict]) -> Dict:
         "dp": dp,
         "dp2": dp2,
         "pelunasan": pelunasan,
-        "profit": total_income - total_expense,
+        "profit": profit,
+        "margin_pct": margin_pct,
+    }
+
+
+def _select_max_amount(txs: List[Dict]) -> Optional[Dict]:
+    if not txs:
+        return None
+    return max(txs, key=lambda x: x.get("jumlah", 0))
+
+
+def _select_min_amount(txs: List[Dict]) -> Optional[Dict]:
+    if not txs:
+        return None
+    return min(txs, key=lambda x: x.get("jumlah", 0))
+
+
+def _compute_company_insights(period_txs: List[Dict], all_txs: List[Dict], end_dt: datetime, company: str) -> Dict:
+    # Largest expense (exclude salary if possible)
+    non_salary_expenses = [t for t in period_txs if _is_expense(t) and not _is_salary(t)]
+    expenses = non_salary_expenses or [t for t in period_txs if _is_expense(t)]
+    expense_max = _select_max_amount(expenses)
+
+    salary_txs = [t for t in period_txs if _is_salary(t)]
+    salary_max = _select_max_amount(salary_txs)
+    salary_min = _select_min_amount(salary_txs)
+
+    # Profitability last 12 months
+    window_start = end_dt - timedelta(days=365)
+    project_profit = {}
+    for tx in all_txs:
+        dt = tx.get("dt")
+        if not dt or dt < window_start or dt > end_dt:
+            continue
+        if _company_from_tx(tx) != company:
+            continue
+        proj = _project_key(tx.get("nama_projek", ""))
+        if not proj or proj.lower() in PROJECT_EXCLUDE_NAMES:
+            continue
+        project_profit.setdefault(proj, {"income": 0, "expense": 0})
+        if _is_income(tx):
+            project_profit[proj]["income"] += tx.get("jumlah", 0)
+        else:
+            project_profit[proj]["expense"] += tx.get("jumlah", 0)
+
+    best_proj = worst_proj = None
+    if project_profit:
+        profits = {
+            k: v["income"] - v["expense"]
+            for k, v in project_profit.items()
+        }
+        best_proj = max(profits.items(), key=lambda x: x[1])
+        worst_proj = min(profits.items(), key=lambda x: x[1])
+
+    return {
+        "expense_max": expense_max,
+        "salary_max": salary_max,
+        "salary_min": salary_min,
+        "best_project": best_proj,   # (name, profit)
+        "worst_project": worst_proj, # (name, profit)
     }
 
 # =========================
@@ -1721,10 +1808,10 @@ def _build_context_monthly(year: int, month: int) -> Dict:
         proj = tx.get("nama_projek", "").strip()
         if not proj:
             continue
-        proj_l = proj.lower()
-        if proj_l in {"operasional kantor", "saldo umum", "umum", "unknown"}:
+        proj_key = _project_key(proj)
+        if not proj_key or proj_key.lower() in PROJECT_EXCLUDE_NAMES:
             continue
-        projects_all.setdefault(proj, []).append(tx)
+        projects_all.setdefault(proj_key, []).append(tx)
 
     company_details = {}
     for comp in COMPANY_ORDER_V2:
@@ -1737,11 +1824,13 @@ def _build_context_monthly(year: int, month: int) -> Dict:
         expense_txs = sorted([t for t in period_list if _is_expense(t) and not _is_salary(t)], key=lambda x: x["jumlah"], reverse=True)
         salary_txs = sorted([t for t in period_list if _is_salary(t)], key=lambda x: x["jumlah"], reverse=True)
 
+        insights = _compute_company_insights(period_list, all_txs, end_dt, comp)
+
         finished_metrics = []
-        for proj in finished_projects.get(comp, []):
-            metrics = _project_metrics(projects_all.get(proj, []))
+        for proj_key in finished_projects.get(comp, []):
+            metrics = _project_metrics(projects_all.get(proj_key, []))
             finished_metrics.append({
-                "name": strip_company_prefix(proj) or proj,
+                "name": _project_display_name(proj_key) or proj_key,
                 "metrics": metrics,
             })
 
@@ -1752,6 +1841,7 @@ def _build_context_monthly(year: int, month: int) -> Dict:
             "expense_txs": expense_txs,
             "salary_txs": salary_txs,
             "finished_projects": finished_metrics,
+            "insights": insights,
         }
 
     return {
@@ -1892,6 +1982,87 @@ def _draw_comparison_column(c: canvas.Canvas, x: float, y_top: float, curr: int,
     c.drawString(x, y_top - 32, _insight_text(label, curr, prev))
 
 
+def _draw_simple_list(c: canvas.Canvas, x: float, y_top: float, title: str, items: List[Dict], max_items: int = 3):
+    c.setFillColor(THEME_V2["text"])
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(x, y_top, title)
+    c.setFont("Helvetica", 8)
+    if not items:
+        c.drawString(x, y_top - 14, "Tidak ada data")
+        return
+    for i, tx in enumerate(items[:max_items], start=1):
+        desc = (tx.get("keterangan") or "")[:24]
+        amount = format_number(tx.get("jumlah", 0))
+        c.drawString(x, y_top - 14 - ((i - 1) * 12), f"{i}. {desc} Rp {amount}")
+
+
+def _draw_insights_block(c: canvas.Canvas, x: float, y_top: float, insights: Dict):
+    c.setFillColor(THEME_V2["text"])
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(x, y_top, "Insight")
+
+    c.setFont("Helvetica", 8)
+    lines = []
+
+    expense_max = insights.get("expense_max")
+    if expense_max:
+        lines.append(f"Pengeluaran Terbesar: {expense_max.get('keterangan', '')[:22]} Rp {format_number(expense_max.get('jumlah', 0))}")
+    else:
+        lines.append("Pengeluaran Terbesar: Tidak ada data")
+
+    salary_max = insights.get("salary_max")
+    if salary_max:
+        lines.append(f"Gaji Terbesar: {salary_max.get('keterangan', '')[:22]} Rp {format_number(salary_max.get('jumlah', 0))}")
+    else:
+        lines.append("Gaji Terbesar: Tidak ada data")
+
+    salary_min = insights.get("salary_min")
+    if salary_min:
+        lines.append(f"Gaji Terkecil: {salary_min.get('keterangan', '')[:22]} Rp {format_number(salary_min.get('jumlah', 0))}")
+    else:
+        lines.append("Gaji Terkecil: Tidak ada data")
+
+    best_proj = insights.get("best_project")
+    if best_proj:
+        lines.append(f"Proyek paling profitable setahun terakhir: {_project_display_name(best_proj[0])} Rp {format_number(best_proj[1])}")
+    else:
+        lines.append("Proyek paling profitable setahun terakhir: Tidak ada data")
+
+    worst_proj = insights.get("worst_project")
+    if worst_proj:
+        lines.append(f"Proyek paling tidak profitable setahun terakhir: {_project_display_name(worst_proj[0])} Rp {format_number(worst_proj[1])}")
+    else:
+        lines.append("Proyek paling tidak profitable setahun terakhir: Tidak ada data")
+
+    for i, line in enumerate(lines):
+        c.drawString(x, y_top - 14 - (i * 12), line[:90])
+
+
+def _draw_delta_chart(c: canvas.Canvas, x: float, y_top: float, curr: Dict, prev: Dict):
+    chart_w = 200
+    chart_h = 90
+    c.setStrokeColor(THEME_V2["black"])
+    c.setLineWidth(1)
+    c.rect(x, y_top - chart_h, chart_w, chart_h, stroke=1, fill=0)
+
+    metrics = [
+        ("Omset", curr["income_total"], prev["income_total"], THEME_V2["teal"]),
+        ("Pengeluaran", curr["expense_total"], prev["expense_total"], THEME_V2["pink"]),
+        ("Profit", curr["profit"], prev["profit"], THEME_V2["text"]),
+    ]
+    max_val = max([abs(m[1]) for m in metrics] + [abs(m[2]) for m in metrics] + [1])
+    for idx, (label, curr_val, prev_val, color) in enumerate(metrics):
+        y = y_top - 15 - (idx * 28)
+        c.setFillColor(THEME_V2["text"])
+        c.setFont("Helvetica", 7)
+        c.drawString(x + 5, y + 8, label)
+
+        prev_len = int((abs(prev_val) / max_val) * 80)
+        curr_len = int((abs(curr_val) / max_val) * 80)
+        c.setFillColor(colors.HexColor("#C0C0C0"))
+        c.rect(x + 60, y + 3, prev_len, 6, fill=1, stroke=0)
+        c.setFillColor(color)
+        c.rect(x + 60, y - 5, curr_len, 6, fill=1, stroke=0)
 def _draw_finished_projects_section(c: canvas.Canvas, ctx: Dict, page_w: float, page_h: float, title: str, note: str):
     c.setFillColor(THEME_V2["teal"])
     c.rect(18, page_h - 535, 26, 18, fill=1, stroke=0)
@@ -1917,7 +2088,10 @@ def _draw_finished_projects_section(c: canvas.Canvas, ctx: Dict, page_w: float, 
         c.setFillColor(THEME_V2["text"])
         c.setFont("Helvetica", 8)
         projects = ctx["finished_projects"].get(comp, [])
-        display = [strip_company_prefix(p) or p for p in projects]
+        display = [_project_display_name(p) or p for p in projects]
+        if not display:
+            c.drawString(x, page_h - 605, "Tidak ada project")
+            continue
         for i, name in enumerate(display[:max_items]):
             c.drawString(x, page_h - 605 - (i * 12), f"• {name}")
         if len(display) > max_items:
@@ -2033,25 +2207,19 @@ def draw_company_page(c: canvas.Canvas, ctx: Dict, company: str):
     _draw_comparison_column(c, 280, page_h - 200, summary["income_total"], prev["income_total"], "income")
     _draw_comparison_column(c, 280, page_h - 260, summary["expense_total"], prev["expense_total"], "expense")
     _draw_comparison_column(c, 280, page_h - 320, summary["profit"], prev["profit"], "profit")
+    _draw_delta_chart(c, 370, page_h - 180, summary, prev)
 
     # Lists
-    list_y = page_h - 420
-    c.setFillColor(THEME_V2["text"])
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(30, list_y, "List Pemasukan")
-    c.drawString(210, list_y, "List Pengeluaran")
-    c.drawString(390, list_y, "List Gaji")
+    list_y = page_h - 430
+    _draw_simple_list(c, 30, list_y, "List Pemasukan", details["income_txs"], max_items=3)
+    _draw_simple_list(c, 210, list_y, "List Pengeluaran", details["expense_txs"], max_items=3)
+    _draw_simple_list(c, 390, list_y, "List Gaji", details["salary_txs"], max_items=3)
 
-    c.setFont("Helvetica", 8)
-    for i, tx in enumerate(details["income_txs"][:6]):
-        c.drawString(30, list_y - 15 - (i * 12), f"{i+1}. {tx['keterangan'][:22]}  Rp {format_number(tx['jumlah'])}")
-    for i, tx in enumerate(details["expense_txs"][:6]):
-        c.drawString(210, list_y - 15 - (i * 12), f"{i+1}. {tx['keterangan'][:22]}  Rp {format_number(tx['jumlah'])}")
-    for i, tx in enumerate(details["salary_txs"][:6]):
-        c.drawString(390, list_y - 15 - (i * 12), f"{i+1}. {tx['keterangan'][:22]}  Rp {format_number(tx['jumlah'])}")
+    insights_y = list_y - 80
+    _draw_insights_block(c, 30, insights_y, details["insights"])
 
     # Finished projects
-    section_y = list_y - 120
+    section_y = insights_y - 110
     c.setStrokeColor(THEME_V2["black"])
     c.setLineWidth(3)
     c.line(30, section_y, page_w - 30, section_y)
@@ -2060,15 +2228,37 @@ def draw_company_page(c: canvas.Canvas, ctx: Dict, company: str):
     c.setFont("Helvetica-Bold", 12)
     c.drawString(30, section_y - 25, "Finished Projects")
 
-    row_y = section_y - 45
-    c.setFont("Helvetica", 8)
-    for idx, item in enumerate(details["finished_projects"][:8], start=1):
-        metrics = item["metrics"]
-        c.drawString(30, row_y - (idx * 14), f"{idx}. {item['name'][:40]}")
-        c.drawRightString(page_w - 30, row_y - (idx * 14), f"Profit {format_number(metrics['profit'])}")
+    headers = ["Project", "Nilai", "DP", "DP2", "Pelunasan", "Pengeluaran", "Gaji", "Profit"]
+    cols = [30, 260, 320, 360, 410, 470, 530, 580]
+    c.setFont("Helvetica", 7)
+    for h, x in zip(headers, cols):
+        if h == "Project":
+            c.drawString(x, section_y - 40, h)
+        else:
+            c.drawRightString(x, section_y - 40, h)
 
-    if len(details["finished_projects"]) > 8:
-        c.drawString(30, row_y - (9 * 14), f"+{len(details['finished_projects']) - 8} lainnya")
+    row_y = section_y - 55
+    c.setFont("Helvetica", 7)
+    items = details["finished_projects"]
+    if not items:
+        c.drawString(30, row_y - 10, "Tidak ada project selesai bulan ini")
+        return
+
+    for idx, item in enumerate(items[:6], start=1):
+        metrics = item["metrics"]
+        y = row_y - (idx * 14)
+        c.drawString(30, y, f"{idx}. {item['name'][:30]}")
+        c.drawRightString(260, y, format_number(metrics['total_income']))
+        c.drawRightString(320, y, format_number(metrics['dp']))
+        c.drawRightString(360, y, format_number(metrics['dp2']))
+        c.drawRightString(410, y, format_number(metrics['pelunasan']))
+        c.drawRightString(470, y, format_number(metrics['total_expense']))
+        c.drawRightString(530, y, format_number(metrics['total_salary']))
+        profit_text = f"{format_number(metrics['profit'])} ({metrics['margin_pct']}%)"
+        c.drawRightString(580, y, profit_text)
+
+    if len(items) > 6:
+        c.drawString(30, row_y - (7 * 14), f"+{len(items) - 6} lainnya")
 
 
 def generate_pdf_report_v2_monthly(year: int, month: int, output_dir: Optional[str] = None) -> str:
