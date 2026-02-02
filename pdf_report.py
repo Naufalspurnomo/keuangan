@@ -907,7 +907,7 @@ def _fit_ellipsis(text: str, font_name: str, font_size: float, max_w: float) -> 
     t = text or ""
     if stringWidth(t, font_name, font_size) <= max_w:
         return t
-    ell = "…"
+    ell = "..."
     if stringWidth(ell, font_name, font_size) > max_w:
         return ""
     # binary shrink
@@ -926,6 +926,7 @@ def _fit_ellipsis(text: str, font_name: str, font_size: float, max_w: float) -> 
 def _wrap_lines(text: str, font_name: str, font_size: float, max_w: float, max_lines: int) -> List[str]:
     """
     Simple word-wrap with ellipsis on last line.
+    Handles very long tokens by force-clamping with ellipsis.
     """
     t = (text or "").strip()
     if not t:
@@ -940,6 +941,15 @@ def _wrap_lines(text: str, font_name: str, font_size: float, max_w: float, max_l
             lines.append(line.strip())
 
     for w in words:
+        # handle super-long single word
+        if stringWidth(w, font_name, font_size) > max_w:
+            flush(cur)
+            lines.append(_fit_ellipsis(w, font_name, font_size, max_w))
+            cur = ""
+            if len(lines) >= max_lines:
+                break
+            continue
+
         cand = (cur + " " + w).strip() if cur else w
         if stringWidth(cand, font_name, font_size) <= max_w:
             cur = cand
@@ -972,6 +982,16 @@ def _draw_text(c: canvas.Canvas, font: str, size: float, color, x: float, y: flo
         c.drawCentredString(x, y, text)
     else:
         c.drawString(x, y, text)
+
+def _fit_font_size(text: str, font: str, max_size: float, min_size: float, max_w: float) -> float:
+    size = max_size
+    while size > min_size and stringWidth(text, font, size) > max_w:
+        size -= 0.5
+    return size
+
+def _draw_text_fit(c: canvas.Canvas, font: str, max_size: float, min_size: float, color, x: float, y: float, text: str, max_w: float, align: str = "left"):
+    size = _fit_font_size(text, font, max_size, min_size, max_w)
+    _draw_text(c, font, size, color, x, y, text, align=align)
 
 def _draw_footer(c: canvas.Canvas, ui: UI, page_w: float):
     y = 14
@@ -1080,7 +1100,9 @@ def _draw_kpi_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h
         num_color = THEME["danger"]
     
     _draw_text(c, ui.fonts["regular"], 11, THEME["muted2"], x + 16, y + h - 48, "Rp")
-    _draw_text(c, ui.fonts["bold"], 24, num_color, x + 38, y + h - 54, format_number(amount))
+    amt_text = format_number(amount)
+    amt_max_w = w - 54  # from x+38 to right padding
+    _draw_text_fit(c, ui.fonts["bold"], 24, 16, num_color, x + 38, y + h - 54, amt_text, amt_max_w, align="left")
 
     # Subnote - if provided
     if subnote:
@@ -1524,7 +1546,19 @@ def _draw_project_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
 
     profit_color = THEME["success"] if profit >= 0 else THEME["danger"]
     _draw_text(c, ui.fonts["semibold"], 10, THEME["muted"], x + w - 18, y + h - 24, "Profit Kotor", align="right")
-    _draw_text(c, ui.fonts["bold"], 13, profit_color, x + w - 18, y + h - 42, f"Rp {format_number(profit)}  ({margin}%)", align="right")
+    profit_text = f"Rp {format_number(profit)}  ({margin}%)"
+    _draw_text_fit(
+        c,
+        ui.fonts["bold"],
+        13,
+        9,
+        profit_color,
+        x + w - 18,
+        y + h - 42,
+        profit_text,
+        180,
+        align="right",
+    )
 
     timeline = proj.get("timeline", {}) or {}
     start_dt = timeline.get("start")
@@ -1544,7 +1578,19 @@ def _draw_project_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
     def metric_cell(ix: int, label: str, value: int, y0: float):
         cx = col1_x + ix * col_w
         _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], cx, y0, label)
-        _draw_text(c, ui.fonts["bold"], 11, THEME["text"], cx, y0 - 15, f"Rp {format_number(value)}")
+        val_text = f"Rp {format_number(value)}"
+        _draw_text_fit(
+            c,
+            ui.fonts["bold"],
+            11,
+            8.5,
+            THEME["text"],
+            cx + col_w - 2,
+            y0 - 15,
+            val_text,
+            col_w - 6,
+            align="right",
+        )
 
     y_row1 = y + 58
     metric_cell(0, "Nilai", int(metrics.get("total_income", 0) or 0), y_row1)
