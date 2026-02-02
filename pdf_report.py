@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-pdf_report_redesigned_v6.py - Finance Bot PDF Export (CHART & LAYOUT FIX)
+pdf_report_redesigned_v7.py - Finance Bot PDF Export (FINAL POLISH)
 
 FIXES APPLIED:
-1. Perbandingan: Changed from Table to Bar Chart visualization.
-2. Finished Projects: Fixed layout alignment (Labels directly above values).
-3. KPI Office Expense: Better formatting for the subnote.
+1. Income Chart: Increased gap between title and first bar.
+2. Comparison Chart: Fixed legend overlap by moving it below the title.
+3. Lists/Insights: Increased card height, reduced font size slightly, enabled text wrapping.
+4. Finished Projects: Improved vertical rhythm between labels and values.
 """
 
 from __future__ import annotations
@@ -80,7 +81,7 @@ THEME = {
     "teal2": colors.HexColor("#0284C7"),
     "pink": colors.HexColor("#EF4444"),
     "green": colors.HexColor("#10B981"),
-    "chart_prev": colors.HexColor("#E5E7EB"), # Gray for previous month bar
+    "chart_prev": colors.HexColor("#E5E7EB"),
 }
 
 COMPANY_KEYS = ["Hollawall", "Hojja", "Texturin Surabaya", "Texturin Bali"]
@@ -187,7 +188,6 @@ def format_currency(amount: int) -> str:
     return f"Rp {format_number(amount)}"
 
 def format_currency_short(amount: int) -> str:
-    """Format cleaner for charts (e.g. 1.2M, 500rb)"""
     abs_amt = abs(amount)
     if abs_amt >= 1_000_000_000:
         val = amount / 1_000_000_000
@@ -796,9 +796,6 @@ def _draw_header_range(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: float, page_
     _draw_text(c, ui.fonts["regular"], 10.5, THEME["text"], left_w + 18, page_h - 138, f"{end_text} (00:00)")
 
 def _draw_kpi_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h: float, label: str, amount: int, accent, subnote_val: Optional[str] = None):
-    """
-    FIXED: Subnote is now rendered as a clean footer text if present.
-    """
     y = y_top - h
     _draw_card(c, ui, x, y, w, h, shadow=True)
     accent_h = 5
@@ -817,27 +814,26 @@ def _draw_kpi_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h
     _draw_text_fit(c, ui.fonts["bold"], 28, 18, num_color, x + 44, y + h - 58, format_number(amount), w - 64, align="left")
     
     if subnote_val:
-        # Draw as footer note
         _draw_text(c, ui.fonts["regular"], 9.5, THEME["muted"], x + 20, y + 16, "Termasuk Ops. Kantor:")
         _draw_text(c, ui.fonts["semibold"], 9.5, THEME["text"], x + 20, y + 6, subnote_val)
 
 def _draw_comparison_chart(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h: float, curr: Dict, prev: Dict):
     """
-    FIXED: Implemented grouped bar chart for visual comparison.
+    FIXED: Moved Legend below title to prevent overlap.
     """
     y = y_top - h
     _draw_card(c, ui, x, y, w, h, shadow=True)
     _draw_text(c, ui.fonts["bold"], 14, THEME["text"], x + 20, y + h - 24, "Perbandingan Bulan Lalu")
     
-    # Legend
-    leg_y = y + h - 24
+    # Legend - Positioned explicitly below title
+    leg_y = y + h - 42 
     c.setFillColor(THEME["chart_prev"])
-    c.roundRect(x + w - 140, leg_y, 10, 10, 2, stroke=0, fill=1)
-    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + w - 125, leg_y + 2, "Bulan lalu")
+    c.roundRect(x + 20, leg_y, 10, 10, 2, stroke=0, fill=1)
+    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + 35, leg_y + 2, "Bulan lalu")
     
-    c.setFillColor(THEME["teal"]) # Generic active color for legend
-    c.roundRect(x + w - 70, leg_y, 10, 10, 2, stroke=0, fill=1)
-    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + w - 55, leg_y + 2, "Bulan ini")
+    c.setFillColor(THEME["teal"]) 
+    c.roundRect(x + 90, leg_y, 10, 10, 2, stroke=0, fill=1)
+    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + 105, leg_y + 2, "Bulan ini")
 
     # Chart Area
     chart_h = h - 60
@@ -845,58 +841,48 @@ def _draw_comparison_chart(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: 
     chart_w = w - 40
     chart_x = x + 20
     
-    # Data preparation
     groups = [
         ("Omset", "income_total", THEME["accent"]),
         ("Pengeluaran", "expense_total", THEME["warning"]),
         ("Profit", "profit", THEME["success"]),
     ]
     
-    # Calculate max value for scaling
     max_val = 0
     for _, key, _ in groups:
         max_val = max(max_val, abs(int(curr.get(key, 0) or 0)), abs(int(prev.get(key, 0) or 0)))
     if max_val == 0: max_val = 1
     
-    # Bar geometry
     group_width = chart_w / len(groups)
     bar_width = (group_width * 0.6) / 2
     gap = 4
     
     for i, (label, key, color) in enumerate(groups):
         cx = chart_x + i * group_width + (group_width * 0.2)
-        
         val_prev = int(prev.get(key, 0) or 0)
         val_curr = int(curr.get(key, 0) or 0)
         
-        # Determine bar colors
         c_prev = THEME["chart_prev"]
         c_curr = color if val_curr >= 0 else THEME["danger"]
         if label == "Profit" and val_curr < 0: c_curr = THEME["danger"]
         
-        # Height calculation (relative to max_val)
-        # Using simple normalization, ignoring negative split axis for simplicity in this mini-chart
-        # (Assuming mostly positive, or visualizing magnitude)
         h_prev = (abs(val_prev) / max_val) * (chart_h - 20)
         h_curr = (abs(val_curr) / max_val) * (chart_h - 20)
         
-        # Draw Prev Bar
         c.setFillColor(c_prev)
         c.roundRect(cx, chart_y + 15, bar_width, max(2, h_prev), 3, stroke=0, fill=1)
-        # Label Prev
         _draw_text(c, ui.fonts["regular"], 8, THEME["muted2"], cx + bar_width/2, chart_y + 15 + h_prev + 2, format_currency_short(val_prev), align="center")
         
-        # Draw Curr Bar
         c.setFillColor(c_curr)
         c.roundRect(cx + bar_width + gap, chart_y + 15, bar_width, max(2, h_curr), 3, stroke=0, fill=1)
-        # Label Curr
         _draw_text(c, ui.fonts["bold"], 8, THEME["text"], cx + bar_width + gap + bar_width/2, chart_y + 15 + h_curr + 2, format_currency_short(val_curr), align="center")
         
-        # Group Label
         _draw_text(c, ui.fonts["semibold"], 10, THEME["text"], cx + bar_width + gap/2, chart_y, label, align="center")
 
 def _draw_income_share_chart(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, items: List[Tuple[str, float, int]]):
-    title_h = 22
+    """
+    FIXED: Increased title_h to 35 to prevent overlap with first bar.
+    """
+    title_h = 35 
     bar_h = 14
     gap = 16
     _draw_text(c, ui.fonts["bold"], 13, THEME["text"], x, y_top - 4, "Grafik Pemasukkan")
@@ -998,6 +984,9 @@ def _draw_company_header(c: canvas.Canvas, ui: UI, ctx: Dict, company: str, page
     _draw_text(c, ui.fonts["bold"], 24, THEME["white"], page_w - ui.margin, page_h - 90, year_part, align="right")
 
 def _draw_tx_list_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, title: str, items: List[Dict], kind_color, max_items: Optional[int] = None, h: float = 200):
+    """
+    FIXED: Smaller font and tighter spacing to fit more items.
+    """
     y = y_top - h
     _draw_card(c, ui, x, y, w, h, shadow=True)
     _draw_text(c, ui.fonts["bold"], 14, THEME["text"], x + 20, y + h - 26, title)
@@ -1009,9 +998,9 @@ def _draw_tx_list_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
         _draw_text(c, ui.fonts["regular"], 11, THEME["muted2"], x + 20, y + h - 58, "Tidak ada data")
         return
     font_name = ui.fonts["regular"]
-    font_size = 10.5
+    font_size = 9.5 
     amount_font = ui.fonts["semibold"]
-    amount_size = 11
+    amount_size = 10 
     padding_x = 20
     max_display = max_items if max_items is not None else len(items)
     sample = items[:max_display]
@@ -1021,30 +1010,33 @@ def _draw_tx_list_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
         desc = (tx.get("keterangan") or "-").strip() or "-"
         prefix = f"{i + 1}."
         prefix_w = stringWidth(prefix + " ", font_name, font_size)
-        avail_w = w - 2 * padding_x - prefix_w - 100
+        avail_w = w - 2 * padding_x - prefix_w - 90
         wrapped = _wrap_lines(desc, font_name, font_size, avail_w, max_lines=2) or ["-"]
-        line_h = 15
-        row_h = line_h * len(wrapped) + 12
+        line_h = 13.5
+        row_h = line_h * len(wrapped) + 10 
         line_y = yy - row_h
         if line_y < y + 16: break
-        _draw_text(c, font_name, font_size, THEME["text"], x + padding_x, line_y + row_h - 20, f"{prefix} {wrapped[0]}")
+        _draw_text(c, font_name, font_size, THEME["text"], x + padding_x, line_y + row_h - 18, f"{prefix} {wrapped[0]}")
         if len(wrapped) > 1:
-            _draw_text(c, font_name, font_size, THEME["muted"], x + padding_x + prefix_w, line_y + row_h - 35, wrapped[1])
+            _draw_text(c, font_name, font_size, THEME["muted"], x + padding_x + prefix_w, line_y + row_h - 31, wrapped[1])
         amt = int(tx.get("jumlah", 0) or 0)
-        _draw_text(c, amount_font, amount_size, THEME["text"], x + w - padding_x, line_y + row_h - 20, f"Rp {format_number(amt)}", align="right")
+        _draw_text(c, amount_font, amount_size, THEME["text"], x + w - padding_x, line_y + row_h - 18, f"Rp {format_number(amt)}", align="right")
         drawn += 1
         yy = line_y
         if i < len(sample) - 1:
             c.saveState()
             c.setStrokeColor(THEME["border_light"])
             c.setLineWidth(1)
-            c.line(x + padding_x, yy + 6, x + w - padding_x, yy + 6)
+            c.line(x + padding_x, yy + 5, x + w - padding_x, yy + 5)
             c.restoreState()
     remaining = len(items) - drawn
     if remaining > 0 and yy - 20 > y + 14:
-        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], x + padding_x, yy - 12, f"+{remaining} lainnya")
+        _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + padding_x, yy - 12, f"+{remaining} lainnya")
 
 def _draw_insight_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, company_details: Dict, h: float = 200):
+    """
+    FIXED: Enabled text wrapping instead of truncation for insights.
+    """
     y = y_top - h
     _draw_card(c, ui, x, y, w, h, shadow=True)
     _draw_text(c, ui.fonts["bold"], 14, THEME["text"], x + 20, y + h - 26, "Insight")
@@ -1052,38 +1044,50 @@ def _draw_insight_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
     c.setFillColor(THEME["accent"])
     c.roundRect(x + 20, y + h - 40, 24, 4, 2, stroke=0, fill=1)
     c.restoreState()
-    lines: List[str] = []
+    
     exp = company_details.get("expense_txs") or []
     sal = company_details.get("salary_txs") or []
+    cards = company_details.get("finished_cards") or []
+
+    # Helper to format line
+    def fmt_line(label, val_txt, amt):
+        return f"{label}: {val_txt} ({format_currency(amt)})"
+
+    lines = []
     if exp:
         top = exp[0]
-        lines.append(f"Pengeluaran terbesar bulan ini: {_fit_ellipsis(top.get('keterangan',''), ui.fonts['regular'], 10.5, w-240)} (Rp {format_number(int(top.get('jumlah',0) or 0))})")
-    else: lines.append("Pengeluaran terbesar bulan ini: Tidak ada data")
+        lines.append(fmt_line("Pengeluaran terbesar", top.get('keterangan',''), int(top.get('jumlah',0) or 0)))
+    else: lines.append("Pengeluaran terbesar: -")
+    
     if sal:
-        smax = sal[0]
-        smin = sal[-1] if len(sal) > 1 else sal[0]
-        lines.append(f"Gaji terbesar: {_fit_ellipsis(smax.get('keterangan',''), ui.fonts['regular'], 10.5, w-200)} (Rp {format_number(int(smax.get('jumlah',0) or 0))})")
-        lines.append(f"Gaji terkecil: {_fit_ellipsis(smin.get('keterangan',''), ui.fonts['regular'], 10.5, w-200)} (Rp {format_number(int(smin.get('jumlah',0) or 0))})")
+        lines.append(fmt_line("Gaji terbesar", sal[0].get('keterangan',''), int(sal[0].get('jumlah',0) or 0)))
+        lines.append(fmt_line("Gaji terkecil", sal[-1].get('keterangan','') if len(sal)>1 else sal[0].get('keterangan',''), int((sal[-1] if len(sal)>1 else sal[0]).get('jumlah',0) or 0)))
     else:
-        lines.append("Gaji terbesar: Tidak ada data")
-        lines.append("Gaji terkecil: Tidak ada data")
-    cards = company_details.get("finished_cards") or []
+        lines.append("Gaji terbesar: -")
+        lines.append("Gaji terkecil: -")
+        
     if cards:
         best = max(cards, key=lambda x: int(x["metrics"]["profit"]))
         worst = min(cards, key=lambda x: int(x["metrics"]["profit"]))
-        lines.append(f"Finished project terbaik: {_fit_ellipsis(best['name'], ui.fonts['regular'], 10.5, w-240)} (Rp {format_number(int(best['metrics']['profit']))})")
-        lines.append(f"Finished project terendah: {_fit_ellipsis(worst['name'], ui.fonts['regular'], 10.5, w-240)} (Rp {format_number(int(worst['metrics']['profit']))})")
+        lines.append(f"Project terbaik: {best['name']} ({format_currency(int(best['metrics']['profit']))})")
+        lines.append(f"Project terendah: {worst['name']} ({format_currency(int(worst['metrics']['profit']))})")
     else:
-        lines.append("Finished project terbaik: Tidak ada data")
-        lines.append("Finished project terendah: Tidak ada data")
+        lines.append("Project terbaik: -")
+        lines.append("Project terendah: -")
+
     yy = y + h - 56
-    max_lines = 5 if h >= 200 else 4
-    for i, line in enumerate(lines[:max_lines], start=0):
-        _draw_text(c, ui.fonts["regular"], 10.5, THEME["text"], x + 20, yy - i * 24, _fit_ellipsis(line, ui.fonts["regular"], 10.5, w - 40))
+    font_sz = 9.5
+    for line in lines:
+        wrapped = _wrap_lines(line, ui.fonts["regular"], font_sz, w - 40, max_lines=2)
+        for wline in wrapped:
+            if yy < y + 10: break
+            _draw_text(c, ui.fonts["regular"], font_sz, THEME["text"], x + 20, yy, wline)
+            yy -= 14
+        yy -= 4
 
 def _draw_project_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h: float, idx: int, company: str, proj: Dict):
     """
-    FIXED: Layout alignment issues. Labels are now strictly aligned with values.
+    FIXED: Improved vertical rhythm.
     """
     y = y_top - h
     _draw_card(c, ui, x, y, w, h, shadow=True)
@@ -1125,8 +1129,8 @@ def _draw_project_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
 
     def draw_pair(ix: int, label: str, val_text: str, y_base: float, val_color=THEME["text"]):
         cx = col1_x + ix * col_w
-        # Label above value
-        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_base + 14, label)
+        # Label above value with more spacing
+        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_base + 16, label)
         # Value
         _draw_text_fit(c, ui.fonts["bold"], 12, 9.5, val_color, cx, y_base, val_text, col_w - 6, align="left")
 
@@ -1147,12 +1151,12 @@ def _draw_project_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
         desc = _fit_ellipsis(max_exp.get("keterangan", ""), ui.fonts["regular"], 10, col_w * 2 - 10)
         amt = int(max_exp.get("jumlah", 0) or 0)
         cx = col1_x + 2 * col_w
-        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_r2 + 14, "Pengeluaran Terbesar")
+        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_r2 + 16, "Pengeluaran Terbesar")
         _draw_text(c, ui.fonts["regular"], 10, THEME["text"], cx, y_r2, desc)
         _draw_text(c, ui.fonts["bold"], 12, THEME["text"], cx + col_w * 2 - 6, y_r2, f"Rp {format_number(amt)}", align="right")
     else:
         cx = col1_x + 2 * col_w
-        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_r2 + 14, "Pengeluaran Terbesar")
+        _draw_text(c, ui.fonts["regular"], 10, THEME["muted"], cx, y_r2 + 16, "Pengeluaran Terbesar")
         _draw_text(c, ui.fonts["regular"], 10, THEME["muted2"], cx, y_r2, "-")
         
     c.saveState()
@@ -1265,7 +1269,10 @@ def draw_company_page(c: canvas.Canvas, ui: UI, ctx: Dict, company: str, page_h:
     y -= (row_h + 24)
     col_gap = 20
     col_w = (content_w - col_gap) / 2.0
-    list_h = 200
+    
+    # INCREASED height for lists to fit more items
+    list_h = 260 
+    
     _draw_tx_list_card(c, ui, content_x, y, col_w, "List Pemasukan", details["income_txs"], THEME["teal"], max_items=None, h=list_h)
     _draw_tx_list_card(c, ui, content_x + col_w + col_gap, y, col_w, "List Pengeluaran", details["expense_txs"], THEME["pink"], max_items=None, h=list_h)
     y -= (list_h + 20)

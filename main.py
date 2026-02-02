@@ -820,7 +820,7 @@ Balas 1 atau 2"""
                         # Validasi typo / project baru
                         pending['pending_type'] = 'confirmation_new_project'
                         pending['new_project_name'] = res['original']
-                        send_reply(f"🆕 Project **{res['original']}** belum ada.\n\nBuat Project Baru?\n✅ Ya / ❌ Ganti Nama")
+                        send_reply(f"🆕 Project **{res['original']}** belum ada.\n\nBuat Project Baru?\n✅ Ya / ❌ Ganti Nama (Langsung Ketik Nama Baru)")
                         return jsonify({'status': 'asking_new_project'}), 200
                     
                     elif res['status'] in ['EXACT', 'AUTO_FIX']:
