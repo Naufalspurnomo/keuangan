@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-pdf_report_redesigned_v7.py - Finance Bot PDF Export (FINAL POLISH)
+Finance Bot PDF Export (FINAL POLISH)
 
 FIXES APPLIED:
 1. Income Chart: Increased gap between title and first bar.
@@ -1310,7 +1310,7 @@ def generate_pdf_report_v4_monthly(year: int, month: int, output_dir: Optional[s
     ui = UI(fonts=fonts)
     out_dir = output_dir or tempfile.gettempdir()
     os.makedirs(out_dir, exist_ok=True)
-    fname = _safe_filename(f"Laporan_Keuangan_{ctx['period_label']}_REDESIGNED") + ".pdf"
+    fname = _safe_filename(f"Laporan_Keuangan_{ctx['period_label']}") + ".pdf"
     output_path = os.path.join(out_dir, fname)
     logo_path = os.getenv("HOLLAWALL_LOGO_PATH")
     c = canvas.Canvas(output_path, pagesize=A4)
@@ -1322,7 +1322,7 @@ def generate_pdf_report_v4_monthly(year: int, month: int, output_dir: Optional[s
         draw_company_page(c, ui, ctx, comp, page_h=page_h)
         c.showPage()
     c.save()
-    secure_log("INFO", f"PDF generated (REDESIGNED): {output_path}")
+    secure_log("INFO", f"PDF generated: {output_path}")
     return output_path
 
 def generate_pdf_report_v4_range(start_dt: datetime, end_dt: datetime, output_dir: Optional[str] = None) -> str:
@@ -1331,13 +1331,13 @@ def generate_pdf_report_v4_range(start_dt: datetime, end_dt: datetime, output_di
     ui = UI(fonts=fonts)
     out_dir = output_dir or tempfile.gettempdir()
     os.makedirs(out_dir, exist_ok=True)
-    fname = _safe_filename(f"Laporan_Keuangan_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}_REDESIGNED") + ".pdf"
+    fname = _safe_filename(f"Laporan_Keuangan_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}") + ".pdf"
     output_path = os.path.join(out_dir, fname)
     logo_path = os.getenv("HOLLAWALL_LOGO_PATH")
     c = canvas.Canvas(output_path, pagesize=A4)
     draw_cover_periodical(c, ui, ctx, logo_path=logo_path)
     c.save()
-    secure_log("INFO", f"PDF generated (REDESIGNED): {output_path}")
+    secure_log("INFO", f"PDF generated: {output_path}")
     return output_path
 
 def generate_pdf_report(year: int, month: int, output_dir: Optional[str] = None, **kwargs) -> str:
