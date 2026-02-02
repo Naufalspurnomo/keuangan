@@ -1075,6 +1075,25 @@ Balas 1 atau 2"""
                 else:
                     send_reply("⚠️ Tidak ada pertanyaan aktif atau sesi sudah kedaluwarsa.\nKirim ulang transaksi ya.")
                     return jsonify({'status': 'no_pending_selection'}), 200
+
+        # Group noise gate (pre-AI): avoid processing random media/chatter
+        if is_group and not has_pending:
+            is_mentioned = False
+            try:
+                is_mentioned = is_explicit_bot_call(text)
+            except Exception:
+                is_mentioned = False
+            should, cleaned = should_respond_in_group(
+                text or "",
+                is_group,
+                has_media=(input_type == 'image'),
+                has_pending=has_pending,
+                is_mentioned=is_mentioned
+            )
+            if not should:
+                return jsonify({'status': 'ignored_group'}), 200
+            if cleaned:
+                text = cleaned
         
         # 4. Filter AI Trigger
         text = sanitize_input(text or '')
@@ -1544,6 +1563,28 @@ Balas 1 atau 2"""
                     send_reply("❌ Dibatalkan.")
                     return jsonify({'status': 'cancelled'}), 200
 
+            # F. OCR Amount Confirmation (image safety)
+            if ptype == 'confirm_amount':
+                clean = text.lower().strip()
+                if clean in ['ok', 'oke', 'ya', 'y', 'benar', 'betul']:
+                    pending.pop('pending_type', None)
+                    pending.pop('pending_amount', None)
+                    return finalize_transaction_workflow(pending, pending_pkey)
+                else:
+                    try:
+                        amt = parse_revision_amount(clean)
+                    except Exception:
+                        amt = 0
+                    if not amt or int(amt) <= 0:
+                        send_reply("⚠️ Nominal tidak valid. Balas *OK* atau ketik nominal yang benar (contoh: 202500).")
+                        return jsonify({'status': 'invalid_amount'}), 200
+                    for t in pending.get('transactions', []):
+                        t['jumlah'] = int(amt)
+                        t.pop('needs_amount', None)
+                    pending.pop('pending_type', None)
+                    pending.pop('pending_amount', None)
+                    return finalize_transaction_workflow(pending, pending_pkey)
+
             # F. Undo Confirmation
             if ptype == 'undo_confirmation':
                 if text.lower().strip() in ['1', 'ya', 'yes', 'hapus']:
@@ -1731,6 +1772,20 @@ Balas 1 atau 2"""
                 'category_scope': layer_category_scope,  # From AI layer (initialized earlier)
                 'override_dompet': transfer_dompet if layer_category_scope == 'TRANSFER' else None,
             }
+
+            # OCR safety: ask confirmation for single-transaction images
+            if input_type == 'image' and len(transactions) == 1:
+                t0 = transactions[0]
+                try:
+                    amt0 = int(t0.get('jumlah', 0) or 0)
+                except Exception:
+                    amt0 = 0
+                if amt0 > 0:
+                    _pending_transactions[sender_pkey]['pending_type'] = 'confirm_amount'
+                    item = t0.get('keterangan', 'Transaksi')
+                    amt_text = f"{amt0:,}".replace(',', '.')
+                    send_reply(f"📷 OCR terdeteksi: {item} (Rp {amt_text}).\nBalas *OK* jika benar, atau ketik nominal yang benar.")
+                    return jsonify({'status': 'confirm_amount'}), 200
 
             # If amount missing/zero, ask user before proceeding
             missing_amount = [t for t in transactions if int(t.get('jumlah', 0) or 0) <= 0]
