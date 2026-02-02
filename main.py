@@ -974,7 +974,7 @@ Balas 1 atau 2"""
             # 3. Ask Company if Unresolved
             pending['pending_type'] = 'selection'
             reply = build_selection_prompt(txs).replace('*', '')
-            if is_group: reply += "\n\n↩️ Reply angka 1-4"
+            if is_group: reply += "\n\n↩️ Reply angka 1-5"
             sent = send_reply(reply)
             cache_prompt(pkey, pending, sent)
             return jsonify({'status': 'asking_company'}), 200
@@ -1406,7 +1406,7 @@ Balas 1 atau 2"""
                     
                     # Re-send updated prompt
                     reply = build_selection_prompt(pending['transactions'])
-                    if is_group: reply += "\n\n↩️ Reply angka 1-4"
+                    if is_group: reply += "\n\n↩️ Reply angka 1-5"
                     send_reply(reply)
                     return jsonify({'status': 'merged'}), 200
                 
@@ -1441,6 +1441,19 @@ Balas 1 atau 2"""
                 
             # A. Select Source Wallet (Operational)
             if ptype == 'select_source_wallet':
+                clean = text.strip().lower()
+                if clean in ['4', 'project', 'projek']:
+                    pending['pending_type'] = None
+                    pending['is_operational'] = False
+                    pending.pop('operational_category', None)
+                    pending['project_confirmed'] = False
+                    pending['category_scope'] = 'PROJECT'
+                    needs_project = any(not t.get('nama_projek') or t.get('needs_project') for t in pending.get('transactions', []))
+                    if needs_project:
+                        pending['pending_type'] = 'needs_project'
+                        send_reply("Nama projeknya apa?")
+                        return jsonify({'status': 'switch_to_project'}), 200
+                    return finalize_transaction_workflow(pending, pending_pkey)
                 try:
                     sel = int(text.strip())
                     opt = get_wallet_selection_by_idx(sel)
@@ -1449,7 +1462,7 @@ Balas 1 atau 2"""
                     pending['selected_source_wallet'] = opt['dompet']
                     return finalize_transaction_workflow(pending, pending_pkey)
                 except:
-                    send_reply("❌ Pilih angka 1-3.")
+                    send_reply("❌ Pilih angka 1-4.")
                     return jsonify({'status': 'invalid'}), 200
             
             # B. Project Confirmation (Existing - Ambiguous Name)
@@ -1528,6 +1541,16 @@ Balas 1 atau 2"""
                 
             # D. Company Selection
             if ptype == 'selection':
+                clean = text.strip().lower()
+                if clean in ['5', 'operasional', 'kantor', 'operasional kantor']:
+                    pending['pending_type'] = 'select_source_wallet'
+                    pending['is_operational'] = True
+                    pending['operational_category'] = pending.get('operational_category', 'Lain Lain')
+                    pending['project_confirmed'] = False
+                    prompt = format_wallet_selection_prompt()
+                    mention = format_mention(pending.get('sender_name', sender_name), is_group)
+                    send_reply(f"{mention}🏢 Diganti ke Operasional Kantor\n\n{prompt}".replace('*', ''))
+                    return jsonify({'status': 'switch_to_operational'}), 200
                 valid, sel, err = parse_selection(text)
                 if not valid:
                     send_reply(f"❌ {err}")

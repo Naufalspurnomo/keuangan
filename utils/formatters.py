@@ -134,11 +134,13 @@ def build_selection_prompt(transactions: list, mention: str = "") -> str:
 {tx_preview}
 📊 Total: Rp {total:,}
 
-❓ Simpan ke company mana? (1-4)
+❓ Simpan ke company mana? (1-4) atau pilih 5 untuk Operasional
 
 📁 CV HB (101): 1️⃣ HOLLA | 2️⃣ HOJJA
 📁 TX SBY (216): 3️⃣ TEXTURIN-Surabaya
 📁 TX BALI (087): 4️⃣ TEXTURIN-Bali
+
+5️⃣ Ini ternyata Operasional Kantor
 
 ⏳ Batas waktu: 15 menit
 💡 Salah pilih? /cancel lalu kirim ulang""".replace(',', '.')

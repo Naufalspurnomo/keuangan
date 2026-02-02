@@ -318,7 +318,9 @@ def format_wallet_selection_prompt() -> str:
     for opt in WALLET_SELECTION_OPTIONS:
         lines.append(opt["display"])
     lines.append("")
-    lines.append("↩️ Balas angka 1-3")
+    lines.append("4. Ini ternyata Project")
+    lines.append("")
+    lines.append("↩️ Balas angka 1-4")
     return "\n".join(lines)
 
 
