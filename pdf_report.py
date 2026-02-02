@@ -1267,7 +1267,7 @@ def generate_pdf_report_v4_monthly(year: int, month: int, output_dir: Optional[s
     ui = UI(fonts=fonts)
     out_dir = output_dir or tempfile.gettempdir()
     os.makedirs(out_dir, exist_ok=True)
-    fname = _safe_filename(f"Laporan_Keuangan_{ctx['period_label']}_REDESIGNED") + ".pdf"
+    fname = _safe_filename(f"Laporan_Keuangan_{ctx['period_label']}") + ".pdf"
     output_path = os.path.join(out_dir, fname)
     logo_path = os.getenv("HOLLAWALL_LOGO_PATH")
     c = canvas.Canvas(output_path, pagesize=A4)
