@@ -21,6 +21,7 @@ Integration:
 import os
 import re
 import math
+import calendar
 import tempfile
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
@@ -31,6 +32,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm, mm
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+from reportlab.pdfgen import canvas
 
 from reportlab.platypus import (
     BaseDocTemplate,
@@ -59,6 +61,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 # Import your existing modules
 from sheets_helper import get_all_data, COMPANY_SHEETS
 from security import ALLOWED_CATEGORIES, secure_log
+from config.wallets import extract_company_prefix, strip_company_prefix
 
 
 # =========================
@@ -115,6 +118,33 @@ THEME = {
 
 
 # =========================
+# THEME (HOLLAWALL STYLE)
+# =========================
+
+THEME_V2 = {
+    "text": colors.HexColor("#231F20"),
+    "teal": colors.HexColor("#1DB7C5"),
+    "teal_soft": colors.HexColor("#18B0C0"),
+    "pink": colors.HexColor("#EE396D"),
+    "black": colors.HexColor("#231F20"),
+}
+
+COMPANY_THEME_V2 = {
+    "Hollawall Mural": colors.HexColor("#1DB7C5"),
+    "Hojja": colors.HexColor("#7A9572"),
+    "Texturin Surabaya": colors.HexColor("#8C5637"),
+    "Texturin Bali": colors.HexColor("#DFB281"),
+}
+
+COMPANY_ORDER_V2 = ["Hollawall Mural", "Hojja", "Texturin Surabaya", "Texturin Bali"]
+
+OFFICE_SHEET_NAME = "Operasional Kantor"
+
+FINISH_KEYWORDS = [
+    "pelunasan", "lunas", "final payment", "penyelesaian", "selesai", "kelar", "beres", "closing"
+]
+
+# =========================
 # SAFE HELPERS
 # =========================
 
@@ -161,6 +191,31 @@ def _safe_filename(name: str) -> str:
     name = re.sub(r"[^a-zA-Z0-9_\-]+", "_", name.strip())
     name = re.sub(r"_+", "_", name)
     return name.strip("_") or "report"
+
+
+def format_number(amount: int) -> str:
+    return f"{amount:,.0f}".replace(",", ".")
+
+
+def format_period_label(year: int, month: int) -> str:
+    return f"{calendar.month_abbr[month].upper()} {str(year)[-2:]}"
+
+
+def format_generated_on(dt: Optional[datetime] = None) -> str:
+    return (dt or datetime.now()).strftime("%d %b %y")
+
+
+def _month_start_end(year: int, month: int) -> Tuple[datetime, datetime]:
+    last_day = calendar.monthrange(year, month)[1]
+    start = datetime(year, month, 1)
+    end = datetime(year, month, last_day)
+    return start, end
+
+
+def _prev_month(year: int, month: int) -> Tuple[int, int]:
+    if month == 1:
+        return year - 1, 12
+    return year, month - 1
 
 
 # =========================
@@ -374,6 +429,170 @@ def calculate_pnl(transactions: List[Dict]) -> Dict:
         "income_transactions": income_transactions,
     }
 
+
+# =========================
+# DATA (HOLLAWALL STYLE)
+# =========================
+
+def _normalize_tx(tx: Dict) -> Optional[Dict]:
+    date_str = _safe_str(tx.get("tanggal", "")).strip()
+    dt = _parse_date(date_str)
+    if not dt:
+        return None
+    return {
+        "tanggal": date_str,
+        "dt": dt,
+        "keterangan": _safe_str(tx.get("keterangan", "")).strip(),
+        "jumlah": _to_int(tx.get("jumlah", 0)),
+        "tipe": _safe_str(tx.get("tipe", "Pengeluaran")).strip(),
+        "kategori": _safe_str(tx.get("kategori", "Lain-lain")).strip() or "Lain-lain",
+        "company_sheet": _safe_str(tx.get("company_sheet", "Unknown")).strip(),
+        "nama_projek": _safe_str(tx.get("nama_projek", "")).strip(),
+    }
+
+
+def _get_all_transactions_v2() -> List[Dict]:
+    all_data = get_all_data(days=None)
+    normalized = []
+    for tx in all_data:
+        ntx = _normalize_tx(tx)
+        if ntx:
+            normalized.append(ntx)
+    return normalized
+
+
+def _filter_period(transactions: List[Dict], start_dt: datetime, end_dt: datetime) -> List[Dict]:
+    out = []
+    for tx in transactions:
+        dt = tx.get("dt")
+        if not dt:
+            continue
+        if start_dt <= dt <= end_dt:
+            out.append(tx)
+    return out
+
+
+def _is_income(tx: Dict) -> bool:
+    return "pemasukan" in tx.get("tipe", "").lower()
+
+
+def _is_expense(tx: Dict) -> bool:
+    return not _is_income(tx)
+
+
+def _is_salary(tx: Dict) -> bool:
+    category = (tx.get("kategori") or "").lower()
+    desc = (tx.get("keterangan") or "").lower()
+    return "gaji" in category or "gaji" in desc
+
+
+def _company_from_tx(tx: Dict) -> Optional[str]:
+    dompet = tx.get("company_sheet")
+    if dompet == "TX SBY(216)":
+        return "Texturin Surabaya"
+    if dompet == "TX BALI(087)":
+        return "Texturin Bali"
+    if dompet == "CV HB (101)":
+        prefix = extract_company_prefix(tx.get("nama_projek", ""))
+        if prefix == "HOJJA":
+            return "Hojja"
+        return "Hollawall Mural"
+    return None
+
+
+def _summarize_period(transactions: List[Dict]) -> Dict:
+    income_total = 0
+    expense_total = 0
+    office_expense = 0
+    for tx in transactions:
+        amt = tx.get("jumlah", 0)
+        if _is_income(tx):
+            income_total += amt
+        else:
+            expense_total += amt
+            if tx.get("company_sheet") == OFFICE_SHEET_NAME:
+                office_expense += amt
+    return {
+        "income_total": income_total,
+        "expense_total": expense_total,
+        "office_expense": office_expense,
+        "profit": income_total - expense_total,
+    }
+
+
+def _pct_change(curr: int, prev: int) -> Optional[int]:
+    if prev == 0:
+        if curr == 0:
+            return 0
+        return None
+    return int(round(((curr - prev) / prev) * 100))
+
+
+def _insight_text(label: str, curr: int, prev: int) -> str:
+    pct = _pct_change(curr, prev)
+    if pct is None:
+        return "Naik signifikan"
+    if label == "expense":
+        if pct < 0:
+            return f"Menurun {abs(pct)}%"
+        if pct > 0:
+            return f"Meningkat {pct}%"
+        return "Stabil"
+    if label == "profit" and curr < 0:
+        return "Merugi"
+    if pct > 0:
+        return f"Wah meningkat {pct}%"
+    if pct < 0:
+        return f"Menurun {abs(pct)}%"
+    return "Stabil"
+
+
+def _finished_projects_by_company(period_txs: List[Dict]) -> Dict[str, List[str]]:
+    finished = {c: set() for c in COMPANY_ORDER_V2}
+    for tx in period_txs:
+        if not _is_income(tx):
+            continue
+        desc = (tx.get("keterangan") or "").lower()
+        if not any(k in desc for k in FINISH_KEYWORDS):
+            continue
+        proj = tx.get("nama_projek", "").strip()
+        if not proj:
+            continue
+        comp = _company_from_tx(tx)
+        if comp in finished:
+            finished[comp].add(proj)
+    return {k: sorted(list(v)) for k, v in finished.items()}
+
+
+def _project_metrics(project_txs: List[Dict]) -> Dict:
+    dp = dp2 = pelunasan = 0
+    total_income = 0
+    total_expense = 0
+    total_salary = 0
+    for tx in project_txs:
+        amt = tx.get("jumlah", 0)
+        desc = (tx.get("keterangan") or "").lower()
+        if _is_income(tx):
+            total_income += amt
+            if "dp2" in desc or "dp 2" in desc:
+                dp2 += amt
+            elif "dp" in desc:
+                dp += amt
+            elif any(k in desc for k in FINISH_KEYWORDS):
+                pelunasan += amt
+        else:
+            total_expense += amt
+            if _is_salary(tx):
+                total_salary += amt
+    return {
+        "total_income": total_income,
+        "total_expense": total_expense,
+        "total_salary": total_salary,
+        "dp": dp,
+        "dp2": dp2,
+        "pelunasan": pelunasan,
+        "profit": total_income - total_expense,
+    }
 
 # =========================
 # FONTS (OPTIONAL)
@@ -1458,19 +1677,461 @@ def generate_pdf_report(
     return output_path
 
 
+def _build_context_monthly(year: int, month: int) -> Dict:
+    all_txs = _get_all_transactions_v2()
+    start_dt, end_dt = _month_start_end(year, month)
+    period_txs = _filter_period(all_txs, start_dt, end_dt)
+
+    if not period_txs:
+        raise ValueError("Tidak ada data di periode tersebut.")
+
+    prev_year, prev_month = _prev_month(year, month)
+    prev_start, prev_end = _month_start_end(prev_year, prev_month)
+    prev_txs = _filter_period(all_txs, prev_start, prev_end)
+
+    summary = _summarize_period(period_txs)
+    prev_summary = _summarize_period(prev_txs)
+
+    company_period = {c: [] for c in COMPANY_ORDER_V2}
+    company_prev = {c: [] for c in COMPANY_ORDER_V2}
+
+    for tx in period_txs:
+        comp = _company_from_tx(tx)
+        if comp in company_period:
+            company_period[comp].append(tx)
+
+    for tx in prev_txs:
+        comp = _company_from_tx(tx)
+        if comp in company_prev:
+            company_prev[comp].append(tx)
+
+    income_by_company = {}
+    for comp in COMPANY_ORDER_V2:
+        income_by_company[comp] = sum(tx["jumlah"] for tx in company_period[comp] if _is_income(tx))
+
+    total_income = sum(income_by_company.values()) or 1
+    income_share = {c: (income_by_company[c] / total_income) * 100 for c in COMPANY_ORDER_V2}
+
+    finished_projects = _finished_projects_by_company(period_txs)
+
+    projects_all = {}
+    for tx in all_txs:
+        if tx.get("company_sheet") == OFFICE_SHEET_NAME:
+            continue
+        proj = tx.get("nama_projek", "").strip()
+        if not proj:
+            continue
+        proj_l = proj.lower()
+        if proj_l in {"operasional kantor", "saldo umum", "umum", "unknown"}:
+            continue
+        projects_all.setdefault(proj, []).append(tx)
+
+    company_details = {}
+    for comp in COMPANY_ORDER_V2:
+        period_list = company_period[comp]
+        prev_list = company_prev[comp]
+        comp_summary = _summarize_period(period_list)
+        comp_prev = _summarize_period(prev_list)
+
+        income_txs = sorted([t for t in period_list if _is_income(t)], key=lambda x: x["jumlah"], reverse=True)
+        expense_txs = sorted([t for t in period_list if _is_expense(t) and not _is_salary(t)], key=lambda x: x["jumlah"], reverse=True)
+        salary_txs = sorted([t for t in period_list if _is_salary(t)], key=lambda x: x["jumlah"], reverse=True)
+
+        finished_metrics = []
+        for proj in finished_projects.get(comp, []):
+            metrics = _project_metrics(projects_all.get(proj, []))
+            finished_metrics.append({
+                "name": strip_company_prefix(proj) or proj,
+                "metrics": metrics,
+            })
+
+        company_details[comp] = {
+            "summary": comp_summary,
+            "prev_summary": comp_prev,
+            "income_txs": income_txs,
+            "expense_txs": expense_txs,
+            "salary_txs": salary_txs,
+            "finished_projects": finished_metrics,
+        }
+
+    return {
+        "mode": "monthly",
+        "period_label": format_period_label(year, month),
+        "generated_on": format_generated_on(),
+        "summary": summary,
+        "prev_summary": prev_summary,
+        "income_share": income_share,
+        "finished_projects": finished_projects,
+        "company_details": company_details,
+    }
+
+
+def _build_context_range(start_dt: datetime, end_dt: datetime) -> Dict:
+    all_txs = _get_all_transactions_v2()
+    period_txs = _filter_period(all_txs, start_dt, end_dt)
+
+    if not period_txs:
+        raise ValueError("Tidak ada data di periode tersebut.")
+
+    summary = _summarize_period(period_txs)
+
+    company_period = {c: [] for c in COMPANY_ORDER_V2}
+    for tx in period_txs:
+        comp = _company_from_tx(tx)
+        if comp in company_period:
+            company_period[comp].append(tx)
+
+    income_by_company = {}
+    for comp in COMPANY_ORDER_V2:
+        income_by_company[comp] = sum(tx["jumlah"] for tx in company_period[comp] if _is_income(tx))
+
+    total_income = sum(income_by_company.values()) or 1
+    income_share = {c: (income_by_company[c] / total_income) * 100 for c in COMPANY_ORDER_V2}
+
+    finished_projects = _finished_projects_by_company(period_txs)
+
+    return {
+        "mode": "range",
+        "generated_on": format_generated_on(),
+        "summary": summary,
+        "income_share": income_share,
+        "finished_projects": finished_projects,
+        "start_dt": start_dt,
+        "end_dt": end_dt,
+    }
+
+
+def _y_from_top(y_top: float, page_h: float) -> float:
+    return page_h - y_top
+
+
+def _draw_header_monthly(c: canvas.Canvas, ctx: Dict, page_w: float, page_h: float, logo_path: Optional[str] = None):
+    header_h = 190
+    left_w = 427
+    c.setFillColor(THEME_V2["teal"])
+    c.rect(0, page_h - header_h, left_w, header_h, fill=1, stroke=0)
+
+    if logo_path and os.path.exists(logo_path):
+        c.drawImage(logo_path, 30, page_h - 70, width=120, height=40, mask="auto")
+
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Oblique", 9)
+    c.drawString(130, page_h - 25, f"Generated on {ctx['generated_on']}")
+
+    c.setFont("Helvetica-Bold", 24)
+    c.drawString(130, page_h - 60, "Financial")
+    c.drawString(130, page_h - 90, "Report")
+
+    c.setFillColor(THEME_V2["teal"])
+    c.setFont("Helvetica-Bold", 28)
+    month_part, year_part = ctx["period_label"].split()
+    c.drawString(left_w + 15, page_h - 60, month_part)
+    c.drawString(left_w + 15, page_h - 95, year_part)
+
+
+def _draw_header_range(c: canvas.Canvas, ctx: Dict, page_w: float, page_h: float, logo_path: Optional[str] = None):
+    header_h = 190
+    left_w = 427
+    c.setFillColor(THEME_V2["teal"])
+    c.rect(0, page_h - header_h, left_w, header_h, fill=1, stroke=0)
+
+    if logo_path and os.path.exists(logo_path):
+        c.drawImage(logo_path, 30, page_h - 70, width=120, height=40, mask="auto")
+
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Oblique", 9)
+    c.drawString(130, page_h - 25, f"Generated on {ctx['generated_on']}")
+
+    c.setFont("Helvetica-Bold", 24)
+    c.drawString(130, page_h - 60, "Financial")
+    c.drawString(130, page_h - 90, "Report")
+
+    c.setFillColor(THEME_V2["teal"])
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(left_w + 15, page_h - 55, "Periodical Audit")
+    c.setFont("Helvetica", 9)
+    c.drawString(left_w + 15, page_h - 75, "Dalam rentang waktu")
+
+    c.setFont("Helvetica", 9)
+    start_text = ctx["start_dt"].strftime("%d-%m-%y")
+    end_text = ctx["end_dt"].strftime("%d-%m-%y")
+    c.drawString(left_w + 15, page_h - 95, f"{start_text} (00:00)")
+    c.drawString(left_w + 15, page_h - 110, "hingga")
+    c.drawString(left_w + 15, page_h - 125, f"{end_text} (00:00)")
+
+
+def _draw_kpi_block(c: canvas.Canvas, x: float, y_top: float, label: str, amount: int, color, subnote: Optional[str] = None):
+    c.setFillColor(THEME_V2["text"])
+    c.setFont("Helvetica-Oblique", 9)
+    c.drawString(x, y_top, label)
+
+    c.setFont("Helvetica", 8)
+    c.drawString(x, y_top - 16, "Rp")
+
+    c.setFillColor(color)
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(x + 18, y_top - 20, format_number(amount))
+
+    if subnote:
+        c.setFillColor(color)
+        c.setFont("Helvetica", 8)
+        c.drawString(x, y_top - 38, subnote)
+
+    c.setStrokeColor(THEME_V2["black"])
+    c.setLineWidth(2.5)
+    c.line(x, y_top - 46, x + 210, y_top - 46)
+
+
+def _draw_comparison_column(c: canvas.Canvas, x: float, y_top: float, curr: int, prev: int, label: str):
+    c.setFillColor(THEME_V2["text"])
+    c.setFont("Helvetica", 8)
+    c.drawString(x, y_top, "Bulan lalu")
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(x, y_top - 16, format_number(prev))
+    c.setFont("Helvetica", 8)
+    c.drawString(x, y_top - 32, _insight_text(label, curr, prev))
+
+
+def _draw_finished_projects_section(c: canvas.Canvas, ctx: Dict, page_w: float, page_h: float, title: str, note: str):
+    c.setFillColor(THEME_V2["teal"])
+    c.rect(18, page_h - 535, 26, 18, fill=1, stroke=0)
+
+    c.setFillColor(THEME_V2["text"])
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(50, page_h - 520, title)
+    c.setFont("Helvetica", 8)
+    c.drawString(260, page_h - 520, note)
+
+    column_x = [30, 160, 290, 420]
+    max_items = 6
+    for idx, comp in enumerate(COMPANY_ORDER_V2):
+        x = column_x[idx]
+        c.setFillColor(THEME_V2["text"])
+        c.setFont("Helvetica-Oblique", 9)
+        c.drawString(x, page_h - 560, comp)
+        c.setFillColor(THEME_V2["teal"])
+        c.setFont("Helvetica-Bold", 20)
+        count = len(ctx["finished_projects"].get(comp, []))
+        c.drawString(x, page_h - 585, str(count))
+
+        c.setFillColor(THEME_V2["text"])
+        c.setFont("Helvetica", 8)
+        projects = ctx["finished_projects"].get(comp, [])
+        display = [strip_company_prefix(p) or p for p in projects]
+        for i, name in enumerate(display[:max_items]):
+            c.drawString(x, page_h - 605 - (i * 12), f"• {name}")
+        if len(display) > max_items:
+            c.drawString(x, page_h - 605 - (max_items * 12), f"+{len(display) - max_items} lainnya")
+
+    # Income share chart
+    chart_x = 460
+    chart_y = page_h - 610
+    c.setFillColor(THEME_V2["text"])
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(chart_x, page_h - 560, "Grafik Pemasukkan")
+    bar_max = 100
+    for i, comp in enumerate(COMPANY_ORDER_V2):
+        pct = ctx["income_share"].get(comp, 0)
+        c.setFillColor(COMPANY_THEME_V2.get(comp, THEME_V2["teal"]))
+        c.rect(chart_x, chart_y - (i * 18), bar_max * (pct / 100), 8, fill=1, stroke=0)
+        c.setFillColor(THEME_V2["text"])
+        c.setFont("Helvetica", 7)
+        c.drawString(chart_x + bar_max + 5, chart_y - (i * 18) + 1, f"{pct:.0f}%")
+
+
+def draw_cover_monthly(c: canvas.Canvas, ctx: Dict, logo_path: Optional[str] = None):
+    page_w, page_h = A4
+    _draw_header_monthly(c, ctx, page_w, page_h, logo_path=logo_path)
+
+    summary = ctx["summary"]
+    _draw_kpi_block(
+        c, 30, page_h - 230, "OMSET TOTAL", summary["income_total"], THEME_V2["text"]
+    )
+    _draw_kpi_block(
+        c, 30, page_h - 310, "PENGELUARAN TOTAL", summary["expense_total"], THEME_V2["pink"],
+        subnote=f"(Pengeluaran Kantor Rp {format_number(summary['office_expense'])})"
+    )
+    _draw_kpi_block(
+        c, 30, page_h - 390, "PROFIT", summary["profit"], THEME_V2["teal"]
+    )
+
+    c.setStrokeColor(THEME_V2["black"])
+    c.setLineWidth(3)
+    c.line(320, page_h - 220, 320, page_h - 430)
+
+    prev = ctx["prev_summary"]
+    _draw_comparison_column(c, 340, page_h - 240, summary["income_total"], prev["income_total"], "income")
+    _draw_comparison_column(c, 340, page_h - 300, summary["expense_total"], prev["expense_total"], "expense")
+    _draw_comparison_column(c, 340, page_h - 360, summary["profit"], prev["profit"], "profit")
+
+    _draw_finished_projects_section(
+        c,
+        ctx,
+        page_w,
+        page_h,
+        "Project yang Selesai Bulan ini",
+        "Adalah Project, yang telah tuntas pada bulan ini. Untuk mulainya tidak harus bulan ini.",
+    )
+
+
+def draw_cover_periodical(c: canvas.Canvas, ctx: Dict, logo_path: Optional[str] = None):
+    page_w, page_h = A4
+    _draw_header_range(c, ctx, page_w, page_h, logo_path=logo_path)
+
+    summary = ctx["summary"]
+    _draw_kpi_block(
+        c, 30, page_h - 230, "OMSET TOTAL", summary["income_total"], THEME_V2["text"]
+    )
+    _draw_kpi_block(
+        c, 30, page_h - 310, "PENGELUARAN TOTAL", summary["expense_total"], THEME_V2["pink"],
+        subnote=f"(Pengeluaran Kantor Rp {format_number(summary['office_expense'])})"
+    )
+    _draw_kpi_block(
+        c, 30, page_h - 390, "PROFIT", summary["profit"], THEME_V2["teal"]
+    )
+
+    c.setStrokeColor(THEME_V2["black"])
+    c.setLineWidth(3)
+    c.line(320, page_h - 220, 320, page_h - 430)
+
+    _draw_finished_projects_section(
+        c,
+        ctx,
+        page_w,
+        page_h,
+        "Project Selesai",
+        "Adalah Project, yang telah tuntas pada periode ini.",
+    )
+
+
+def draw_company_page(c: canvas.Canvas, ctx: Dict, company: str):
+    page_w, page_h = (A4[0], 1621)
+    color = COMPANY_THEME_V2.get(company, THEME_V2["teal"])
+    c.setFillColor(color)
+    c.rect(0, page_h - 130, page_w, 130, fill=1, stroke=0)
+
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 22)
+    c.drawString(30, page_h - 60, company)
+    c.setFont("Helvetica-Bold", 18)
+    month_part, year_part = ctx["period_label"].split()
+    c.drawRightString(page_w - 30, page_h - 60, month_part)
+    c.drawRightString(page_w - 30, page_h - 85, year_part)
+
+    details = ctx["company_details"][company]
+    summary = details["summary"]
+    prev = details["prev_summary"]
+
+    _draw_kpi_block(c, 30, page_h - 180, "OMSET TOTAL", summary["income_total"], THEME_V2["text"])
+    _draw_kpi_block(c, 30, page_h - 260, "PENGELUARAN TOTAL", summary["expense_total"], THEME_V2["pink"])
+    _draw_kpi_block(c, 30, page_h - 340, "PROFIT", summary["profit"], THEME_V2["teal"])
+
+    c.setStrokeColor(THEME_V2["black"])
+    c.setLineWidth(2)
+    c.line(260, page_h - 180, 260, page_h - 340)
+
+    _draw_comparison_column(c, 280, page_h - 200, summary["income_total"], prev["income_total"], "income")
+    _draw_comparison_column(c, 280, page_h - 260, summary["expense_total"], prev["expense_total"], "expense")
+    _draw_comparison_column(c, 280, page_h - 320, summary["profit"], prev["profit"], "profit")
+
+    # Lists
+    list_y = page_h - 420
+    c.setFillColor(THEME_V2["text"])
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(30, list_y, "List Pemasukan")
+    c.drawString(210, list_y, "List Pengeluaran")
+    c.drawString(390, list_y, "List Gaji")
+
+    c.setFont("Helvetica", 8)
+    for i, tx in enumerate(details["income_txs"][:6]):
+        c.drawString(30, list_y - 15 - (i * 12), f"{i+1}. {tx['keterangan'][:22]}  Rp {format_number(tx['jumlah'])}")
+    for i, tx in enumerate(details["expense_txs"][:6]):
+        c.drawString(210, list_y - 15 - (i * 12), f"{i+1}. {tx['keterangan'][:22]}  Rp {format_number(tx['jumlah'])}")
+    for i, tx in enumerate(details["salary_txs"][:6]):
+        c.drawString(390, list_y - 15 - (i * 12), f"{i+1}. {tx['keterangan'][:22]}  Rp {format_number(tx['jumlah'])}")
+
+    # Finished projects
+    section_y = list_y - 120
+    c.setStrokeColor(THEME_V2["black"])
+    c.setLineWidth(3)
+    c.line(30, section_y, page_w - 30, section_y)
+
+    c.setFillColor(THEME_V2["text"])
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(30, section_y - 25, "Finished Projects")
+
+    row_y = section_y - 45
+    c.setFont("Helvetica", 8)
+    for idx, item in enumerate(details["finished_projects"][:8], start=1):
+        metrics = item["metrics"]
+        c.drawString(30, row_y - (idx * 14), f"{idx}. {item['name'][:40]}")
+        c.drawRightString(page_w - 30, row_y - (idx * 14), f"Profit {format_number(metrics['profit'])}")
+
+    if len(details["finished_projects"]) > 8:
+        c.drawString(30, row_y - (9 * 14), f"+{len(details['finished_projects']) - 8} lainnya")
+
+
+def generate_pdf_report_v2_monthly(year: int, month: int, output_dir: Optional[str] = None) -> str:
+    ctx = _build_context_monthly(year, month)
+    period_label = ctx["period_label"]
+    fname = _safe_filename(f"Laporan_Keuangan_{period_label}") + ".pdf"
+    output_path = os.path.join(output_dir or tempfile.gettempdir(), fname)
+
+    logo_path = os.getenv("HOLLAWALL_LOGO_PATH")
+    c = canvas.Canvas(output_path, pagesize=A4)
+    draw_cover_monthly(c, ctx, logo_path=logo_path)
+    c.showPage()
+
+    c.setPageSize((A4[0], 1621))
+    for comp in COMPANY_ORDER_V2:
+        draw_company_page(c, ctx, comp)
+        c.showPage()
+
+    c.save()
+    secure_log("INFO", f"PDF generated: {output_path}")
+    return output_path
+
+
+def generate_pdf_report_v2_range(start_dt: datetime, end_dt: datetime, output_dir: Optional[str] = None) -> str:
+    ctx = _build_context_range(start_dt, end_dt)
+    fname = _safe_filename(f"Laporan_Keuangan_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}") + ".pdf"
+    output_path = os.path.join(output_dir or tempfile.gettempdir(), fname)
+
+    logo_path = os.getenv("HOLLAWALL_LOGO_PATH")
+    c = canvas.Canvas(output_path, pagesize=A4)
+    draw_cover_periodical(c, ctx, logo_path=logo_path)
+    c.save()
+    secure_log("INFO", f"PDF generated: {output_path}")
+    return output_path
+
+
+def _parse_range_input(period_input: str) -> Optional[Tuple[datetime, datetime]]:
+    matches = re.findall(r"\d{4}-\d{2}-\d{2}", period_input or "")
+    if len(matches) >= 2:
+        start = datetime.strptime(matches[0], "%Y-%m-%d")
+        end = datetime.strptime(matches[1], "%Y-%m-%d")
+        if end < start:
+            start, end = end, start
+        return start, end
+    return None
+
+
 def generate_pdf_from_input(
     month_input: str,
     output_dir: Optional[str] = None,
     max_projects_detail: int = 12,
     max_tx_appendix: int = 200,
 ) -> str:
+    range_input = _parse_range_input(month_input)
+    if range_input:
+        start_dt, end_dt = range_input
+        return generate_pdf_report_v2_range(start_dt, end_dt, output_dir=output_dir)
+
     year, month = parse_month_input(month_input)
-    return generate_pdf_report(
+    return generate_pdf_report_v2_monthly(
         year=year,
         month=month,
         output_dir=output_dir,
-        max_projects_detail=max_projects_detail,
-        max_tx_appendix=max_tx_appendix,
     )
 
 

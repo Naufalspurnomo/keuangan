@@ -1613,12 +1613,13 @@ Balas 1 atau 2"""
                      if send_document:
                          send_document(reply_to, fpath, caption=f"Laporan {arg}")
                      else:
-                         send_reply("❌ Fitur kirim PDF belum tersedia di channel ini.")
+                         fname = os.path.basename(fpath)
+                         send_reply(f"✅ PDF berhasil dibuat: {fname}\nDi channel ini belum bisa kirim PDF. Silakan ambil dari server.")
                  else:
                      send_reply("❌ Gagal membuat PDF (Data kosong/Format salah).")
                  return jsonify({'status': 'command_pdf'}), 200
              except ValueError as ve:
-                 send_reply(f"❌ Format salah. Cth: /exportpdf 2026-01")
+                 send_reply("❌ Format salah. Contoh: /exportpdf 2026-01 atau /exportpdf 2025-09-22 2025-10-22")
                  return jsonify({'status': 'error_pdf'}), 200
              except Exception as e:
                  secure_log("ERROR", f"PDF Error: {e}")

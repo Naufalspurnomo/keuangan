@@ -79,7 +79,7 @@ class UserErrors:
         "• Cek periode yang benar\n"
         "• Gunakan 'status' untuk lihat data tersedia"
     )
-    PDF_FORMAT_ERROR = "❌ Format salah.\n\nFormat: exportpdf 2026-01 atau exportpdf januari 2026"
+    PDF_FORMAT_ERROR = "❌ Format salah.\n\nFormat: exportpdf 2026-01 atau exportpdf 2025-09-22 2025-10-22"
     PDF_NOT_INSTALLED = "❌ PDF generator belum terinstall."
     PDF_FAILED = "❌ Gagal generate PDF."
 
