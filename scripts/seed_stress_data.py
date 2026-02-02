@@ -5,6 +5,7 @@ Usage examples:
   python scripts/seed_stress_data.py
   python scripts/seed_stress_data.py --seed 42 --projects 8 --months 7
   python scripts/seed_stress_data.py --start 2025-07-01 --end 2026-01-31
+  python scripts/seed_stress_data.py --reset
 """
 
 import argparse
@@ -145,7 +146,7 @@ def _build_operational_row(no_val: int, dt: datetime, amount: int, desc: str, ca
     ]
 
 
-def seed_data(start_dt: datetime, end_dt: datetime, projects_per_company: int, seed: int):
+def seed_data(start_dt: datetime, end_dt: datetime, projects_per_company: int, seed: int, reset: bool = False):
     random.seed(seed)
 
     dompet_sheets = {name: get_dompet_sheet(name) for name in DOMPET_SHEETS}
@@ -157,12 +158,25 @@ def seed_data(start_dt: datetime, end_dt: datetime, projects_per_company: int, s
     start_row_in = {}
     start_row_out = {}
     for dompet, sheet in dompet_sheets.items():
-        no_in[dompet] = _count_existing(sheet, SPLIT_PEMASUKAN["NO"], start_row=SPLIT_LAYOUT_DATA_START)
-        no_out[dompet] = _count_existing(sheet, SPLIT_PENGELUARAN["NO"], start_row=SPLIT_LAYOUT_DATA_START)
-        start_row_in[dompet] = _first_empty_row(sheet, SPLIT_PEMASUKAN["NO"], SPLIT_LAYOUT_DATA_START)
-        start_row_out[dompet] = _first_empty_row(sheet, SPLIT_PENGELUARAN["NO"], SPLIT_LAYOUT_DATA_START)
+        if reset:
+            row_count = sheet.row_count or 1000
+            sheet.update(f"A{SPLIT_LAYOUT_DATA_START}:R{row_count}", [[""] * 18] * (row_count - SPLIT_LAYOUT_DATA_START + 1))
+            no_in[dompet] = 0
+            no_out[dompet] = 0
+            start_row_in[dompet] = SPLIT_LAYOUT_DATA_START
+            start_row_out[dompet] = SPLIT_LAYOUT_DATA_START
+        else:
+            no_in[dompet] = _count_existing(sheet, SPLIT_PEMASUKAN["NO"], start_row=SPLIT_LAYOUT_DATA_START)
+            no_out[dompet] = _count_existing(sheet, SPLIT_PENGELUARAN["NO"], start_row=SPLIT_LAYOUT_DATA_START)
+            start_row_in[dompet] = _first_empty_row(sheet, SPLIT_PEMASUKAN["NO"], SPLIT_LAYOUT_DATA_START)
+            start_row_out[dompet] = _first_empty_row(sheet, SPLIT_PENGELUARAN["NO"], SPLIT_LAYOUT_DATA_START)
 
-    op_no = max(_count_existing(op_sheet, OPERASIONAL_COLS["NO"], start_row=OPERASIONAL_DATA_START), 0)
+    if reset:
+        op_row_count = op_sheet.row_count or 1000
+        op_sheet.update(f"A{OPERASIONAL_DATA_START}:H{op_row_count}", [[""] * 8] * (op_row_count - OPERASIONAL_DATA_START + 1))
+        op_no = 0
+    else:
+        op_no = max(_count_existing(op_sheet, OPERASIONAL_COLS["NO"], start_row=OPERASIONAL_DATA_START), 0)
 
     rows_by_sheet_in = {dompet: [] for dompet in DOMPET_SHEETS}
     rows_by_sheet_out = {dompet: [] for dompet in DOMPET_SHEETS}
@@ -180,10 +194,8 @@ def seed_data(start_dt: datetime, end_dt: datetime, projects_per_company: int, s
             finish_date = _random_date(start_date + timedelta(days=14), end_dt)
 
             is_finished = random.random() < 0.7
-            if is_finished:
-                finish_name = f"{project_name} (Finish)"
-            else:
-                finish_name = project_name
+            start_name = f"{project_name} (Start)"
+            finish_name = f"{project_name} (Finish)" if is_finished else project_name
 
             # Income: DP
             no_in[dompet] += 1
@@ -192,7 +204,7 @@ def seed_data(start_dt: datetime, end_dt: datetime, projects_per_company: int, s
                     "Pemasukan",
                     no_in[dompet],
                     start_date,
-                    project_name,
+                    start_name,
                     "DP project",
                     random.randint(5_000_000, 25_000_000),
                     f"{company['name']}-dp-{idx}",
@@ -318,6 +330,7 @@ def main():
     parser.add_argument("--months", type=int, default=6, help="Months back from today if no start/end.")
     parser.add_argument("--start", type=str, default=None, help="Start date YYYY-MM-DD.")
     parser.add_argument("--end", type=str, default=None, help="End date YYYY-MM-DD.")
+    parser.add_argument("--reset", action="store_true", help="Clear existing data ranges before seeding.")
     args = parser.parse_args()
 
     if args.start and args.end:
@@ -331,7 +344,7 @@ def main():
         raise SystemExit("Start date must be before end date.")
 
     print(f"Seeding data from {start_dt.date()} to {end_dt.date()} ...")
-    seed_data(start_dt, end_dt, args.projects, args.seed)
+    seed_data(start_dt, end_dt, args.projects, args.seed, reset=args.reset)
     print("Done.")
 
 

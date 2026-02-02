@@ -76,7 +76,7 @@ from security import (
     SecurityError, RateLimitError,
     ALLOWED_CATEGORIES, now_wib,
 )
-from pdf_report import generate_pdf_from_input, parse_month_input, validate_period_data
+from pdf_report import generate_pdf_from_input, parse_month_input, validate_period_data, PDFNoDataError
 from utils.parsers import (
     parse_selection, parse_revision_amount,
     should_respond_in_group, is_command_match,
@@ -1136,10 +1136,25 @@ Balas 1 atau 2"""
             last_message = get_user_last_message(sender_number, chat_jid, max_age_seconds=60)
 
             if last_message:
-                # Check if current message is just an amount
-                if has_amount_pattern(text) and len(text.strip()) < 20:
+                def _is_amount_only(msg: str) -> bool:
+                    clean = msg.strip().lower()
+                    if not clean or clean.startswith("/"):
+                        return False
+                    if not has_amount_pattern(clean):
+                        return False
+                    return bool(re.fullmatch(r"(rp|rb|ribu|k|jt|juta|m|milyar|b|bn|[0-9]|[.,\s])+", clean))
+
+                def _should_combine_amount(prev_msg: str, cur_msg: str) -> bool:
+                    if not _is_amount_only(cur_msg):
+                        return False
+                    prev = (prev_msg or "").strip()
+                    if prev.startswith("/") and " " in prev:
+                        return False
+                    return True
+
+                # Check if current message is just an amount and safe to combine
+                if _should_combine_amount(last_message, text):
                     # Likely continuing previous message
-                    # Combine context
                     combined_text = f"{last_message} {text}"
                     secure_log("INFO", f"Combined with last message: {combined_text}")
                     text = combined_text
@@ -1618,6 +1633,9 @@ Balas 1 atau 2"""
                  else:
                      send_reply("❌ Gagal membuat PDF (Data kosong/Format salah).")
                  return jsonify({'status': 'command_pdf'}), 200
+             except PDFNoDataError as nde:
+                 send_reply(UserErrors.PDF_NO_DATA.format(period=nde.period))
+                 return jsonify({'status': 'error_pdf_no_data'}), 200
              except ValueError as ve:
                  send_reply("❌ Format salah. Contoh: /exportpdf 2026-01 atau /exportpdf 2025-09-22 2025-10-22")
                  return jsonify({'status': 'error_pdf'}), 200

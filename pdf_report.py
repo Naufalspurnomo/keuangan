@@ -231,6 +231,13 @@ MIN_YEAR = 2020
 MAX_YEAR = 2100
 
 
+class PDFNoDataError(Exception):
+    """Raised when requested period has no transactions."""
+    def __init__(self, period: str):
+        self.period = period
+        super().__init__(f"No data for period: {period}")
+
+
 def parse_month_input(month_input: str) -> Tuple[int, int]:
     """
     Parse month input with validation.
@@ -1866,7 +1873,8 @@ def _build_context_range(start_dt: datetime, end_dt: datetime) -> Dict:
     period_txs = _filter_period(all_txs, start_dt, end_dt)
 
     if not period_txs:
-        raise ValueError("Tidak ada data di periode tersebut.")
+        period_label = f"{start_dt.strftime('%d-%m-%y')} s/d {end_dt.strftime('%d-%m-%y')}"
+        raise PDFNoDataError(period_label)
 
     summary = _summarize_period(period_txs)
 
@@ -2499,6 +2507,9 @@ def generate_pdf_from_input(
         return generate_pdf_report_v2_range(start_dt, end_dt, output_dir=output_dir)
 
     year, month = parse_month_input(month_input)
+    has_data, _, period_name = validate_period_data(year, month)
+    if not has_data:
+        raise PDFNoDataError(period_name)
     return generate_pdf_report_v2_monthly(
         year=year,
         month=month,
