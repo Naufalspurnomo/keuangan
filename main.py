@@ -1628,7 +1628,7 @@ Balas 1 atau 2"""
                  parts = text.strip().split(' ', 1)
                  arg = parts[1] if len(parts) > 1 else now_wib().strftime("%Y-%m")
                  
-                 send_reply(f"⏳ Mengenerate PDF {arg}...")
+                 send_reply(f"⏳ Proses Membuat PDF {arg}...")
                  from pdf_report import generate_pdf_from_input
                  fpath = generate_pdf_from_input(arg)
                  
