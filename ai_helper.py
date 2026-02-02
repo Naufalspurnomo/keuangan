@@ -851,6 +851,67 @@ def transcribe_audio(audio_path: str) -> str:
         raise
 
 
+GENERIC_CAPTION_TERMS = {
+    "catat", "catetin", "catatkan", "catatkan", "catet", "catetkan",
+    "scan", "foto", "gambar", "struk", "nota", "bukti", "transfer",
+    "ini", "nih", "ya", "dong", "tolong", "please"
+}
+
+RECEIPT_KEYWORDS = {
+    "transfer", "transaksi", "jumlah", "total", "subtotal", "biaya",
+    "status", "berhasil", "rekening", "no", "referensi", "ref",
+    "virtual account", "va", "bank", "bca", "mandiri", "bni", "bri",
+    "payment", "invoice", "merchant", "terminal", "auth", "approval",
+    "struk", "nota", "receipt", "pembayaran", "tanggal", "trx"
+}
+
+
+def is_generic_caption(caption: str) -> bool:
+    if not caption:
+        return True
+    cleaned = sanitize_input(caption).lower().strip()
+    if not cleaned:
+        return True
+    tokens = re.findall(r"[a-z0-9]+", cleaned)
+    if not tokens:
+        return True
+    if len(tokens) <= 4 and all(token in GENERIC_CAPTION_TERMS for token in tokens):
+        return True
+    if all(token in GENERIC_CAPTION_TERMS for token in tokens):
+        return True
+    return False
+
+
+def normalize_ocr_text(text: str) -> str:
+    if not text:
+        return ""
+    lines = []
+    for raw in text.splitlines():
+        line = re.sub(r"\s+", " ", raw).strip()
+        if not line:
+            continue
+        if len(line) <= 2 and not re.search(r"\d", line):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def looks_like_receipt_text(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    score = 0
+    if re.search(r"\b(rp|idr)\s*[\d\.,]+", lower):
+        score += 2
+    if re.search(r"\b\d{2}/\d{2}/\d{2,4}\b", lower):
+        score += 1
+    if any(kw in lower for kw in RECEIPT_KEYWORDS):
+        score += 1
+    if re.search(r"\b\d{1,3}([.,]\d{3})+(?:[.,]\d{2})?\b", lower):
+        score += 1
+    return score >= 2
+
+
 def extract_from_image(image_paths: Union[str, List[str]], sender_name: str, caption: str = None) -> List[Dict]:
     """
     Extract financial data from Single or Multiple images: OCR -> Text -> Groq.
@@ -862,11 +923,17 @@ def extract_from_image(image_paths: Union[str, List[str]], sender_name: str, cap
         caption: Optional caption text
     """
     try:
-        ocr_text = ocr_image(image_paths)
+        ocr_text = normalize_ocr_text(ocr_image(image_paths))
         
         if not ocr_text.strip():
             raise ValueError("Tidak ada teks ditemukan di gambar")
         
+        clean_caption = sanitize_input(caption) if caption else ""
+        caption_is_generic = is_generic_caption(clean_caption)
+
+        if not looks_like_receipt_text(ocr_text) and not (clean_caption and not caption_is_generic):
+            raise ValueError("Gambar tidak terdeteksi sebagai struk")
+
         full_text = f"Receipt/Struk content:\n{ocr_text}"
         if caption:
             # Sanitize caption too
@@ -874,7 +941,7 @@ def extract_from_image(image_paths: Union[str, List[str]], sender_name: str, cap
             
             # Check caption for injection
             is_injection, _ = detect_prompt_injection(clean_caption)
-            if not is_injection:
+            if not is_injection and clean_caption and not caption_is_generic:
                 full_text = f"Note: {clean_caption}\n\n{full_text}"
         
         return extract_from_text(full_text, sender_name)

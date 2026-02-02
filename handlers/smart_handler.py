@@ -23,7 +23,7 @@ from utils.groq_analyzer import (
 from utils.semantic_matcher import find_matching_item, extract_revision_entities
 from layers.context_detector import get_full_context, record_interaction
 from security import secure_log
-from ai_helper import groq_client
+from ai_helper import groq_client, is_generic_caption
 from sheets_helper import update_transaction_amount  # Fixed missing import
 
 logger = logging.getLogger(__name__)
@@ -47,6 +47,15 @@ class SmartHandler:
         # 0. EXPLICIT COMMAND BYPASS
         if text.strip().startswith('/'):
             return {"action": "PROCESS", "intent": "COMMAND", "normalized_text": text}
+        
+        # Shortcut: media-only or generic caption should go to extraction directly
+        if has_media and (not text.strip() or is_generic_caption(text)):
+            return {
+                "action": "PROCESS",
+                "intent": "RECORD_TRANSACTION",
+                "normalized_text": text,
+                "category_scope": "UNKNOWN"
+            }
 
         # 1. Reply Logic
         original_tx_id = None

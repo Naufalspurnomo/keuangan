@@ -1703,6 +1703,19 @@ Balas 1 atau 2"""
             
             return finalize_transaction_workflow(_pending_transactions[sender_pkey], sender_pkey)
             
+        except ValueError as e:
+            msg = str(e)
+            secure_log("WARNING", f"AI Proc ValueError: {msg}")
+            if input_type == 'image':
+                if "Tidak ada teks ditemukan" in msg:
+                    send_reply("❓ Tidak terbaca.")
+                elif "tidak terdeteksi sebagai struk" in msg:
+                    send_reply("❗ Gambar tidak terdeteksi sebagai struk. Tolong kirim struk yang jelas atau tambahkan keterangan transaksi.")
+                else:
+                    send_reply("❌ Error sistem.")
+            else:
+                send_reply("❌ Error sistem.")
+            return jsonify({'status': 'error'}), 200
         except Exception as e:
             secure_log("ERROR", f"AI Proc Error: {e}")
             send_reply("❌ Error sistem.")
