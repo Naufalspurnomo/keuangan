@@ -76,7 +76,12 @@ from security import (
     SecurityError, RateLimitError,
     ALLOWED_CATEGORIES, now_wib,
 )
-from pdf_report import generate_pdf_from_input, parse_month_input, validate_period_data, PDFNoDataError
+try:
+    from pdf_report import generate_pdf_from_input, PDFNoDataError
+except ImportError:
+    from pdf_report import generate_pdf_from_input
+    class PDFNoDataError(Exception):
+        pass
 from utils.parsers import (
     parse_selection, parse_revision_amount,
     should_respond_in_group, is_command_match,
