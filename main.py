@@ -483,6 +483,8 @@ def webhook_wuzapi():
         
         # FILTER: Only process actual messages (text or media)
         msg_type = info.get('Type', '')
+        if not msg_type:
+            secure_log("INFO", f"Webhook: Missing message type (info.Type empty). Info keys: {list(info.keys())}")
         if msg_type not in ['text', 'media', 'image']:
             secure_log("INFO", f"Webhook: Ignored message type '{msg_type}'")
             return jsonify({'status': f'ignored_type_{msg_type}'}), 200
@@ -502,6 +504,12 @@ def webhook_wuzapi():
                     local_media_path = download_wuzapi_image(info.get('ID'), chat_jid)
                 except Exception:
                     local_media_path = None
+            secure_log(
+                "INFO",
+                f"Webhook: Image message received (caption_len={len(text or '')}, "
+                f"base64={'yes' if event_data.get('base64') else 'no'}, "
+                f"download={'yes' if local_media_path else 'no'})"
+            )
 
         # Ignore empty text payloads (avoid typing/presence noise)
         if msg_type == 'text' and not (text or '').strip():
