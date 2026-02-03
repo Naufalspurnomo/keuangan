@@ -1272,7 +1272,47 @@ Balas 1 atau 2"""
                 if force_record:
                     action = "PROCESS"
                     intent = "RECORD_TRANSACTION"
-                    layer_category_scope = "UNKNOWN"
+                    # Use SmartHandler for better normalization/scope, but never allow IGNORE.
+                    smart_scope = None
+                    try:
+                        smart_result = smart_handler.process(
+                            text=text,
+                            chat_jid=chat_jid,
+                            sender_number=sender_number,
+                            reply_message_id=quoted_msg_id,
+                            has_media=(input_type == 'image' or media_url is not None),
+                            sender_name=sender_name,
+                            quoted_message_text=quoted_message_text,
+                            has_visual=has_visual
+                        )
+                        if smart_result.get('normalized_text'):
+                            text = smart_result.get('normalized_text')
+                        smart_scope = smart_result.get('category_scope')
+                        if smart_scope in [None, '', 'UNKNOWN']:
+                            smart_scope = None
+                    except Exception:
+                        smart_result = {}
+                        smart_scope = None
+
+                    # Fallback lightweight scope detection for explicit "catat"
+                    if not smart_scope:
+                        text_lower = (text or "").lower()
+                        has_project_word = bool(re.search(r"\b(projek|project|proyek|prj)\b", text_lower))
+                        has_kantor_word = bool(re.search(r"\b(kantor|office|operasional|ops)\b", text_lower))
+                        has_operational_kw = any(
+                            re.search(r'\b' + re.escape(kw) + r'\b', text_lower)
+                            for kw in OPERATIONAL_KEYWORDS
+                        )
+                        if has_project_word and (has_kantor_word or has_operational_kw):
+                            smart_scope = "AMBIGUOUS"
+                        elif has_kantor_word or has_operational_kw:
+                            smart_scope = "OPERATIONAL"
+                        elif has_project_word:
+                            smart_scope = "PROJECT"
+                        else:
+                            smart_scope = "UNKNOWN"
+
+                    layer_category_scope = smart_scope or "UNKNOWN"
                 else:
                     # Use the initialized smart_handler instance
                     # It returns a dict with action, intent, normalized_text, etc.
