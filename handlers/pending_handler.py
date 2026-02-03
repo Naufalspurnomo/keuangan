@@ -77,6 +77,62 @@ def _apply_project_prefix(transactions: list, dompet_sheet: str, company: str) -
             tx['nama_projek'] = apply_company_prefix(pname, dompet_sheet, company)
 
 
+def _continue_project_after_name(transactions: list, dompet_sheet: str, company: str,
+                                 user_id: str, sender_name: str, source: str,
+                                 original_message_id: str, event_id: str,
+                                 is_new_project: bool, is_group: bool,
+                                 chat_id: str) -> dict:
+    """Continue project flow after project name is resolved."""
+    _apply_project_prefix(transactions, dompet_sheet, company)
+
+    if is_new_project and not any(t.get('tipe') == 'Pemasukan' for t in transactions):
+        set_pending_confirmation(
+            user_id=user_id,
+            chat_id=chat_id,
+            data={
+                'type': 'new_project_first_expense',
+                'transactions': transactions,
+                'dompet': dompet_sheet,
+                'company': company,
+                'sender_name': sender_name,
+                'source': source,
+                'original_message_id': original_message_id,
+                'event_id': event_id
+            }
+        )
+        msg = (
+            f"⚠️ Project baru **{transactions[0].get('nama_projek', '-') }** tetapi transaksi pertama *Pengeluaran*.\n"
+            "Biasanya project baru dimulai dari DP (Pemasukan).\n\n"
+            "Pilih tindakan:\n"
+            "1️⃣ Lanjutkan sebagai project baru\n"
+            "2️⃣ Ubah jadi Operasional Kantor\n"
+            "3️⃣ Batal"
+        )
+        return {'response': msg.replace('*', ''), 'completed': False}
+
+    set_pending_confirmation(
+        user_id=user_id,
+        chat_id=chat_id,
+        data={
+            'type': 'confirm_commit_project',
+            'transactions': transactions,
+            'dompet': dompet_sheet,
+            'company': company,
+            'sender_name': sender_name,
+            'source': source,
+            'original_message_id': original_message_id,
+            'event_id': event_id,
+            'is_new_project': is_new_project
+        }
+    )
+
+    mention = format_mention(sender_name, is_group)
+    response = format_draft_summary_project(
+        transactions, dompet_sheet, company, mention
+    )
+    return {'response': response, 'completed': False}
+
+
 def _detect_operational_category(keterangan: str) -> str:
     keterangan_lower = (keterangan or "").lower()
     if 'gaji' in keterangan_lower:
@@ -506,6 +562,35 @@ Atau ketik /cancel untuk batal total"""
             final_name = apply_company_prefix(final_base, dompet_sheet, company)
         is_new_project = (res.get('status') == 'NEW')
         
+        if is_new_project:
+            transactions = pending_data.get('transactions', [])
+            for tx in transactions:
+                tx['nama_projek'] = final_name
+            set_pending_confirmation(
+                user_id=user_id,
+                chat_id=chat_id,
+                data={
+                    'type': 'project_new_confirm',
+                    'project_name': final_name,
+                    'project_display': res.get('original') or lookup_name,
+                    'transactions': transactions,
+                    'dompet_sheet': dompet_sheet,
+                    'company': company,
+                    'sender_name': sender_name,
+                    'source': pending_data.get('source', 'WhatsApp'),
+                    'original_message_id': pending_data.get('original_message_id'),
+                    'event_id': pending_data.get('event_id')
+                }
+            )
+            mention = format_mention(sender_name, is_group)
+            display_name = res.get('original') or lookup_name
+            prompt = (
+                f"{mention}🆕 Project *{display_name}* belum ada.\n\n"
+                "Buat Project Baru?\n"
+                "✅ Ya / ❌ Ganti Nama (Langsung Ketik Nama Baru)"
+            )
+            return {'response': prompt.replace('*', ''), 'completed': False}
+
         transactions = pending_data.get('transactions', [])
         
         for tx in transactions:
@@ -614,6 +699,89 @@ Atau ketik /cancel untuk batal total"""
             transactions, dompet_sheet, company, mention
         )
         return {'response': response, 'completed': False}
+
+    # ===================================
+    # HANDLE: Project New Confirm
+    # ===================================
+    elif pending_type == 'project_new_confirm':
+        clean = text_lower
+        dompet_sheet = pending_data.get('dompet_sheet')
+        company = pending_data.get('company')
+        transactions = pending_data.get('transactions', [])
+        project_name = pending_data.get('project_name')
+
+        if clean in ['ya', 'y', 'yes', 'oke', 'ok', 'buat', 'lanjut']:
+            # Proceed as new project
+            return _continue_project_after_name(
+                transactions, dompet_sheet, company,
+                user_id, sender_name, pending_data.get('source', 'WhatsApp'),
+                pending_data.get('original_message_id'), pending_data.get('event_id'),
+                True, is_group, chat_id
+            )
+
+        if clean in ['tidak', 'no', 'ganti', 'bukan', 'salah']:
+            set_pending_confirmation(
+                user_id=user_id,
+                chat_id=chat_id,
+                data={
+                    'type': 'project_name_input',
+                    'dompet_sheet': dompet_sheet,
+                    'company': company,
+                    'transactions': transactions,
+                    'original_message_id': pending_data.get('original_message_id'),
+                    'event_id': pending_data.get('event_id')
+                }
+            )
+            return {'response': '📝 Nama projeknya apa?', 'completed': False}
+
+        # Treat other input as new project name
+        new_name = text.strip()
+        if not new_name:
+            return {'response': '📝 Nama projeknya apa?', 'completed': False}
+
+        prefix = extract_company_prefix(new_name)
+        lookup_name = strip_company_prefix(new_name) if prefix else new_name
+        res = resolve_project_name(lookup_name)
+
+        if res.get('status') == 'AMBIGUOUS':
+            suggested = res.get('final_name')
+            if prefix:
+                suggested = f"{prefix} - {suggested}".strip()
+            else:
+                suggested = apply_company_prefix(suggested, dompet_sheet, company)
+            set_pending_confirmation(
+                user_id=user_id,
+                chat_id=chat_id,
+                data={
+                    'type': 'project_name_confirm',
+                    'suggested_project': suggested,
+                    'transactions': transactions,
+                    'dompet_sheet': dompet_sheet,
+                    'company': company,
+                    'original_message_id': pending_data.get('original_message_id'),
+                    'event_id': pending_data.get('event_id')
+                }
+            )
+            return {
+                'response': f"🤔 Maksudnya **{suggested}**?\n✅ Ya / ❌ Bukan".replace('*', ''),
+                'completed': False
+            }
+
+        final_base = res.get('final_name') or lookup_name
+        if prefix:
+            final_name = f"{prefix} - {final_base}".strip()
+        else:
+            final_name = apply_company_prefix(final_base, dompet_sheet, company)
+
+        for tx in transactions:
+            tx['nama_projek'] = final_name
+
+        return _continue_project_after_name(
+            transactions, dompet_sheet, company,
+            user_id, sender_name, pending_data.get('source', 'WhatsApp'),
+            pending_data.get('original_message_id'), pending_data.get('event_id'),
+            (res.get('status') == 'NEW'), is_group, chat_id
+        )
 
     # ===================================
     # HANDLE: Operational Category Input (Draft Adjust)

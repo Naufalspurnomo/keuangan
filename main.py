@@ -805,7 +805,7 @@ Balas 1 atau 2"""
             
             # --- VALIDATION: CHECK PROJECT EXISTENCE ---
             # Checks if project exists in Spreadsheet/Cache before proceeding
-            if not pending.get('project_confirmed'):
+            if not pending.get('project_validated'):
                 for t in txs:
                     p_name_raw = t.get('nama_projek')
                     # Skip validation for "Saldo Umum", empty, or "Umum"
@@ -832,6 +832,9 @@ Balas 1 atau 2"""
                     elif res['status'] in ['EXACT', 'AUTO_FIX']:
                         # Auto update to canonical name
                         t['nama_projek'] = res['final_name']
+                
+                # Mark as validated once all checks pass (no NEW/AMBIGUOUS trigger)
+                pending['project_validated'] = True
 
             # 1. Resolve Company/Dompet
             detected_company = None
@@ -1499,6 +1502,7 @@ Balas 1 atau 2"""
                 
                 # Set confirmed to true so we don't ask again
                 pending['project_confirmed'] = True
+                pending['project_validated'] = True
                 return finalize_transaction_workflow(pending, pending_pkey)
 
             # G. New Project Confirmation (NEW -> Create or Rename)
@@ -1508,6 +1512,7 @@ Balas 1 atau 2"""
                     # User confirmed it is new
                     pending['project_confirmed'] = True
                     pending['is_new_project'] = True  # Flag for lifecycle marker
+                    pending['project_validated'] = True
                     # Delayed cache update until save success
                     return finalize_transaction_workflow(pending, pending_pkey)
                     
@@ -1526,6 +1531,7 @@ Balas 1 atau 2"""
                     send_reply(f"👌 Update ke: **{final_proj}**")
                     for t in pending['transactions']: t['nama_projek'] = final_proj
                     pending['project_confirmed'] = True
+                    pending['project_validated'] = True
                     return finalize_transaction_workflow(pending, pending_pkey)
                 
             # C. Needs Project
@@ -1536,13 +1542,22 @@ Balas 1 atau 2"""
                 if res['status'] == 'AMBIGUOUS':
                     pending['pending_type'] = 'confirmation_project'
                     pending['suggested_project'] = res['final_name']
-                    send_reply(f"🤔 Maksudnya **{res['final_name']}**?\n✅ Ya / ❌ Bukan")
+                    send_reply(f"???? Maksudnya **{res['final_name']}**?\n??? Ya / ??? Bukan")
                     return jsonify({'status': 'confirm'}), 200
+                
+                if res['status'] == 'NEW':
+                    for t in pending['transactions']:
+                        t['nama_projek'] = res['final_name']
+                    pending['pending_type'] = 'confirmation_new_project'
+                    pending['new_project_name'] = res['original']
+                    send_reply(f"???? Project **{res['original']}** belum ada.\n\nBuat Project Baru?\n??? Ya / ??? Ganti Nama (Langsung Ketik Nama Baru)")
+                    return jsonify({'status': 'asking_new_project'}), 200
                 
                 final = res['final_name']
                 for t in pending['transactions']: t['nama_projek'] = final
                 # Set confirmed to true
                 pending['project_confirmed'] = True
+                pending['project_validated'] = True
                 return finalize_transaction_workflow(pending, pending_pkey)
                 
             # D. Company Selection
