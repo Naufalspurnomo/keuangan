@@ -177,9 +177,17 @@ class SmartHandler:
         if analysis.get('error') == 'rate_limit' and not analysis.get('should_respond', False):
             # If user is clearly addressing bot, respond with guidance
             if has_amount or has_media or context.get('addressed_score', 0) >= 40:
+                retry_after = analysis.get('retry_after')
+                retry_hint = "beberapa saat (perkiraan, tergantung limit API)"
+                if retry_after:
+                    retry_hint = f"dalam {retry_after} (dari API)"
                 return {
                     "action": "REPLY",
-                    "response": "⚠️ AI sedang sibuk (limit). Mohon kirim ulang dengan format jelas: nominal + keterangan + konteks (projek/kantor)."
+                    "response": (
+                        "⚠️ AI sedang sibuk (limit). "
+                        f"Coba lagi {retry_hint}. "
+                        "Jika urgent, kirim ulang dengan format jelas: nominal + keterangan + konteks (projek/kantor)."
+                    )
                 }
         
         if not analysis.get('should_respond', False):
