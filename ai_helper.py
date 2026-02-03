@@ -168,6 +168,9 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
     total_candidates = []
     base_candidates = []
     all_amounts = []
+    fee_keyword_found = False
+    total_keyword_found = False
+    base_keyword_found = False
 
     for raw in ocr_text.splitlines():
         line = raw.strip()
@@ -185,10 +188,13 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
         if not amounts:
             continue
         if any(k in lower for k in fee_keywords):
+            fee_keyword_found = True
             fee_candidates.extend(amounts)
         if any(k in lower for k in total_keywords):
+            total_keyword_found = True
             total_candidates.extend(amounts)
         if any(k in lower for k in base_keywords):
+            base_keyword_found = True
             base_candidates.extend(amounts)
 
     fee = 0
@@ -200,7 +206,12 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
     total = max(total_candidates) if total_candidates else 0
     base = max(base_candidates) if base_candidates else 0
     if not base and all_amounts:
-        base = max(all_amounts)
+        # If total exists, prefer next-highest amount as base
+        if total and len(all_amounts) > 1:
+            candidates = [a for a in all_amounts if a < total]
+            base = max(candidates) if candidates else total
+        else:
+            base = max(all_amounts)
 
     # Reconcile fee using total-base when available
     if total and base:
@@ -209,7 +220,14 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
             if fee == 0 or abs(fee - computed_fee) > max(500, int(0.2 * fee) if fee else 500):
                 fee = computed_fee
 
-    return {"base": base, "fee": fee, "total": total}
+    return {
+        "base": base,
+        "fee": fee,
+        "total": total,
+        "fee_keyword_found": fee_keyword_found,
+        "total_keyword_found": total_keyword_found,
+        "base_keyword_found": base_keyword_found
+    }
 
 
 
@@ -492,8 +510,14 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
             ocr_text = ""
             if "Receipt/Struk content:" in clean_text:
                 ocr_text = clean_text.split("Receipt/Struk content:", 1)[1]
-            receipt_amounts = extract_receipt_amounts(ocr_text) if ocr_text else {"base": 0, "fee": 0, "total": 0}
+            receipt_amounts = extract_receipt_amounts(ocr_text) if ocr_text else {
+                "base": 0, "fee": 0, "total": 0,
+                "fee_keyword_found": False,
+                "total_keyword_found": False,
+                "base_keyword_found": False
+            }
 
+            fee_keyword_found = bool(receipt_amounts.get("fee_keyword_found"))
             transfer_fee = receipt_amounts.get("fee", 0) or extract_transfer_fee(clean_text)
 
             # Identify fee transaction (if any)
@@ -512,6 +536,11 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                     main_tx["jumlah"] = base_amt
                 elif total_amt > 0 and transfer_fee > 0 and total_amt > transfer_fee:
                     main_tx["jumlah"] = max(total_amt - transfer_fee, main_tx.get("jumlah", 0))
+
+            # Remove fee transaction if amount not detected
+            if fee_tx and transfer_fee <= 0:
+                validated_transactions = [t for t in validated_transactions if t is not fee_tx]
+                fee_tx = None
 
             # Ensure fee transaction exists with corrected amount
             if transfer_fee > 0:

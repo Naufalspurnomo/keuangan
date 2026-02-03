@@ -437,7 +437,31 @@ def _save_state():
             # EXCLUDE visual_buffer from cloud backup (too large for base64 images)
             cloud_data = data.copy()
             cloud_data.pop("visual_buffer", None)
+            # Prune large fields for cloud backup to stay under cell limit (~50k chars)
+            def _trim_dict(d: dict, max_items: int) -> dict:
+                if not isinstance(d, dict):
+                    return d
+                if len(d) <= max_items:
+                    return d
+                # Keep newest items by insertion order
+                return dict(list(d.items())[-max_items:])
+
+            cloud_data["processed_messages"] = _trim_dict(cloud_data.get("processed_messages", {}), 500)
+            cloud_data["bot_message_refs"] = _trim_dict(cloud_data.get("bot_message_refs", {}), 200)
+            cloud_data["pending_message_refs"] = _trim_dict(cloud_data.get("pending_message_refs", {}), 200)
+            cloud_data["bot_interactions"] = _trim_dict(cloud_data.get("bot_interactions", {}), 200)
+            cloud_data["last_bot_reports"] = _trim_dict(cloud_data.get("last_bot_reports", {}), 200)
+            cloud_data["audit_log"] = []  # Skip audit log for cloud to save space
+
             cloud_json = json.dumps(cloud_data, default=str)
+            # If still too large, drop dedup + refs entirely
+            if len(cloud_json) > 45000:
+                cloud_data["processed_messages"] = {}
+                cloud_data["bot_message_refs"] = {}
+                cloud_data["pending_message_refs"] = {}
+                cloud_data["bot_interactions"] = {}
+                cloud_data["last_bot_reports"] = {}
+                cloud_json = json.dumps(cloud_data, default=str)
             
             threading.Thread(target=save_state_to_cloud, args=(cloud_json,), daemon=True).start()
                 
