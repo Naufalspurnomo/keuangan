@@ -48,7 +48,7 @@ from services.retry_service import process_retry_queue
 from services.project_service import resolve_project_name, add_new_project_to_cache
 from services.state_manager import (
     pending_key, pending_is_expired,
-    is_message_duplicate, store_bot_message_ref,
+    is_message_duplicate, clear_message_duplicate, store_bot_message_ref,
     store_pending_message_ref,
     get_pending_key_from_message,
     store_visual_buffer, get_visual_buffer,
@@ -516,9 +516,15 @@ def webhook_wuzapi():
         if ctx_info:
             quoted_msg_id = ctx_info.get('stanzaId')
 
-        # 6. Deduplication
+        # 6. Deduplication (allow upgrade for richer payloads)
         message_id = info.get('ID', '')
-        if is_message_duplicate(message_id):
+        dedup_score = 0
+        if text and text.strip():
+            dedup_score += min(len(text.strip()), 200)
+        if input_type == 'image':
+            if local_media_path or media_url or event_data.get('base64'):
+                dedup_score += 1000
+        if is_message_duplicate(message_id, score=dedup_score, allow_upgrade=True):
             secure_log("INFO", f"Webhook: Duplicate message {message_id} ignored")
             return jsonify({'status': 'duplicate'}), 200
 
@@ -1765,6 +1771,8 @@ Balas 1 atau 2"""
             transactions = extract_financial_data(inp, input_type, sender_name, media_list, caption)
             
             if not transactions:
+                if message_id:
+                    clear_message_duplicate(message_id)
                 if input_type == 'image': send_reply("❓ Tidak terbaca.")
                 return jsonify({'status': 'no_tx'}), 200
             
@@ -1847,6 +1855,8 @@ Balas 1 atau 2"""
         except ValueError as e:
             msg = str(e)
             secure_log("WARNING", f"AI Proc ValueError: {msg}")
+            if message_id:
+                clear_message_duplicate(message_id)
             if input_type == 'image':
                 if "Tidak ada teks ditemukan" in msg:
                     send_reply("❓ Tidak terbaca.")
@@ -1859,6 +1869,8 @@ Balas 1 atau 2"""
             return jsonify({'status': 'error'}), 200
         except Exception as e:
             secure_log("ERROR", f"AI Proc Error: {e}")
+            if message_id:
+                clear_message_duplicate(message_id)
             send_reply("❌ Error sistem.")
             return jsonify({'status': 'error'}), 200
 

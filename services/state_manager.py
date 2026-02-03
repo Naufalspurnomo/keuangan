@@ -12,7 +12,7 @@ State will be lost on restart. For production, consider external storage (Redis/
 
 import threading
 from datetime import datetime, timedelta
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Tuple
 import json
 import os
 from sheets_helper import save_state_to_cloud, load_state_from_cloud
@@ -227,37 +227,73 @@ def clear_pending_message_ref(bot_msg_id: str) -> None:
 
 # ===================== MESSAGE DEDUP =====================
 # Format: {message_id: timestamp}
-_processed_messages: Dict[str, datetime] = {}
+_processed_messages: Dict[str, Any] = {}
 _project_registry: Dict[str, str] = {}  # project_name(lower) -> dompet_sheet
 _audit_log: list = []
 _last_state_save: Optional[datetime] = None
 
 
-def is_message_duplicate(message_id: str) -> bool:
+def _normalize_dedup_entry(entry: Any) -> Tuple[Optional[datetime], int]:
+    """Normalize dedup entry to (timestamp, score)."""
+    if isinstance(entry, dict):
+        ts = entry.get("ts") or entry.get("timestamp")
+        score = int(entry.get("score", 0) or 0)
+    else:
+        ts = entry
+        score = 0
+
+    if isinstance(ts, str):
+        try:
+            ts = datetime.fromisoformat(ts)
+        except Exception:
+            ts = None
+    return ts, score
+
+
+def is_message_duplicate(message_id: str, score: int = 0, allow_upgrade: bool = False) -> bool:
     """Check if message was already processed (dedup). Returns True if duplicate."""
     if not message_id:
         return False
+    global _last_state_save
     
     now = datetime.now()
     with _dedup_lock:
         # Cleanup old entries (older than TTL)
-        expired_keys = [k for k, v in _processed_messages.items() 
-                       if (now - v).total_seconds() > DEDUP_TTL_SECONDS]
+        expired_keys = []
+        for k, v in _processed_messages.items():
+            ts, _score = _normalize_dedup_entry(v)
+            if ts and (now - ts).total_seconds() > DEDUP_TTL_SECONDS:
+                expired_keys.append(k)
         for k in expired_keys:
             _processed_messages.pop(k, None)
         
         # Check if already processed
         if message_id in _processed_messages:
+            _, prev_score = _normalize_dedup_entry(_processed_messages.get(message_id))
+            if allow_upgrade and score > prev_score:
+                _processed_messages[message_id] = {"ts": now, "score": int(score or 0)}
+                if _last_state_save is None or (now - _last_state_save).total_seconds() > 30:
+                    _last_state_save = now
+                    _save_state()
+                return False
             return True
         
         # Mark as processed
-        _processed_messages[message_id] = now
+        _processed_messages[message_id] = {"ts": now, "score": int(score or 0)}
         # Persist occasionally to survive restarts (idempotency)
-        global _last_state_save
         if _last_state_save is None or (now - _last_state_save).total_seconds() > 30:
             _last_state_save = now
             _save_state()
         return False
+
+
+def clear_message_duplicate(message_id: str) -> None:
+    """Remove message id from dedup cache (allow retry)."""
+    if not message_id:
+        return
+    with _dedup_lock:
+        _processed_messages.pop(message_id, None)
+    _save_state()
 
 
 # ===================== BOT MESSAGE REFS =====================
@@ -362,11 +398,22 @@ def _save_state():
     """Save state to local JSON AND Google Sheets (Background)."""
     with _state_lock:
         try:
+            # Normalize processed_messages for persistence
+            processed_dump = {}
+            for k, v in _processed_messages.items():
+                ts, score = _normalize_dedup_entry(v)
+                if isinstance(ts, datetime):
+                    processed_dump[k] = {"ts": ts.isoformat(), "score": int(score or 0)}
+                elif ts:
+                    processed_dump[k] = {"ts": str(ts), "score": int(score or 0)}
+                else:
+                    processed_dump[k] = {"ts": None, "score": int(score or 0)}
+
             data = {
                 "pending_transactions": _pending_transactions,
                 "bot_message_refs": _bot_message_refs,
                 "pending_message_refs": _pending_message_refs,
-                "processed_messages": {k: v.isoformat() for k, v in _processed_messages.items()},
+                "processed_messages": processed_dump,
                 "project_registry": _project_registry,
                 "audit_log": _audit_log,
                 "bot_interactions": {k: {**v, 'timestamp': v['timestamp'].isoformat()} for k, v in _bot_interactions.items()},
@@ -447,10 +494,15 @@ def _load_state():
             if "processed_messages" in data:
                 for k, v in data["processed_messages"].items():
                     try:
-                        ts = datetime.fromisoformat(v)
-                        # Skip expired to keep idempotency store small
-                        if (datetime.now() - ts).total_seconds() <= DEDUP_TTL_SECONDS:
-                            _processed_messages[k] = ts
+                        if isinstance(v, dict):
+                            ts_raw = v.get("ts")
+                            score = int(v.get("score", 0) or 0)
+                        else:
+                            ts_raw = v
+                            score = 0
+                        ts = datetime.fromisoformat(ts_raw) if isinstance(ts_raw, str) else ts_raw
+                        if ts and (datetime.now() - ts).total_seconds() <= DEDUP_TTL_SECONDS:
+                            _processed_messages[k] = {"ts": ts, "score": score}
                     except Exception:
                         pass
 
