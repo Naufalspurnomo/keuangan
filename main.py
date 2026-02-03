@@ -1117,6 +1117,8 @@ Balas 1 atau 2"""
 
         # Group noise gate (pre-AI): avoid processing random media/chatter
         # If user recently sent an image, allow follow-up text to bind.
+        raw_text = text or ""
+        explicit_catat = bool(re.match(r'^\s*\+?catat\b', raw_text, re.IGNORECASE))
         has_visual = has_visual_buffer(sender_number, chat_jid) if is_group else False
         if is_group and not has_pending:
             is_mentioned = False
@@ -1137,8 +1139,10 @@ Balas 1 atau 2"""
                 text = cleaned
         
         # 4. Filter AI Trigger
+        if explicit_catat:
+            text = re.sub(r'^\s*\+?catat\b', '', raw_text, flags=re.IGNORECASE).strip()
         text = sanitize_input(text or '')
-        force_record = False
+        force_record = explicit_catat
         
         # ========== PRIORITY: COMMANDS FIRST (before layer processing) ==========
         if text.strip().startswith('/'):
@@ -1212,11 +1216,6 @@ Balas 1 atau 2"""
                     send_reply(f"❌ Maaf, terjadi kesalahan saat menganalisis data.")
                     return jsonify({'status': 'command_tanya_error'}), 200
         
-        # Explicit "catat" without slash should behave like /catat
-        if not force_record and re.match(r'^\s*\+?catat\b', text, re.IGNORECASE):
-            force_record = True
-            text = re.sub(r'^\s*\+?catat\b', '', text, flags=re.IGNORECASE).strip()
-
         # Initialize category scope and intent variables (prevent UnboundLocalError)
         layer_category_scope = 'UNKNOWN'
         intent = 'UNKNOWN'
