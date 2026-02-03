@@ -108,6 +108,24 @@ def should_respond_in_group(message: str, is_group: bool, has_media: bool = Fals
         return True, message  # Process likely transactions and commands
     
     message_lower = message.lower().strip()
+
+    # 2.5. Wallet balance updates are explicit financial actions
+    saldo_update_keywords = [
+        "update saldo",
+        "update dompet",
+        "update saldo dompet",
+        "isi saldo",
+        "isi dompet",
+        "topup dompet",
+        "top up dompet",
+        "masuk dompet",
+        "tambah saldo",
+        "tarik tunai",
+        "tarik dompet",
+        "ambil dompet",
+    ]
+    if any(kw in message_lower for kw in saldo_update_keywords):
+        return True, message
     
     # 1. Active Session Bonus (+50 equivalent) -> Always processing pending flow
     if has_pending:
