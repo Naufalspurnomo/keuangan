@@ -777,17 +777,19 @@ def _draw_header_monthly(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: float, pag
     c.restoreState()
     if logo_path and os.path.exists(logo_path):
         try:
-            # Draw logo with preserved aspect ratio (max height 50, auto width)
+            # Draw logo with preserved aspect ratio - BIGGER size
             from reportlab.lib.utils import ImageReader
             img = ImageReader(logo_path)
             img_w, img_h = img.getSize()
-            max_h = 50
-            max_w = 110
+            max_h = 90
+            max_w = 100
             # Scale to fit within bounds while preserving aspect ratio
             scale = min(max_w / img_w, max_h / img_h)
             draw_w = img_w * scale
             draw_h = img_h * scale
-            c.drawImage(logo_path, 25, page_h - 25 - draw_h, width=draw_w, height=draw_h, mask="auto")
+            # Center vertically in header
+            logo_y = page_h - 95 - draw_h / 2 + 45
+            c.drawImage(logo_path, 25, logo_y, width=draw_w, height=draw_h, mask="auto")
         except Exception: pass
     _draw_text(c, ui.fonts["italic"], 10.5, THEME["white"], 140, page_h - 30, f"Generated on {ctx['generated_on']}")
     _draw_text(c, ui.fonts["bold"], 32, THEME["white"], 140, page_h - 74, "Financial")
@@ -1022,13 +1024,14 @@ def _draw_company_header(c: canvas.Canvas, ui: UI, ctx: Dict, company: str, page
     color = COMPANY_COLOR.get(company, THEME["teal"])
     c.setFillColor(color)
     c.rect(0, page_h - header_h, page_w, header_h, fill=1, stroke=0)
-    # Company name - larger and more prominent
-    _draw_text(c, ui.fonts["bold"], 36, THEME["white"], ui.margin, page_h - 60, COMPANY_DISPLAY.get(company, company))
-    # Period on the right
+    # Company name - vertically centered
+    center_y = page_h - header_h / 2 - 8
+    _draw_text(c, ui.fonts["bold"], 36, THEME["white"], ui.margin, center_y, COMPANY_DISPLAY.get(company, company))
+    # Period on the right - also centered
     month_part, year_part = ctx["period_label"].split()
-    _draw_text(c, ui.fonts["bold"], 28, THEME["white"], page_w - ui.margin, page_h - 45, f"{month_part} {year_part}", align="right")
-    # Generated date - smaller, at top
-    _draw_text(c, ui.fonts["italic"], 9, THEME["white"], ui.margin, page_h - 20, f"Generated on {ctx['generated_on']}")
+    _draw_text(c, ui.fonts["bold"], 28, THEME["white"], page_w - ui.margin, center_y + 4, f"{month_part} {year_part}", align="right")
+    # Generated date - smaller, at top left
+    _draw_text(c, ui.fonts["italic"], 9, THEME["white"], ui.margin, page_h - 18, f"Generated on {ctx['generated_on']}")
 
 def _draw_tx_list_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, title: str, items: List[Dict], kind_color, max_items: Optional[int] = None, h: float = 200):
     """
