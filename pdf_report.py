@@ -824,37 +824,39 @@ def _draw_kpi_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h
 
 def _draw_comparison_chart(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h: float, curr: Dict, prev: Dict):
     """
-    Chart perbandingan: Abu-abu = Bulan Lalu, Berwarna = Bulan Ini
+    Chart perbandingan: Abu-abu = Bulan Lalu, Biru = Bulan Ini
     """
     y = y_top - h
     _draw_card(c, ui, x, y, w, h, shadow=True)
-    _draw_text(c, ui.fonts["bold"], 14, THEME["text"], x + 20, y + h - 24, "Perbandingan Bulan Lalu")
     
-    # Legend at top right - very clear
-    leg_y = y + h - 22
+    # Title
+    _draw_text(c, ui.fonts["bold"], 14, THEME["text"], x + 20, y + h - 22, "Perbandingan Bulan Lalu")
+    
+    # Legend on separate line below title
+    leg_y = y + h - 40
     c.setFillColor(THEME["chart_prev"])
-    c.roundRect(x + w - 130, leg_y - 2, 10, 10, 2, stroke=0, fill=1)
-    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + w - 118, leg_y, "Bulan lalu")
+    c.roundRect(x + 20, leg_y - 2, 10, 10, 2, stroke=0, fill=1)
+    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + 34, leg_y, "Bulan lalu")
     
     c.setFillColor(THEME["accent"])
-    c.roundRect(x + w - 60, leg_y - 2, 10, 10, 2, stroke=0, fill=1)
-    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + w - 48, leg_y, "Bulan ini")
+    c.roundRect(x + 95, leg_y - 2, 10, 10, 2, stroke=0, fill=1)
+    _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + 109, leg_y, "Bulan ini")
 
     # Chart Area
-    chart_h = h - 60
-    chart_y = y + 16
+    chart_h = h - 70
+    chart_y = y + 14
     chart_w = w - 40
     chart_x = x + 20
     
-    # Colors: Gray for previous, colored for current
+    # All metrics use same colors: Gray for previous, Blue for current
     groups = [
-        ("Omset", "income_total", THEME["accent"]),
-        ("Pengeluaran", "expense_total", THEME["warning"]),
-        ("Profit", "profit", THEME["success"]),
+        ("Omset", "income_total"),
+        ("Pengeluaran", "expense_total"),
+        ("Profit", "profit"),
     ]
     
     max_val = 0
-    for _, key, _ in groups:
+    for _, key in groups:
         max_val = max(max_val, abs(int(curr.get(key, 0) or 0)), abs(int(prev.get(key, 0) or 0)))
     if max_val == 0: max_val = 1
     
@@ -862,18 +864,17 @@ def _draw_comparison_chart(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: 
     bar_width = (group_width * 0.6) / 2
     gap = 6
     
-    for i, (label, key, color_curr) in enumerate(groups):
+    for i, (label, key) in enumerate(groups):
         cx = chart_x + i * group_width + (group_width * 0.2)
         val_prev = int(prev.get(key, 0) or 0)
         val_curr = int(curr.get(key, 0) or 0)
         
-        # Gray for previous month, colored for current month
+        # Same colors for all: Gray = previous, Blue = current
         c_prev = THEME["chart_prev"]
-        c_curr = color_curr
-        if label == "Profit" and val_curr < 0: c_curr = THEME["danger"]
+        c_curr = THEME["accent"]
         
-        h_prev = (abs(val_prev) / max_val) * (chart_h - 30)
-        h_curr = (abs(val_curr) / max_val) * (chart_h - 30)
+        h_prev = (abs(val_prev) / max_val) * (chart_h - 28)
+        h_curr = (abs(val_curr) / max_val) * (chart_h - 28)
         
         # Draw label at bottom
         _draw_text(c, ui.fonts["semibold"], 10, THEME["text"], cx + bar_width + gap/2, chart_y, label, align="center")
@@ -885,7 +886,7 @@ def _draw_comparison_chart(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: 
         c.roundRect(cx, bar_base_y, bar_width, max(2, h_prev), 3, stroke=0, fill=1)
         _draw_text(c, ui.fonts["regular"], 8, THEME["muted"], cx + bar_width/2, bar_base_y + h_prev + 3, format_currency_short(val_prev), align="center")
         
-        # Current month bar (right, COLORED)
+        # Current month bar (right, BLUE)
         c.setFillColor(c_curr)
         c.roundRect(cx + bar_width + gap, bar_base_y, bar_width, max(2, h_curr), 3, stroke=0, fill=1)
         _draw_text(c, ui.fonts["bold"], 8, THEME["text"], cx + bar_width + gap + bar_width/2, bar_base_y + h_curr + 3, format_currency_short(val_curr), align="center")
@@ -1069,11 +1070,11 @@ def _draw_insight_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
     else: lines.append("Pengeluaran terbesar: -")
     
     if sal:
-        lines.append(fmt_line("Gaji terbesar", sal[0].get('keterangan',''), int(sal[0].get('jumlah',0) or 0)))
-        lines.append(fmt_line("Gaji terkecil", sal[-1].get('keterangan','') if len(sal)>1 else sal[0].get('keterangan',''), int((sal[-1] if len(sal)>1 else sal[0]).get('jumlah',0) or 0)))
+        lines.append(fmt_line("Fee terbesar", sal[0].get('keterangan',''), int(sal[0].get('jumlah',0) or 0)))
+        lines.append(fmt_line("Fee terkecil", sal[-1].get('keterangan','') if len(sal)>1 else sal[0].get('keterangan',''), int((sal[-1] if len(sal)>1 else sal[0]).get('jumlah',0) or 0)))
     else:
-        lines.append("Gaji terbesar: -")
-        lines.append("Gaji terkecil: -")
+        lines.append("Fee terbesar: -")
+        lines.append("Fee terkecil: -")
         
     if cards:
         best = max(cards, key=lambda x: int(x["metrics"]["profit"]))
