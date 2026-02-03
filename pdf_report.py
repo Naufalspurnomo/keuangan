@@ -776,7 +776,18 @@ def _draw_header_monthly(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: float, pag
     c.circle(left_w - 120, page_h - 90, 22, stroke=0, fill=1)
     c.restoreState()
     if logo_path and os.path.exists(logo_path):
-        try: c.drawImage(logo_path, 30, page_h - 78, width=120, height=40, mask="auto")
+        try:
+            # Draw logo with preserved aspect ratio (max height 50, auto width)
+            from reportlab.lib.utils import ImageReader
+            img = ImageReader(logo_path)
+            img_w, img_h = img.getSize()
+            max_h = 50
+            max_w = 110
+            # Scale to fit within bounds while preserving aspect ratio
+            scale = min(max_w / img_w, max_h / img_h)
+            draw_w = img_w * scale
+            draw_h = img_h * scale
+            c.drawImage(logo_path, 25, page_h - 25 - draw_h, width=draw_w, height=draw_h, mask="auto")
         except Exception: pass
     _draw_text(c, ui.fonts["italic"], 10.5, THEME["white"], 140, page_h - 30, f"Generated on {ctx['generated_on']}")
     _draw_text(c, ui.fonts["bold"], 32, THEME["white"], 140, page_h - 74, "Financial")
@@ -797,7 +808,16 @@ def _draw_header_range(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: float, page_
     c.circle(left_w - 120, page_h - 90, 22, stroke=0, fill=1)
     c.restoreState()
     if logo_path and os.path.exists(logo_path):
-        try: c.drawImage(logo_path, 30, page_h - 78, width=120, height=40, mask="auto")
+        try:
+            from reportlab.lib.utils import ImageReader
+            img = ImageReader(logo_path)
+            img_w, img_h = img.getSize()
+            max_h = 50
+            max_w = 110
+            scale = min(max_w / img_w, max_h / img_h)
+            draw_w = img_w * scale
+            draw_h = img_h * scale
+            c.drawImage(logo_path, 25, page_h - 25 - draw_h, width=draw_w, height=draw_h, mask="auto")
         except Exception: pass
     _draw_text(c, ui.fonts["italic"], 10.5, THEME["white"], 140, page_h - 30, f"Generated on {ctx['generated_on']}")
     _draw_text(c, ui.fonts["bold"], 32, THEME["white"], 140, page_h - 74, "Financial")
@@ -998,15 +1018,17 @@ def _draw_finished_projects_cover(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: f
     chart_items = [(c, ctx["income_share"].get(c, 0.0), ctx.get("income_by_company", {}).get(c, 0)) for c in COMPANY_KEYS]
     _draw_income_share_chart(c, ui, card_x + pad, chart_y0 + chart_h - 8, card_w - 2 * pad, chart_items)
 
-def _draw_company_header(c: canvas.Canvas, ui: UI, ctx: Dict, company: str, page_w: float, page_h: float, header_h: float = 150):
+def _draw_company_header(c: canvas.Canvas, ui: UI, ctx: Dict, company: str, page_w: float, page_h: float, header_h: float = 100):
     color = COMPANY_COLOR.get(company, THEME["teal"])
     c.setFillColor(color)
     c.rect(0, page_h - header_h, page_w, header_h, fill=1, stroke=0)
-    _draw_text(c, ui.fonts["italic"], 10.5, THEME["white"], ui.margin, page_h - 28, f"Generated on {ctx['generated_on']}")
-    _draw_text(c, ui.fonts["bold"], 28, THEME["white"], ui.margin, page_h - 72, COMPANY_DISPLAY.get(company, company))
+    # Company name - larger and more prominent
+    _draw_text(c, ui.fonts["bold"], 36, THEME["white"], ui.margin, page_h - 60, COMPANY_DISPLAY.get(company, company))
+    # Period on the right
     month_part, year_part = ctx["period_label"].split()
-    _draw_text(c, ui.fonts["bold"], 24, THEME["white"], page_w - ui.margin, page_h - 58, month_part, align="right")
-    _draw_text(c, ui.fonts["bold"], 24, THEME["white"], page_w - ui.margin, page_h - 90, year_part, align="right")
+    _draw_text(c, ui.fonts["bold"], 28, THEME["white"], page_w - ui.margin, page_h - 45, f"{month_part} {year_part}", align="right")
+    # Generated date - smaller, at top
+    _draw_text(c, ui.fonts["italic"], 9, THEME["white"], ui.margin, page_h - 20, f"Generated on {ctx['generated_on']}")
 
 def _draw_tx_list_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, title: str, items: List[Dict], kind_color, max_items: Optional[int] = None, h: float = 200):
     """
