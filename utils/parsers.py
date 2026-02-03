@@ -116,6 +116,8 @@ def should_respond_in_group(message: str, is_group: bool, has_media: bool = Fals
         "update saldo dompet",
         "isi saldo",
         "isi dompet",
+        "tambah dompet",
+        "tambah saldo dompet",
         "topup dompet",
         "top up dompet",
         "masuk dompet",

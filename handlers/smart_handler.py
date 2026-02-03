@@ -123,7 +123,7 @@ class SmartHandler:
         # CHECK 5: Finance keywords
         finance_keywords = [
             "beli", "bayar", "transfer", "lunas", "dp", "biaya", "ongkir", 
-            "saldo", "uang", "dana", "keluar", "masuk", "total", "rekap", 
+            "saldo", "dompet", "uang", "dana", "keluar", "masuk", "total", "rekap", 
             "hutang", "tagihan", "invoice", "nota", "struk", "jajan",
             "catat", "tulis", "input", "rekam", "masukin", "simpan",
             "cek", "lihat", "tanya", "info", "help",
