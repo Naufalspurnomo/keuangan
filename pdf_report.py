@@ -113,8 +113,23 @@ PROJECT_EXCLUDE_NAMES = {"operasional", "operasional kantor", "saldo umum", "umu
 
 
 # =============================================================================
-# Fonts
+# Fonts & Assets
 # =============================================================================
+
+def _get_logo_path() -> Optional[str]:
+    """Resolve logo path from environment variable, relative to script directory."""
+    logo_env = os.getenv("HOLLAWALL_LOGO_PATH")
+    if not logo_env:
+        return None
+    
+    # If it's already an absolute path, use it directly
+    if os.path.isabs(logo_env):
+        return logo_env if os.path.exists(logo_env) else None
+    
+    # Otherwise, resolve relative to script directory
+    base_dir = os.path.dirname(__file__)
+    full_path = os.path.join(base_dir, logo_env)
+    return full_path if os.path.exists(full_path) else None
 
 def register_fonts() -> Dict[str, str]:
     base_dir = os.path.dirname(__file__)
@@ -1334,7 +1349,7 @@ def generate_pdf_report_v4_monthly(year: int, month: int, output_dir: Optional[s
     os.makedirs(out_dir, exist_ok=True)
     fname = _safe_filename(f"Laporan_Keuangan_{ctx['period_label']}") + ".pdf"
     output_path = os.path.join(out_dir, fname)
-    logo_path = os.getenv("HOLLAWALL_LOGO_PATH")
+    logo_path = _get_logo_path()
     c = canvas.Canvas(output_path, pagesize=A4)
     draw_cover_monthly(c, ui, ctx, logo_path=logo_path)
     c.showPage()
@@ -1355,7 +1370,7 @@ def generate_pdf_report_v4_range(start_dt: datetime, end_dt: datetime, output_di
     os.makedirs(out_dir, exist_ok=True)
     fname = _safe_filename(f"Laporan_Keuangan_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}") + ".pdf"
     output_path = os.path.join(out_dir, fname)
-    logo_path = os.getenv("HOLLAWALL_LOGO_PATH")
+    logo_path = _get_logo_path()
     c = canvas.Canvas(output_path, pagesize=A4)
     draw_cover_periodical(c, ui, ctx, logo_path=logo_path)
     c.save()
