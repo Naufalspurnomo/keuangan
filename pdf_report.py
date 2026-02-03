@@ -765,50 +765,38 @@ def _draw_footer(c: canvas.Canvas, ui: UI, page_w: float):
 # =============================================================================
 
 def _draw_header_monthly(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: float, page_h: float, logo_path: Optional[str]):
-    header_h = 240 # Slight increase to accommodate larger text comfortably
+    header_h = 190
     left_w = 427
     c.saveState()
     c.setFillColor(THEME["teal"])
     c.rect(0, page_h - header_h, left_w, header_h, fill=1, stroke=0)
+    _set_alpha(c, fill=0.08)
+    c.setFillColor(colors.white)
+    c.circle(left_w - 60, page_h - 40, 36, stroke=0, fill=1)
+    c.circle(left_w - 120, page_h - 90, 22, stroke=0, fill=1)
     c.restoreState()
-    
-    # Grid references
-    mid_y = page_h - (header_h / 2)
-    logo_x = 30
-    text_x = 210
-    
-    # Logo Logic - Maximized
     if logo_path and os.path.exists(logo_path):
         try:
+            # Draw logo - BIGGER and properly centered
             from reportlab.lib.utils import ImageReader
             img = ImageReader(logo_path)
             img_w, img_h = img.getSize()
-            max_h = 165  
-            max_w = 165
+            max_h = 140
+            max_w = 140
+            # Scale to fit within bounds while preserving aspect ratio
             scale = min(max_w / img_w, max_h / img_h)
             draw_w = img_w * scale
             draw_h = img_h * scale
-            
-            # Vertically centered
-            logo_y = mid_y - (draw_h / 2)
-            c.drawImage(logo_path, logo_x, logo_y, width=draw_w, height=draw_h, mask="auto")
+            # Center vertically: header is 190px, centered at page_h - 95
+            logo_y = page_h - (header_h / 2) - (draw_h / 2)
+            c.drawImage(logo_path, 20, logo_y, width=draw_w, height=draw_h, mask="auto")
         except Exception: pass
-        
-    # "Generated on" - Positioned above title
-    _draw_text(c, ui.fonts["italic"], 11, THEME["white"], text_x, mid_y + 65, f"Generated on {ctx['generated_on']}")
-    
-    # Main Title - "Financial Report" - BIGGER (60pt)
-    # Tight leading
-    _draw_text(c, ui.fonts["bold"], 60, THEME["white"], text_x, mid_y + 10, "Financial")
-    _draw_text(c, ui.fonts["bold"], 60, THEME["white"], text_x, mid_y - 50, "Report")
-    
-    # Date Section (Right side)
+    _draw_text(c, ui.fonts["italic"], 10.5, THEME["white"], 140, page_h - 30, f"Generated on {ctx['generated_on']}")
+    _draw_text(c, ui.fonts["bold"], 32, THEME["white"], 140, page_h - 74, "Financial")
+    _draw_text(c, ui.fonts["bold"], 32, THEME["white"], 140, page_h - 114, "Report")
     month_part, year_part = ctx["period_label"].split()
-    date_x = left_w + 30
-    
-    # Match vertical alignment
-    _draw_text(c, ui.fonts["bold"], 60, THEME["teal"], date_x, mid_y + 10, month_part)
-    _draw_text(c, ui.fonts["regular"], 60, THEME["teal"], date_x, mid_y - 50, year_part)
+    _draw_text(c, ui.fonts["bold"], 36, THEME["teal"], left_w + 18, page_h - 74, month_part)
+    _draw_text(c, ui.fonts["bold"], 36, THEME["teal"], left_w + 18, page_h - 114, year_part)
 
 def _draw_header_range(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: float, page_h: float, logo_path: Optional[str]):
     header_h = 190
