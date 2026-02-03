@@ -268,7 +268,7 @@ class Commands:
 
 # ===================== GROUP TRIGGERS =====================
 
-GROUP_TRIGGERS = ["+catat", "+bot", "+input", "/catat"]
+GROUP_TRIGGERS = ["+catat", "+bot", "+input", "/catat", "catat"]
 
 
 # For testing

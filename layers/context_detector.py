@@ -295,6 +295,8 @@ def calculate_addressed_score(
     # 2. Explicit triggers
     if any(trigger in text_lower for trigger in ['+catat', '+bot', '+input', '/catat', '/bot']):
         return 100
+    if re.match(r'^\s*catat\b', text_lower):
+        return 100
         
     # 3. Mention / Command
     if mention_context and mention_context.get('mentioned'):

@@ -9,6 +9,7 @@ Major Improvements:
 """
 import json
 import logging
+import re
 from config.constants import Timeouts, OPERATIONAL_KEYWORDS
 from utils.context_detector import ContextDetector
 from utils.amounts import has_amount_pattern
@@ -546,6 +547,11 @@ REMEMBER:
         except Exception as e:
             err_str = str(e).lower()
             is_rate_limit = ("rate limit" in err_str or "rate_limit" in err_str or "429" in err_str)
+            retry_after = None
+            if is_rate_limit:
+                match = re.search(r"try again in ([0-9ms\.]+)", str(e))
+                if match:
+                    retry_after = match.group(1)
             logger.error(f"Groq Analyzer Failed: {e}")
             return self._fallback_result(
                 text=text,
@@ -557,6 +563,7 @@ REMEMBER:
                 is_human_cmd=is_human_cmd,
                 category_scope=category_scope,
                 error_type="rate_limit" if is_rate_limit else "ai_error",
+                retry_after=retry_after,
             )
     
     def _apply_safety_overrides(self, result: dict, text: str, context: dict,
@@ -596,7 +603,7 @@ REMEMBER:
     def _fallback_result(self, text: str, context: dict, has_amount: bool,
                          has_media: bool, is_saldo: bool, is_future: bool,
                          is_human_cmd: bool, category_scope: str,
-                         error_type: str) -> dict:
+                         error_type: str, retry_after: str = None) -> dict:
         """Rule-based fallback when AI is unavailable."""
         text_lower = (text or "").lower()
         question_words = [
@@ -614,7 +621,8 @@ REMEMBER:
                 "category_scope": "UNKNOWN",
                 "extracted_data": {},
                 "reasoning": "Fallback: query keyword detected",
-                "error": error_type
+                "error": error_type,
+                "retry_after": retry_after
             }
 
         # Saldo update => Transfer funds
@@ -626,7 +634,8 @@ REMEMBER:
                 "category_scope": "TRANSFER",
                 "extracted_data": {},
                 "reasoning": "Fallback: saldo update keyword detected",
-                "error": error_type
+                "error": error_type,
+                "retry_after": retry_after
             }
 
         # Transaction-like signal
@@ -641,7 +650,8 @@ REMEMBER:
                 "category_scope": category_scope or "UNKNOWN",
                 "extracted_data": {},
                 "reasoning": "Fallback: amount/media detected",
-                "error": error_type
+                "error": error_type,
+                "retry_after": retry_after
             }
 
         return {
@@ -651,7 +661,8 @@ REMEMBER:
             "category_scope": category_scope or "UNKNOWN",
             "extracted_data": {},
             "reasoning": "Fallback: insufficient signal",
-            "error": error_type
+            "error": error_type,
+            "retry_after": retry_after
         }
 
 
