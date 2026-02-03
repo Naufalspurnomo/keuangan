@@ -855,10 +855,18 @@ def _draw_kpi_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h
     _draw_text(c, ui.fonts["regular"], 14, THEME["muted2"], x + 20, y + h - 50, "Rp")
     _draw_text_fit(c, ui.fonts["bold"], 26, 18, num_color, x + 46, y + h - 50, format_number(amount), w - 66, align="left")
     
-    # Subnote for operational costs - on two lines for clarity
+    # Subnote for operational costs - styled with colored background pill
     if subnote_val:
-        _draw_text(c, ui.fonts["regular"], 9, THEME["muted"], x + 20, y + 22, "Termasuk Ops. Kantor:")
-        _draw_text(c, ui.fonts["semibold"], 10, THEME["text"], x + 20, y + 10, subnote_val)
+        pill_h = 32
+        pill_y = y + 7
+        c.saveState()
+        c.setFillColor(accent)
+        _set_alpha(c, fill=0.08, stroke=0)
+        c.roundRect(x + 12, pill_y, w - 24, pill_h, 6, stroke=0, fill=1)
+        c.restoreState()
+        
+        _draw_text(c, ui.fonts["regular"], 8.5, THEME["text_secondary"], x + 22, pill_y + 19, "Termasuk Ops. Kantor:")
+        _draw_text(c, ui.fonts["bold"], 10.5, accent, x + 22, pill_y + 7, subnote_val)
 
 def _draw_comparison_chart(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, h: float, curr: Dict, prev: Dict):
     """
