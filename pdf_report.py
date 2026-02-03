@@ -1021,18 +1021,16 @@ def _draw_finished_projects_cover(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: f
     chart_items = [(c, ctx["income_share"].get(c, 0.0), ctx.get("income_by_company", {}).get(c, 0)) for c in COMPANY_KEYS]
     _draw_income_share_chart(c, ui, card_x + pad, chart_y0 + chart_h - 8, card_w - 2 * pad, chart_items)
 
-def _draw_company_header(c: canvas.Canvas, ui: UI, ctx: Dict, company: str, page_w: float, page_h: float, header_h: float = 100):
+def _draw_company_header(c: canvas.Canvas, ui: UI, ctx: Dict, company: str, page_w: float, page_h: float, header_h: float = 65):
     color = COMPANY_COLOR.get(company, THEME["teal"])
     c.setFillColor(color)
     c.rect(0, page_h - header_h, page_w, header_h, fill=1, stroke=0)
-    # Company name - vertically centered
-    center_y = page_h - header_h / 2 - 8
-    _draw_text(c, ui.fonts["bold"], 36, THEME["white"], ui.margin, center_y, COMPANY_DISPLAY.get(company, company))
+    # Company name - vertically centered, slightly smaller font
+    center_y = page_h - header_h / 2 - 6
+    _draw_text(c, ui.fonts["bold"], 28, THEME["white"], ui.margin, center_y, COMPANY_DISPLAY.get(company, company))
     # Period on the right - also centered
     month_part, year_part = ctx["period_label"].split()
-    _draw_text(c, ui.fonts["bold"], 28, THEME["white"], page_w - ui.margin, center_y + 4, f"{month_part} {year_part}", align="right")
-    # Generated date - smaller, at top left
-    _draw_text(c, ui.fonts["italic"], 9, THEME["white"], ui.margin, page_h - 18, f"Generated on {ctx['generated_on']}")
+    _draw_text(c, ui.fonts["bold"], 22, THEME["white"], page_w - ui.margin, center_y + 2, f"{month_part} {year_part}", align="right")
 
 def _draw_tx_list_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, title: str, items: List[Dict], kind_color, max_items: Optional[int] = None, h: float = 200):
     """
