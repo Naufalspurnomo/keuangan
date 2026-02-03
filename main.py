@@ -1212,6 +1212,11 @@ Balas 1 atau 2"""
                     send_reply(f"❌ Maaf, terjadi kesalahan saat menganalisis data.")
                     return jsonify({'status': 'command_tanya_error'}), 200
         
+        # Explicit "catat" without slash should behave like /catat
+        if not force_record and re.match(r'^\s*\+?catat\b', text, re.IGNORECASE):
+            force_record = True
+            text = re.sub(r'^\s*\+?catat\b', '', text, flags=re.IGNORECASE).strip()
+
         # Initialize category scope and intent variables (prevent UnboundLocalError)
         layer_category_scope = 'UNKNOWN'
         intent = 'UNKNOWN'

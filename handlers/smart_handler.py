@@ -96,6 +96,7 @@ class SmartHandler:
         quick = should_quick_filter(message)
         if quick == "IGNORE":
             if not has_media:
+                secure_log("INFO", f"SmartHandler: quick-filter ignore (no media, text_len={len(text or '')})")
                 return {"action": "IGNORE"}
              
 
@@ -172,6 +173,26 @@ class SmartHandler:
         context['is_ambient'] = (score < 40)
         
         analysis = analyzer.analyze_message(message, context)
+
+        # Log AI decision for media or ignored messages to aid debugging
+        if has_media or not analysis.get('should_respond', False):
+            reason = (analysis.get('reasoning') or '').strip()
+            if len(reason) > 160:
+                reason = reason[:160] + "..."
+            secure_log(
+                "INFO",
+                "SmartHandler AI result: "
+                f"should_respond={analysis.get('should_respond')} "
+                f"intent={analysis.get('intent')} "
+                f"conf={analysis.get('confidence')} "
+                f"scope={analysis.get('category_scope')} "
+                f"error={analysis.get('error')} "
+                f"has_media={has_media} "
+                f"has_amount={has_amount} "
+                f"score={score} "
+                f"text_len={len(text or '')} "
+                f"reason={reason}"
+            )
 
         # AI fallback notification (rate limit)
         if analysis.get('error') == 'rate_limit' and not analysis.get('should_respond', False):
