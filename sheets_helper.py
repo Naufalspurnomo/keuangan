@@ -7,6 +7,7 @@ from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 from typing import List, Dict, Optional
 from config.constants import COL_NAMA_PROJEK
+from security import now_wib
 
 
 # Cache sederhana agar tidak boros kuota Google API
@@ -403,7 +404,7 @@ def append_project_transaction(
         entry_count = _count_entries_in_block(sheet, no_col, SPLIT_LAYOUT_DATA_START)
         
         # Build row data
-        now = datetime.now()
+        now = now_wib()
         jumlah = abs(int(transaction.get('jumlah', 0)))
         keterangan = sanitize_input(str(transaction.get('keterangan', '')))[:200]
         safe_sender = sanitize_input(sender_name)[:50]
@@ -490,7 +491,7 @@ def append_operational_transaction(
         
         row_data = [
             entry_count + 1,                        # No
-            datetime.now().strftime('%Y-%m-%d'),    # Tanggal
+            now_wib().strftime('%Y-%m-%d'),    # Tanggal
             jumlah,                                 # JUMLAH
             keterangan_with_source,                 # KETERANGAN with [Sumber: X]
             safe_sender,                            # Oleh
@@ -681,7 +682,7 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
         # Row order: No, Tanggal, Company, Keterangan, Jumlah, Tipe, Oleh, Source, Kategori, Nama Projek, MessageID
         row = [
             next_no,  # A: Auto-generated Number
-            transaction.get('tanggal', datetime.now().strftime('%Y-%m-%d')),  # B: Tanggal
+            transaction.get('tanggal', now_wib().strftime('%Y-%m-%d')),  # B: Tanggal
             safe_company,  # C: Company
             keterangan,  # D: Keterangan (description)
             jumlah,  # E: Jumlah (amount)
