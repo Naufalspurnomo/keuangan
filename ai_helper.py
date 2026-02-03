@@ -379,6 +379,14 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
             transactions = transactions[:MAX_TRANSACTIONS_PER_MESSAGE]
 
         validated_transactions = []
+        # Extract user note (caption) if present in clean_text
+        user_note_global = ""
+        if clean_text.lower().startswith("note:"):
+            try:
+                first_line = clean_text.split("\n", 1)[0]
+                user_note_global = first_line.replace("Note:", "").strip()
+            except Exception:
+                user_note_global = ""
         
         # Run Regex Fallback for Wallet Detection
         # This covers cases where AI might miss the specific wallet name
@@ -447,13 +455,7 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
             # 3c. Ensure keterangan aligns with original text to avoid hallucination
             keterangan = sanitized.get("keterangan", "") or ""
             # Extract user note (caption) if present in clean_text to avoid dumping OCR
-            user_note = ""
-            if clean_text.lower().startswith("note:"):
-                try:
-                    first_line = clean_text.split("\n", 1)[0]
-                    user_note = first_line.replace("Note:", "").strip()
-                except Exception:
-                    user_note = ""
+            user_note = user_note_global
             if keterangan:
                 from difflib import SequenceMatcher
                 similarity = SequenceMatcher(None, keterangan.lower(), clean_text.lower()).ratio()
@@ -563,6 +565,17 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                     if not t.get("nama_projek"):
                         t["nama_projek"] = inferred_project[:100]
                         t.pop("needs_project", None)
+
+            # If caption exists, prefer a single main transaction (keep fee if any)
+            if user_note_global:
+                non_fee = [t for t in validated_transactions if not _is_fee_tx(t)]
+                if len(non_fee) > 1:
+                    main_tx = max(non_fee, key=lambda t: int(t.get("jumlah", 0) or 0))
+                    main_tx["keterangan"] = user_note_global
+                    kept = [main_tx]
+                    if fee_tx:
+                        kept.append(fee_tx)
+                    validated_transactions = kept
 
         secure_log("INFO", f"Extracted {len(validated_transactions)} valid transactions")
         return validated_transactions

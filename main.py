@@ -56,6 +56,7 @@ from services.state_manager import (
     store_last_bot_report,
     # New Pending Confirmations
     get_pending_confirmation, set_pending_confirmation,
+    find_pending_confirmation_in_chat,
     store_user_message, get_user_last_message, clear_user_last_message,
     get_project_lock
 )
@@ -1028,6 +1029,16 @@ Balas 1 atau 2"""
         from handlers.pending_handler import handle_pending_response
 
         pending_conf = get_pending_confirmation(sender_number, chat_jid)
+        if not pending_conf and is_group and text:
+            # Allow other group members to answer if only one pending confirmation exists
+            t = text.strip().lower()
+            is_quick_reply = (
+                bool(re.fullmatch(r"\d{1,2}", t)) or
+                t in ['ya', 'y', 'iya', 'ok', 'oke', 'yes', 'no', 'tidak', 'bukan',
+                      'simpan', 'batal', 'cancel', '/cancel']
+            )
+            if is_quick_reply:
+                _, pending_conf = find_pending_confirmation_in_chat(chat_jid)
         if pending_conf:
             # Check if handled by pending handler
             result = handle_pending_response(

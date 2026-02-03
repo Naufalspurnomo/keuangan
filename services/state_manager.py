@@ -625,6 +625,33 @@ def has_pending_confirmation(user_id: str, chat_id: str) -> bool:
     return get_pending_confirmation(user_id, chat_id) is not None
 
 
+def find_pending_confirmation_in_chat(chat_id: str):
+    """
+    Find a single pending confirmation in a chat (any user).
+    Returns (key, pending) if exactly one active pending exists.
+    """
+    if not chat_id:
+        return None, None
+    now = datetime.now()
+    matches = []
+    for key, pending in list(PENDING_CONFIRMATIONS.items()):
+        if not key.startswith(f"{chat_id}:"):
+            continue
+        expires = pending.get('expires_at')
+        if expires and now > expires:
+            # Clean expired entry
+            try:
+                user_id = key.split(":", 1)[1]
+            except Exception:
+                user_id = ""
+            clear_pending_confirmation(user_id, chat_id)
+            continue
+        matches.append((key, pending))
+    if len(matches) == 1:
+        return matches[0]
+    return None, None
+
+
 # ===================== PROJECT REGISTRY =====================
 def _normalize_project_key(name: str) -> str:
     if not name:
