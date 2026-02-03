@@ -149,7 +149,7 @@ def should_respond_in_group(message: str, is_group: bool, has_media: bool = Fals
         return True, message
         
     # 3.5. Allow action verbs or operational keywords even without amount
-    if any(re.search(rf"\\b{re.escape(verb)}\\b", message_lower) for verb in ACTION_VERBS):
+    if any(re.search(rf"\b{re.escape(verb)}\b", message_lower) for verb in ACTION_VERBS):
         return True, message
     if any(kw in message_lower for kw in OPERATIONAL_KEYWORDS):
         return True, message

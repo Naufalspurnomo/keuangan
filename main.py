@@ -724,7 +724,7 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             t = msg.strip().lower()
             if t.startswith('/catat') or t.startswith('+catat') or t.startswith('+bot'):
                 return True
-            if re.match(r'^catat\\b', t):
+            if re.match(r'^catat\b', t):
                 return True
             if t.startswith('bot') or '@bot' in t:
                 return True

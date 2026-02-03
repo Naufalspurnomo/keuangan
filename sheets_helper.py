@@ -79,14 +79,60 @@ def get_or_create_state_sheet():
 def save_state_to_cloud(json_state_string):
     """
     Simpan JSON string ke Cell A1 di sheet tersembunyi.
+    Google Sheets cell limit is ~50,000 characters.
     """
+    import json
+    
+    MAX_STATE_SIZE = 48000  # Leave buffer below 50K limit
+    
     try:
+        # Check if state is too large
+        if len(json_state_string) > MAX_STATE_SIZE:
+            print(f"[WARNING] State too large ({len(json_state_string)} chars), cleaning up...")
+            
+            # Parse and cleanup state
+            try:
+                state = json.loads(json_state_string)
+                
+                # Clear processed_message_ids (keep only last 50)
+                if 'processed_message_ids' in state:
+                    ids = list(state['processed_message_ids']) if isinstance(state['processed_message_ids'], (list, set)) else []
+                    state['processed_message_ids'] = ids[-50:] if len(ids) > 50 else ids
+                
+                # Clear OCR texts from pending transactions
+                if 'pending_transactions' in state:
+                    for key in list(state['pending_transactions'].keys()):
+                        tx = state['pending_transactions'][key]
+                        if isinstance(tx, dict):
+                            # Remove large OCR text, keep only essential fields
+                            tx.pop('ocr_text', None)
+                            tx.pop('raw_ocr', None)
+                            tx.pop('base64_images', None)
+                            tx.pop('image_data', None)
+                
+                # Clear old combined_messages
+                if 'combined_messages' in state:
+                    combos = state['combined_messages']
+                    if isinstance(combos, dict) and len(combos) > 20:
+                        # Keep only 20 most recent
+                        keys = sorted(combos.keys())[-20:]
+                        state['combined_messages'] = {k: combos[k] for k in keys}
+                
+                json_state_string = json.dumps(state, default=str)
+                print(f"[INFO] State cleaned to {len(json_state_string)} chars")
+                
+            except json.JSONDecodeError:
+                print(f"[ERROR] Could not parse state for cleanup")
+                return  # Don't save corrupted state
+        
+        # Final check
+        if len(json_state_string) > 49500:
+            print(f"[ERROR] State still too large after cleanup ({len(json_state_string)} chars), skipping cloud save")
+            return
+        
         ws = get_or_create_state_sheet()
         if ws:
-            # Simpan di cell A1. 
-            # Batas karakter cell google sheet ~50.000 chars. Cukup untuk pending tx.
             ws.update_cell(1, 1, json_state_string)
-            # Optional: Tambahkan timestamp di B1 biar tau kapan terakhir update
             ws.update_cell(1, 2, str(datetime.now()))
     except Exception as e:
         print(f"[ERROR] Failed to save state to cloud: {e}")
@@ -1612,6 +1658,10 @@ def get_dashboard_summary():
         dompet_summary = {}
         company_summary = {}
 
+        # Import at function level to ensure it's available in all blocks
+        from config.wallets import get_dompet_short_name
+        import re
+
         # Iterate 3 Split-Layout Wallets
         for dompet in DOMPET_SHEETS:
             dompet_summary[dompet] = {'inc': 0, 'exp': 0, 'bal': 0}
@@ -1662,9 +1712,6 @@ def get_dashboard_summary():
 
         # --- PROCESS OPERATIONAL DEBITS FOR DASHBOARD ---
         try:
-            from config.wallets import get_dompet_short_name
-            import re
-            
             # Re-use logic from get_wallet_balances to find operational debits
             op_sheet = get_or_create_operational_sheet()
             # Get values - checking existence first
@@ -1698,9 +1745,6 @@ def get_dashboard_summary():
                                     break
                     except:
                         continue
-        except Exception as e:
-            secure_log("WARNING", f"Dashboard operational calc failed: {e}")
-
         except Exception as e:
             secure_log("WARNING", f"Dashboard operational calc failed: {e}")
 
