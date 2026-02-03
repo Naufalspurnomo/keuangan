@@ -4,7 +4,8 @@ from services.state_manager import (
     set_pending_confirmation,
     clear_pending_confirmation,
     get_pending_confirmation,
-    clear_pending_transaction
+    clear_pending_transaction,
+    clear_visual_buffer
 )
 from utils.formatters import (
     format_mention, build_selection_prompt,
@@ -176,6 +177,7 @@ def handle_pending_response(user_id: str, chat_id: str, text: str,
     
     if text_lower in cancel_commands:
         clear_pending_confirmation(user_id, chat_id)
+        clear_visual_buffer(user_id, chat_id)
         
         mention = format_mention(sender_name, is_group)
         return {

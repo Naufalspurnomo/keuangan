@@ -1075,6 +1075,12 @@ Balas 1 atau 2"""
                 else:
                     # Flow continues (asked next question)
                     return jsonify({'status': 'pending_interaction'}), 200
+
+        # If /cancel is sent without any pending flow, clear visual buffer and stop.
+        if is_command_match(text, Commands.CANCEL, is_group) and not has_pending and not pending_conf:
+            clear_visual_buffer(sender_number, chat_jid)
+            send_reply(UserErrors.CANCELLED)
+            return jsonify({'status': 'cancelled_no_pending'}), 200
             
             # If result is None, it means the input didn't match the expected options
             # (e.g. user typed something random instead of '1' or '2')
@@ -1467,6 +1473,7 @@ Balas 1 atau 2"""
             # Cancel
             if is_command_match(text, Commands.CANCEL, is_group):
                 _pending_transactions.pop(pending_pkey, None)
+                clear_visual_buffer(sender_number, chat_jid)
                 send_reply(UserErrors.CANCELLED)
                 return jsonify({'status': 'cancelled'}), 200
             
