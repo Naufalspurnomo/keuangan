@@ -772,8 +772,8 @@ def _draw_header_monthly(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: float, pag
     c.rect(0, page_h - header_h, left_w, header_h, fill=1, stroke=0)
     _set_alpha(c, fill=0.08)
     c.setFillColor(colors.white)
-    c.circle(left_w - 60, page_h - 40, 36, stroke=0, fill=1)
-    c.circle(left_w - 120, page_h - 90, 22, stroke=0, fill=1)
+    c.circle(left_w - 60, page_h - 40, 20, stroke=0, fill=1)
+    c.circle(left_w - 120, page_h - 90, 12, stroke=0, fill=1)
     c.restoreState()
     if logo_path and os.path.exists(logo_path):
         try:
@@ -791,12 +791,12 @@ def _draw_header_monthly(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: float, pag
             logo_y = page_h - (header_h / 2) - (draw_h / 2)
             c.drawImage(logo_path, 20, logo_y, width=draw_w, height=draw_h, mask="auto")
         except Exception: pass
-    _draw_text(c, ui.fonts["italic"], 10.5, THEME["white"], 140, page_h - 30, f"Generated on {ctx['generated_on']}")
-    _draw_text(c, ui.fonts["bold"], 32, THEME["white"], 140, page_h - 74, "Financial")
-    _draw_text(c, ui.fonts["bold"], 32, THEME["white"], 140, page_h - 114, "Report")
+    _draw_text(c, ui.fonts["italic"], 10.5, THEME["white"], 140, page_h - 50, f"Generated on {ctx['generated_on']}")
+    _draw_text(c, ui.fonts["bold"], 32, THEME["white"], 140, page_h - 94, "Financial")
+    _draw_text(c, ui.fonts["bold"], 32, THEME["white"], 140, page_h - 134, "Report")
     month_part, year_part = ctx["period_label"].split()
-    _draw_text(c, ui.fonts["bold"], 36, THEME["teal"], left_w + 18, page_h - 74, month_part)
-    _draw_text(c, ui.fonts["bold"], 36, THEME["teal"], left_w + 18, page_h - 114, year_part)
+    _draw_text(c, ui.fonts["bold"], 36, THEME["teal"], left_w + 18, page_h - 94, month_part)
+    _draw_text(c, ui.fonts["bold"], 36, THEME["teal"], left_w + 18, page_h - 134, year_part)
 
 def _draw_header_range(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: float, page_h: float, logo_path: Optional[str]):
     header_h = 190
@@ -806,8 +806,8 @@ def _draw_header_range(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: float, page_
     c.rect(0, page_h - header_h, left_w, header_h, fill=1, stroke=0)
     _set_alpha(c, fill=0.08)
     c.setFillColor(colors.white)
-    c.circle(left_w - 60, page_h - 40, 36, stroke=0, fill=1)
-    c.circle(left_w - 120, page_h - 90, 22, stroke=0, fill=1)
+    c.circle(left_w - 60, page_h - 40, 20, stroke=0, fill=1)
+    c.circle(left_w - 120, page_h - 90, 12, stroke=0, fill=1)
     c.restoreState()
     if logo_path and os.path.exists(logo_path):
         try:
@@ -822,9 +822,9 @@ def _draw_header_range(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: float, page_
             logo_y = page_h - (header_h / 2) - (draw_h / 2)
             c.drawImage(logo_path, 20, logo_y, width=draw_w, height=draw_h, mask="auto")
         except Exception: pass
-    _draw_text(c, ui.fonts["italic"], 10.5, THEME["white"], 140, page_h - 30, f"Generated on {ctx['generated_on']}")
-    _draw_text(c, ui.fonts["bold"], 32, THEME["white"], 140, page_h - 74, "Financial")
-    _draw_text(c, ui.fonts["bold"], 32, THEME["white"], 140, page_h - 114, "Report")
+    _draw_text(c, ui.fonts["italic"], 10.5, THEME["white"], 140, page_h - 50, f"Generated on {ctx['generated_on']}")
+    _draw_text(c, ui.fonts["bold"], 32, THEME["white"], 140, page_h - 94, "Financial")
+    _draw_text(c, ui.fonts["bold"], 32, THEME["white"], 140, page_h - 134, "Report")
     start_text = ctx["start_dt"].strftime("%d-%m-%y")
     end_text = ctx["end_dt"].strftime("%d-%m-%y")
     _draw_text(c, ui.fonts["bold"], 22, THEME["teal"], left_w + 18, page_h - 66, "Periodical Audit")
@@ -1021,7 +1021,7 @@ def _draw_finished_projects_cover(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: f
     chart_items = [(c, ctx["income_share"].get(c, 0.0), ctx.get("income_by_company", {}).get(c, 0)) for c in COMPANY_KEYS]
     _draw_income_share_chart(c, ui, card_x + pad, chart_y0 + chart_h - 8, card_w - 2 * pad, chart_items)
 
-def _draw_company_header(c: canvas.Canvas, ui: UI, ctx: Dict, company: str, page_w: float, page_h: float, header_h: float = 65):
+def _draw_company_header(c: canvas.Canvas, ui: UI, ctx: Dict, company: str, page_w: float, page_h: float, header_h: float = 50):
     color = COMPANY_COLOR.get(company, THEME["teal"])
     c.setFillColor(color)
     c.rect(0, page_h - header_h, page_w, header_h, fill=1, stroke=0)
