@@ -117,6 +117,101 @@ def extract_transfer_fee(text: str) -> int:
     return 0
 
 
+def _parse_money_token(token: str) -> int:
+    """
+    Parse a money token with mixed separators.
+    Examples:
+    - 1,551,000.00 -> 1551000
+    - 1.551.000,00 -> 1551000
+    - 10.984.668   -> 10984668
+    """
+    if not token:
+        return 0
+    t = token.strip()
+    t = re.sub(r"[^\d.,]", "", t)
+    if not t:
+        return 0
+    # Identify last separator as decimal if 1-2 digits after it
+    last_sep = re.search(r"[.,](\d+)$", t)
+    if last_sep:
+        digits_after = len(last_sep.group(1))
+        if digits_after <= 2:
+            # Treat last separator as decimal; remove other separators
+            t = re.sub(r"[.,](?=\d{3}(\D|$))", "", t)
+            t = re.sub(r"[.,]\d{1,2}$", "", t)
+            t = t.replace(",", "").replace(".", "")
+            try:
+                return int(t)
+            except ValueError:
+                return 0
+    # Default: treat all separators as thousands
+    t = t.replace(",", "").replace(".", "")
+    try:
+        return int(t)
+    except ValueError:
+        return 0
+
+
+def extract_receipt_amounts(ocr_text: str) -> dict:
+    """
+    Extract base/fee/total amounts from OCR text using keyword context.
+    Returns dict: {base, fee, total}
+    """
+    if not ocr_text:
+        return {"base": 0, "fee": 0, "total": 0}
+
+    fee_keywords = ["fee", "biaya", "admin", "charge"]
+    total_keywords = ["total", "jumlah", "grand total", "total bayar", "total transfer", "total pembayaran"]
+    base_keywords = ["nominal", "amount", "transfer", "pembayaran", "debit", "subtotal"]
+
+    fee_candidates = []
+    total_candidates = []
+    base_candidates = []
+    all_amounts = []
+
+    for raw in ocr_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        lower = line.lower()
+        tokens = re.findall(r"\b\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?\b|\b\d+[.,]\d{2}\b|\b\d{4,}\b", line)
+        amounts = []
+        for tok in tokens:
+            val = _parse_money_token(tok)
+            if val > 0:
+                amounts.append(val)
+                all_amounts.append(val)
+
+        if not amounts:
+            continue
+        if any(k in lower for k in fee_keywords):
+            fee_candidates.extend(amounts)
+        if any(k in lower for k in total_keywords):
+            total_candidates.extend(amounts)
+        if any(k in lower for k in base_keywords):
+            base_candidates.extend(amounts)
+
+    fee = 0
+    if fee_candidates:
+        fee = min((a for a in fee_candidates if a <= 100000), default=0)
+        if not fee:
+            fee = min(fee_candidates)
+
+    total = max(total_candidates) if total_candidates else 0
+    base = max(base_candidates) if base_candidates else 0
+    if not base and all_amounts:
+        base = max(all_amounts)
+
+    # Reconcile fee using total-base when available
+    if total and base:
+        computed_fee = total - base
+        if 0 < computed_fee <= 100000:
+            if fee == 0 or abs(fee - computed_fee) > max(500, int(0.2 * fee) if fee else 500):
+                fee = computed_fee
+
+    return {"base": base, "fee": fee, "total": total}
+
+
 
 # Groq Configuration
 GROQ_API_KEY = os.getenv('GROQ_API_KEY')
@@ -392,23 +487,48 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                 (t.get("nama_projek") for t in validated_transactions if t.get("nama_projek")),
                 ""
             )
-            transfer_fee = extract_transfer_fee(clean_text)
-            has_transfer_fee = any(
-                "transfer" in (t.get("keterangan", "") or "").lower()
-                for t in validated_transactions
-            )
-            if transfer_fee and not has_transfer_fee:
-                fee_tx = {
-                    "keterangan": "Biaya transfer",
-                    "jumlah": transfer_fee,
-                    "tipe": "Pengeluaran",
-                    "kategori": "Lain-lain",
-                    "nama_projek": inferred_project or "",
-                }
-                is_valid, _, sanitized_fee = validate_transaction_data(fee_tx)
-                if is_valid:
-                    validated_transactions.append(sanitized_fee)
-            
+
+            # Try to extract fee/base/total from OCR text when available
+            ocr_text = ""
+            if "Receipt/Struk content:" in clean_text:
+                ocr_text = clean_text.split("Receipt/Struk content:", 1)[1]
+            receipt_amounts = extract_receipt_amounts(ocr_text) if ocr_text else {"base": 0, "fee": 0, "total": 0}
+
+            transfer_fee = receipt_amounts.get("fee", 0) or extract_transfer_fee(clean_text)
+
+            # Identify fee transaction (if any)
+            def _is_fee_tx(tx: dict) -> bool:
+                ket = (tx.get("keterangan", "") or "").lower()
+                return "biaya transfer" in ket or "fee" in ket or "biaya admin" in ket
+
+            fee_tx = next((t for t in validated_transactions if _is_fee_tx(t)), None)
+            main_tx = next((t for t in validated_transactions if t is not fee_tx), None)
+
+            # Adjust main amount based on OCR base/total
+            base_amt = receipt_amounts.get("base", 0)
+            total_amt = receipt_amounts.get("total", 0)
+            if main_tx:
+                if base_amt > 0:
+                    main_tx["jumlah"] = base_amt
+                elif total_amt > 0 and transfer_fee > 0 and total_amt > transfer_fee:
+                    main_tx["jumlah"] = max(total_amt - transfer_fee, main_tx.get("jumlah", 0))
+
+            # Ensure fee transaction exists with corrected amount
+            if transfer_fee > 0:
+                if fee_tx:
+                    fee_tx["jumlah"] = transfer_fee
+                else:
+                    fee_tx = {
+                        "keterangan": "Biaya transfer",
+                        "jumlah": transfer_fee,
+                        "tipe": "Pengeluaran",
+                        "kategori": "Lain-lain",
+                        "nama_projek": inferred_project or "",
+                    }
+                    is_valid, _, sanitized_fee = validate_transaction_data(fee_tx)
+                    if is_valid:
+                        validated_transactions.append(sanitized_fee)
+
             if inferred_project:
                 for t in validated_transactions:
                     if not t.get("nama_projek"):

@@ -1095,6 +1095,8 @@ Balas 1 atau 2"""
                     return jsonify({'status': 'no_pending_selection'}), 200
 
         # Group noise gate (pre-AI): avoid processing random media/chatter
+        # If user recently sent an image, allow follow-up text to bind.
+        has_visual = has_visual_buffer(sender_number, chat_jid) if is_group else False
         if is_group and not has_pending:
             is_mentioned = False
             try:
@@ -1104,7 +1106,7 @@ Balas 1 atau 2"""
             should, cleaned = should_respond_in_group(
                 text or "",
                 is_group,
-                has_media=(input_type == 'image'),
+                has_media=(input_type == 'image' or media_url is not None or has_visual),
                 has_pending=has_pending,
                 is_mentioned=is_mentioned
             )

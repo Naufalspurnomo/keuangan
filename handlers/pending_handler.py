@@ -12,6 +12,7 @@ from utils.formatters import (
     format_success_reply_new
 )
 from utils.lifecycle import apply_lifecycle_markers
+from utils.parsers import parse_revision_amount
 from services.project_service import add_new_project_to_cache, resolve_project_name
 from services.state_manager import set_project_lock
 from sheets_helper import (
@@ -834,6 +835,24 @@ Atau ketik /cancel untuk batal total"""
     # HANDLE: Confirm Commit (Operational)
     # ===================================
     elif pending_type == 'confirm_commit_operational':
+        # Allow /revisi amount while in draft confirmation
+        if text_lower.startswith('/revisi') or text_lower.startswith('revisi'):
+            new_amt = parse_revision_amount(text)
+            if not new_amt:
+                return {'response': '❗ Nominal revisi tidak terbaca. Contoh: /revisi 150rb', 'completed': False}
+            transactions = pending_data.get('transactions', [])
+            if transactions:
+                transactions[0]['jumlah'] = int(new_amt)
+
+            mention = format_mention(sender_name, is_group)
+            response = format_draft_summary_operational(
+                transactions,
+                pending_data.get('source_wallet'),
+                pending_data.get('category'),
+                mention
+            )
+            return {'response': response, 'completed': False}
+
         if text_lower in ['1', 'ya', 'yes', 'simpan', 'ok', 'oke']:
             transactions = pending_data.get('transactions', [])
             dompet_sheet = pending_data.get('source_wallet')
@@ -939,6 +958,28 @@ Atau ketik /cancel untuk batal total"""
     # HANDLE: Confirm Commit (Project)
     # ===================================
     elif pending_type == 'confirm_commit_project':
+        # Allow /revisi amount while in draft confirmation
+        if text_lower.startswith('/revisi') or text_lower.startswith('revisi'):
+            new_amt = parse_revision_amount(text)
+            if not new_amt:
+                return {'response': '❗ Nominal revisi tidak terbaca. Contoh: /revisi 150rb', 'completed': False}
+            transactions = pending_data.get('transactions', [])
+
+            def _is_fee_tx(tx: dict) -> bool:
+                ket = (tx.get('keterangan', '') or '').lower()
+                return 'biaya transfer' in ket or 'fee' in ket or 'biaya admin' in ket
+
+            fee_tx = next((t for t in transactions if _is_fee_tx(t)), None)
+            main_tx = next((t for t in transactions if t is not fee_tx), None)
+            if main_tx:
+                main_tx['jumlah'] = int(new_amt)
+
+            mention = format_mention(sender_name, is_group)
+            response = format_draft_summary_project(
+                transactions, pending_data.get('dompet'), pending_data.get('company'), mention
+            )
+            return {'response': response, 'completed': False}
+
         if text_lower in ['1', 'ya', 'yes', 'simpan', 'ok', 'oke']:
             transactions = pending_data.get('transactions', [])
             dompet_sheet = pending_data.get('dompet')
