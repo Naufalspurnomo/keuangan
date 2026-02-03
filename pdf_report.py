@@ -777,19 +777,19 @@ def _draw_header_monthly(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: float, pag
     c.restoreState()
     if logo_path and os.path.exists(logo_path):
         try:
-            # Draw logo with preserved aspect ratio - BIGGER size
+            # Draw logo - BIGGER and properly centered
             from reportlab.lib.utils import ImageReader
             img = ImageReader(logo_path)
             img_w, img_h = img.getSize()
-            max_h = 90
-            max_w = 100
+            max_h = 140
+            max_w = 140
             # Scale to fit within bounds while preserving aspect ratio
             scale = min(max_w / img_w, max_h / img_h)
             draw_w = img_w * scale
             draw_h = img_h * scale
-            # Center vertically in header
-            logo_y = page_h - 95 - draw_h / 2 + 45
-            c.drawImage(logo_path, 25, logo_y, width=draw_w, height=draw_h, mask="auto")
+            # Center vertically: header is 190px, centered at page_h - 95
+            logo_y = page_h - (header_h / 2) - (draw_h / 2)
+            c.drawImage(logo_path, 20, logo_y, width=draw_w, height=draw_h, mask="auto")
         except Exception: pass
     _draw_text(c, ui.fonts["italic"], 10.5, THEME["white"], 140, page_h - 30, f"Generated on {ctx['generated_on']}")
     _draw_text(c, ui.fonts["bold"], 32, THEME["white"], 140, page_h - 74, "Financial")
@@ -814,12 +814,13 @@ def _draw_header_range(c: canvas.Canvas, ui: UI, ctx: Dict, page_w: float, page_
             from reportlab.lib.utils import ImageReader
             img = ImageReader(logo_path)
             img_w, img_h = img.getSize()
-            max_h = 50
-            max_w = 110
+            max_h = 140
+            max_w = 140
             scale = min(max_w / img_w, max_h / img_h)
             draw_w = img_w * scale
             draw_h = img_h * scale
-            c.drawImage(logo_path, 25, page_h - 25 - draw_h, width=draw_w, height=draw_h, mask="auto")
+            logo_y = page_h - (header_h / 2) - (draw_h / 2)
+            c.drawImage(logo_path, 20, logo_y, width=draw_w, height=draw_h, mask="auto")
         except Exception: pass
     _draw_text(c, ui.fonts["italic"], 10.5, THEME["white"], 140, page_h - 30, f"Generated on {ctx['generated_on']}")
     _draw_text(c, ui.fonts["bold"], 32, THEME["white"], 140, page_h - 74, "Financial")
