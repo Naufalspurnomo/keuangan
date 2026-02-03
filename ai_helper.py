@@ -502,6 +502,27 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
 
             validated_transactions.append(sanitized)
 
+        # De-duplicate identical OCR transactions (common when OCR repeats blocks)
+        if "Receipt/Struk content:" in clean_text and len(validated_transactions) > 1:
+            unique = []
+            seen = set()
+            for t in validated_transactions:
+                key = (
+                    str(t.get("tipe") or ""),
+                    int(t.get("jumlah", 0) or 0),
+                    (t.get("keterangan") or "").strip().lower(),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                unique.append(t)
+            if len(unique) != len(validated_transactions):
+                secure_log(
+                    "INFO",
+                    f"Deduped OCR transactions: {len(validated_transactions)} -> {len(unique)}",
+                )
+                validated_transactions = unique
+
         if not wallet_update and validated_transactions:
             inferred_project = next(
                 (t.get("nama_projek") for t in validated_transactions if t.get("nama_projek")),
