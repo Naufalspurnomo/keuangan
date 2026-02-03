@@ -136,6 +136,11 @@ Contoh yang benar:
 Pelunasan projek Taman Indah 20jt
 ```
 
+Tips agar rapi:
+- Gunakan "DP ..." untuk pemasukan awal (Start).
+- Gunakan kata "pelunasan/lunas/selesai" untuk menutup (Finish).
+- Jika transaksi pertama projek adalah pengeluaran, bot akan meminta konfirmasi.
+
 ## 9) Cara Pakai di Grup
 
 Di grup, bot hanya merespon pesan yang jelas transaksi.
@@ -152,4 +157,3 @@ Jika grup lagi chat santai, bot akan diam agar tidak spam.
 - Selalu tulis nama projek yang konsisten.
 - Hindari nama projek yang terlalu umum (contoh: "gaji", "beli cat").
 - Jika ragu, tulis detail: "projek X", "operasional kantor", dan dompet.
-

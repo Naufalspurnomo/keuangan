@@ -544,9 +544,20 @@ REMEMBER:
             return result
             
         except Exception as e:
+            err_str = str(e).lower()
+            is_rate_limit = ("rate limit" in err_str or "rate_limit" in err_str or "429" in err_str)
             logger.error(f"Groq Analyzer Failed: {e}")
-            # Fallback safe: Ignore if AI fails
-            return {"should_respond": False, "intent": "ERROR"}
+            return self._fallback_result(
+                text=text,
+                context=context,
+                has_amount=has_amount,
+                has_media=has_media,
+                is_saldo=is_saldo,
+                is_future=is_future,
+                is_human_cmd=is_human_cmd,
+                category_scope=category_scope,
+                error_type="rate_limit" if is_rate_limit else "ai_error",
+            )
     
     def _apply_safety_overrides(self, result: dict, text: str, context: dict,
                                  has_amount: bool, is_future: bool, is_human_cmd: bool) -> dict:
@@ -581,6 +592,67 @@ REMEMBER:
             result['intent'] = 'IGNORE'
 
         return result
+
+    def _fallback_result(self, text: str, context: dict, has_amount: bool,
+                         has_media: bool, is_saldo: bool, is_future: bool,
+                         is_human_cmd: bool, category_scope: str,
+                         error_type: str) -> dict:
+        """Rule-based fallback when AI is unavailable."""
+        text_lower = (text or "").lower()
+        question_words = [
+            'berapa', 'gimana', 'bagaimana', 'apa', 'kapan', 'kenapa',
+            'how much', 'how many', 'what', 'when', 'why',
+            'cek', 'check', 'lihat', 'tunjukkan'
+        ]
+
+        # Query detection
+        if any(qw in text_lower for qw in question_words):
+            return {
+                "should_respond": True,
+                "intent": "QUERY_STATUS",
+                "confidence": 0.6,
+                "category_scope": "UNKNOWN",
+                "extracted_data": {},
+                "reasoning": "Fallback: query keyword detected",
+                "error": error_type
+            }
+
+        # Saldo update => Transfer funds
+        if is_saldo:
+            return {
+                "should_respond": True,
+                "intent": "TRANSFER_FUNDS",
+                "confidence": 0.7,
+                "category_scope": "TRANSFER",
+                "extracted_data": {},
+                "reasoning": "Fallback: saldo update keyword detected",
+                "error": error_type
+            }
+
+        # Transaction-like signal
+        if has_amount or has_media:
+            if is_future and not is_human_cmd:
+                # Still process to avoid silence in fallback mode
+                pass
+            return {
+                "should_respond": True,
+                "intent": "RECORD_TRANSACTION",
+                "confidence": 0.55,
+                "category_scope": category_scope or "UNKNOWN",
+                "extracted_data": {},
+                "reasoning": "Fallback: amount/media detected",
+                "error": error_type
+            }
+
+        return {
+            "should_respond": False,
+            "intent": "IGNORE",
+            "confidence": 0.0,
+            "category_scope": category_scope or "UNKNOWN",
+            "extracted_data": {},
+            "reasoning": "Fallback: insufficient signal",
+            "error": error_type
+        }
 
 
 def should_quick_filter(message: dict) -> str:

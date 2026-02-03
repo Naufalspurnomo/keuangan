@@ -172,6 +172,15 @@ class SmartHandler:
         context['is_ambient'] = (score < 40)
         
         analysis = analyzer.analyze_message(message, context)
+
+        # AI fallback notification (rate limit)
+        if analysis.get('error') == 'rate_limit' and not analysis.get('should_respond', False):
+            # If user is clearly addressing bot, respond with guidance
+            if has_amount or has_media or context.get('addressed_score', 0) >= 40:
+                return {
+                    "action": "REPLY",
+                    "response": "⚠️ AI sedang sibuk (limit). Mohon kirim ulang dengan format jelas: nominal + keterangan + konteks (projek/kantor)."
+                }
         
         if not analysis.get('should_respond', False):
             return {"action": "IGNORE"}

@@ -700,6 +700,15 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             caption = current_text if current_input_type == 'image' else None
             return current_text, media_list, caption
 
+        def safe_extract(input_data: str, in_type: str, sender: str, media_list=None, caption=None):
+            """Extract financial data with graceful AI rate-limit handling."""
+            try:
+                return extract_financial_data(input_data, in_type, sender, media_list, caption)
+            except RateLimitException as e:
+                wait = getattr(e, "wait_time", "beberapa saat")
+                send_reply(f"⚠️ AI sedang sibuk (limit). Coba lagi dalam {wait}.")
+                return None
+
         def is_explicit_bot_call(msg: str) -> bool:
             if not msg:
                 return False
@@ -1302,10 +1311,12 @@ Balas 1 atau 2"""
                             inp, media_list, caption = build_extraction_inputs(
                                 text, input_type, media_url, local_media_path
                             )
-                            temp_txs = extract_financial_data(
+                            temp_txs = safe_extract(
                                 inp, input_type, sender_name, media_list, caption
                             )
                             
+                            if temp_txs is None:
+                                return jsonify({'status': 'rate_limit'}), 200
                             if temp_txs:
                                 # REMOVED local import of format_mention to fix UnboundLocalError
                                 set_pending_confirmation(
@@ -1396,10 +1407,12 @@ Balas 1 atau 2"""
                 inp, media_list, caption = build_extraction_inputs(
                     text, input_type, media_url, local_media_path
                 )
-                new_txs = extract_financial_data(
+                new_txs = safe_extract(
                     inp, input_type, sender_name, media_list, caption
                 )
                 
+                if new_txs is None:
+                    return jsonify({'status': 'rate_limit'}), 200
                 if new_txs:
                     send_reply("➕ Menambahkan ke antrian transaksi...")
                     # Merge with existing
@@ -1783,7 +1796,9 @@ Balas 1 atau 2"""
             inp, media_list, caption = build_extraction_inputs(
                 text, input_type, media_url, local_media_path
             )
-            transactions = extract_financial_data(inp, input_type, sender_name, media_list, caption)
+            transactions = safe_extract(inp, input_type, sender_name, media_list, caption)
+            if transactions is None:
+                return jsonify({'status': 'rate_limit'}), 200
             
             if not transactions:
                 if message_id:

@@ -36,8 +36,8 @@ def _styles():
             "title_white",
             parent=base["Normal"],
             fontName="Helvetica-Bold",
-            fontSize=18,
-            leading=22,
+            fontSize=17,
+            leading=20,
             textColor=colors.white,
             alignment=TA_LEFT,
         ),
@@ -45,8 +45,8 @@ def _styles():
             "subtitle_white",
             parent=base["Normal"],
             fontName="Helvetica",
-            fontSize=10,
-            leading=13,
+            fontSize=9,
+            leading=12,
             textColor=colors.white,
             alignment=TA_LEFT,
         ),
@@ -54,8 +54,8 @@ def _styles():
             "h2",
             parent=base["Normal"],
             fontName="Helvetica-Bold",
-            fontSize=13,
-            leading=16,
+            fontSize=11.5,
+            leading=14,
             textColor=DARK,
             spaceAfter=2,
         ),
@@ -63,40 +63,40 @@ def _styles():
             "h3",
             parent=base["Normal"],
             fontName="Helvetica-Bold",
-            fontSize=10.5,
-            leading=13,
+            fontSize=9.8,
+            leading=12,
             textColor=DARK,
         ),
         "body": ParagraphStyle(
             "body",
             parent=base["Normal"],
             fontName="Helvetica",
-            fontSize=9.6,
-            leading=12.5,
+            fontSize=9.0,
+            leading=11.6,
             textColor=DARK,
         ),
         "small": ParagraphStyle(
             "small",
             parent=base["Normal"],
             fontName="Helvetica",
-            fontSize=8.6,
-            leading=11.2,
+            fontSize=8.0,
+            leading=10.2,
             textColor=DARK,
         ),
         "code": ParagraphStyle(
             "code",
             parent=base["Normal"],
             fontName="Courier",
-            fontSize=9.2,
-            leading=12,
+            fontSize=8.6,
+            leading=11,
             textColor=DARK,
         ),
         "center_small": ParagraphStyle(
             "center_small",
             parent=base["Normal"],
             fontName="Helvetica",
-            fontSize=8.4,
-            leading=11,
+            fontSize=7.8,
+            leading=10,
             textColor=DARK,
             alignment=TA_CENTER,
         ),
@@ -209,10 +209,10 @@ def build_pdf(output_path):
     doc = SimpleDocTemplate(
         output_path,
         pagesize=A4,
-        leftMargin=16 * mm,
-        rightMargin=16 * mm,
-        topMargin=14 * mm,
-        bottomMargin=14 * mm,
+        leftMargin=12 * mm,
+        rightMargin=12 * mm,
+        topMargin=12 * mm,
+        bottomMargin=12 * mm,
     )
     usable_width = A4[0] - doc.leftMargin - doc.rightMargin
 
@@ -227,7 +227,7 @@ def build_pdf(output_path):
             styles,
         )
     )
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 6))
 
     story.append(section_header("Checklist cepat sebelum kirim pesan", usable_width, styles))
     checklist = Paragraph(
@@ -237,12 +237,12 @@ def build_pdf(output_path):
         "- Jika bot minta pilihan, balas angka sesuai menu (batas 15 menit).",
         styles["body"],
     )
-    story.append(Spacer(1, 4))
+    story.append(Spacer(1, 3))
     story.append(checklist)
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 6))
 
     story.append(section_header("Contoh pesan yang ideal", usable_width, styles))
-    story.append(Spacer(1, 4))
+    story.append(Spacer(1, 3))
 
     col_w = (usable_width - 6 * mm) / 2
     card_left = example_card(
@@ -266,7 +266,7 @@ def build_pdf(output_path):
         styles,
     )
     story.append(Table([[card_left, card_right]], colWidths=[col_w, col_w], hAlign="LEFT", style=[]))
-    story.append(Spacer(1, 6))
+    story.append(Spacer(1, 4))
     story.append(
         example_card(
             "Contoh TRANSFER / UPDATE SALDO DOMPET",
@@ -278,21 +278,20 @@ def build_pdf(output_path):
             styles,
         )
     )
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 6))
 
     story.append(
         callout_box(
             "Foto struk dan OCR",
             [
-                "Tambahkan caption agar OCR akurat.",
-                "Contoh: 'Struk bensin 205rb + fee 2.500'.",
+                "Tambahkan caption: 'Struk bensin 205rb + fee 2.500'.",
                 "Jika bot menampilkan OCR, balas 'OK' atau ketik nominal yang benar.",
             ],
             usable_width,
             styles,
         )
     )
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 6))
 
     story.append(
         callout_box(
@@ -300,7 +299,7 @@ def build_pdf(output_path):
             [
                 "Gunakan trigger: '+catat ...' atau '/catat ...'.",
                 "Atau mention bot: '@Bot catat ...'.",
-                "Pesan transaksi harus mengandung nominal dan kata kerja (beli/bayar/transfer).",
+                "Pesan harus ada nominal + kata kerja (beli/bayar/transfer).",
             ],
             usable_width,
             styles,
@@ -312,7 +311,7 @@ def build_pdf(output_path):
 
     # Page 2
     story.append(section_header("Dompet dan company", usable_width, styles))
-    story.append(Spacer(1, 4))
+    story.append(Spacer(1, 3))
     story.append(
         Paragraph(
             "<b>Dompet tersedia:</b><br/>"
@@ -322,7 +321,7 @@ def build_pdf(output_path):
             styles["body"],
         )
     )
-    story.append(Spacer(1, 6))
+    story.append(Spacer(1, 4))
     story.append(
         Paragraph(
             "<b>Mode Project (pilih company):</b> 1 HOLLA, 2 HOJJA, 3 TEXTURIN-Surabaya, 4 TEXTURIN-Bali<br/>"
@@ -330,7 +329,7 @@ def build_pdf(output_path):
             styles["body"],
         )
     )
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 6))
     story.append(
         callout_box(
             "Salah mode? Bisa ganti di menu",
@@ -343,10 +342,10 @@ def build_pdf(output_path):
             styles,
         )
     )
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 6))
 
     story.append(section_header("Alur singkat bot", usable_width, styles))
-    story.append(Spacer(1, 4))
+    story.append(Spacer(1, 3))
     story.append(
         Paragraph(
             "1) User kirim transaksi<br/>"
@@ -359,28 +358,42 @@ def build_pdf(output_path):
     )
     story.append(Spacer(1, 10))
 
-    story.append(section_header("Command penting", usable_width, styles))
+    story.append(section_header("Start & Finish projek", usable_width, styles))
     story.append(Spacer(1, 4))
     story.append(
-        command_table(
+        Paragraph(
+            "Bot memberi label otomatis di nama projek:<br/>"
+            "- (Start) saat projek baru pertama kali muncul.<br/>"
+            "- (Finish) saat pemasukan mengandung kata: pelunasan, lunas, selesai, final payment.",
+            styles["body"],
+        )
+    )
+    story.append(Spacer(1, 4))
+    story.append(
+        example_card(
+            "Contoh pesan untuk Start/Finish",
             [
-                ("/status", "Ringkasan dashboard"),
-                ("/saldo", "Saldo per dompet"),
-                ("/list", "Riwayat transaksi 7 hari"),
-                ("/laporan", "Laporan 7 hari"),
-                ("/laporan30", "Laporan 30 hari"),
-                ("/exportpdf 2026-01", "PDF bulanan (YYYY-MM)"),
-                ("/exportpdf 2025-09-22 2025-10-22", "PDF rentang tanggal"),
-                ("/revisi 150rb", "Ubah nominal transaksi"),
-                ("/revisi operational", "Pindah ke operasional"),
-                ("/revisi project Nama", "Pindah ke project"),
-                ("/undo", "Batalkan transaksi terakhir"),
+                "DP 5jt projek Taman Indah  -> (Start)",
+                "Pelunasan projek Taman Indah 20jt  -> (Finish)",
             ],
             usable_width,
             styles,
         )
     )
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 6))
+
+    story.append(section_header("Command penting", usable_width, styles))
+    story.append(Spacer(1, 3))
+    story.append(
+        Paragraph(
+            "<b>Monitoring:</b> /status, /saldo, /list, /laporan, /laporan30<br/>"
+            "<b>PDF:</b> /exportpdf 2026-01 &nbsp;|&nbsp; /exportpdf 2025-09-22 2025-10-22<br/>"
+            "<b>Revisi:</b> /revisi 150rb, /revisi operational, /revisi project Nama, /undo<br/>"
+            "<b>Help:</b> /start, /help, /link",
+            styles["body"],
+        )
+    )
+    story.append(Spacer(1, 6))
 
     story.append(section_header("Catatan penting", usable_width, styles))
     story.append(Spacer(1, 4))
@@ -400,4 +413,3 @@ if __name__ == "__main__":
     out = os.path.join(os.path.dirname(__file__), "Client_Guide.pdf")
     build_pdf(out)
     print(f"PDF created: {out}")
-
