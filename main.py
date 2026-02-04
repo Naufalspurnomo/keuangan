@@ -91,6 +91,7 @@ from utils.parsers import (
     should_respond_in_group, is_command_match,
     is_prefix_match, GROUP_TRIGGERS, PENDING_TTL_SECONDS,
 )
+from utils.groq_analyzer import is_saldo_update
 from utils.formatters import (
     format_success_reply, format_success_reply_new,
     format_draft_summary_operational, format_draft_summary_project,
@@ -911,6 +912,11 @@ Balas 1 atau 2"""
                     # Resolve Name
                     lookup_name = strip_company_prefix(p_name_raw)
                     res = resolve_project_name(lookup_name)
+                    if res['status'] == 'AMBIGUOUS' and FAST_MODE:
+                        t['nama_projek'] = res.get('final_name') or res.get('original')
+                        pending['project_confirmed'] = True
+                        continue
+
                     
                     if res['status'] == 'AMBIGUOUS':
                          pending['pending_type'] = 'confirmation_project'
@@ -1018,11 +1024,11 @@ Balas 1 atau 2"""
                                 }
                             )
                             msg = (
-                                f"?????? Project **{p_name_check}** sudah terdaftar di dompet **{locked_dompet}**.\n\n"
+                                f" Project **{p_name_check}** sudah terdaftar di dompet **{locked_dompet}**.\n\n"
                                 "Pilih tindakan:\n"
-                                f"1?????? Gunakan dompet terdaftar ({locked_dompet})\n"
-                                f"2?????? Pindahkan project ke dompet baru ({dompet})\n"
-                                "3?????? Batal"
+                                f"1 Gunakan dompet terdaftar ({locked_dompet})\n"
+                                f"2 Pindahkan project ke dompet baru ({dompet})\n"
+                                "3 Batal"
                             )
                             send_reply(msg.replace('*', ''))
                             return jsonify({'status': 'project_lock_mismatch'}), 200
@@ -1053,12 +1059,12 @@ Balas 1 atau 2"""
                                 }
                             )
                             msg = (
-                                f"?????? Project baru **{p_name_check}** tetapi transaksi pertama *Pengeluaran*.\n"
+                                f" Project baru **{p_name_check}** tetapi transaksi pertama *Pengeluaran*.\n"
                                 "Biasanya project baru dimulai dari DP (Pemasukan).\n\n"
                                 "Pilih tindakan:\n"
-                                "1?????? Lanjutkan sebagai project baru\n"
-                                "2?????? Ubah jadi Operasional Kantor\n"
-                                "3?????? Batal"
+                                "1 Lanjutkan sebagai project baru\n"
+                                "2 Ubah jadi Operasional Kantor\n"
+                                "3 Batal"
                             )
                             send_reply(msg.replace('*', ''))
                             return jsonify({'status': 'new_project_first_expense'}), 200
@@ -1104,9 +1110,9 @@ Balas 1 atau 2"""
                     mention = format_mention(pending.get('sender_name', sender_name), is_group)
                     response = format_success_reply_new(txs, dompet, detected_company, mention).replace('*', '')
                     if lock_note:
-                        response += f"\n?????? {lock_note}"
+                        response += f"\n {lock_note}"
                     if new_project_expense_note:
-                        response += f"\n?????? {new_project_expense_note}"
+                        response += f"\n {new_project_expense_note}"
                     _send_and_track(response, event_id)
                     return jsonify({'status': 'saved_project'}), 200
 
@@ -2073,7 +2079,15 @@ Balas 1 atau 2"""
             
             # Check for Needs Project (Manual override from AI)
             if layer_category_scope == 'TRANSFER':
-                # Force "Saldo Umum" for transfers
+                if not is_saldo_update(text):
+                    has_proj_name = any(t.get('nama_projek') for t in transactions if t.get('nama_projek'))
+                    if has_proj_name:
+                        layer_category_scope = 'PROJECT'
+                    else:
+                        layer_category_scope = 'UNKNOWN'
+
+            if layer_category_scope == 'TRANSFER':
+                # Force "Saldo Umum" for explicit wallet updates
                 for t in transactions:
                     t['nama_projek'] = 'Saldo Umum'
                     t['company'] = 'UMUM'

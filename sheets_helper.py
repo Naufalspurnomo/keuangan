@@ -1828,10 +1828,11 @@ def find_all_transactions_by_message_id(message_id: str) -> List[Dict]:
                     
                     if _match_message_id(mid_in, message_id):
                         row_data = sheet.row_values(row_number)
+                        amt_raw = row_data[SPLIT_PEMASUKAN['JUMLAH'] - 1] if len(row_data) >= SPLIT_PEMASUKAN['JUMLAH'] else 0
                         results.append({
                             'dompet': dompet,
                             'row': row_number,
-                            'amount': int(row_data[SPLIT_PEMASUKAN['JUMLAH'] - 1]) if len(row_data) >= SPLIT_PEMASUKAN['JUMLAH'] and row_data[SPLIT_PEMASUKAN['JUMLAH'] - 1] else 0,
+                            'amount': _parse_amount(amt_raw),
                             'keterangan': row_data[SPLIT_PEMASUKAN['KETERANGAN'] - 1] if len(row_data) >= SPLIT_PEMASUKAN['KETERANGAN'] else '',
                             'user_id': row_data[SPLIT_PEMASUKAN['OLEH'] - 1] if len(row_data) >= SPLIT_PEMASUKAN['OLEH'] else '',
                             'nama_projek': row_data[SPLIT_PEMASUKAN['PROJECT'] - 1] if len(row_data) >= SPLIT_PEMASUKAN['PROJECT'] else '',
@@ -1840,10 +1841,11 @@ def find_all_transactions_by_message_id(message_id: str) -> List[Dict]:
                     
                     if _match_message_id(mid_out, message_id):
                         row_data = sheet.row_values(row_number)
+                        amt_raw = row_data[SPLIT_PENGELUARAN['JUMLAH'] - 1] if len(row_data) >= SPLIT_PENGELUARAN['JUMLAH'] else 0
                         results.append({
                             'dompet': dompet,
                             'row': row_number,
-                            'amount': int(row_data[SPLIT_PENGELUARAN['JUMLAH'] - 1]) if len(row_data) >= SPLIT_PENGELUARAN['JUMLAH'] and row_data[SPLIT_PENGELUARAN['JUMLAH'] - 1] else 0,
+                            'amount': _parse_amount(amt_raw),
                             'keterangan': row_data[SPLIT_PENGELUARAN['KETERANGAN'] - 1] if len(row_data) >= SPLIT_PENGELUARAN['KETERANGAN'] else '',
                             'user_id': row_data[SPLIT_PENGELUARAN['OLEH'] - 1] if len(row_data) >= SPLIT_PENGELUARAN['OLEH'] else '',
                             'nama_projek': row_data[SPLIT_PENGELUARAN['PROJECT'] - 1] if len(row_data) >= SPLIT_PENGELUARAN['PROJECT'] else '',
@@ -1862,10 +1864,11 @@ def find_all_transactions_by_message_id(message_id: str) -> List[Dict]:
                 if _match_message_id(mid, message_id):
                     row_number = row_idx + 1
                     row_data = op_sheet.row_values(row_number)
+                    amt_raw = row_data[OPERASIONAL_COLS['JUMLAH'] - 1] if len(row_data) >= OPERASIONAL_COLS['JUMLAH'] else 0
                     results.append({
                         'dompet': OPERASIONAL_SHEET_NAME,
                         'row': row_number,
-                        'amount': int(row_data[OPERASIONAL_COLS['JUMLAH'] - 1]) if len(row_data) >= OPERASIONAL_COLS['JUMLAH'] and row_data[OPERASIONAL_COLS['JUMLAH'] - 1] else 0,
+                        'amount': _parse_amount(amt_raw),
                         'keterangan': row_data[OPERASIONAL_COLS['KETERANGAN'] - 1] if len(row_data) >= OPERASIONAL_COLS['KETERANGAN'] else '',
                         'user_id': row_data[OPERASIONAL_COLS['OLEH'] - 1] if len(row_data) >= OPERASIONAL_COLS['OLEH'] else '',
                         'nama_projek': 'Operasional Kantor',
