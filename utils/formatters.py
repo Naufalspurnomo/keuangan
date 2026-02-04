@@ -218,7 +218,8 @@ def format_success_reply_new(transactions: list, dompet_sheet: str, company: str
     lines.append(f"⏱️ {now}")
     
     # Next steps
-    lines.append("\n💡 Ralat jumlah: reply /revisi 150rb")
+    lines.append("\n↩️ Batalkan: /undo")
+    lines.append("💡 Ralat jumlah: reply /revisi 150rb")
     lines.append("📊 Cek ringkas: /status | /saldo")
     
     return '\n'.join(lines)

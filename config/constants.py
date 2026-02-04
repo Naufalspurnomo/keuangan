@@ -198,6 +198,11 @@ class Timeouts:
     BOT_REFS_MAX = 1000            # Max bot message refs to cache
 
 
+# ===================== UX MODE =====================
+# Fast mode: minimize confirmations; auto-save when confident.
+FAST_MODE = os.getenv('FAST_MODE', 'true').lower() in ('1', 'true', 'yes')
+
+
 # ===================== COMMANDS =====================
 
 class Commands:

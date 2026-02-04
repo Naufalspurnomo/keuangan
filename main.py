@@ -58,7 +58,7 @@ from services.state_manager import (
     get_pending_confirmation, set_pending_confirmation,
     find_pending_confirmation_in_chat,
     store_user_message, get_user_last_message, clear_user_last_message,
-    get_project_lock
+    get_project_lock, set_project_lock
 )
 
 # Layer Integration - Superseded by SmartHandler
@@ -98,9 +98,10 @@ from utils.formatters import (
     START_MESSAGE, HELP_MESSAGE,
     CATEGORIES_DISPLAY, SELECTION_DISPLAY,
 )
+from utils.lifecycle import apply_lifecycle_markers
 
 # Configuration
-from config.constants import Commands, Timeouts, GROUP_TRIGGERS, SPREADSHEET_ID, OPERATIONAL_KEYWORDS
+from config.constants import Commands, Timeouts, GROUP_TRIGGERS, SPREADSHEET_ID, OPERATIONAL_KEYWORDS, FAST_MODE
 from config.errors import UserErrors
 from config.allowlist import is_sender_allowed
 from config.wallets import (
@@ -737,6 +738,34 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
         def finalize_transaction_workflow(pending: dict, pkey: str):
             txs = pending.get('transactions', [])
             if not txs: return jsonify({'status': 'error_no_tx'}), 200
+
+            def _assign_tx_ids(transactions: list, event_id: str) -> None:
+                base = event_id or f"evt_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                for idx, tx in enumerate(transactions, start=1):
+                    tx_id = f"{base}|{idx}"
+                    tx['message_id'] = tx_id
+                    tx['tx_id'] = tx_id
+
+            def _detect_operational_category(keterangan: str) -> str:
+                keterangan_lower = (keterangan or "").lower()
+                if 'gaji' in keterangan_lower:
+                    return 'Gaji'
+                if any(x in keterangan_lower for x in ['listrik', 'pln', 'token', 'air', 'pdam']):
+                    return 'ListrikAir'
+                if any(x in keterangan_lower for x in ['konsumsi', 'snack', 'makan', 'minum']):
+                    return 'Konsumsi'
+                if any(x in keterangan_lower for x in ['atk', 'printer', 'kertas', 'tinta', 'peralatan']):
+                    return 'Peralatan'
+                if 'internet' in keterangan_lower or 'wifi' in keterangan_lower:
+                    return 'ListrikAir'
+                return 'Lain Lain'
+
+            def _send_and_track(response: str, event_id: str) -> None:
+                sent = send_reply(response)
+                bid = extract_bot_msg_id(sent)
+                if bid:
+                    store_bot_message_ref(bid, event_id)
+                    store_last_bot_report(chat_jid, bid)
             
             # ROUTING CHECK
             original_text = pending.get('original_text', '')
@@ -797,8 +826,53 @@ Balas 1 atau 2"""
                     cache_prompt(pkey, pending, sent)
                     return jsonify({'status': 'asking_wallet'}), 200
                 
-                # Step 2: Save to Operational Sheet
-                # Step 2: Draft → Confirm → Commit
+                # Step 2: Save to Operational Sheet (fast mode auto-commit)
+                if FAST_MODE:
+                    event_id = pending.get('event_id') or pending.get('message_id')
+                    _assign_tx_ids(txs, event_id)
+                    category = context.get('category') or _detect_operational_category(
+                        txs[0].get('keterangan', '') if txs else ''
+                    )
+                    for tx in txs:
+                        kategori = category or _detect_operational_category(tx.get('keterangan', ''))
+                        append_operational_transaction(
+                            transaction={
+                                'jumlah': tx['jumlah'],
+                                'keterangan': tx['keterangan'],
+                                'message_id': tx.get('message_id')
+                            },
+                            sender_name=pending.get('sender_name', sender_name),
+                            source=pending.get('source', 'WhatsApp'),
+                            source_wallet=source_wallet,
+                            category=kategori
+                        )
+                        # Debit dompet sheet (Pengeluaran)
+                        append_project_transaction(
+                            transaction={
+                                'jumlah': tx['jumlah'],
+                                'keterangan': tx['keterangan'],
+                                'tipe': 'Pengeluaran',
+                                'message_id': tx.get('message_id')
+                            },
+                            sender_name=pending.get('sender_name', sender_name),
+                            source=pending.get('source', 'WhatsApp'),
+                            dompet_sheet=source_wallet,
+                            project_name="Operasional Kantor"
+                        )
+
+                    invalidate_dashboard_cache()
+                    _pending_transactions.pop(pkey, None)
+
+                    total_amount = sum(int(t.get('jumlah', 0) or 0) for t in txs)
+                    mention = format_mention(pending.get('sender_name', sender_name), is_group)
+                    response = (
+                        f"{mention}✅ Tersimpan: Operasional — Rp {total_amount:,} — {source_wallet}\n"
+                        "Ketik /undo jika salah."
+                    ).replace(',', '.')
+                    _send_and_track(response, event_id)
+                    return jsonify({'status': 'saved_operational'}), 200
+
+                # Strict mode: Draft → Confirm → Commit
                 set_pending_confirmation(
                     user_id=sender_number,
                     chat_id=chat_jid,
@@ -822,6 +896,8 @@ Balas 1 atau 2"""
                 return jsonify({'status': 'draft_operational'}), 200
 
             # === JALUR 2: PROJECT (Standard) ===
+            lock_note = None
+            new_project_expense_note = None
             
             # --- VALIDATION: CHECK PROJECT EXISTENCE ---
             # Checks if project exists in Spreadsheet/Cache before proceeding
@@ -843,10 +919,15 @@ Balas 1 atau 2"""
                          return jsonify({'status': 'asking_project_confirm'}), 200
                     
                     elif res['status'] == 'NEW':
-                        # Validasi typo / project baru
+                        # Project baru: fast mode auto-create, strict mode confirm
+                        if FAST_MODE:
+                            t['nama_projek'] = res.get('final_name') or res.get('original')
+                            pending['is_new_project'] = True
+                            pending['project_confirmed'] = True
+                            continue
                         pending['pending_type'] = 'confirmation_new_project'
                         pending['new_project_name'] = res['original']
-                        send_reply(f"🆕 Project **{res['original']}** belum ada.\n\nBuat Project Baru?\n✅ Ya / ❌ Ganti Nama (Langsung Ketik Nama Baru)")
+                        send_reply(f"???? Project **{res['original']}** belum ada.\n\nBuat Project Baru?\n??? Ya / ??? Ganti Nama (Langsung Ketik Nama Baru)")
                         return jsonify({'status': 'asking_new_project'}), 200
                     
                     elif res['status'] in ['EXACT', 'AUTO_FIX']:
@@ -912,71 +993,124 @@ Balas 1 atau 2"""
                     if locked_dompet and locked_dompet != dompet:
                         from config.wallets import get_company_name_from_sheet
                         locked_company = get_company_name_from_sheet(locked_dompet)
-                        # Ask user to confirm locked dompet or move project
-                        set_pending_confirmation(
-                            user_id=sender_number,
-                            chat_id=chat_jid,
-                            data={
-                                'type': 'project_dompet_mismatch',
-                                'transactions': txs,
-                                'dompet_input': dompet,
-                                'company_input': detected_company,
-                                'dompet_locked': locked_dompet,
-                                'company_locked': locked_company,
-                                'sender_name': pending.get('sender_name'),
-                                'source': pending.get('source'),
-                                'original_message_id': pending.get('message_id'),
-                                'event_id': pending.get('event_id'),
-                                'is_new_project': pending.get('is_new_project', False),
-                                'pending_key': pkey
-                            }
-                        )
-                        msg = (
-                            f"⚠️ Project **{p_name_check}** sudah terdaftar di dompet **{locked_dompet}**.\n\n"
-                            "Pilih tindakan:\n"
-                            f"1️⃣ Gunakan dompet terdaftar ({locked_dompet})\n"
-                            f"2️⃣ Pindahkan project ke dompet baru ({dompet})\n"
-                            "3️⃣ Batal"
-                        )
-                        send_reply(msg.replace('*', ''))
-                        return jsonify({'status': 'project_lock_mismatch'}), 200
+                        if FAST_MODE:
+                            dompet = locked_dompet
+                            detected_company = locked_company
+                            lock_note = f"Dompet disesuaikan ke {locked_dompet} (sesuai riwayat project)."
+                        else:
+                            # Ask user to confirm locked dompet or move project
+                            set_pending_confirmation(
+                                user_id=sender_number,
+                                chat_id=chat_jid,
+                                data={
+                                    'type': 'project_dompet_mismatch',
+                                    'transactions': txs,
+                                    'dompet_input': dompet,
+                                    'company_input': detected_company,
+                                    'dompet_locked': locked_dompet,
+                                    'company_locked': locked_company,
+                                    'sender_name': pending.get('sender_name'),
+                                    'source': pending.get('source'),
+                                    'original_message_id': pending.get('message_id'),
+                                    'event_id': pending.get('event_id'),
+                                    'is_new_project': pending.get('is_new_project', False),
+                                    'pending_key': pkey
+                                }
+                            )
+                            msg = (
+                                f"?????? Project **{p_name_check}** sudah terdaftar di dompet **{locked_dompet}**.\n\n"
+                                "Pilih tindakan:\n"
+                                f"1?????? Gunakan dompet terdaftar ({locked_dompet})\n"
+                                f"2?????? Pindahkan project ke dompet baru ({dompet})\n"
+                                "3?????? Batal"
+                            )
+                            send_reply(msg.replace('*', ''))
+                            return jsonify({'status': 'project_lock_mismatch'}), 200
 
-                # New project but first tx is expense → confirm
+                # New project but first tx is expense ? confirm or warn
                 if pending.get('is_new_project'):
                     has_income = any(t.get('tipe') == 'Pemasukan' for t in txs)
                     if not has_income:
-                        set_pending_confirmation(
-                            user_id=sender_number,
-                            chat_id=chat_jid,
-                            data={
-                                'type': 'new_project_first_expense',
-                                'transactions': txs,
-                                'dompet': dompet,
-                                'company': detected_company,
-                                'sender_name': pending.get('sender_name'),
-                                'source': pending.get('source'),
-                                'original_message_id': pending.get('message_id'),
-                                'event_id': pending.get('event_id'),
-                                'pending_key': pkey
-                            }
-                        )
-                        msg = (
-                            f"⚠️ Project baru **{p_name_check}** tetapi transaksi pertama *Pengeluaran*.\n"
-                            "Biasanya project baru dimulai dari DP (Pemasukan).\n\n"
-                            "Pilih tindakan:\n"
-                            "1️⃣ Lanjutkan sebagai project baru\n"
-                            "2️⃣ Ubah jadi Operasional Kantor\n"
-                            "3️⃣ Batal"
-                        )
-                        send_reply(msg.replace('*', ''))
-                        return jsonify({'status': 'new_project_first_expense'}), 200
+                        if FAST_MODE:
+                            new_project_expense_note = (
+                                'Project baru dimulai dari pengeluaran. '
+                                'Ketik /undo jika salah.'
+                            )
+                        else:
+                            set_pending_confirmation(
+                                user_id=sender_number,
+                                chat_id=chat_jid,
+                                data={
+                                    'type': 'new_project_first_expense',
+                                    'transactions': txs,
+                                    'dompet': dompet,
+                                    'company': detected_company,
+                                    'sender_name': pending.get('sender_name'),
+                                    'source': pending.get('source'),
+                                    'original_message_id': pending.get('message_id'),
+                                    'event_id': pending.get('event_id'),
+                                    'pending_key': pkey
+                                }
+                            )
+                            msg = (
+                                f"?????? Project baru **{p_name_check}** tetapi transaksi pertama *Pengeluaran*.\n"
+                                "Biasanya project baru dimulai dari DP (Pemasukan).\n\n"
+                                "Pilih tindakan:\n"
+                                "1?????? Lanjutkan sebagai project baru\n"
+                                "2?????? Ubah jadi Operasional Kantor\n"
+                                "3?????? Batal"
+                            )
+                            send_reply(msg.replace('*', ''))
+                            return jsonify({'status': 'new_project_first_expense'}), 200
 
                 for t in txs:
                     pname = t.get('nama_projek')
                     if pname:
                         t['nama_projek'] = apply_company_prefix(pname, dompet, detected_company)
 
-                # Draft → Confirm → Commit
+                # Fast mode: commit directly
+                if FAST_MODE:
+                    event_id = pending.get('event_id') or pending.get('message_id')
+                    _assign_tx_ids(txs, event_id)
+                    for tx in txs:
+                        pname = tx.get('nama_projek') or 'Umum'
+                        pname = apply_company_prefix(pname, dompet, detected_company)
+                        pname = apply_lifecycle_markers(
+                            pname, tx, is_new_project=pending.get('is_new_project', False), allow_finish=True
+                        )
+                        append_project_transaction(
+                            transaction={
+                                'jumlah': tx['jumlah'],
+                                'keterangan': tx['keterangan'],
+                                'tipe': tx.get('tipe', 'Pengeluaran'),
+                                'message_id': tx.get('message_id')
+                            },
+                            sender_name=pending.get('sender_name', sender_name),
+                            source=pending.get('source', 'WhatsApp'),
+                            dompet_sheet=dompet,
+                            project_name=pname
+                        )
+                        if pname and pname.lower() not in ['saldo umum', 'operasional kantor', 'umum', 'unknown']:
+                            set_project_lock(pname, dompet, actor=pending.get('sender_name', sender_name), reason='commit')
+
+                    if pending.get('is_new_project'):
+                        raw_proj = txs[0].get('nama_projek') if txs else ''
+                        if raw_proj:
+                            add_new_project_to_cache(raw_proj)
+
+                    invalidate_dashboard_cache()
+                    _pending_transactions.pop(pkey, None)
+
+                    mention = format_mention(pending.get('sender_name', sender_name), is_group)
+                    response = format_success_reply_new(txs, dompet, detected_company, mention).replace('*', '')
+                    if lock_note:
+                        response += f"\n?????? {lock_note}"
+                    if new_project_expense_note:
+                        response += f"\n?????? {new_project_expense_note}"
+                    _send_and_track(response, event_id)
+                    return jsonify({'status': 'saved_project'}), 200
+
+                # Strict mode: Draft ? Confirm ? Commit
                 set_pending_confirmation(
                     user_id=sender_number,
                     chat_id=chat_jid,
@@ -1910,8 +2044,8 @@ Balas 1 atau 2"""
                 'override_dompet': transfer_dompet if layer_category_scope == 'TRANSFER' else None,
             }
 
-            # OCR safety: ask confirmation for single-transaction images
-            if input_type == 'image' and len(transactions) == 1:
+            # OCR safety: ask confirmation for single-transaction images (strict mode only)
+            if (not FAST_MODE) and input_type == 'image' and len(transactions) == 1:
                 t0 = transactions[0]
                 try:
                     amt0 = int(t0.get('jumlah', 0) or 0)
