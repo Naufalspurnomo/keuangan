@@ -178,8 +178,14 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
         "trx", "rrn", "stan", "auth", "approval"
     ]
     date_pattern = re.compile(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b")
+    # VA patterns: 216-0688044, 8801234567890, etc.
     va_pattern = re.compile(r"\b\d{3}[-\s]?\d{6,8}\b")
+    # BCA VA specific pattern (3-digit prefix + 7-8 digits)
+    bca_va_pattern = re.compile(r"\b(\d{3})[-\s]?(\d{6,8})\b")
     small_amount_threshold = int(os.getenv('OCR_SMALL_AMOUNT', '5000'))
+    
+    # Pattern to detect "(Rp)" in names (not currency prefix)
+    rp_in_parens_pattern = re.compile(r"\([^)]*rp[^)]*\)", re.IGNORECASE)
 
     def _score_amount(val: int, tok: str, line: str, has_currency: bool,
                       has_total: bool, has_base: bool, has_fee: bool,
@@ -231,7 +237,9 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
         if date_pattern.search(lower):
             continue
 
-        has_currency = ("rp" in lower) or ("idr" in lower)
+        # Check for real currency prefix (not "(Rp)" in names)
+        line_no_parens = rp_in_parens_pattern.sub("", lower)  # Remove "(Rp)" etc
+        has_currency = ("rp" in line_no_parens) or ("idr" in line_no_parens)
         has_ignore = any(k in lower for k in ignore_keywords)
         has_total = any(k in lower for k in total_keywords)
         has_base = any(k in lower for k in base_keywords)
@@ -240,7 +248,17 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
         tokens = re.findall(r"\b\d{1,3}(?:[.,\s]\d{3})+(?:[.,]\d{2})?\b|\b\d+[.,]\d{2}\b|\b\d{4,}\b", line)
         if not tokens:
             continue
-        va_suffixes = [m.group(0).replace("-", "").replace(" ", "")[-8:] for m in va_pattern.finditer(lower)]
+        
+        # Extract VA suffixes (handle leading zeros properly)
+        # e.g., 216-0688044 -> both "0688044" and "688044" should be skipped
+        va_suffixes = set()
+        for m in bca_va_pattern.finditer(lower):
+            suffix = m.group(2)  # The 6-8 digit part
+            va_suffixes.add(suffix)  # "0688044"
+            va_suffixes.add(suffix.lstrip('0'))  # "688044" (without leading zeros)
+            # Also add the full VA number
+            full_va = m.group(1) + m.group(2)  # "2160688044"
+            va_suffixes.add(full_va)
 
         for tok in tokens:
             tok_norm = re.sub(r"\s+", "", tok)
@@ -254,19 +272,30 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
                 currency_amounts.append(val)
 
             # Detect if currency is adjacent to this specific token
+            # Use line_no_parens to avoid "(Rp)" in names triggering false positives
             currency_adjacent = False
-            for m in re.finditer(r"(?:rp|idr)\s*([0-9][0-9\.,\s]+)", lower):
+            for m in re.finditer(r"(?:rp|idr)\s*([0-9][0-9\.,\s]+)", line_no_parens):
                 if tok_norm == re.sub(r"\s+", "", m.group(1)):
                     currency_adjacent = True
                     break
             if not currency_adjacent:
-                for m in re.finditer(r"([0-9][0-9\.,\s]+)\s*(?:rp|idr)", lower):
+                for m in re.finditer(r"([0-9][0-9\.,\s]+)\s*(?:rp|idr)", line_no_parens):
                     if tok_norm == re.sub(r"\s+", "", m.group(1)):
                         currency_adjacent = True
                         break
 
-            # Skip likely VA/account suffix numbers (e.g., 216-0688044 -> 0688044)
+            # Skip likely VA/account suffix numbers (e.g., 216-0688044 -> 688044)
             if va_suffixes and digits_only in va_suffixes:
+                continue
+            
+            # Also check with leading zeros stripped
+            if va_suffixes and digits_only.lstrip('0') in va_suffixes:
+                continue
+
+            # Skip numbers that look like VA parts (6-8 digits on lines with "/" or "-")
+            # but only if no proper currency prefix directly adjacent
+            is_on_va_line = bool(bca_va_pattern.search(lower))
+            if is_on_va_line and not currency_adjacent and digit_len >= 6 and digit_len <= 8:
                 continue
 
             # Skip likely account/VA/reference numbers when no currency/keywords
