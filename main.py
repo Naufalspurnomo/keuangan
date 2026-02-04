@@ -921,13 +921,31 @@ Balas 1 atau 2"""
                     if res['status'] == 'AMBIGUOUS':
                          pending['pending_type'] = 'confirmation_project'
                          pending['suggested_project'] = res['final_name']
-                         send_reply(f"🤔 Maksudnya **{res['final_name']}**?\n✅ Ya / ❌ Bukan")
+                         msg = (
+                             f"🤔 *KONFIRMASI PROJECT*\n"
+                             f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                             f"Maksudnya *{res['final_name']}*?\n\n"
+                             f"━━━━━━━━━━━━━━━━━━━━━\n"
+                             f"✅ *Ya* — Lanjutkan\n"
+                             f"❌ *Bukan* — Langsung ketik nama yang benar"
+                         )
+                         send_reply(msg)
                          return jsonify({'status': 'asking_project_confirm'}), 200
                     
                     elif res['status'] == 'NEW':
                         pending['pending_type'] = 'confirmation_new_project'
                         pending['new_project_name'] = res['original']
-                        send_reply(f"Project **{res['original']}** belum ada.\n\nBuat Project Baru?\nYa / Ganti Nama (Langsung Ketik Nama Baru)")
+                        msg = (
+                            f"📁 *PROJECT BARU*\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                            f"Project *{res['original']}* belum terdaftar.\n\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━\n"
+                            f"*Pilih tindakan:*\n\n"
+                            f"✅ *Ya* — Buat project baru\n"
+                            f"✏️ Ketik nama lain untuk ganti\n\n"
+                            f"↩️ _Balas 'Ya' atau ketik nama baru_"
+                        )
+                        send_reply(msg)
                         return jsonify({'status': 'asking_new_project'}), 200
                     
                     elif res['status'] in ['EXACT', 'AUTO_FIX']:
@@ -1018,13 +1036,19 @@ Balas 1 atau 2"""
                                 }
                             )
                             msg = (
-                                f" Project **{p_name_check}** sudah terdaftar di dompet **{locked_dompet}**.\n\n"
-                                "Pilih tindakan:\n"
-                                f"1 Gunakan dompet terdaftar ({locked_dompet})\n"
-                                f"2 Pindahkan project ke dompet baru ({dompet})\n"
-                                "3 Batal"
+                                f"⚠️ *KONFIRMASI DOMPET*\n"
+                                f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                                f"📁 Project: *{p_name_check}*\n"
+                                f"📌 Terdaftar di: *{locked_dompet}*\n"
+                                f"🔄 Input baru: *{dompet}*\n\n"
+                                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                                f"*Pilih tindakan:*\n\n"
+                                f"1️⃣  Gunakan dompet terdaftar ({locked_dompet})\n"
+                                f"2️⃣  Pindahkan project ke ({dompet})\n"
+                                f"3️⃣  Batal\n\n"
+                                f"↩️ _Balas dengan angka 1, 2, atau 3_"
                             )
-                            send_reply(msg.replace('*', ''))
+                            send_reply(msg)
                             return jsonify({'status': 'project_lock_mismatch'}), 200
 
                 # New project but first tx is expense ? confirm
@@ -1047,14 +1071,19 @@ Balas 1 atau 2"""
                             }
                         )
                         msg = (
-                            f"Project baru **{p_name_check}** tetapi transaksi pertama Pengeluaran.\n"
-                            "Biasanya project baru dimulai dari DP (Pemasukan).\n\n"
-                            "Pilih tindakan:\n"
-                            "1 Lanjutkan sebagai project baru\n"
-                            "2 Ubah jadi Operasional Kantor\n"
-                            "3 Batal"
+                            f"⚠️ *KONFIRMASI PROJECT BARU*\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                            f"📁 Project: *{p_name_check}*\n"
+                            f"💸 Transaksi: Pengeluaran\n\n"
+                            f"💡 _Biasanya project baru dimulai dari DP (Pemasukan)_\n\n"
+                            f"━━━━━━━━━━━━━━━━━━━━━\n"
+                            f"*Pilih tindakan:*\n\n"
+                            f"1️⃣  Lanjutkan sebagai project baru\n"
+                            f"2️⃣  Ubah jadi Operasional Kantor\n"
+                            f"3️⃣  Batal\n\n"
+                            f"↩️ _Balas dengan angka 1, 2, atau 3_"
                         )
-                        send_reply(msg.replace('*', ''))
+                        send_reply(msg)
                         return jsonify({'status': 'new_project_first_expense'}), 200
 
                 for t in txs:
