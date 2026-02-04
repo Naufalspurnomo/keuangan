@@ -173,7 +173,8 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
     ]
     base_keywords = ["nominal", "amount", "transfer", "pembayaran", "debit", "subtotal"]
     ignore_keywords = [
-        "no.", "no ", "nomor", "ref", "kode", "id", "rekening", "account",
+        "no.", "no ", "nomor", "ref", "referensi", "kode", "id",
+        "rekening", "account", "virtual", "va", "bca", "bank",
         "trx", "rrn", "stan", "auth", "approval"
     ]
     date_pattern = re.compile(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b")
@@ -181,18 +182,28 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
 
     def _score_amount(val: int, tok: str, line: str, has_currency: bool,
                       has_total: bool, has_base: bool, has_fee: bool,
-                      has_ignore: bool) -> int:
+                      has_ignore: bool, currency_adjacent: bool) -> int:
         score = 0
-        if has_currency:
-            score += 3
+        if currency_adjacent:
+            score += 6
+        elif has_currency:
+            score += 2
         if has_total:
-            score += 3
+            score += 4
         if has_base:
             score += 2
         if has_fee:
             score += 2
-        if any(sep in tok for sep in [".", ","]):
-            score += 1
+        has_separators = any(sep in tok for sep in [".", ","])
+        if has_separators:
+            score += 2
+        # Penalize raw long digit tokens without separators (likely IDs)
+        digit_len = len(re.sub(r"\D", "", tok))
+        if not has_separators and digit_len >= 6:
+            score -= 2
+        # Penalize lines with slashes/hyphens (often account/ref)
+        if ("/" in line or "-" in line) and not (has_total or has_base or has_fee or currency_adjacent):
+            score -= 2
         if val < small_amount_threshold:
             score -= 2
         if has_ignore:
@@ -225,19 +236,43 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
         has_base = any(k in lower for k in base_keywords)
         has_fee = any(k in lower for k in fee_keywords)
 
-        tokens = re.findall(r"\b\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?\b|\b\d+[.,]\d{2}\b|\b\d{4,}\b", line)
+        tokens = re.findall(r"\b\d{1,3}(?:[.,\s]\d{3})+(?:[.,]\d{2})?\b|\b\d+[.,]\d{2}\b|\b\d{4,}\b", line)
         if not tokens:
             continue
 
         for tok in tokens:
+            tok_norm = re.sub(r"\s+", "", tok)
             val = _parse_money_token(tok)
             if val <= 0 or val > OCR_MAX_AMOUNT:
                 continue
+            digit_len = len(re.sub(r"\D", "", tok_norm))
             all_amounts.append(val)
             if has_currency:
                 currency_amounts.append(val)
 
-            score = _score_amount(val, tok, line, has_currency, has_total, has_base, has_fee, has_ignore)
+            # Detect if currency is adjacent to this specific token
+            currency_adjacent = False
+            for m in re.finditer(r"(?:rp|idr)\s*([0-9][0-9\.,\s]+)", lower):
+                if tok_norm == re.sub(r"\s+", "", m.group(1)):
+                    currency_adjacent = True
+                    break
+            if not currency_adjacent:
+                for m in re.finditer(r"([0-9][0-9\.,\s]+)\s*(?:rp|idr)", lower):
+                    if tok_norm == re.sub(r"\s+", "", m.group(1)):
+                        currency_adjacent = True
+                        break
+
+            # Skip likely account/VA/reference numbers when no currency/keywords
+            if not currency_adjacent and not has_total and not has_base and not has_fee and not has_currency:
+                if digit_len >= 6 and ("/" in line or "-" in line):
+                    continue
+                if has_ignore:
+                    continue
+
+            score = _score_amount(
+                val, tok, line, has_currency, has_total, has_base,
+                has_fee, has_ignore, currency_adjacent
+            )
             line_snip = line[:120]
             if has_fee:
                 fee_keyword_found = True
@@ -276,9 +311,14 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
     base, base_line = _pick_best(base_candidates)
 
     if not total:
-        total, total_line = _pick_best(general_candidates)
-        if not total:
-            total = max(currency_amounts) if currency_amounts else 0
+        currency_large = [v for v in currency_amounts if v >= small_amount_threshold]
+        if currency_large:
+            total = max(currency_large)
+            total_line = ""
+        else:
+            total, total_line = _pick_best(general_candidates)
+            if not total:
+                total = max(currency_amounts) if currency_amounts else 0
     if not base:
         if total:
             candidates = [v for v, _s, _l in general_candidates if v < total]
@@ -286,7 +326,8 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
                 base = max(candidates)
                 base_line = next((l for v, _s, l in general_candidates if v == base), "")
         if not base:
-            base = max(currency_amounts) if currency_amounts else 0
+            currency_large = [v for v in currency_amounts if v >= small_amount_threshold]
+            base = max(currency_large) if currency_large else (max(currency_amounts) if currency_amounts else 0)
     if not base and all_amounts:
         base = max(all_amounts)
 
@@ -654,6 +695,8 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
 
             fee_keyword_found = bool(receipt_amounts.get("fee_keyword_found"))
             transfer_fee = receipt_amounts.get("fee", 0) or extract_transfer_fee(clean_text)
+            if fee_keyword_found and transfer_fee <= 0:
+                secure_log("INFO", "Fee keyword found but amount missing; fee ignored")
 
             # Identify fee transaction (if any)
             def _is_fee_tx(tx: dict) -> bool:
