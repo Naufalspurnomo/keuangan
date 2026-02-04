@@ -178,6 +178,7 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
         "trx", "rrn", "stan", "auth", "approval"
     ]
     date_pattern = re.compile(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b")
+    va_pattern = re.compile(r"\b\d{3}[-\s]?\d{6,8}\b")
     small_amount_threshold = int(os.getenv('OCR_SMALL_AMOUNT', '5000'))
 
     def _score_amount(val: int, tok: str, line: str, has_currency: bool,
@@ -239,13 +240,15 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
         tokens = re.findall(r"\b\d{1,3}(?:[.,\s]\d{3})+(?:[.,]\d{2})?\b|\b\d+[.,]\d{2}\b|\b\d{4,}\b", line)
         if not tokens:
             continue
+        va_suffixes = [m.group(0).replace("-", "").replace(" ", "")[-8:] for m in va_pattern.finditer(lower)]
 
         for tok in tokens:
             tok_norm = re.sub(r"\s+", "", tok)
             val = _parse_money_token(tok)
             if val <= 0 or val > OCR_MAX_AMOUNT:
                 continue
-            digit_len = len(re.sub(r"\D", "", tok_norm))
+            digits_only = re.sub(r"\D", "", tok_norm)
+            digit_len = len(digits_only)
             all_amounts.append(val)
             if has_currency:
                 currency_amounts.append(val)
@@ -262,12 +265,20 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
                         currency_adjacent = True
                         break
 
+            # Skip likely VA/account suffix numbers (e.g., 216-0688044 -> 0688044)
+            if va_suffixes and digits_only in va_suffixes:
+                continue
+
             # Skip likely account/VA/reference numbers when no currency/keywords
             if not currency_adjacent and not has_total and not has_base and not has_fee and not has_currency:
                 if digit_len >= 6 and ("/" in line or "-" in line):
                     continue
                 if has_ignore:
                     continue
+
+            # Skip long ref numbers when ignore keywords are present
+            if has_ignore and digit_len >= 9 and not currency_adjacent:
+                continue
 
             score = _score_amount(
                 val, tok, line, has_currency, has_total, has_base,
