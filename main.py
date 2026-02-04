@@ -925,15 +925,9 @@ Balas 1 atau 2"""
                          return jsonify({'status': 'asking_project_confirm'}), 200
                     
                     elif res['status'] == 'NEW':
-                        # Project baru: fast mode auto-create, strict mode confirm
-                        if FAST_MODE:
-                            t['nama_projek'] = res.get('final_name') or res.get('original')
-                            pending['is_new_project'] = True
-                            pending['project_confirmed'] = True
-                            continue
                         pending['pending_type'] = 'confirmation_new_project'
                         pending['new_project_name'] = res['original']
-                        send_reply(f"???? Project **{res['original']}** belum ada.\n\nBuat Project Baru?\n??? Ya / ??? Ganti Nama (Langsung Ketik Nama Baru)")
+                        send_reply(f"Project **{res['original']}** belum ada.\n\nBuat Project Baru?\nYa / Ganti Nama (Langsung Ketik Nama Baru)")
                         return jsonify({'status': 'asking_new_project'}), 200
                     
                     elif res['status'] in ['EXACT', 'AUTO_FIX']:
@@ -1033,41 +1027,35 @@ Balas 1 atau 2"""
                             send_reply(msg.replace('*', ''))
                             return jsonify({'status': 'project_lock_mismatch'}), 200
 
-                # New project but first tx is expense ? confirm or warn
+                # New project but first tx is expense ? confirm
                 if pending.get('is_new_project'):
                     has_income = any(t.get('tipe') == 'Pemasukan' for t in txs)
                     if not has_income:
-                        if FAST_MODE:
-                            new_project_expense_note = (
-                                'Project baru dimulai dari pengeluaran. '
-                                'Ketik /undo jika salah.'
-                            )
-                        else:
-                            set_pending_confirmation(
-                                user_id=sender_number,
-                                chat_id=chat_jid,
-                                data={
-                                    'type': 'new_project_first_expense',
-                                    'transactions': txs,
-                                    'dompet': dompet,
-                                    'company': detected_company,
-                                    'sender_name': pending.get('sender_name'),
-                                    'source': pending.get('source'),
-                                    'original_message_id': pending.get('message_id'),
-                                    'event_id': pending.get('event_id'),
-                                    'pending_key': pkey
-                                }
-                            )
-                            msg = (
-                                f" Project baru **{p_name_check}** tetapi transaksi pertama *Pengeluaran*.\n"
-                                "Biasanya project baru dimulai dari DP (Pemasukan).\n\n"
-                                "Pilih tindakan:\n"
-                                "1 Lanjutkan sebagai project baru\n"
-                                "2 Ubah jadi Operasional Kantor\n"
-                                "3 Batal"
-                            )
-                            send_reply(msg.replace('*', ''))
-                            return jsonify({'status': 'new_project_first_expense'}), 200
+                        set_pending_confirmation(
+                            user_id=sender_number,
+                            chat_id=chat_jid,
+                            data={
+                                'type': 'new_project_first_expense',
+                                'transactions': txs,
+                                'dompet': dompet,
+                                'company': detected_company,
+                                'sender_name': pending.get('sender_name'),
+                                'source': pending.get('source'),
+                                'original_message_id': pending.get('message_id'),
+                                'event_id': pending.get('event_id'),
+                                'pending_key': pkey
+                            }
+                        )
+                        msg = (
+                            f"Project baru **{p_name_check}** tetapi transaksi pertama Pengeluaran.\n"
+                            "Biasanya project baru dimulai dari DP (Pemasukan).\n\n"
+                            "Pilih tindakan:\n"
+                            "1 Lanjutkan sebagai project baru\n"
+                            "2 Ubah jadi Operasional Kantor\n"
+                            "3 Batal"
+                        )
+                        send_reply(msg.replace('*', ''))
+                        return jsonify({'status': 'new_project_first_expense'}), 200
 
                 for t in txs:
                     pname = t.get('nama_projek')
