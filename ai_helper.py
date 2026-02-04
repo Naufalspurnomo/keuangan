@@ -863,10 +863,53 @@ VALID_VISION_MODELS = [
     "llama-3.2-11b-vision-instruct"
 ]
 
+def validate_financial_ocr(ocr_text: str) -> dict:
+    """
+    Validate and extract structured financial data from OCR output.
+    Returns dict with validation status and extracted amounts.
+    """
+    validation = {
+        "valid": False,
+        "amounts_found": [],
+        "account_numbers": [],
+        "warnings": []
+    }
+    
+    # Extract amounts (support both formats: Rp 1,000.00 and Rp 1.000,00)
+    amount_patterns = [
+        r'Rp\s*[\d.,]+',  # General pattern
+        r'(?:Jumlah|Nominal|Amount):\s*Rp\s*([\d.,]+)',
+        r'(?:Biaya|Fee):\s*Rp\s*([\d.,]+)'
+    ]
+    
+    for pattern in amount_patterns:
+        matches = re.findall(pattern, ocr_text, re.IGNORECASE)
+        validation["amounts_found"].extend(matches)
+    
+    # Extract account numbers (10-16 digits)
+    account_pattern = r'\b\d{10,16}\b'
+    validation["account_numbers"] = re.findall(account_pattern, ocr_text)
+    
+    # Validation checks
+    if not validation["amounts_found"]:
+        validation["warnings"].append("No amounts detected")
+    
+    if not validation["account_numbers"]:
+        validation["warnings"].append("No account numbers detected")
+    
+    if len(ocr_text) < 50:
+        validation["warnings"].append("OCR output suspiciously short")
+    
+    validation["valid"] = len(validation["warnings"]) == 0
+    
+    return validation
+
+
 def ocr_image(image_source: Union[str, List[str]]) -> str:
     """
     Extract text from Single or Multiple images using Groq Vision.
     Uses fallback mechanism to try multiple models if one is decommissioned.
+    Optimized for Indonesian financial receipts (BCA, Mandiri, BNI, BRI, etc.)
     """
     try:
         secure_log("INFO", "Running OCR via Groq Vision (Multi-Image)...")
@@ -877,11 +920,55 @@ def ocr_image(image_source: Union[str, List[str]]) -> str:
         if not paths:
             return ""
 
+        # ENHANCED OCR PROMPT - Optimized for Indonesian financial receipts
+        ocr_prompt = """You are a FINANCIAL OCR SPECIALIST. Extract ALL text with ABSOLUTE PRECISION.
+
+CONTEXT: This is an Indonesian bank transfer receipt (BCA, Mandiri, BNI, BRI, CIMB, etc.)
+
+CRITICAL EXTRACTION RULES:
+1. NUMBERS ARE SACRED - Read EVERY digit exactly as shown
+   ❌ WRONG: Skipping digits, rounding, approximating
+   ✅ CORRECT: Character-by-character transcription
+
+2. CURRENCY AMOUNTS - Pay extreme attention:
+   - Format: "Rp X,XXX,XXX.XX" or "Rp X.XXX.XXX,XX" (both used in Indonesia)
+   - Common columns: "Jumlah", "Nominal", "Amount", "Biaya", "Fee"
+   - Preserve ALL separators (commas, periods) exactly as shown
+   - Include decimal places even if ".00"
+
+3. TABLE STRUCTURE - Look for these columns:
+   - Tanggal / Date
+   - Dari Rekening / From Account (10-16 digit account number)
+   - Ke Rekening / To Account (10-16 digit account number)
+   - Jumlah / Nominal / Amount
+   - Biaya / Fee
+   - Status (Sukses/Berhasil/Success)
+
+4. VERIFICATION CHECKS:
+   - Account numbers: typically 10-16 digits
+   - Transaction amounts: typically Rp 1,000 to Rp 999,999,999
+   - Dates: DD/MM/YYYY or DD-MM-YYYY format
+   - Reference numbers: alphanumeric codes
+
+5. COMMON OCR PITFALLS TO AVOID:
+   - "0" (zero) vs "O" (letter O)
+   - "1" (one) vs "l" (lowercase L) vs "I" (uppercase i)
+   - "5" vs "S"
+   - "8" vs "B"
+   - Comma "," vs period "."
+
+OUTPUT REQUIREMENTS:
+- Extract line-by-line in original layout order
+- For amounts, use format: "Jumlah: Rp 8,700,000.00"
+- For account numbers, use format: "Dari Rekening: 1234567890"
+- If multiple transactions visible, separate with "---"
+
+DOUBLE-CHECK before output: Are all numbers complete? Are separators correct?"""
+
         content_payload = [
             {
                 "type": "text",
-                "text": "Extract ALL text from these images. specific per image. Output ONLY the extracted text, nothing else. "
-                        "If receipt, include all items, prices, totals, dates, and store names."
+                "text": ocr_prompt
             }
         ]
         
@@ -891,7 +978,8 @@ def ocr_image(image_source: Union[str, List[str]]) -> str:
                 image_data = base64.b64encode(img_file.read()).decode('utf-8')
             
             ext = os.path.splitext(path)[1].lower()
-            mime_types = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp'}
+            mime_types = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', 
+                         '.png': 'image/png', '.webp': 'image/webp'}
             mime_type = mime_types.get(ext, 'image/jpeg')
             
             content_payload.append({
@@ -914,18 +1002,36 @@ def ocr_image(image_source: Union[str, List[str]]) -> str:
                             "content": content_payload
                         }
                     ],
-                    temperature=0.0,
-                    max_completion_tokens=1024
+                    temperature=0.0,  # CRITICAL: Keep at 0 for deterministic output
+                    max_completion_tokens=2048  # Increased for detailed extraction
                 )
                 
                 extracted_text = response.choices[0].message.content.strip()
                 extracted_text = sanitize_input(extracted_text)
-                secure_log("INFO", f"Groq Vision OCR success with {model_name}: {len(extracted_text)} chars")
+                
+                # Enhanced logging for financial data
+                secure_log("INFO", f"OCR Success [{model_name}]: {len(extracted_text)} chars")
+                
+                # Debug logging
+                if OCR_DEBUG:
+                    secure_log("INFO", f"OCR_PREVIEW: {extracted_text[:300]}...")
+                
+                # Validation check for key financial markers
+                if "Rp" in extracted_text or "rekening" in extracted_text.lower():
+                    secure_log("INFO", "✓ Financial markers detected in OCR")
+                else:
+                    secure_log("WARNING", "⚠ No financial markers found - verify image quality")
+                
+                # Post-OCR validation for financial data
+                validation = validate_financial_ocr(extracted_text)
+                if validation["warnings"]:
+                    for warning in validation["warnings"]:
+                        secure_log("WARNING", f"OCR Validation: {warning}")
+                
                 return extracted_text
                 
             except Exception as e:
                 # Log error and try next model
-                # We catch ALL exceptions here to ensure we try every available model
                 secure_log("WARNING", f"Model {model_name} failed: {type(e).__name__}. Trying next...")
                 last_error = e
                 continue
@@ -935,7 +1041,7 @@ def ocr_image(image_source: Union[str, List[str]]) -> str:
         raise last_error
 
     except Exception as e:
-        secure_log("ERROR", f"Groq Vision OCR failed final: {type(e).__name__}: {str(e)}")
+        secure_log("ERROR", f"Groq Vision OCR failed: {type(e).__name__}: {str(e)}")
         raise
 
 
