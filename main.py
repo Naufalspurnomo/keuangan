@@ -1414,19 +1414,28 @@ Balas 1 atau 2"""
             if input_type == 'text':
                 buf = get_visual_buffer(sender_number, chat_jid)
                 if buf:
-                    # Handle both list and dict format from buffer
-                    item = buf[0] if isinstance(buf, list) else buf
-                    media_url = item.get('media_url')
-                    local_media_path = item.get('media_path')
-                    buf_caption = item.get('caption') or ''
-                    
-                    # If user says "catat diatas" and caption exists, use caption as text
-                    ref_phrase = re.search(r'\b(catat\s+(di\s+)?(atas|tadi|sebelumnya)|catat\s+itu)\b', text.lower())
-                    if ref_phrase and buf_caption.strip():
-                        text = buf_caption.strip()
-                    
-                    input_type = 'image'
-                    clear_visual_buffer(sender_number, chat_jid)
+                    # Only auto-bind if text looks like transaction intent
+                    should_bind, _ = should_respond_in_group(
+                        text or "",
+                        is_group,
+                        has_media=True,
+                        has_pending=False,
+                        is_mentioned=is_explicit_bot_call(text)
+                    )
+                    if should_bind:
+                        # Handle both list and dict format from buffer
+                        item = buf[0] if isinstance(buf, list) else buf
+                        media_url = item.get('media_url')
+                        local_media_path = item.get('media_path')
+                        buf_caption = item.get('caption') or ''
+                        
+                        # If user says "catat diatas" and caption exists, use caption as text
+                        ref_phrase = re.search(r'\b(catat\s+(di\s+)?(atas|tadi|sebelumnya)|catat\s+itu)\b', text.lower())
+                        if ref_phrase and buf_caption.strip():
+                            text = buf_caption.strip()
+                        
+                        input_type = 'image'
+                        clear_visual_buffer(sender_number, chat_jid)
  
         # 5. REVISION HANDLER (New)
         if quoted_msg_id or is_command_match(text, Commands.UNDO, is_group) or is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):

@@ -45,6 +45,9 @@ from config.wallets import resolve_dompet_from_text
 
 # OCR sanity limit (default 10B IDR) to avoid parsing long IDs as amounts
 OCR_MAX_AMOUNT = int(os.getenv('OCR_MAX_AMOUNT', '10000000000'))
+# OCR debug logging (set OCR_DEBUG=1)
+OCR_DEBUG = os.getenv('OCR_DEBUG', '0').lower() in ('1', 'true', 'yes')
+OCR_DEBUG_MAX = int(os.getenv('OCR_DEBUG_MAX', '3'))
 
 def extract_project_from_description(description: str) -> str:
     """
@@ -164,13 +167,46 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
         return {"base": 0, "fee": 0, "total": 0}
 
     fee_keywords = ["fee", "biaya", "admin", "charge"]
-    total_keywords = ["total", "jumlah", "grand total", "total bayar", "total transfer", "total pembayaran"]
+    total_keywords = [
+        "total", "jumlah", "grand total", "total bayar", "total transfer", "total pembayaran",
+        "tagihan", "angsuran", "cicilan", "bayar", "setoran", "pokok", "sisa"
+    ]
     base_keywords = ["nominal", "amount", "transfer", "pembayaran", "debit", "subtotal"]
+    ignore_keywords = [
+        "no.", "no ", "nomor", "ref", "kode", "id", "rekening", "account",
+        "trx", "rrn", "stan", "auth", "approval"
+    ]
+    date_pattern = re.compile(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b")
+    small_amount_threshold = int(os.getenv('OCR_SMALL_AMOUNT', '5000'))
+
+    def _score_amount(val: int, tok: str, line: str, has_currency: bool,
+                      has_total: bool, has_base: bool, has_fee: bool,
+                      has_ignore: bool) -> int:
+        score = 0
+        if has_currency:
+            score += 3
+        if has_total:
+            score += 3
+        if has_base:
+            score += 2
+        if has_fee:
+            score += 2
+        if any(sep in tok for sep in [".", ","]):
+            score += 1
+        if val < small_amount_threshold:
+            score -= 2
+        if has_ignore:
+            score -= 3
+        if len(line) > 40:
+            score -= 1
+        return score
 
     fee_candidates = []
     total_candidates = []
     base_candidates = []
+    general_candidates = []
     all_amounts = []
+    currency_amounts = []
     fee_keyword_found = False
     total_keyword_found = False
     base_keyword_found = False
@@ -180,41 +216,79 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
         if not line:
             continue
         lower = line.lower()
+        if date_pattern.search(lower):
+            continue
+
+        has_currency = ("rp" in lower) or ("idr" in lower)
+        has_ignore = any(k in lower for k in ignore_keywords)
+        has_total = any(k in lower for k in total_keywords)
+        has_base = any(k in lower for k in base_keywords)
+        has_fee = any(k in lower for k in fee_keywords)
+
         tokens = re.findall(r"\b\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?\b|\b\d+[.,]\d{2}\b|\b\d{4,}\b", line)
-        amounts = []
+        if not tokens:
+            continue
+
         for tok in tokens:
             val = _parse_money_token(tok)
-            if val > 0 and val <= OCR_MAX_AMOUNT:
-                amounts.append(val)
-                all_amounts.append(val)
+            if val <= 0 or val > OCR_MAX_AMOUNT:
+                continue
+            all_amounts.append(val)
+            if has_currency:
+                currency_amounts.append(val)
 
-        if not amounts:
-            continue
-        if any(k in lower for k in fee_keywords):
-            fee_keyword_found = True
-            fee_candidates.extend(amounts)
-        if any(k in lower for k in total_keywords):
-            total_keyword_found = True
-            total_candidates.extend(amounts)
-        if any(k in lower for k in base_keywords):
-            base_keyword_found = True
-            base_candidates.extend(amounts)
+            score = _score_amount(val, tok, line, has_currency, has_total, has_base, has_fee, has_ignore)
+            line_snip = line[:120]
+            if has_fee:
+                fee_keyword_found = True
+                fee_candidates.append((val, score, line_snip))
+            elif has_total:
+                total_keyword_found = True
+                total_candidates.append((val, score, line_snip))
+            elif has_base:
+                base_keyword_found = True
+                base_candidates.append((val, score, line_snip))
+            else:
+                general_candidates.append((val, score, line_snip))
+
+    def _pick_best(cands: list) -> tuple:
+        if not cands:
+            return 0, ""
+        cands_sorted = sorted(cands, key=lambda x: (x[1], x[0]), reverse=True)
+        best = cands_sorted[0]
+        return best[0], best[2]
+
+    def _debug_top(label: str, cands: list) -> None:
+        if not OCR_DEBUG:
+            return
+        if not cands:
+            return
+        top = sorted(cands, key=lambda x: (x[1], x[0]), reverse=True)[:OCR_DEBUG_MAX]
+        for val, score, line in top:
+            secure_log("INFO", f"OCR_DEBUG {label}: val={val} score={score} line='{line}'")
 
     fee = 0
     if fee_candidates:
-        fee = min((a for a in fee_candidates if a <= 100000), default=0)
-        if not fee:
-            fee = min(fee_candidates)
+        fee_vals = [v for v, _s, _l in fee_candidates if v <= 100000]
+        fee = min(fee_vals) if fee_vals else min(v for v, _s, _l in fee_candidates)
 
-    total = max(total_candidates) if total_candidates else 0
-    base = max(base_candidates) if base_candidates else 0
+    total, total_line = _pick_best(total_candidates)
+    base, base_line = _pick_best(base_candidates)
+
+    if not total:
+        total, total_line = _pick_best(general_candidates)
+        if not total:
+            total = max(currency_amounts) if currency_amounts else 0
+    if not base:
+        if total:
+            candidates = [v for v, _s, _l in general_candidates if v < total]
+            if candidates:
+                base = max(candidates)
+                base_line = next((l for v, _s, l in general_candidates if v == base), "")
+        if not base:
+            base = max(currency_amounts) if currency_amounts else 0
     if not base and all_amounts:
-        # If total exists, prefer next-highest amount as base
-        if total and len(all_amounts) > 1:
-            candidates = [a for a in all_amounts if a < total]
-            base = max(candidates) if candidates else total
-        else:
-            base = max(all_amounts)
+        base = max(all_amounts)
 
     # Reconcile fee using total-base when available
     if total and base:
@@ -228,6 +302,17 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
         total = 0
     if base > OCR_MAX_AMOUNT:
         base = 0
+
+    if OCR_DEBUG:
+        _debug_top("TOTAL_CANDIDATE", total_candidates)
+        _debug_top("BASE_CANDIDATE", base_candidates)
+        _debug_top("FEE_CANDIDATE", fee_candidates)
+        _debug_top("GENERAL_CANDIDATE", general_candidates)
+        secure_log(
+            "INFO",
+            f"OCR_DEBUG PICKED total={total} base={base} fee={fee} "
+            f"total_line='{total_line[:120]}' base_line='{base_line[:120]}'"
+        )
 
     return {
         "base": base,
