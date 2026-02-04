@@ -179,7 +179,7 @@ OPERATIONAL_KEYWORDS = {
     'peralatan', 'atk', 'alat tulis', 'perlengkapan kantor',
     
     # General Ops
-    'operasional', 'ops', 'biaya kantor', 'sewa kantor',
+    'operasional', 'operational', 'ops', 'biaya kantor', 'sewa kantor',
     'kebersihan', 'keamanan', 'security', 'cleaning',
     
     # Misc that shouldn't be project

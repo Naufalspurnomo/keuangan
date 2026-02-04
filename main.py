@@ -248,7 +248,7 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
     """
     text_lower = (text or '').lower()
     has_project_word = bool(re.search(r"\b(projek|project|proyek|prj)\b", text_lower))
-    has_kantor_word = bool(re.search(r"\b(kantor|office)\b", text_lower))
+    has_kantor_word = bool(re.search(r"\b(kantor|office|operasional|operational|ops)\b", text_lower))
     
     # NEW v2.0: Trust AI's category_scope if available
     if category_scope == 'OPERATIONAL':
@@ -264,18 +264,21 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
     if category_scope == 'AMBIGUOUS':
         return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
 
-    # Conflict: both "projek" and "kantor"
-    if has_project_word and has_kantor_word:
-        return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
-    
-    # Fallback: Rule-based detection (when AI uncertain or not used)
-    
-    # Check Keywords with better matching
+    # Pre-compute operational keywords for quick routing
     detected_keywords = []
     for kw in OPERATIONAL_KEYWORDS:
         # Use word boundary matching for better accuracy
         if re.search(r'\b' + re.escape(kw) + r'\b', text_lower):
             detected_keywords.append(kw)
+
+    # Conflict: prioritize "kantor/operasional" over project keyword
+    if has_kantor_word:
+        category = map_operational_category(detected_keywords[0]) if detected_keywords else 'Lain Lain'
+        return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
+    
+    # Fallback: Rule-based detection (when AI uncertain or not used)
+    
+    # Check Keywords with better matching (already computed above)
     
     # Ambiguous keyword detection (e.g., gaji/fee/cicilan)
     try:
@@ -347,9 +350,6 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
     all_ambiguous = bool(detected_keywords) and len(detected_ambiguous) == len(detected_keywords)
     
     # Explicit bias: "kantor" or "project" keywords should win
-    if has_kantor_word and not has_project_word:
-        category = map_operational_category(detected_keywords[0]) if detected_keywords else 'Lain Lain'
-        return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
     if has_project_word and not has_kantor_word:
         return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
     if has_office_role and not has_project_word:
@@ -1076,17 +1076,6 @@ Balas 1 atau 2"""
                     # Flow continues (asked next question)
                     return jsonify({'status': 'pending_interaction'}), 200
 
-        # If /cancel is sent without any pending flow, clear visual buffer and stop.
-        if is_command_match(text, Commands.CANCEL, is_group) and not has_pending and not pending_conf:
-            clear_visual_buffer(sender_number, chat_jid)
-            send_reply(UserErrors.CANCELLED)
-            return jsonify({'status': 'cancelled_no_pending'}), 200
-            
-            # If result is None, it means the input didn't match the expected options
-            # (e.g. user typed something random instead of '1' or '2')
-            # So we continue to normal processing (AI Layers)
-            pass
-        
         # 3. Check Pending (Standard/Legacy)
         sender_pkey = pending_key(sender_number, chat_jid)
         pending_pkey = sender_pkey
@@ -1100,6 +1089,12 @@ Balas 1 atau 2"""
             pending_data = None
             
         has_pending = pending_data is not None
+
+        # If /cancel is sent without any pending flow, clear visual buffer and stop.
+        if is_command_match(text, Commands.CANCEL, is_group) and not has_pending and not pending_conf:
+            clear_visual_buffer(sender_number, chat_jid)
+            send_reply(UserErrors.CANCELLED)
+            return jsonify({'status': 'cancelled_no_pending'}), 200
 
         # If user replies with a selection number but no pending is found,
         # try to resolve a single active pending in the same group chat.
@@ -1303,9 +1298,7 @@ Balas 1 atau 2"""
                             re.search(r'\b' + re.escape(kw) + r'\b', text_lower)
                             for kw in OPERATIONAL_KEYWORDS
                         )
-                        if has_project_word and (has_kantor_word or has_operational_kw):
-                            smart_scope = "AMBIGUOUS"
-                        elif has_kantor_word or has_operational_kw:
+                        if has_kantor_word or has_operational_kw:
                             smart_scope = "OPERATIONAL"
                         elif has_project_word:
                             smart_scope = "PROJECT"
@@ -1538,7 +1531,7 @@ Balas 1 atau 2"""
             # A. Select Source Wallet (Operational)
             if ptype == 'select_source_wallet':
                 clean = text.strip().lower()
-                if clean in ['4', 'project', 'projek']:
+                if clean == '4' or 'project' in clean or 'projek' in clean:
                     pending['pending_type'] = None
                     pending['is_operational'] = False
                     pending.pop('operational_category', None)
@@ -1650,7 +1643,7 @@ Balas 1 atau 2"""
             # D. Company Selection
             if ptype == 'selection':
                 clean = text.strip().lower()
-                if clean in ['5', 'operasional', 'kantor', 'operasional kantor']:
+                if clean == '5' or any(k in clean for k in ['operasional', 'kantor']):
                     pending['pending_type'] = 'select_source_wallet'
                     pending['is_operational'] = True
                     pending['operational_category'] = pending.get('operational_category', 'Lain Lain')

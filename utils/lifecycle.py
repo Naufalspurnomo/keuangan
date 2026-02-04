@@ -5,7 +5,7 @@ from services.project_service import get_existing_projects
 from config.wallets import strip_company_prefix
 
 
-def apply_lifecycle_markers(project_name: str, transaction: dict, is_new_project: bool = False) -> str:
+def apply_lifecycle_markers(project_name: str, transaction: dict, is_new_project: bool = False, allow_finish: bool = True) -> str:
     """
     Applies (Start) or (Finish) markers to project names.
     Only for 'Pemasukan' transactions.
@@ -17,7 +17,7 @@ def apply_lifecycle_markers(project_name: str, transaction: dict, is_new_project
 
     # Rule 1: Finish
     finish_keywords = ['pelunasan', 'lunas', 'final payment', 'penyelesaian', 'selesai', 'kelar', 'beres']
-    if any(k in desc for k in finish_keywords):
+    if allow_finish and any(k in desc for k in finish_keywords):
         return f"{project_name} (Finish)"
 
     # Rule 2: Start (New Project Auto-Detect)

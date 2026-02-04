@@ -230,7 +230,7 @@ class ContextDetector:
         
         # Soft bias keywords (non-absolute)
         has_project_word = bool(re.search(r"\b(projek|project|proyek|prj)\b", text_lower))
-        has_kantor_word = bool(re.search(r"\b(kantor|office)\b", text_lower))
+        has_kantor_word = bool(re.search(r"\b(kantor|office|operasional|operational|ops)\b", text_lower))
 
         # Build signals dict
         signals = {
@@ -244,13 +244,13 @@ class ContextDetector:
         }
 
         # DECISION LOGIC
-        # If both project + kantor words exist, treat as ambiguous
-        if has_project_word and has_kantor_word:
+        # If both project + kantor words exist, prioritize OPERATIONAL
+        if has_kantor_word:
             return {
-                "category_scope": "AMBIGUOUS",
-                "confidence": 0.40,
+                "category_scope": "OPERATIONAL",
+                "confidence": 0.60 if has_project_word else 0.70,
                 "signals": signals,
-                "reasoning": "Both 'projek' and 'kantor' detected; needs clarification"
+                "reasoning": "Keyword 'kantor/operasional' detected; prioritize OPERATIONAL"
             }
 
         category_scope, confidence, reasoning = self._make_decision(

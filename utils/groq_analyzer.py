@@ -503,6 +503,11 @@ REMEMBER:
                     result['confidence'] = 0.95
                     result['category_scope'] = 'TRANSFER'  # Special marker
 
+            # 1.5 Operational keyword should prioritize OPERATIONAL scope
+            if result.get('intent') == 'RECORD_TRANSACTION':
+                if detect_operational_keyword(text):
+                    result['category_scope'] = 'OPERATIONAL'
+
             # 2. DP/Project keywords MUST be RECORD_TRANSACTION
             if result.get('intent') == 'IGNORE':
                  # Check for DP/term keywords
@@ -712,6 +717,20 @@ def is_saldo_update(text: str) -> bool:
     """
     text_lower = text.lower()
     
+    if not text:
+        return False
+
+    text_lower = text.lower()
+
+    # If it's a question, treat as query (not update)
+    question_words = [
+        'berapa', 'gimana', 'bagaimana', 'apa', 'kapan', 'kenapa',
+        'how much', 'how many', 'what', 'when', 'why',
+        'cek', 'check', 'lihat', 'tunjukkan'
+    ]
+    if any(qw in text_lower for qw in question_words) or '?' in text_lower:
+        return False
+
     # Keywords yang JELAS ini update saldo
     saldo_update_keywords = [
         "update saldo",
@@ -730,5 +749,11 @@ def is_saldo_update(text: str) -> bool:
         "tarik dompet",
         "ambil dompet",
     ]
-    
-    return any(kw in text_lower for kw in saldo_update_keywords)
+    if any(kw in text_lower for kw in saldo_update_keywords):
+        return True
+
+    # Fallback: if mentions saldo/dompet (non-question), treat as update
+    if "saldo" in text_lower or "dompet" in text_lower:
+        return True
+
+    return False

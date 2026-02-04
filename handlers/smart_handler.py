@@ -136,6 +136,10 @@ class SmartHandler:
         # Combined keywords
         all_keywords = finance_keywords + list(OPERATIONAL_KEYWORDS)
         has_finance_keyword = any(k in text_lower for k in all_keywords)
+
+        # Project vs Operational keyword hints (for media override)
+        has_project_word = bool(re.search(r"\b(projek|project|proyek|prj)\b", text_lower))
+        has_kantor_word = bool(re.search(r"\b(kantor|operasional|operational|ops)\b", text_lower))
         
         # Is this likely a financial transaction report?
         is_likely_transaction = (
@@ -212,6 +216,23 @@ class SmartHandler:
                 }
         
         if not analysis.get('should_respond', False):
+            # If media is attached and there are transactional hints, force processing
+            if has_media and (has_amount or has_finance_keyword or has_project_word or has_kantor_word):
+                forced_scope = analysis.get('category_scope')
+                if not forced_scope or forced_scope == 'UNKNOWN':
+                    if has_kantor_word:
+                        forced_scope = "OPERATIONAL"
+                    elif has_project_word:
+                        forced_scope = "PROJECT"
+                    else:
+                        forced_scope = "UNKNOWN"
+                return {
+                    "action": "PROCESS",
+                    "intent": "RECORD_TRANSACTION",
+                    "normalized_text": text,
+                    "layer_response": text,
+                    "category_scope": forced_scope
+                }
             return {"action": "IGNORE"}
              
         intent = analysis.get('intent', 'UNKNOWN')

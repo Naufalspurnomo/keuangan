@@ -151,6 +151,67 @@ def _detect_operational_category(keterangan: str) -> str:
         return 'ListrikAir'
     return 'Lain Lain'
 
+
+def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: str, chat_id: str, is_group: bool) -> dict:
+    """Commit project transactions with lifecycle markers and cleanup."""
+    transactions = pending_data.get('transactions', [])
+    dompet_sheet = pending_data.get('dompet')
+    company = pending_data.get('company')
+    event_id = pending_data.get('event_id') or pending_data.get('original_message_id')
+    is_new_project = pending_data.get('is_new_project', False)
+    finish_decision = pending_data.get('finish_decision')
+    allow_finish = finish_decision != 'SKIP'
+
+    _assign_tx_ids(transactions, event_id)
+
+    for tx in transactions:
+        p_name = tx.get('nama_projek', '') or 'Umum'
+        p_name = apply_company_prefix(p_name, dompet_sheet, company)
+        p_name = apply_lifecycle_markers(p_name, tx, is_new_project=is_new_project, allow_finish=allow_finish)
+
+        append_project_transaction(
+            transaction={
+                'jumlah': tx['jumlah'],
+                'keterangan': tx['keterangan'],
+                'tipe': tx.get('tipe', 'Pengeluaran'),
+                'message_id': tx.get('message_id')
+            },
+            sender_name=sender_name,
+            source=pending_data.get('source', 'WhatsApp'),
+            dompet_sheet=dompet_sheet,
+            project_name=p_name
+        )
+
+    # If this is a revision move, delete old rows after re-save
+    if pending_data.get('revision_delete'):
+        for item in pending_data.get('revision_delete', []):
+            delete_transaction_row(item.get('dompet'), item.get('row'))
+
+    # Update project cache if new
+    if is_new_project:
+        raw_proj = transactions[0].get('nama_projek')
+        if raw_proj:
+            add_new_project_to_cache(raw_proj)
+
+    invalidate_dashboard_cache()
+    clear_pending_confirmation(user_id, chat_id)
+    if pending_data.get('pending_key'):
+        clear_pending_transaction(pending_data.get('pending_key'))
+
+    mention = format_mention(sender_name, is_group)
+    response = format_success_reply_new(transactions, dompet_sheet, company, mention).replace('*', '')
+    tx_ids = [t.get('tx_id') for t in transactions if t.get('tx_id')]
+    if tx_ids:
+        response += f"\nðŸ†” TX: {', '.join(tx_ids)}"
+
+    # Lock project to dompet for consistency
+    for t in transactions:
+        pname = t.get('nama_projek')
+        if pname and pname.lower() not in ['saldo umum', 'operasional kantor', 'umum', 'unknown']:
+            set_project_lock(pname, dompet_sheet, actor=sender_name, reason="commit")
+
+    return {'response': response, 'completed': True, 'bot_ref_event_id': event_id}
+
 def handle_pending_response(user_id: str, chat_id: str, text: str, 
                             pending_data: dict, sender_name: str) -> dict:
     """
@@ -275,7 +336,8 @@ Atau ketik /cancel untuk batal total"""
                     'category_scope': 'OPERATIONAL',
                     'transactions': transactions,
                     'original_message_id': original_msg_id,
-                    'event_id': event_id
+                    'event_id': event_id,
+                    'raw_text': pending_data.get('raw_text', '')
                 }
             )
             
@@ -345,7 +407,8 @@ Atau ketik /cancel untuk batal total"""
                     'category_scope': 'OPERATIONAL',
                     'transactions': transactions,
                     'original_message_id': original_msg_id,
-                    'event_id': event_id
+                    'event_id': event_id,
+                    'raw_text': pending_data.get('raw_text', '')
                 }
             )
             mention = format_mention(sender_name, is_group)
@@ -373,6 +436,24 @@ Atau ketik /cancel untuk batal total"""
     # HANDLE: Dompet Selection (Operational)
     # ===================================
     elif pending_type == 'dompet_selection_operational':
+        
+        # Switch to Project if user says so
+        if text_lower == '4' or 'project' in text_lower or 'projek' in text_lower:
+            set_pending_confirmation(
+                user_id=user_id,
+                chat_id=chat_id,
+                data={
+                    'type': 'dompet_selection_project',
+                    'category_scope': 'PROJECT',
+                    'transactions': pending_data.get('transactions', []),
+                    'original_message_id': pending_data.get('original_message_id'),
+                    'event_id': pending_data.get('event_id'),
+                    'raw_text': pending_data.get('raw_text', '')
+                }
+            )
+            mention = format_mention(sender_name, is_group)
+            response = build_selection_prompt(pending_data.get('transactions', []), mention)
+            return {'response': response, 'completed': False}
         
         # Parse dompet choice using config
         try:
@@ -424,6 +505,24 @@ Atau ketik /cancel untuk batal total"""
     # HANDLE: Dompet Selection (Project)
     # ===================================
     elif pending_type == 'dompet_selection_project':
+        
+        # Switch to Operational if user says so
+        if text_lower == '5' or any(k in text_lower for k in ['operasional', 'kantor', 'operational', 'ops']):
+            set_pending_confirmation(
+                user_id=user_id,
+                chat_id=chat_id,
+                data={
+                    'type': 'dompet_selection_operational',
+                    'category_scope': 'OPERATIONAL',
+                    'transactions': pending_data.get('transactions', []),
+                    'original_message_id': pending_data.get('original_message_id'),
+                    'event_id': pending_data.get('event_id'),
+                    'raw_text': pending_data.get('raw_text', '')
+                }
+            )
+            mention = format_mention(sender_name, is_group)
+            prompt = format_wallet_selection_prompt()
+            return {'response': f"{mention}ðŸ’¼ Operational Kantor\n{prompt}", 'completed': False}
         
         # Parse choice (1-4) using config
         try:
@@ -984,6 +1083,41 @@ Atau ketik /cancel untuk batal total"""
 
         if text_lower in ['1', 'ya', 'yes', 'simpan', 'ok', 'oke']:
             transactions = pending_data.get('transactions', [])
+            
+            def _has_finish_keyword(txs: list) -> bool:
+                finish_keywords = ['pelunasan', 'lunas', 'final payment', 'penyelesaian', 'selesai', 'kelar', 'beres']
+                for tx in txs:
+                    if tx.get('tipe') != 'Pemasukan':
+                        continue
+                    desc = (tx.get('keterangan', '') or '').lower()
+                    if any(k in desc for k in finish_keywords):
+                        return True
+                return False
+
+            if _has_finish_keyword(transactions) and not pending_data.get('finish_decision'):
+                set_pending_confirmation(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    data={
+                        'type': 'project_finish_confirm',
+                        'transactions': transactions,
+                        'dompet': pending_data.get('dompet'),
+                        'company': pending_data.get('company'),
+                        'sender_name': sender_name,
+                        'source': pending_data.get('source', 'WhatsApp'),
+                        'original_message_id': pending_data.get('original_message_id'),
+                        'event_id': pending_data.get('event_id'),
+                        'is_new_project': pending_data.get('is_new_project', False),
+                        'pending_key': pending_data.get('pending_key'),
+                        'revision_delete': pending_data.get('revision_delete')
+                    }
+                )
+                return {
+                    'response': 'Terdeteksi kata pelunasan/selesai. Tandai project sebagai (Finish)?\n\n1️⃣ Ya\n2️⃣ Tidak',
+                    'completed': False
+                }
+
+            return _commit_project_transactions(pending_data, sender_name, user_id, chat_id, is_group)
             dompet_sheet = pending_data.get('dompet')
             company = pending_data.get('company')
             event_id = pending_data.get('event_id') or pending_data.get('original_message_id')
@@ -1080,6 +1214,15 @@ Atau ketik /cancel untuk batal total"""
     # ===================================
     # HANDLE: Project Dompet Mismatch
     # ===================================
+    elif pending_type == 'project_finish_confirm':
+        if text_lower in ['1', 'ya', 'yes', 'ok', 'oke', 'simpan']:
+            pending_data['finish_decision'] = 'APPLY'
+            return _commit_project_transactions(pending_data, sender_name, user_id, chat_id, is_group)
+        if text_lower in ['2', 'tidak', 'no', 'bukan']:
+            pending_data['finish_decision'] = 'SKIP'
+            return _commit_project_transactions(pending_data, sender_name, user_id, chat_id, is_group)
+        return {'response': 'Balas 1 untuk tandai (Finish) atau 2 untuk tidak.', 'completed': False}
+
     elif pending_type == 'project_dompet_mismatch':
         choice = text_lower.strip()
         dompet_locked = pending_data.get('dompet_locked')

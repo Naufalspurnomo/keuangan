@@ -19,6 +19,7 @@ ACTION_VERBS = [
     'lunasin', 'kasih', 'isi', 'topup', 'top up', 'tarik',
     'catat', 'simpan', 'input', 'masukin', 'tambah'
 ]
+ACTION_VERBS.append('fee')
 
 # Use centralized timeouts
 PENDING_TTL_SECONDS = Timeouts.PENDING_TRANSACTION
@@ -152,6 +153,9 @@ def should_respond_in_group(message: str, is_group: bool, has_media: bool = Fals
     if any(re.search(rf"\b{re.escape(verb)}\b", message_lower) for verb in ACTION_VERBS):
         return True, message
     if any(kw in message_lower for kw in OPERATIONAL_KEYWORDS):
+        return True, message
+    # 3.6. Project keywords should trigger processing (even without amount)
+    if re.search(r"\b(projek|project|proyek|prj)\b", message_lower):
         return True, message
 
     # 4. Smart Financial Scoring

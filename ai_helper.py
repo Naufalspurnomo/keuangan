@@ -43,6 +43,9 @@ from utils.parsers import parse_revision_amount, extract_project_name_from_text
 from config.constants import KNOWN_COMPANY_NAMES, PROJECT_STOPWORDS
 from config.wallets import resolve_dompet_from_text
 
+# OCR sanity limit (default 10B IDR) to avoid parsing long IDs as amounts
+OCR_MAX_AMOUNT = int(os.getenv('OCR_MAX_AMOUNT', '10000000000'))
+
 def extract_project_from_description(description: str) -> str:
     """
     Extract project name from description text.
@@ -181,7 +184,7 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
         amounts = []
         for tok in tokens:
             val = _parse_money_token(tok)
-            if val > 0:
+            if val > 0 and val <= OCR_MAX_AMOUNT:
                 amounts.append(val)
                 all_amounts.append(val)
 
@@ -219,6 +222,12 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
         if 0 < computed_fee <= 100000:
             if fee == 0 or abs(fee - computed_fee) > max(500, int(0.2 * fee) if fee else 500):
                 fee = computed_fee
+
+    # Sanity clamp
+    if total > OCR_MAX_AMOUNT:
+        total = 0
+    if base > OCR_MAX_AMOUNT:
+        base = 0
 
     return {
         "base": base,
@@ -290,8 +299,26 @@ def _is_wallet_update_context(clean_text: str) -> bool:
     """Check if input is about updating wallet balance (not a project transaction)."""
     if not clean_text:
         return False
-    # Check both patterns
-    return bool(WALLET_UPDATE_REGEX.search(clean_text) or DOMPET_UPDATE_REGEX.search(clean_text))
+    text_lower = clean_text.lower()
+
+    # If it's a question, treat as query (not update)
+    question_words = [
+        'berapa', 'gimana', 'bagaimana', 'apa', 'kapan', 'kenapa',
+        'how much', 'how many', 'what', 'when', 'why',
+        'cek', 'check', 'lihat', 'tunjukkan'
+    ]
+    if any(qw in text_lower for qw in question_words) or '?' in text_lower:
+        return False
+
+    # Explicit update keywords
+    if WALLET_UPDATE_REGEX.search(clean_text) or DOMPET_UPDATE_REGEX.search(clean_text):
+        return True
+
+    # Fallback: saldo/dompet mention (non-question) -> treat as update
+    if "saldo" in text_lower or "dompet" in text_lower:
+        return True
+
+    return False
 
 def detect_wallet_from_text(text: str) -> Optional[str]:
     """
@@ -559,6 +586,9 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                     main_tx["jumlah"] = base_amt
                 elif total_amt > 0 and transfer_fee > 0 and total_amt > transfer_fee:
                     main_tx["jumlah"] = max(total_amt - transfer_fee, main_tx.get("jumlah", 0))
+                if int(main_tx.get("jumlah", 0) or 0) > OCR_MAX_AMOUNT:
+                    main_tx["jumlah"] = 0
+                    main_tx["needs_amount"] = True
 
             # Remove fee transaction if amount not detected
             if fee_tx and transfer_fee <= 0:
@@ -597,6 +627,14 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                     if fee_tx:
                         kept.append(fee_tx)
                     validated_transactions = kept
+
+            # Final OCR sanity check for extreme amounts
+            if "Receipt/Struk content:" in clean_text:
+                for t in validated_transactions:
+                    amt = int(t.get("jumlah", 0) or 0)
+                    if amt > OCR_MAX_AMOUNT:
+                        t["jumlah"] = 0
+                        t["needs_amount"] = True
 
         secure_log("INFO", f"Extracted {len(validated_transactions)} valid transactions")
         return validated_transactions

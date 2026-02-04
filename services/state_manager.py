@@ -394,6 +394,14 @@ import os
 PERSISTENCE_FILE = "data/user_state.json"
 _state_lock = threading.Lock()
 
+def _sanitize_keys(obj):
+    """Ensure all dict keys are JSON-serializable strings."""
+    if isinstance(obj, dict):
+        return {str(k): _sanitize_keys(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_keys(v) for v in obj]
+    return obj
+
 def _save_state():
     """Save state to local JSON AND Google Sheets (Background)."""
     with _state_lock:
@@ -427,7 +435,8 @@ def _save_state():
             
             # Ensure directory exists
             os.makedirs(os.path.dirname(PERSISTENCE_FILE), exist_ok=True)
-            json_str = json.dumps(data, default=str)
+            safe_data = _sanitize_keys(data)
+            json_str = json.dumps(safe_data, default=str)
 
             with open(PERSISTENCE_FILE, 'w') as f:
                 f.write(json_str)
@@ -453,7 +462,7 @@ def _save_state():
             cloud_data["last_bot_reports"] = _trim_dict(cloud_data.get("last_bot_reports", {}), 200)
             cloud_data["audit_log"] = []  # Skip audit log for cloud to save space
 
-            cloud_json = json.dumps(cloud_data, default=str)
+            cloud_json = json.dumps(_sanitize_keys(cloud_data), default=str)
             # If still too large, drop dedup + refs entirely
             if len(cloud_json) > 45000:
                 cloud_data["processed_messages"] = {}
@@ -461,7 +470,7 @@ def _save_state():
                 cloud_data["pending_message_refs"] = {}
                 cloud_data["bot_interactions"] = {}
                 cloud_data["last_bot_reports"] = {}
-                cloud_json = json.dumps(cloud_data, default=str)
+                cloud_json = json.dumps(_sanitize_keys(cloud_data), default=str)
             
             threading.Thread(target=save_state_to_cloud, args=(cloud_json,), daemon=True).start()
                 
