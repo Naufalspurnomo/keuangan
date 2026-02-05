@@ -7,7 +7,8 @@ from sheets_helper import (
     append_operational_transaction,
     append_project_transaction,
     delete_transaction_row,
-    get_dompet_sheet
+    get_dompet_sheet,
+    cancel_hutang_by_event_id
 )
 from services.state_manager import (
     set_pending_confirmation,
@@ -331,7 +332,7 @@ Balas:
 Peringatan: Data yang dihapus tidak bisa dikembalikan!'''
     }
 
-def process_undo_deletion(items: list) -> dict:
+def process_undo_deletion(items: list, event_id: Optional[str] = None) -> dict:
     """Helper to execute deletion"""
     deleted_count = 0
     if not items:
@@ -364,6 +365,9 @@ def process_undo_deletion(items: list) -> dict:
             success = delete_transaction_row(dompet, row)
             if success:
                 deleted_count += 1
+
+    if event_id:
+        cancel_hutang_by_event_id(event_id)
     
     if deleted_count == target_count:
         return {

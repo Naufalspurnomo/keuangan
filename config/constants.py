@@ -109,6 +109,29 @@ OPERASIONAL_COLS = {
     'MESSAGE_ID': 8    # H
 }
 
+# ===================== HUTANG SHEET =====================
+HUTANG_SHEET_NAME = "HUTANG"
+HUTANG_HEADER_ROW = 1
+HUTANG_DATA_START = 2
+
+HUTANG_COLS = {
+    'NO': 1,            # A
+    'TANGGAL': 2,       # B
+    'NOMINAL': 3,       # C
+    'KETERANGAN': 4,    # D
+    'YANG_HUTANG': 5,   # E (borrower)
+    'YANG_DIHUTANGI': 6,# F (lender)
+    'STATUS': 7,        # G (OPEN/PAID/CANCELLED)
+    'TGL_LUNAS': 8,     # H
+    'MESSAGE_ID': 9     # I
+}
+
+HUTANG_HEADERS = [
+    'No', 'Tanggal', 'Nominal', 'Keterangan',
+    'Yang Hutang', 'Yang Dihutangi',
+    'Status', 'Tgl Lunas', 'MessageID'
+]
+
 OPERASIONAL_HEADERS = ['No', 'Tanggal', 'JUMLAH', 'KETERANGAN', 'Oleh', 'Source', 'Kategori', 'MessageID']
 
 # Operational Categories
@@ -269,6 +292,11 @@ class Commands:
     LINK_SLASH = ['/link']
     LINK_PRIVATE = ['link']
     LINK = LINK_SLASH + LINK_PRIVATE
+
+    # Hutang management
+    LUNAS_SLASH = ['/lunas']
+    LUNAS_PRIVATE = ['lunas']
+    LUNAS_PREFIXES = LUNAS_SLASH + LUNAS_PRIVATE
 
 
 # ===================== GROUP TRIGGERS =====================

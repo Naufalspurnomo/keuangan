@@ -41,6 +41,10 @@ from sheets_helper import (
     # New Split Layout Functions
     append_project_transaction,
     append_operational_transaction,
+    append_hutang_entry,
+    update_hutang_status_by_no,
+    cancel_hutang_by_event_id,
+    find_open_hutang,
     get_all_data,
 )
 
@@ -114,6 +118,8 @@ from config.wallets import (
     get_dompet_short_name,
     apply_company_prefix,
     strip_company_prefix,
+    DOMPET_ALIASES,
+    resolve_dompet_from_text,
 )
 
 # Initialize Flask app
@@ -255,7 +261,9 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
     has_project_word = bool(re.search(r"\b(projek|project|proyek|prj)\b", text_lower))
     has_kantor_word = bool(re.search(r"\b(kantor|office|operasional|operational|ops)\b", text_lower))
     
-    # Trust AI's category_scope if available
+    # Trust AI's category_scope if available (but allow explicit project override)
+    if category_scope == 'OPERATIONAL' and has_project_word:
+        return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
     if category_scope == 'OPERATIONAL':
         # Detect which operational category
         detected_keywords = [kw for kw in OPERATIONAL_KEYWORDS if kw in text_lower]
@@ -276,7 +284,11 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
         if re.search(r'\b' + re.escape(kw) + r'\b', text_lower):
             detected_keywords.append(kw)
 
-    # Conflict: prioritize "kantor/operasional" over project keyword
+    # Explicit project keyword should win
+    if has_project_word:
+        return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
+
+    # Otherwise, kantor/operasional wins
     if has_kantor_word:
         category = map_operational_category(detected_keywords[0]) if detected_keywords else 'Lain Lain'
         return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
@@ -414,6 +426,128 @@ def map_operational_category(keyword: str) -> str:
         return 'Peralatan'
     
     return 'Lain Lain'
+
+
+DEBT_PAYMENT_KEYWORDS = [
+    "bayar", "lunas", "lunasi", "pelunasan", "cicil", "cicilan", "angsuran"
+]
+
+def _is_debt_payment_text(text: str) -> bool:
+    lower = (text or "").lower()
+    if not re.search(r"\b(utang|hutang)\b", lower):
+        return False
+    return any(re.search(rf"\b{re.escape(k)}\b", lower) for k in DEBT_PAYMENT_KEYWORDS)
+
+
+def _extract_dompet_mentions(text: str) -> List[str]:
+    lower = (text or "").lower()
+    aliases = sorted(DOMPET_ALIASES.items(), key=lambda x: -len(x[0]))
+    seen = set()
+    dompets: List[str] = []
+    for alias, dompet in aliases:
+        if alias and alias in lower:
+            if dompet not in seen:
+                seen.add(dompet)
+                dompets.append(dompet)
+    return dompets
+
+
+def _pick_dompet_by_prep(text: str, preps: List[str]) -> Optional[str]:
+    lower = (text or "").lower()
+    aliases = sorted(DOMPET_ALIASES.items(), key=lambda x: -len(x[0]))
+    for prep in preps:
+        for alias, dompet in aliases:
+            pattern = rf"\\b{re.escape(prep)}\\b[^a-z0-9]{{0,10}}(?:dompet|rekening|rek|wallet)?\\s*{re.escape(alias)}\\b"
+            if re.search(pattern, lower):
+                return dompet
+    return None
+
+
+def _handle_auto_hutang_payment(text: str) -> Optional[str]:
+    """
+    Auto mark hutang as PAID based on natural language.
+    Returns response text if handled, otherwise None.
+    """
+    if not _is_debt_payment_text(text):
+        return None
+
+    lower = (text or "").lower()
+    if re.search(r"\b(projek|project|proyek|prj)\b", lower):
+        return None
+    # Allow direct "no 3" or "nomor 3"
+    m_no = re.search(r"\\b(?:no|nomor)\\.?\\s*(\\d+)\\b", lower)
+    if m_no:
+        info = update_hutang_status_by_no(int(m_no.group(1)), "PAID")
+        if not info:
+            return "❌ No hutang tidak ditemukan."
+        invalidate_dashboard_cache()
+        return (
+            f"✅ Hutang #{info['no']} ditandai PAID.\n"
+            f"{info.get('keterangan', '-')}\n"
+            f"{info.get('yang_hutang', '-')} → {info.get('yang_dihutangi', '-')}\n"
+            f"Rp {info.get('amount', 0):,}"
+        ).replace(',', '.')
+
+    amount = parse_revision_amount(text) or 0
+    lender = _pick_dompet_by_prep(text, ["ke", "kepada", "kpd", "untuk"])
+    borrower = _pick_dompet_by_prep(text, ["dari", "dr"])
+
+    if not lender and not borrower:
+        return (
+            "🤔 Ini pelunasan hutang dompet atau transaksi project?\n"
+            "Jika hutang dompet, tulis: bayar hutang ke TX SBY 2jt / bayar hutang no 3.\n"
+            "Jika transaksi project, tulis kata 'projek'."
+        )
+
+    # Try strict match first (by pair + amount)
+    candidates = []
+    if amount > 0:
+        candidates = find_open_hutang(
+            yang_hutang=borrower,
+            yang_dihutangi=lender,
+            amount=amount
+        )
+        if not candidates:
+            candidates = find_open_hutang(
+                yang_hutang=borrower or None,
+                yang_dihutangi=lender or None,
+                amount=amount
+            )
+
+    # Fallback: match by pair only
+    if not candidates:
+        candidates = find_open_hutang(
+            yang_hutang=borrower or None,
+            yang_dihutangi=lender or None,
+            amount=None
+        )
+
+    if not candidates and amount > 0:
+        candidates = find_open_hutang(amount=amount)
+
+    if not candidates:
+        return "❌ Tidak ada hutang OPEN yang cocok. Tulis contoh: bayar hutang ke TX SBY 2jt."
+
+    if len(candidates) > 1:
+        lines = ["🤔 Ada beberapa hutang OPEN. Balas dengan format: `bayar hutang no 3`."]
+        for item in candidates[:5]:
+            lines.append(
+                f"#{item['no']} {item.get('yang_hutang','-')} → {item.get('yang_dihutangi','-')} "
+                f"Rp {item.get('amount',0):,} ({item.get('keterangan','-')})"
+            )
+        return "\n".join(lines).replace(',', '.')
+
+    chosen = candidates[0]
+    info = update_hutang_status_by_no(int(chosen.get('no', 0)), "PAID")
+    if not info:
+        return "❌ Gagal menandai hutang PAID."
+    invalidate_dashboard_cache()
+    return (
+        f"✅ Hutang #{info['no']} ditandai PAID.\n"
+        f"{info.get('keterangan', '-')}\n"
+        f"{info.get('yang_hutang', '-')} → {info.get('yang_dihutangi', '-')}\n"
+        f"Rp {info.get('amount', 0):,}"
+    ).replace(',', '.')
 
 
 
@@ -811,6 +945,10 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 lower = text.lower()
                 if not re.search(r"\b(utang|hutang|minjem|minjam|pinjam)\b", lower):
                     return None
+                # If this looks like paying a debt, do not treat as new borrowing
+                if _is_debt_payment_text(lower):
+                    if not _pick_dompet_by_prep(lower, ["dari", "dr"]):
+                        return None
                 from config.wallets import resolve_dompet_from_text
                 return resolve_dompet_from_text(lower)
 
@@ -920,7 +1058,7 @@ Balas 1 atau 2"""
 
                     total_amount = sum(int(t.get('jumlah', 0) or 0) for t in txs)
                     response = (
-                        "✅ Tersimpan: Operasional — Rp {total_amount:,} — {source_wallet}\n"
+                        f"✅ Tersimpan: Operasional — Rp {total_amount:,} — {source_wallet}\n"
                         "Ketik /undo jika salah."
                     ).replace(',', '.')
                     _send_and_track(response, event_id)
@@ -1195,6 +1333,14 @@ Balas 1 atau 2"""
                                 dompet_sheet=debt_source,
                                 project_name="Saldo Umum"
                             )
+                            # Log hutang entry (borrower = dompet, lender = debt_source)
+                            append_hutang_entry(
+                                amount=total_amount,
+                                keterangan=txs[0].get('keterangan', '') if txs else '',
+                                yang_hutang=dompet,
+                                yang_dihutangi=debt_source,
+                                message_id=f"{event_id}|HUTANG"
+                            )
 
                     if pending.get('is_new_project'):
                         raw_proj = txs[0].get('nama_projek') if txs else ''
@@ -1416,7 +1562,32 @@ Balas 1 atau 2"""
                 except Exception as e:
                     send_reply(f"❌ Error: {str(e)}")
                     return jsonify({'status': 'error'}), 200
-    
+
+            if is_prefix_match(text, Commands.LUNAS_PREFIXES, is_group):
+                try:
+                    match = re.search(r"\b(\d+)\b", text)
+                    if not match:
+                        send_reply("Format: /lunas NO_HUTANG (contoh: /lunas 3)")
+                        return jsonify({'status': 'command_lunas_invalid'}), 200
+                    no = int(match.group(1))
+                    info = update_hutang_status_by_no(no, "PAID")
+                    if not info:
+                        send_reply("No hutang tidak ditemukan.")
+                        return jsonify({'status': 'command_lunas_not_found'}), 200
+                    invalidate_dashboard_cache()
+                    msg = (
+                        f"Hutang #{info['no']} ditandai PAID.\n"
+                        f"{info.get('keterangan', '-')}\n"
+                        f"{info.get('yang_hutang', '-')} -> {info.get('yang_dihutangi', '-')}\n"
+                        f"Rp {info.get('amount', 0):,}"
+                    )
+                    send_reply(msg.replace(',', '.'))
+                    return jsonify({'status': 'command_lunas'}), 200
+                except Exception as e:
+                    send_reply(f"Error: {str(e)}")
+                    return jsonify({'status': 'error'}), 200
+
+
             if is_command_match(text, Commands.STATUS, is_group):
                 try:
                     dashboard = get_dashboard_summary()
@@ -1539,10 +1710,10 @@ Balas 1 atau 2"""
                             re.search(r'\b' + re.escape(kw) + r'\b', text_lower)
                             for kw in OPERATIONAL_KEYWORDS
                         )
-                        if has_kantor_word or has_operational_kw:
-                            smart_scope = "OPERATIONAL"
-                        elif has_project_word:
+                        if has_project_word:
                             smart_scope = "PROJECT"
+                        elif has_kantor_word or has_operational_kw:
+                            smart_scope = "OPERATIONAL"
                         else:
                             smart_scope = "UNKNOWN"
 
@@ -1578,6 +1749,10 @@ Balas 1 atau 2"""
                     return jsonify({'status': 'replied'}), 200
                 if action == "PROCESS":
                     if intent == "RECORD_TRANSACTION":
+                        auto_hutang = _handle_auto_hutang_payment(text)
+                        if auto_hutang:
+                            send_reply(auto_hutang)
+                            return jsonify({'status': 'auto_hutang_paid'}), 200
                         # Send quick ack only when explicitly addressed or private chat
                         if (force_record or (not is_group) or is_explicit_bot_call(text)) and not processing_ack_sent:
                             send_reply("⏳ Memproses...")
@@ -1961,7 +2136,10 @@ Balas 1 atau 2"""
                 if text.lower().strip() in ['1', 'ya', 'yes', 'hapus']:
                     from handlers.revision_handler import process_undo_deletion
                     
-                    result = process_undo_deletion(pending.get('transactions', []))
+                    result = process_undo_deletion(
+                        pending.get('transactions', []),
+                        pending.get('original_message_id')
+                    )
                     
                     _pending_transactions.pop(pending_pkey, None)
                     send_reply(result.get('response'))
@@ -1996,6 +2174,31 @@ Balas 1 atau 2"""
                 send_reply(f"❌ Error: {str(e)}")
                 return jsonify({'status': 'error'}), 200
         
+        if is_prefix_match(text, Commands.LUNAS_PREFIXES, is_group):
+            try:
+                match = re.search(r"\b(\d+)\b", text)
+                if not match:
+                    send_reply("Format: /lunas NO_HUTANG (contoh: /lunas 3)")
+                    return jsonify({'status': 'command_lunas_invalid'}), 200
+                no = int(match.group(1))
+                info = update_hutang_status_by_no(no, "PAID")
+                if not info:
+                    send_reply("No hutang tidak ditemukan.")
+                    return jsonify({'status': 'command_lunas_not_found'}), 200
+                invalidate_dashboard_cache()
+                msg = (
+                    f"Hutang #{info['no']} ditandai PAID.\n"
+                    f"{info.get('keterangan', '-')}\n"
+                    f"{info.get('yang_hutang', '-')} -> {info.get('yang_dihutangi', '-')}\n"
+                    f"Rp {info.get('amount', 0):,}"
+                )
+                send_reply(msg.replace(',', '.'))
+                return jsonify({'status': 'command_lunas'}), 200
+            except Exception as e:
+                send_reply(f"Error: {str(e)}")
+                return jsonify({'status': 'error'}), 200
+
+
         if is_command_match(text, Commands.STATUS, is_group):
             try:
                 dashboard = get_dashboard_summary()

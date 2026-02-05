@@ -36,6 +36,14 @@ Transfer 5jt dari CV HB ke TX SBY
 Update saldo: isi dompet TX BALI 2jt dari CV HB
 ```
 
+Bayar hutang (tanpa perintah):
+
+```
+Bayar hutang ke TX SBY 2jt
+Pelunasan hutang ke CV HB 5jt
+Bayar hutang nomor 3
+```
+
 ## 3) Dompet dan Company
 
 Dompet yang tersedia:
@@ -103,6 +111,7 @@ Umum:
 /list
 /laporan
 /laporan30
+/lunas 3
 /link
 ```
 

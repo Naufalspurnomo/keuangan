@@ -1056,13 +1056,16 @@ USE_EASYOCR = os.getenv('USE_EASYOCR', 'false').lower() == 'true'
 import base64
 
 # List of potential Groq Vision models to try (fallback mechanism)
-# Prioritize Llama 4 Scout (Original Working Model)
+# Can be overridden via env: GROQ_VISION_MODELS="modelA,modelB"
 VALID_VISION_MODELS = [
-    "meta-llama/llama-4-scout-17b-16e-instruct", # ORIGINAL WORKING MODEL
+    "meta-llama/llama-4-scout-17b-16e-instruct",
     "llama-3.2-90b-vision-preview",
     "llama-3.2-11b-vision-preview",
     "llama-3.2-11b-vision-instruct"
 ]
+_env_models = os.getenv("GROQ_VISION_MODELS", "").strip()
+if _env_models:
+    VALID_VISION_MODELS = [m.strip() for m in _env_models.split(",") if m.strip()]
 
 def validate_financial_ocr(ocr_text: str) -> dict:
     """
@@ -1250,13 +1253,13 @@ Status: Transfer Successful"""
                 last_error = e
                 continue
                     
-        # If all failed
+        # If all failed, return empty OCR text and let caller handle fallback
         secure_log("ERROR", "All Vision Models failed.")
-        raise last_error
+        return ""
 
     except Exception as e:
         secure_log("ERROR", f"Groq Vision OCR failed: {type(e).__name__}: {str(e)}")
-        raise
+        return ""
 
 
 # ===================== PROMPT & PATTERNS =====================
@@ -1643,12 +1646,13 @@ def extract_from_image(image_paths: Union[str, List[str]], sender_name: str, cap
     """
     try:
         ocr_text = normalize_ocr_text(ocr_image(image_paths))
-        
-        if not ocr_text.strip():
-            raise ValueError("Tidak ada teks ditemukan di gambar")
-        
         clean_caption = sanitize_input(caption) if caption else ""
         caption_is_generic = is_generic_caption(clean_caption)
+        
+        if not ocr_text.strip():
+            if clean_caption and not caption_is_generic:
+                return extract_from_text(clean_caption, sender_name)
+            raise ValueError("Tidak ada teks ditemukan di gambar")
 
         if not looks_like_receipt_text(ocr_text) and not (clean_caption and not caption_is_generic):
             raise ValueError("Gambar tidak terdeteksi sebagai struk")

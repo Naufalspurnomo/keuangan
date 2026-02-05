@@ -20,6 +20,7 @@ from services.state_manager import set_project_lock
 from sheets_helper import (
     append_operational_transaction,
     append_project_transaction,
+    append_hutang_entry,
     invalidate_dashboard_cache,
     delete_transaction_row
 )
@@ -211,6 +212,13 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
                 dompet_sheet=debt_source,
                 project_name="Saldo Umum"
             )
+            append_hutang_entry(
+                amount=total_amount,
+                keterangan=transactions[0].get('keterangan', '') if transactions else '',
+                yang_hutang=dompet_sheet,
+                yang_dihutangi=debt_source,
+                message_id=f"{event_id}|HUTANG"
+            )
 
     # If this is a revision move, delete old rows after re-save
     if pending_data.get('revision_delete'):
@@ -296,7 +304,10 @@ def handle_pending_response(user_id: str, chat_id: str, text: str,
         if clean in confirm_words or clean.startswith('ya ') or clean.startswith('iya ') or 'hapus' in clean:
             from handlers.revision_handler import process_undo_deletion
 
-            result = process_undo_deletion(pending_data.get('transactions', []))
+            result = process_undo_deletion(
+                pending_data.get('transactions', []),
+                pending_data.get('original_message_id')
+            )
             clear_pending_confirmation(user_id, chat_id)
             return {
                 'response': result.get('response', 'Transaksi dihapus.'),

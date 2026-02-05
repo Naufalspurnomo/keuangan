@@ -196,6 +196,11 @@ from config.constants import (
     OPERASIONAL_DATA_START,
     OPERASIONAL_HEADER_ROW,
     OPERASIONAL_HEADERS,
+    HUTANG_SHEET_NAME,
+    HUTANG_COLS,
+    HUTANG_DATA_START,
+    HUTANG_HEADER_ROW,
+    HUTANG_HEADERS,
     DEFAULT_BUDGET,
     BUDGET_WARNING_PERCENT,
     SPLIT_LAYOUT_DATA_START,
@@ -372,6 +377,185 @@ def get_or_create_operational_sheet():
         
         secure_log("INFO", f"Created operational sheet: {OPERASIONAL_SHEET_NAME}")
         return sheet
+
+
+def get_or_create_hutang_sheet():
+    """Get Hutang sheet, auto-create with headers if missing."""
+    spreadsheet = get_spreadsheet()
+    try:
+        sheet = spreadsheet.worksheet(HUTANG_SHEET_NAME)
+        secure_log("INFO", f"Using hutang sheet: {HUTANG_SHEET_NAME}")
+        return sheet
+    except gspread.WorksheetNotFound:
+        secure_log("INFO", f"Creating new hutang sheet: {HUTANG_SHEET_NAME}")
+        sheet = spreadsheet.add_worksheet(title=HUTANG_SHEET_NAME, rows=200, cols=12)
+        for i, header in enumerate(HUTANG_HEADERS):
+            sheet.update_cell(HUTANG_HEADER_ROW, i + 1, header)
+        secure_log("INFO", f"Created hutang sheet: {HUTANG_SHEET_NAME}")
+        return sheet
+
+
+def _normalize_dompet_name(value: str) -> str:
+    """Normalize dompet name to canonical sheet name if possible."""
+    if not value:
+        return ""
+    key = value.strip().lower()
+    if key in DOMPET_ALIASES:
+        return DOMPET_ALIASES[key]
+    for full, short in DOMPET_SHORT_NAMES.items():
+        if key == short.lower():
+            return full
+    return value.strip()
+
+
+def append_hutang_entry(
+    amount: int,
+    keterangan: str,
+    yang_hutang: str,
+    yang_dihutangi: str,
+    message_id: str = "",
+    status: str = "OPEN"
+) -> Dict:
+    """Append a hutang entry into Hutang sheet."""
+    try:
+        sheet = get_or_create_hutang_sheet()
+        col_values = sheet.col_values(HUTANG_COLS['NO'])
+        entry_count = len([v for v in col_values[HUTANG_DATA_START - 1:] if v.strip()])
+
+        jumlah = abs(int(amount or 0))
+        safe_ket = sanitize_input(str(keterangan or ""))[:150]
+        hutang_dompet = _normalize_dompet_name(yang_hutang)
+        dihutangi_dompet = _normalize_dompet_name(yang_dihutangi)
+        status_norm = (status or "OPEN").upper()
+
+        row_data = [
+            entry_count + 1,                # No
+            now_wib().strftime('%Y-%m-%d'), # Tanggal
+            jumlah,                         # Nominal
+            safe_ket,                       # Keterangan
+            hutang_dompet,                  # Yang Hutang (borrower)
+            dihutangi_dompet,               # Yang Dihutangi (lender)
+            status_norm,                    # Status
+            "",                             # Tgl Lunas
+            message_id                      # MessageID
+        ]
+
+        sheet.append_row(row_data, value_input_option='USER_ENTERED')
+
+        secure_log("INFO", f"Hutang entry: Rp{jumlah:,} {hutang_dompet} -> {dihutangi_dompet}")
+        return {
+            'success': True,
+            'amount': jumlah,
+            'yang_hutang': hutang_dompet,
+            'yang_dihutangi': dihutangi_dompet,
+            'status': status_norm
+        }
+    except Exception as e:
+        secure_log("ERROR", f"append_hutang_entry failed: {type(e).__name__}: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+def update_hutang_status_by_no(no: int, status: str = "PAID") -> Optional[Dict]:
+    """Update hutang status by No. Returns row info if found."""
+    try:
+        sheet = get_or_create_hutang_sheet()
+        target = str(no).strip()
+        if not target:
+            return None
+
+        col_values = sheet.col_values(HUTANG_COLS['NO'])
+        for idx in range(HUTANG_DATA_START - 1, len(col_values)):
+            if col_values[idx].strip() == target:
+                row = idx + 1
+                row_vals = sheet.row_values(row)
+                status_norm = (status or "PAID").upper()
+
+                sheet.update_cell(row, HUTANG_COLS['STATUS'], status_norm)
+                if status_norm == "PAID":
+                    sheet.update_cell(row, HUTANG_COLS['TGL_LUNAS'], now_wib().strftime('%Y-%m-%d'))
+
+                return {
+                    'row': row,
+                    'no': target,
+                    'keterangan': row_vals[HUTANG_COLS['KETERANGAN'] - 1] if len(row_vals) >= HUTANG_COLS['KETERANGAN'] else '',
+                    'amount': _parse_amount(row_vals[HUTANG_COLS['NOMINAL'] - 1]) if len(row_vals) >= HUTANG_COLS['NOMINAL'] else 0,
+                    'yang_hutang': row_vals[HUTANG_COLS['YANG_HUTANG'] - 1] if len(row_vals) >= HUTANG_COLS['YANG_HUTANG'] else '',
+                    'yang_dihutangi': row_vals[HUTANG_COLS['YANG_DIHUTANGI'] - 1] if len(row_vals) >= HUTANG_COLS['YANG_DIHUTANGI'] else '',
+                    'status': status_norm
+                }
+        return None
+    except Exception as e:
+        secure_log("ERROR", f"update_hutang_status_by_no failed: {type(e).__name__}: {str(e)}")
+        return None
+
+
+def find_open_hutang(
+    yang_hutang: Optional[str] = None,
+    yang_dihutangi: Optional[str] = None,
+    amount: Optional[int] = None,
+    limit: int = 20
+) -> List[Dict]:
+    """Find OPEN hutang entries with optional filters."""
+    results: List[Dict] = []
+    try:
+        sheet = get_or_create_hutang_sheet()
+        rows = sheet.get_all_values()[HUTANG_DATA_START - 1:]  # Skip header
+        for idx, row in enumerate(rows, start=HUTANG_DATA_START):
+            if len(row) < HUTANG_COLS['STATUS']:
+                continue
+            status = (row[HUTANG_COLS['STATUS'] - 1] or "").strip().upper()
+            if status != "OPEN":
+                continue
+            amt = _parse_amount(row[HUTANG_COLS['NOMINAL'] - 1] if len(row) >= HUTANG_COLS['NOMINAL'] else 0)
+            borrower = _normalize_dompet_name(row[HUTANG_COLS['YANG_HUTANG'] - 1] if len(row) >= HUTANG_COLS['YANG_HUTANG'] else "")
+            lender = _normalize_dompet_name(row[HUTANG_COLS['YANG_DIHUTANGI'] - 1] if len(row) >= HUTANG_COLS['YANG_DIHUTANGI'] else "")
+
+            if yang_hutang and borrower != _normalize_dompet_name(yang_hutang):
+                continue
+            if yang_dihutangi and lender != _normalize_dompet_name(yang_dihutangi):
+                continue
+            if amount and amt != int(amount):
+                continue
+
+            results.append({
+                'row': idx,
+                'no': row[HUTANG_COLS['NO'] - 1] if len(row) >= HUTANG_COLS['NO'] else '',
+                'tanggal': row[HUTANG_COLS['TANGGAL'] - 1] if len(row) >= HUTANG_COLS['TANGGAL'] else '',
+                'amount': amt,
+                'keterangan': row[HUTANG_COLS['KETERANGAN'] - 1] if len(row) >= HUTANG_COLS['KETERANGAN'] else '',
+                'yang_hutang': borrower,
+                'yang_dihutangi': lender,
+                'status': status
+            })
+            if len(results) >= limit:
+                break
+        return results
+    except Exception as e:
+        secure_log("ERROR", f"find_open_hutang failed: {type(e).__name__}: {str(e)}")
+        return []
+
+
+def cancel_hutang_by_event_id(event_id: str) -> int:
+    """Mark hutang entries as CANCELLED by matching MessageID prefix."""
+    if not event_id:
+        return 0
+    try:
+        sheet = get_or_create_hutang_sheet()
+        ids = sheet.col_values(HUTANG_COLS['MESSAGE_ID'])
+        updated = 0
+        for idx in range(HUTANG_DATA_START - 1, len(ids)):
+            mid = (ids[idx] or "").strip()
+            if not mid:
+                continue
+            if mid == event_id or mid.startswith(f"{event_id}|"):
+                row = idx + 1
+                sheet.update_cell(row, HUTANG_COLS['STATUS'], "CANCELLED")
+                sheet.update_cell(row, HUTANG_COLS['TGL_LUNAS'], "")
+                updated += 1
+        return updated
+    except Exception as e:
+        secure_log("ERROR", f"cancel_hutang_by_event_id failed: {type(e).__name__}: {str(e)}")
+        return 0
 
 
 def _find_next_empty_row(sheet, check_column: int, start_row: int = 9) -> int:
@@ -1498,6 +1682,8 @@ def get_wallet_balances() -> Dict:
     
     Real Balance = (Pemasukan in Dompet Sheet - Pengeluaran in Dompet Sheet)
                    - (Operational expenses where Sumber = this Dompet)
+                   + (Hutang OPEN where this dompet is borrower)
+                   + (Hutang PAID where this dompet is lender)
     
     This reads directly from Split Layout sheets (CV HB, TX SBY, TX BALI)
     and the Operasional Ktr sheet for operational debits.
@@ -1525,7 +1711,9 @@ def get_wallet_balances() -> Dict:
                 'pemasukan': total_masuk,
                 'pengeluaran': total_keluar,
                 'internal_balance': total_masuk - total_keluar,
-                'operational_debit': 0  # Will be calculated next
+                'operational_debit': 0,  # Will be calculated next
+                'utang_open_in': 0,
+                'utang_paid_in': 0
             }
             
         except Exception as e:
@@ -1534,7 +1722,9 @@ def get_wallet_balances() -> Dict:
                 'pemasukan': 0,
                 'pengeluaran': 0,
                 'internal_balance': 0,
-                'operational_debit': 0
+                'operational_debit': 0,
+                'utang_open_in': 0,
+                'utang_paid_in': 0
             }
     
     # 2. Parse Operasional Ktr sheet and debit from source wallets
@@ -1560,10 +1750,36 @@ def get_wallet_balances() -> Dict:
                             break
     except Exception as e:
         secure_log("ERROR", f"Error parsing operational sheet: {e}")
+
+    # 3. Parse Hutang sheet and adjust balances
+    try:
+        h_sheet = get_or_create_hutang_sheet()
+        h_rows = h_sheet.get_all_values()[HUTANG_DATA_START - 1:]  # Skip header
+        for row in h_rows:
+            if len(row) < HUTANG_COLS['STATUS']:
+                continue
+            status = (row[HUTANG_COLS['STATUS'] - 1] or "").strip().upper()
+            if status not in ['OPEN', 'PAID']:
+                continue
+            amount = _parse_amount(row[HUTANG_COLS['NOMINAL'] - 1] if len(row) >= HUTANG_COLS['NOMINAL'] else 0)
+            yang_hutang = _normalize_dompet_name(row[HUTANG_COLS['YANG_HUTANG'] - 1] if len(row) >= HUTANG_COLS['YANG_HUTANG'] else "")
+            yang_dihutangi = _normalize_dompet_name(row[HUTANG_COLS['YANG_DIHUTANGI'] - 1] if len(row) >= HUTANG_COLS['YANG_DIHUTANGI'] else "")
+
+            if status == 'OPEN' and yang_hutang in balances:
+                balances[yang_hutang]['utang_open_in'] += amount
+            if status == 'PAID' and yang_dihutangi in balances:
+                balances[yang_dihutangi]['utang_paid_in'] += amount
+    except Exception as e:
+        secure_log("ERROR", f"Error parsing hutang sheet: {e}")
     
     # 3. Calculate Final REAL Balance
     for dompet in balances:
-        balances[dompet]['saldo'] = balances[dompet]['internal_balance'] - balances[dompet]['operational_debit']
+        balances[dompet]['saldo'] = (
+            balances[dompet]['internal_balance']
+            - balances[dompet]['operational_debit']
+            + balances[dompet]['utang_open_in']
+            + balances[dompet]['utang_paid_in']
+        )
         
     return balances
 

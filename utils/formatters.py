@@ -49,6 +49,7 @@ Contoh: `Bayar listrik 500rb` (Bot langsung respon)
 *━━ Menu ━━*
 `/status` Dashboard  •  `/saldo` Cek saldo
 `/list` Riwayat  •  `/laporan` Report 7 hari
+`/lunas <no>` Tandai hutang lunas
 `/tanya ...` Tanya AI  •  `/link` Buka Sheets
 
 *━━ Tips Akurasi ━━*
@@ -96,6 +97,7 @@ Bot otomatis baca pesan yang ada *angka* & *kata kerja*.
 📋 `/list` - Riwayat transaksi
 📈 `/laporan` - Report mingguan
 📈 `/laporan30` - Report bulanan
+- `/lunas <no>` - Tandai hutang lunas
 🤖 `/tanya [pertanyaan]` - Analisa AI
 🔗 `/link` - Link Spreadsheet
 📄 `/exportpdf` - Download PDF
