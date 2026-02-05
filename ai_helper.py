@@ -48,6 +48,8 @@ OCR_MAX_AMOUNT = int(os.getenv('OCR_MAX_AMOUNT', '10000000000'))
 # OCR debug logging (set OCR_DEBUG=1)
 OCR_DEBUG = os.getenv('OCR_DEBUG', '0').lower() in ('1', 'true', 'yes')
 OCR_DEBUG_MAX = int(os.getenv('OCR_DEBUG_MAX', '3'))
+# OCR small amount threshold (default 5k IDR)
+OCR_SMALL_AMOUNT = int(os.getenv('OCR_SMALL_AMOUNT', '5000'))
 
 def extract_project_from_description(description: str) -> str:
     """
@@ -134,28 +136,461 @@ def _parse_money_token(token: str) -> int:
     if not token:
         return 0
     t = token.strip()
-    t = re.sub(r"[^\d.,]", "", t)
+    t = re.sub(r"[^\d.,\s]", "", t)
     if not t:
         return 0
-    # Identify last separator as decimal if 1-2 digits after it
-    last_sep = re.search(r"[.,](\d+)$", t)
-    if last_sep:
-        digits_after = len(last_sep.group(1))
-        if digits_after <= 2:
-            # Treat last separator as decimal; remove other separators
-            t = re.sub(r"[.,](?=\d{3}(\D|$))", "", t)
-            t = re.sub(r"[.,]\d{1,2}$", "", t)
-            t = t.replace(",", "").replace(".", "")
+    t = re.sub(r"\s+", ".", t)
+    if not re.search(r"\d", t):
+        return 0
+
+    has_dot = "." in t
+    has_comma = "," in t
+
+    def _strip_seps(val: str) -> str:
+        return val.replace(".", "").replace(",", "")
+
+    if has_dot and has_comma:
+        last_sep = re.search(r"([.,])(\d+)$", t)
+        if last_sep:
+            digits_after = len(last_sep.group(2))
+            head = t[:last_sep.start(1)]
+            if digits_after <= 2 and re.match(r"^\d{1,3}([.,]\d{3})+$", head):
+                t = _strip_seps(head)
+                try:
+                    return int(t)
+                except ValueError:
+                    return 0
+        t = _strip_seps(t)
+        try:
+            return int(t)
+        except ValueError:
+            return 0
+
+    if has_dot or has_comma:
+        sep = "." if has_dot else ","
+        sep_re = re.escape(sep)
+        if re.match(rf"^\d{{1,3}}(?:{sep_re}\d{{3}})+$", t):
+            t = t.replace(sep, "")
             try:
                 return int(t)
             except ValueError:
                 return 0
-    # Default: treat all separators as thousands
-    t = t.replace(",", "").replace(".", "")
+        m = re.match(rf"^(\d+){sep_re}(\d{{2}})$", t)
+        if m:
+            try:
+                return int(m.group(1))
+            except ValueError:
+                return 0
+        t = t.replace(sep, "")
+        try:
+            return int(t)
+        except ValueError:
+            return 0
+
     try:
         return int(t)
     except ValueError:
         return 0
+
+
+_MONEY_TOKEN_RE = re.compile(
+    r"\b\d{1,3}(?:[.,\s]\d{3})+(?:[.,]\d{2})?\b|\b\d+[.,]\d{2}\b|\b\d{4,}\b"
+)
+_CURRENCY_RE = re.compile(r"\b(?:rp|idr)\b", re.IGNORECASE)
+_RP_IN_PARENS_RE = re.compile(r"\([^)]*rp[^)]*\)", re.IGNORECASE)
+_DATE_PATTERN = re.compile(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b")
+_DATE_WITH_MONTH_PATTERN = re.compile(
+    r"\b\d{1,2}\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}\b",
+    re.IGNORECASE
+)
+_TIME_PATTERN = re.compile(r"\b\d{1,2}:\d{2}(?::\d{2})?\b")
+_YEAR_PATTERN = re.compile(r"\b(20[0-3]\d)\b")
+_ACCOUNT_HINT_RE = re.compile(
+    r"\b(rekening|account|virtual\s*account|va|ref(?:erensi)?|rrn|stan|auth|approval|"
+    r"kode|id\s*transaksi|no\.?\s*(?:rek|rekening|ref|transaksi))\b",
+    re.IGNORECASE
+)
+
+_FEE_KEYWORDS = ["fee", "biaya", "admin", "charge"]
+_TOTAL_PHRASES = [
+    "grand total",
+    "total bayar",
+    "total transfer",
+    "total pembayaran",
+    "jumlah pembayaran",
+    "jumlah tagihan",
+    "total tagihan",
+]
+_BASE_KEYWORDS = [
+    "amount",
+    "nominal",
+    "transfer",
+    "pembayaran",
+    "debit",
+    "subtotal",
+    "pokok",
+    "setoran",
+]
+
+_LABEL_AMOUNT_RE = re.compile(
+    r"(?P<label>"
+    r"grand total|total pembayaran|total bayar|total transfer|jumlah pembayaran|jumlah tagihan|total tagihan|"
+    r"fee transfer|biaya transfer|biaya admin|fee|biaya|admin|charge|"
+    r"amount|nominal|jumlah|transfer|pembayaran|debit|subtotal|pokok|setoran|total"
+    r")\s*[:\-]?\s*(?:rp|idr)?\s*(?P<amount>\d[\d\.,\s]+)",
+    re.IGNORECASE
+)
+
+
+def preprocess_ocr(text: str) -> str:
+    """
+    Normalize OCR text and merge label-only lines with amount-only lines.
+    """
+    if not text:
+        return ""
+    raw_lines = []
+    for raw in text.splitlines():
+        line = re.sub(r"\s+", " ", raw).strip()
+        if not line:
+            continue
+        raw_lines.append(line)
+
+    def _line_has_amount_token(line: str) -> bool:
+        return bool(_MONEY_TOKEN_RE.search(line))
+
+    def _line_is_currency_only(line: str) -> bool:
+        cleaned = line.strip().lower().replace(".", "")
+        return cleaned in ("rp", "idr")
+
+    def _line_is_amount_only(line: str) -> bool:
+        if not _line_has_amount_token(line):
+            return False
+        stripped = re.sub(r"(rp|idr)", "", line, flags=re.IGNORECASE)
+        stripped = re.sub(r"[\d\.,\s]", "", stripped)
+        return stripped == ""
+
+    def _line_is_label_only(line: str) -> bool:
+        if re.search(r"\d", line):
+            return False
+        lower = line.lower().strip(" :")
+        if any(phrase in lower for phrase in _TOTAL_PHRASES):
+            return True
+        if any(k in lower for k in _FEE_KEYWORDS):
+            return True
+        if any(k in lower for k in _BASE_KEYWORDS):
+            return True
+        if "total" in lower or "jumlah" in lower:
+            return True
+        return False
+
+    merged = []
+    i = 0
+    while i < len(raw_lines):
+        line = raw_lines[i]
+        next_line = raw_lines[i + 1] if i + 1 < len(raw_lines) else ""
+        if next_line and _line_is_amount_only(next_line) and (
+            _line_is_label_only(line) or line.endswith(":") or _line_is_currency_only(line)
+        ):
+            merged.append(f"{line} {next_line}")
+            i += 2
+            continue
+        if next_line and _line_is_currency_only(line) and _line_has_amount_token(next_line):
+            merged.append(f"{line} {next_line}")
+            i += 2
+            continue
+        merged.append(line)
+        i += 1
+    return "\n".join(merged)
+
+
+def detect_bank_receipt(text: str) -> bool:
+    """
+    Detect if OCR text looks like a structured bank receipt.
+    """
+    if not text:
+        return False
+    lower = text.lower()
+    score = 0
+    if re.search(r"\b(transfer successful|transaksi berhasil|berhasil|status)\b", lower):
+        score += 1
+    if re.search(r"\b(beneficiary|penerima|to account|from account|rekening tujuan|rekening asal)\b", lower):
+        score += 1
+    if re.search(r"\b(rrn|stan|auth|approval|ref(?:erensi)?)\b", lower):
+        score += 1
+    if re.search(r"\b(bca|mandiri|bni|bri|bi-fast|livin|brimo|mybca|m-banking)\b", lower):
+        score += 1
+    if re.search(r"\b(amount|nominal|jumlah|total|fee|biaya)\s*[:\-]", lower):
+        score += 1
+    if _CURRENCY_RE.search(lower) and _MONEY_TOKEN_RE.search(lower):
+        score += 1
+    return score >= 2
+
+
+def _is_date_like_line(lower: str) -> bool:
+    if _DATE_PATTERN.search(lower):
+        return True
+    if _DATE_WITH_MONTH_PATTERN.search(lower):
+        return True
+    if _TIME_PATTERN.search(lower):
+        return True
+    if ("date" in lower or "tanggal" in lower) and _YEAR_PATTERN.search(lower):
+        return True
+    return False
+
+
+def _line_has_currency(line: str) -> bool:
+    if not line:
+        return False
+    line_no_parens = _RP_IN_PARENS_RE.sub("", line)
+    return bool(_CURRENCY_RE.search(line_no_parens))
+
+
+def _line_has_amount_token(line: str) -> bool:
+    return bool(_MONEY_TOKEN_RE.search(line))
+
+
+def _has_account_hints(lower: str) -> bool:
+    return bool(_ACCOUNT_HINT_RE.search(lower))
+
+
+def _classify_line(lower: str, has_amount: bool) -> Optional[str]:
+    if not has_amount:
+        return None
+    if any(k in lower for k in _FEE_KEYWORDS):
+        return "fee"
+    if any(p in lower for p in _TOTAL_PHRASES):
+        return "total"
+    if re.search(r"\btotal\b", lower):
+        return "total"
+    if "jumlah" in lower and ("bayar" in lower or "pembayaran" in lower or "tagihan" in lower):
+        return "total"
+    if any(k in lower for k in _BASE_KEYWORDS):
+        return "base"
+    if "jumlah" in lower:
+        return "base"
+    return None
+
+
+def _extract_amount_values(line: str, allow_bare: bool) -> List[int]:
+    if not line:
+        return []
+    values = []
+    for tok in _MONEY_TOKEN_RE.findall(line):
+        tok_norm = tok.strip()
+        if not allow_bare and not re.search(r"[.,\s]", tok_norm):
+            continue
+        val = _parse_money_token(tok_norm)
+        if val <= 0 or val > OCR_MAX_AMOUNT:
+            continue
+        values.append(val)
+    return values
+
+
+def _map_label(label_raw: str) -> str:
+    label = label_raw.lower()
+    if any(k in label for k in _FEE_KEYWORDS):
+        return "fee"
+    if any(p in label for p in _TOTAL_PHRASES) or label == "total" or label.startswith("total "):
+        return "total"
+    if label.startswith("jumlah") and ("pembayaran" in label or "tagihan" in label):
+        return "total"
+    return "base"
+
+
+def _extract_labeled_amounts(line: str) -> List[tuple]:
+    labeled = []
+    for m in _LABEL_AMOUNT_RE.finditer(line):
+        label_raw = m.group("label")
+        amount_tok = m.group("amount")
+        val = _parse_money_token(amount_tok)
+        if val <= 0 or val > OCR_MAX_AMOUNT:
+            continue
+        labeled.append((_map_label(label_raw), val))
+    return labeled
+
+
+def _pick_largest(cands: List[tuple], min_value: int = 0) -> tuple:
+    if not cands:
+        return 0, ""
+    filtered = [c for c in cands if c[0] >= min_value]
+    pick = max(filtered or cands, key=lambda x: x[0])
+    return pick[0], pick[1]
+
+
+def _pick_fee(cands: List[tuple]) -> tuple:
+    if not cands:
+        return 0, ""
+    fee_vals = [c for c in cands if c[0] <= 100000]
+    pick = min(fee_vals or cands, key=lambda x: x[0])
+    return pick[0], pick[1]
+
+
+def _pick_largest_value(values: List[int], min_value: int = 0) -> int:
+    if not values:
+        return 0
+    filtered = [v for v in values if v >= min_value]
+    return max(filtered or values)
+
+
+def _debug_candidates(label: str, cands: List[tuple]) -> None:
+    if not OCR_DEBUG or not cands:
+        return
+    top = sorted(cands, key=lambda x: x[0], reverse=True)[:OCR_DEBUG_MAX]
+    for val, line in top:
+        secure_log("INFO", f"OCR_DEBUG {label}: val={val} line='{line}'")
+
+
+def _extract_amounts_core(text: str, strict: bool) -> dict:
+    fee_candidates: List[tuple] = []
+    total_candidates: List[tuple] = []
+    base_candidates: List[tuple] = []
+    general_candidates: List[tuple] = []
+    currency_amounts: List[int] = []
+
+    fee_keyword_found = False
+    total_keyword_found = False
+    base_keyword_found = False
+
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        lower = line.lower()
+
+        if _is_date_like_line(lower):
+            continue
+
+        has_amount = _line_has_amount_token(line)
+        if not has_amount:
+            continue
+
+        has_currency = _line_has_currency(line)
+        labeled = _extract_labeled_amounts(line)
+        if labeled:
+            for label, val in labeled:
+                if label == "fee":
+                    fee_keyword_found = True
+                    fee_candidates.append((val, line))
+                elif label == "total":
+                    total_keyword_found = True
+                    total_candidates.append((val, line))
+                else:
+                    base_keyword_found = True
+                    base_candidates.append((val, line))
+            if has_currency:
+                currency_amounts.extend([val for _lbl, val in labeled])
+            continue
+
+        label = _classify_line(lower, has_amount)
+        if _has_account_hints(lower) and not has_currency and not label:
+            continue
+        if strict and not (has_currency or label):
+            continue
+
+        amounts = _extract_amount_values(line, allow_bare=bool(label) or has_currency)
+        if not amounts:
+            continue
+        if has_currency:
+            currency_amounts.extend(amounts)
+
+        if label == "fee":
+            fee_keyword_found = True
+            fee_candidates.extend((val, line) for val in amounts)
+        elif label == "total":
+            total_keyword_found = True
+            total_candidates.extend((val, line) for val in amounts)
+        elif label == "base":
+            base_keyword_found = True
+            base_candidates.extend((val, line) for val in amounts)
+        else:
+            general_candidates.extend((val, line) for val in amounts)
+
+    fee, fee_line = _pick_fee(fee_candidates)
+    total, total_line = _pick_largest(total_candidates, min_value=OCR_SMALL_AMOUNT)
+    base, base_line = _pick_largest(base_candidates, min_value=OCR_SMALL_AMOUNT)
+
+    if not total:
+        total = _pick_largest_value(currency_amounts, min_value=OCR_SMALL_AMOUNT)
+        if not total:
+            total, total_line = _pick_largest(general_candidates, min_value=OCR_SMALL_AMOUNT)
+
+    if not base:
+        if total:
+            smaller = [c for c in (base_candidates or general_candidates) if c[0] < total]
+            if smaller:
+                base, base_line = _pick_largest(smaller, min_value=OCR_SMALL_AMOUNT)
+        if not base:
+            base = _pick_largest_value(currency_amounts, min_value=OCR_SMALL_AMOUNT)
+        if not base and total:
+            base = total
+
+    if OCR_DEBUG:
+        _debug_candidates("TOTAL_CANDIDATE", total_candidates)
+        _debug_candidates("BASE_CANDIDATE", base_candidates)
+        _debug_candidates("FEE_CANDIDATE", fee_candidates)
+        _debug_candidates("GENERAL_CANDIDATE", general_candidates)
+        secure_log(
+            "INFO",
+            f"OCR_DEBUG PICKED total={total} base={base} fee={fee} "
+            f"total_line='{total_line[:120]}' base_line='{base_line[:120]}' fee_line='{fee_line[:120]}'"
+        )
+
+    return {
+        "base": base,
+        "fee": fee,
+        "total": total,
+        "fee_keyword_found": fee_keyword_found,
+        "total_keyword_found": total_keyword_found,
+        "base_keyword_found": base_keyword_found,
+    }
+
+
+def extract_bank_receipt(text: str) -> dict:
+    return _extract_amounts_core(text, strict=True)
+
+
+def extract_casual_text(text: str) -> dict:
+    return _extract_amounts_core(text, strict=False)
+
+
+def validate_amounts(result: dict) -> dict:
+    base = int(result.get("base", 0) or 0)
+    fee = int(result.get("fee", 0) or 0)
+    total = int(result.get("total", 0) or 0)
+    total_keyword_found = bool(result.get("total_keyword_found"))
+
+    fee_limit = 100000
+
+    if total and base:
+        computed_fee = total - base
+        if 0 < computed_fee <= fee_limit:
+            if fee == 0 or abs(fee - computed_fee) > max(500, int(0.2 * fee) if fee else 500):
+                fee = computed_fee
+        if not total_keyword_found and fee > 0 and total == base:
+            total = base + fee
+    elif total and fee:
+        computed_base = total - fee
+        if computed_base > 0:
+            base = computed_base
+    elif base and fee and not total:
+        total = base + fee
+    elif total and not base and not fee:
+        base = total
+    elif base and not total:
+        total = base + fee if fee > 0 else base
+
+    if fee > fee_limit:
+        fee = 0
+    if total > OCR_MAX_AMOUNT:
+        total = 0
+    if base > OCR_MAX_AMOUNT:
+        base = 0
+
+    result["base"] = base
+    result["fee"] = fee
+    result["total"] = total
+    return result
 
 
 def extract_receipt_amounts(ocr_text: str) -> dict:
@@ -165,244 +600,10 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
     """
     if not ocr_text:
         return {"base": 0, "fee": 0, "total": 0}
-
-    fee_keywords = ["fee", "biaya", "admin", "charge"]
-    total_keywords = [
-        "total", "jumlah", "grand total", "total bayar", "total transfer", "total pembayaran",
-        "tagihan", "angsuran", "cicilan", "bayar", "setoran", "pokok", "sisa"
-    ]
-    base_keywords = ["nominal", "amount", "transfer", "pembayaran", "debit", "subtotal"]
-    ignore_keywords = [
-        "no.", "no ", "nomor", "ref", "referensi", "kode", "id",
-        "rekening", "account", "virtual", "va", "bca", "bank",
-        "trx", "rrn", "stan", "auth", "approval"
-    ]
-    date_pattern = re.compile(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b")
-    # VA patterns: 216-0688044, 8801234567890, etc.
-    va_pattern = re.compile(r"\b\d{3}[-\s]?\d{6,8}\b")
-    # BCA VA specific pattern (3-digit prefix + 7-8 digits)
-    bca_va_pattern = re.compile(r"\b(\d{3})[-\s]?(\d{6,8})\b")
-    small_amount_threshold = int(os.getenv('OCR_SMALL_AMOUNT', '5000'))
-    
-    # Pattern to detect "(Rp)" in names (not currency prefix)
-    rp_in_parens_pattern = re.compile(r"\([^)]*rp[^)]*\)", re.IGNORECASE)
-
-    def _score_amount(val: int, tok: str, line: str, has_currency: bool,
-                      has_total: bool, has_base: bool, has_fee: bool,
-                      has_ignore: bool, currency_adjacent: bool) -> int:
-        score = 0
-        if currency_adjacent:
-            score += 6
-        elif has_currency:
-            score += 2
-        if has_total:
-            score += 4
-        if has_base:
-            score += 2
-        if has_fee:
-            score += 2
-        has_separators = any(sep in tok for sep in [".", ","])
-        if has_separators:
-            score += 2
-        # Penalize raw long digit tokens without separators (likely IDs)
-        digit_len = len(re.sub(r"\D", "", tok))
-        if not has_separators and digit_len >= 6:
-            score -= 2
-        # Penalize lines with slashes/hyphens (often account/ref)
-        if ("/" in line or "-" in line) and not (has_total or has_base or has_fee or currency_adjacent):
-            score -= 2
-        if val < small_amount_threshold:
-            score -= 2
-        if has_ignore:
-            score -= 3
-        if len(line) > 40:
-            score -= 1
-        return score
-
-    fee_candidates = []
-    total_candidates = []
-    base_candidates = []
-    general_candidates = []
-    all_amounts = []
-    currency_amounts = []
-    fee_keyword_found = False
-    total_keyword_found = False
-    base_keyword_found = False
-
-    for raw in ocr_text.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        lower = line.lower()
-        if date_pattern.search(lower):
-            continue
-
-        # Check for real currency prefix (not "(Rp)" in names)
-        line_no_parens = rp_in_parens_pattern.sub("", lower)  # Remove "(Rp)" etc
-        has_currency = ("rp" in line_no_parens) or ("idr" in line_no_parens)
-        has_ignore = any(k in lower for k in ignore_keywords)
-        has_total = any(k in lower for k in total_keywords)
-        has_base = any(k in lower for k in base_keywords)
-        has_fee = any(k in lower for k in fee_keywords)
-
-        tokens = re.findall(r"\b\d{1,3}(?:[.,\s]\d{3})+(?:[.,]\d{2})?\b|\b\d+[.,]\d{2}\b|\b\d{4,}\b", line)
-        if not tokens:
-            continue
-        
-        # Extract VA suffixes (handle leading zeros properly)
-        # e.g., 216-0688044 -> both "0688044" and "688044" should be skipped
-        va_suffixes = set()
-        for m in bca_va_pattern.finditer(lower):
-            suffix = m.group(2)  # The 6-8 digit part
-            va_suffixes.add(suffix)  # "0688044"
-            va_suffixes.add(suffix.lstrip('0'))  # "688044" (without leading zeros)
-            # Also add the full VA number
-            full_va = m.group(1) + m.group(2)  # "2160688044"
-            va_suffixes.add(full_va)
-
-        for tok in tokens:
-            tok_norm = re.sub(r"\s+", "", tok)
-            val = _parse_money_token(tok)
-            if val <= 0 or val > OCR_MAX_AMOUNT:
-                continue
-            digits_only = re.sub(r"\D", "", tok_norm)
-            digit_len = len(digits_only)
-            all_amounts.append(val)
-            if has_currency:
-                currency_amounts.append(val)
-
-            # Detect if currency is adjacent to this specific token
-            # Use line_no_parens to avoid "(Rp)" in names triggering false positives
-            currency_adjacent = False
-            for m in re.finditer(r"(?:rp|idr)\s*([0-9][0-9\.,\s]+)", line_no_parens):
-                if tok_norm == re.sub(r"\s+", "", m.group(1)):
-                    currency_adjacent = True
-                    break
-            if not currency_adjacent:
-                for m in re.finditer(r"([0-9][0-9\.,\s]+)\s*(?:rp|idr)", line_no_parens):
-                    if tok_norm == re.sub(r"\s+", "", m.group(1)):
-                        currency_adjacent = True
-                        break
-
-            # Skip likely VA/account suffix numbers (e.g., 216-0688044 -> 688044)
-            if va_suffixes and digits_only in va_suffixes:
-                continue
-            
-            # Also check with leading zeros stripped
-            if va_suffixes and digits_only.lstrip('0') in va_suffixes:
-                continue
-
-            # Skip numbers that look like VA parts (6-8 digits on lines with "/" or "-")
-            # but only if no proper currency prefix directly adjacent
-            is_on_va_line = bool(bca_va_pattern.search(lower))
-            if is_on_va_line and not currency_adjacent and digit_len >= 6 and digit_len <= 8:
-                continue
-
-            # Skip likely account/VA/reference numbers when no currency/keywords
-            if not currency_adjacent and not has_total and not has_base and not has_fee and not has_currency:
-                if digit_len >= 6 and ("/" in line or "-" in line):
-                    continue
-                if has_ignore:
-                    continue
-
-            # Skip long ref numbers when ignore keywords are present
-            if has_ignore and digit_len >= 9 and not currency_adjacent:
-                continue
-
-            score = _score_amount(
-                val, tok, line, has_currency, has_total, has_base,
-                has_fee, has_ignore, currency_adjacent
-            )
-            line_snip = line[:120]
-            if has_fee:
-                fee_keyword_found = True
-                fee_candidates.append((val, score, line_snip))
-            elif has_total:
-                total_keyword_found = True
-                total_candidates.append((val, score, line_snip))
-            elif has_base:
-                base_keyword_found = True
-                base_candidates.append((val, score, line_snip))
-            else:
-                general_candidates.append((val, score, line_snip))
-
-    def _pick_best(cands: list) -> tuple:
-        if not cands:
-            return 0, ""
-        cands_sorted = sorted(cands, key=lambda x: (x[1], x[0]), reverse=True)
-        best = cands_sorted[0]
-        return best[0], best[2]
-
-    def _debug_top(label: str, cands: list) -> None:
-        if not OCR_DEBUG:
-            return
-        if not cands:
-            return
-        top = sorted(cands, key=lambda x: (x[1], x[0]), reverse=True)[:OCR_DEBUG_MAX]
-        for val, score, line in top:
-            secure_log("INFO", f"OCR_DEBUG {label}: val={val} score={score} line='{line}'")
-
-    fee = 0
-    if fee_candidates:
-        fee_vals = [v for v, _s, _l in fee_candidates if v <= 100000]
-        fee = min(fee_vals) if fee_vals else min(v for v, _s, _l in fee_candidates)
-
-    total, total_line = _pick_best(total_candidates)
-    base, base_line = _pick_best(base_candidates)
-
-    if not total:
-        currency_large = [v for v in currency_amounts if v >= small_amount_threshold]
-        if currency_large:
-            total = max(currency_large)
-            total_line = ""
-        else:
-            total, total_line = _pick_best(general_candidates)
-            if not total:
-                total = max(currency_amounts) if currency_amounts else 0
-    if not base:
-        if total:
-            candidates = [v for v, _s, _l in general_candidates if v < total]
-            if candidates:
-                base = max(candidates)
-                base_line = next((l for v, _s, l in general_candidates if v == base), "")
-        if not base:
-            currency_large = [v for v in currency_amounts if v >= small_amount_threshold]
-            base = max(currency_large) if currency_large else (max(currency_amounts) if currency_amounts else 0)
-    if not base and all_amounts:
-        base = max(all_amounts)
-
-    # Reconcile fee using total-base when available
-    if total and base:
-        computed_fee = total - base
-        if 0 < computed_fee <= 100000:
-            if fee == 0 or abs(fee - computed_fee) > max(500, int(0.2 * fee) if fee else 500):
-                fee = computed_fee
-
-    # Sanity clamp
-    if total > OCR_MAX_AMOUNT:
-        total = 0
-    if base > OCR_MAX_AMOUNT:
-        base = 0
-
-    if OCR_DEBUG:
-        _debug_top("TOTAL_CANDIDATE", total_candidates)
-        _debug_top("BASE_CANDIDATE", base_candidates)
-        _debug_top("FEE_CANDIDATE", fee_candidates)
-        _debug_top("GENERAL_CANDIDATE", general_candidates)
-        secure_log(
-            "INFO",
-            f"OCR_DEBUG PICKED total={total} base={base} fee={fee} "
-            f"total_line='{total_line[:120]}' base_line='{base_line[:120]}'"
-        )
-
-    return {
-        "base": base,
-        "fee": fee,
-        "total": total,
-        "fee_keyword_found": fee_keyword_found,
-        "total_keyword_found": total_keyword_found,
-        "base_keyword_found": base_keyword_found
-    }
+    clean_text = preprocess_ocr(ocr_text)
+    is_bank = detect_bank_receipt(clean_text)
+    result = extract_bank_receipt(clean_text) if is_bank else extract_casual_text(clean_text)
+    return validate_amounts(result)
 
 
 
@@ -921,49 +1122,62 @@ def ocr_image(image_source: Union[str, List[str]]) -> str:
             return ""
 
         # ENHANCED OCR PROMPT - Optimized for Indonesian financial receipts
-        ocr_prompt = """You are a FINANCIAL OCR SPECIALIST. Extract ALL text with ABSOLUTE PRECISION.
+        ocr_prompt = """You are a FINANCIAL OCR SPECIALIST for Indonesian bank transfer receipts.
 
-CONTEXT: This is an Indonesian bank transfer receipt (BCA, Mandiri, BNI, BRI, CIMB, etc.)
+CONTEXT: This is a BCA/Mandiri/BNI/BRI mobile banking transfer screenshot.
 
-CRITICAL EXTRACTION RULES:
-1. NUMBERS ARE SACRED - Read EVERY digit exactly as shown
-   ❌ WRONG: Skipping digits, rounding, approximating
-   ✅ CORRECT: Character-by-character transcription
+CRITICAL RULES FOR AMOUNT EXTRACTION:
 
-2. CURRENCY AMOUNTS - Pay extreme attention:
-   - Format: "Rp X,XXX,XXX.XX" or "Rp X.XXX.XXX,XX" (both used in Indonesia)
-   - Common columns: "Jumlah", "Nominal", "Amount", "Biaya", "Fee"
-   - Preserve ALL separators (commas, periods) exactly as shown
-   - Include decimal places even if ".00"
+1. IDENTIFY THE MAIN TRANSACTION AMOUNT:
+   - Look for "IDR" or "Rp" followed by large numbers (usually 6+ digits)
+   - The MAIN amount is typically the LARGEST number with "IDR" or "Rp" prefix
+   - Example: "IDR 200,000.00" or "Rp 200.000,00" → This is the transfer amount
+   
+2. IDENTIFY THE FEE:
+   - Look for "Fee", "Biaya", "Admin" labels
+   - Fee is typically small (Rp 2,500 - Rp 6,500 for BI-FAST)
+   - Example: "Fee IDR 2,500.00" → This is the transfer fee
 
-3. TABLE STRUCTURE - Look for these columns:
-   - Tanggal / Date
-   - Dari Rekening / From Account (10-16 digit account number)
-   - Ke Rekening / To Account (10-16 digit account number)
-   - Jumlah / Nominal / Amount
-   - Biaya / Fee
-   - Status (Sukses/Berhasil/Success)
+3. CRITICAL: DO NOT CONFUSE THESE AS AMOUNTS:
+   ❌ Year numbers like "2026", "2025", "2024" from dates
+   ❌ Account numbers (10-16 digits without currency prefix)
+   ❌ Reference numbers (alphanumeric codes)
+   ❌ Time like "18:48:37"
+   
+4. DATE FORMAT RECOGNITION:
+   - "02 Feb 2026" → This is a DATE, not Rp 2,026!
+   - The "2026" here is a YEAR, not money!
+   - Always look for "Rp" or "IDR" prefix for money amounts
 
-4. VERIFICATION CHECKS:
-   - Account numbers: typically 10-16 digits
-   - Transaction amounts: typically Rp 1,000 to Rp 999,999,999
-   - Dates: DD/MM/YYYY or DD-MM-YYYY format
-   - Reference numbers: alphanumeric codes
+5. KEY FIELDS TO EXTRACT (in order of importance):
+   a) Amount/Jumlah: The main transfer amount (IDR XXX,XXX.XX)
+   b) Fee/Biaya: Transfer fee if any (IDR X,XXX.XX)  
+   c) Beneficiary Name: Recipient name
+   d) To Account: Destination account number
+   e) From Account: Source account number (may be masked)
+   f) Date: Transaction date
+   g) Remarks: Transaction notes/description
+   h) Status: Success/Berhasil
 
-5. COMMON OCR PITFALLS TO AVOID:
-   - "0" (zero) vs "O" (letter O)
-   - "1" (one) vs "l" (lowercase L) vs "I" (uppercase i)
-   - "5" vs "S"
-   - "8" vs "B"
-   - Comma "," vs period "."
+OUTPUT FORMAT (Structured):
+Amount: IDR [main amount]
+Fee: IDR [fee amount]
+Beneficiary: [name]
+To Account: [number]
+From Account: [number]
+Date: [date]
+Remarks: [remarks text]
+Status: [status]
 
-OUTPUT REQUIREMENTS:
-- Extract line-by-line in original layout order
-- For amounts, use format: "Jumlah: Rp 8,700,000.00"
-- For account numbers, use format: "Dari Rekening: 1234567890"
-- If multiple transactions visible, separate with "---"
-
-DOUBLE-CHECK before output: Are all numbers complete? Are separators correct?"""
+EXAMPLE for BCA Transfer:
+Amount: IDR 200,000.00
+Fee: IDR 2,500.00
+Beneficiary: MUKHAMMAD KHOIRUL AZEN
+To Account: 0031-8730-4576
+From Account: 216-0**-**91
+Date: 02 Feb 2026
+Remarks: operasional
+Status: Transfer Successful"""
 
         content_payload = [
             {
@@ -1235,7 +1449,17 @@ CRITICAL LOGIC RULES:
      -> kategori: "Lain-lain"
      -> nama_projek: same as main transaction
 
-5. COMPANY EXTRACTION (If not User explicitly mentions company):
+5. **OCR/RECEIPT PARSING - CRITICAL:**
+   - When input contains "Receipt/Struk content:", this is OCR output from a bank transfer screenshot
+   - ONLY extract amounts that have "IDR", "Rp", "Amount:", "Fee:", "Jumlah:" prefix
+   - ❌ NEVER extract year numbers (2024, 2025, 2026) as amounts - these are dates!
+   - ❌ NEVER extract account numbers as amounts
+   - ✅ "Amount: IDR 200,000.00" -> jumlah: 200000
+   - ✅ "Fee: IDR 2,500.00" -> separate transaction with jumlah: 2500
+   - If "Remarks:" field exists, use it for project name extraction
+   - Create maximum 2 transactions from receipt: main transfer + fee (if any)
+
+6. COMPANY EXTRACTION (If not User explicitly mentions company):
    - IF user mentions "Dompet Evan" AND NOT "Saldo Umum" context: Output "company": "KANTOR" (Default).
    - IF user mentions "Dompet CV HB" AND NOT "Saldo Umum" context: Output "company": "CV HB" (Default).
    - IF user explicitly mentions company (e.g., TEXTURIN-Bali), use that.
