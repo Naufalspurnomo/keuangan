@@ -1123,22 +1123,40 @@ Balas 1 atau 2"""
                          return jsonify({'status': 'asking_project_confirm'}), 200
                     
                     elif res['status'] == 'NEW':
+                        has_income = any(t.get('tipe') == 'Pemasukan' for t in txs)
                         pending['pending_type'] = 'confirmation_new_project'
                         pending['new_project_name'] = res['original']
+                        if not has_income:
+                            pending['new_project_first_expense'] = True
+                            msg = (
+                                f"[PROJECT BARU]\n"
+                                f"--------------------\n\n"
+                                f"Project {res['original']} belum terdaftar.\n"
+                                f"Transaksi: Pengeluaran\n\n"
+                                f"Biasanya project baru dimulai dari DP (Pemasukan)\n\n"
+                                f"--------------------\n"
+                                f"Pilih tindakan:\n\n"
+                                f"1. Lanjutkan sebagai project baru\n"
+                                f"2. Ubah jadi Operasional Kantor\n"
+                                f"3. Batal\n\n"
+                                f"Atau ketik nama lain untuk ganti"
+                            )
+                            send_reply(msg)
+                            return jsonify({'status': 'asking_new_project'}), 200
                         msg = (
-                            f"📁 *PROJECT BARU*\n"
-                            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                            f"Project *{res['original']}* belum terdaftar.\n\n"
-                            f"━━━━━━━━━━━━━━━━━━━━━\n"
-                            f"*Pilih tindakan:*\n\n"
-                            f"✅ *Ya* — Buat project baru\n"
-                            f"✏️ Ketik nama lain untuk ganti\n\n"
-                            f"↩️ _Balas 'Ya' atau ketik nama baru_"
+                            f"[PROJECT BARU]\n"
+                            f"--------------------\n\n"
+                            f"Project {res['original']} belum terdaftar.\n\n"
+                            f"--------------------\n"
+                            f"Pilih tindakan:\n\n"
+                            f"Ya - Buat project baru\n"
+                            f"Ketik nama lain untuk ganti\n\n"
+                            f"Balas 'Ya' atau ketik nama baru"
                         )
                         send_reply(msg)
                         return jsonify({'status': 'asking_new_project'}), 200
-                    
                     elif res['status'] in ['EXACT', 'AUTO_FIX']:
+
                         # Auto update to canonical name
                         t['nama_projek'] = res['final_name']
                 
@@ -1252,7 +1270,7 @@ Balas 1 atau 2"""
                 # New project but first tx is expense ? confirm
                     if pending.get('is_new_project'):
                         has_income = any(t.get('tipe') == 'Pemasukan' for t in txs)
-                        if not has_income:
+                        if not has_income and not pending.get('new_project_first_expense_confirmed'):
                             set_pending_confirmation(
                                 user_id=sender_number,
                                 chat_id=chat_jid,
@@ -2011,6 +2029,45 @@ Balas 1 atau 2"""
             # G. New Project Confirmation (NEW -> Create or Rename)
             if ptype == 'confirmation_new_project':
                 clean = text.lower().strip()
+                if pending.get('new_project_first_expense'):
+                    if clean in ['1', 'ya', 'y', 'ok', 'siap', 'lanjut']:
+                        pending['project_confirmed'] = True
+                        pending['is_new_project'] = True
+                        pending['project_validated'] = True
+                        pending['new_project_first_expense_confirmed'] = True
+                        pending.pop('new_project_first_expense', None)
+                        return finalize_transaction_workflow(pending, pending_pkey)
+                    if clean in ['2', 'operasional', 'kantor']:
+                        pending['pending_type'] = 'select_source_wallet'
+                        pending['is_operational'] = True
+                        pending['operational_category'] = pending.get('operational_category', 'Lain Lain')
+                        pending['project_confirmed'] = False
+                        pending.pop('new_project_first_expense', None)
+                        prompt = format_wallet_selection_prompt()
+                        send_reply("🏢 Diganti ke Operasional Kantor\n\n{prompt}".replace('*', ''))
+                        return jsonify({'status': 'switch_to_operational'}), 200
+                    if clean in ['3', 'batal', 'cancel', 'tidak', 'no']:
+                        _pending_transactions.pop(pending_pkey, None)
+                        send_reply("❌ Dibatalkan.")
+                        return jsonify({'status': 'cancelled'}), 200
+                    # Treat input as new project name
+                    final_proj = sanitize_input(text.strip())
+                    if len(final_proj) < 3:
+                        send_reply("⚠️ Nama terlalu pendek.")
+                        return jsonify({'status': 'invalid'}), 200
+                    res_check = resolve_project_name(strip_company_prefix(final_proj))
+                    if res_check.get('final_name'):
+                        final_proj = res_check['final_name']
+                    if res_check.get('status') == 'NEW':
+                        pending['is_new_project'] = True
+                    pending['new_project_first_expense_confirmed'] = True
+                    for t in pending['transactions']:
+                        t['nama_projek'] = final_proj
+                    pending['project_confirmed'] = True
+                    pending['project_validated'] = True
+                    pending.pop('new_project_first_expense', None)
+                    return finalize_transaction_workflow(pending, pending_pkey)
+
                 if clean in ['ya', 'y', 'ok', 'siap', 'buat', 'lanjut']:
                     # User confirmed it is new
                     pending['project_confirmed'] = True
