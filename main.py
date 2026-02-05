@@ -1196,12 +1196,14 @@ Balas 1 atau 2"""
         if not pending_conf and is_group and text:
             # Allow other group members to answer if only one pending confirmation exists
             t = text.strip().lower()
+            has_choice_token = bool(re.search(r"(?<!\d)[12](?![\d.,])", t))
             is_quick_reply = (
                 bool(re.fullmatch(r"\d{1,2}", t)) or
+                has_choice_token or
                 t in ['ya', 'y', 'iya', 'ok', 'oke', 'yes', 'no', 'tidak', 'bukan',
                       'simpan', 'batal', 'cancel', '/cancel']
             )
-            if is_quick_reply:
+            if quoted_msg_id or is_quick_reply:
                 _, pending_conf = find_pending_confirmation_in_chat(chat_jid)
         if pending_conf:
             # Check if handled by pending handler

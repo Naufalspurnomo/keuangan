@@ -337,12 +337,17 @@ Atau ketik /cancel untuk batal total"""
     if pending_type == 'category_scope':
         
         category_scope = None
-        # Parse user answer
-        if text_lower in ['1', 'operational', 'operasional', 'kantor', 'ops']:
+        # Parse user answer (accept tokens inside longer text)
+        if any(k in text_lower for k in ['operational', 'operasional', 'kantor', 'ops']):
             category_scope = 'OPERATIONAL'
-        elif text_lower in ['2', 'project', 'projek', 'client']:
+        elif any(k in text_lower for k in ['project', 'projek', 'client']):
             category_scope = 'PROJECT'
         else:
+            # Try to detect numeric choice embedded in text (e.g., "... 2")
+            m = re.search(r"(?<!\d)[12](?![\d.,])", text_lower)
+            if m:
+                category_scope = 'OPERATIONAL' if m.group(0) == '1' else 'PROJECT'
+        if not category_scope:
             # Invalid answer, return None to let main flow handle it (or ignore)
             # Alternatively return a message asking to retry?
             # User request says: "Invalid answer, ask again" -> return None (Will continue normal flow)
