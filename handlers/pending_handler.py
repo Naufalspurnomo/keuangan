@@ -245,7 +245,38 @@ def handle_pending_response(user_id: str, chat_id: str, text: str,
             'response': f'{mention}❌ Proses dibatalkan. Kirim ulang transaksinya ya! 🔄',
             'completed': True
         }
-    
+
+    # ==========================================
+    # HANDLE: Undo Confirmation
+    # ==========================================
+    if pending_type == 'undo_confirmation':
+        clean = text_lower.replace('.', '').replace(',', '').strip()
+        clean = re.sub(r"\s+", " ", clean)
+        confirm_words = {'1', 'ya', 'iya', 'y', 'yes', 'hapus', 'ok', 'oke'}
+        cancel_words = {'2', 'batal', 'cancel', 'tidak', 'no'}
+
+        if clean in cancel_words or any(word in clean for word in ['batal', 'cancel', 'tidak', 'no']):
+            clear_pending_confirmation(user_id, chat_id)
+            return {
+                'response': 'Batal hapus.',
+                'completed': True
+            }
+
+        if clean in confirm_words or clean.startswith('ya ') or clean.startswith('iya ') or 'hapus' in clean:
+            from handlers.revision_handler import process_undo_deletion
+
+            result = process_undo_deletion(pending_data.get('transactions', []))
+            clear_pending_confirmation(user_id, chat_id)
+            return {
+                'response': result.get('response', 'Transaksi dihapus.'),
+                'completed': True
+            }
+
+        return {
+            'response': 'Balas *1* untuk hapus atau *2* untuk batal.',
+            'completed': False
+        }
+
     # ==========================================
     # REVISION during confirmation
     # ==========================================
