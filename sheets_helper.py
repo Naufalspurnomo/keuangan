@@ -1960,7 +1960,7 @@ def find_company_for_project(project_name: str) -> tuple:
 
 
 if __name__ == '__main__':
-    print("Testing Google Sheets v2.1...\n")
+    print("Testing Google Sheets...\n")
     
     if test_connection():
         print("\n✓ Connection successful!")

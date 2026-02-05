@@ -1,5 +1,5 @@
 """
-wallets.py - Wallet/Dompet Configuration (Cost Accounting v2)
+wallets.py - Wallet/Dompet Configuration 
 
 Contains:
 - DOMPET_SHEETS: List of Split Layout dompet sheet names  
@@ -384,7 +384,7 @@ def apply_company_prefix(project_name: str, dompet_sheet: str, company: str) -> 
 
 # For testing
 if __name__ == '__main__':
-    print("Wallet Configuration Test (v2 - Cost Accounting)")
+    print("Wallet Configuration Test")
     print(f"Dompets: {DOMPET_SHEETS}")
     print(f"Resolve 'holja': {resolve_dompet_name('holja')}")
     print(f"Resolve 'tx sby': {resolve_dompet_name('tx sby')}")

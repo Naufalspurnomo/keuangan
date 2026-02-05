@@ -89,7 +89,7 @@ def calculate_similarity(a, b):
 def is_operational_keyword(text: str) -> bool:
     """
     Check if text matches any operational keyword.
-    v2.0: Uses word boundary matching for better accuracy.
+    Uses word boundary matching for better accuracy.
     """
     import re
     

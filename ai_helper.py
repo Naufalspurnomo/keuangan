@@ -1,5 +1,5 @@
 """
-ai_helper.py - AI Processing Module v2.1 (Secured)
+ai_helper.py - AI Processing Module (Secured)
 
 Features:
 - FIXED categories (8 predefined, no custom)
@@ -1854,7 +1854,7 @@ Jawab berdasarkan DATA KEUANGAN di atas saja. Jangan mengarang data."""
 
 
 if __name__ == '__main__':
-    print("Testing AI extraction v2.1 (Secured)...\n")
+    print("Testing AI extraction (Secured)...\n")
     
     # Test extraction
     test_input = "Beli semen 5 sak 300rb dan bayar tukang 500rb"

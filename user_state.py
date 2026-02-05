@@ -1,5 +1,5 @@
 """
-user_state.py - User State Management v2.1 (Simplified)
+user_state.py - User State Management
 
 Simplified version - no longer tracks active project.
 Kept for potential future use (user preferences, settings).
@@ -64,5 +64,5 @@ def get_all_users() -> Dict:
 
 
 if __name__ == '__main__':
-    print("User state module v2.1 (simplified)")
+    print("User state module")
     print(f"State file: {STATE_FILE}")

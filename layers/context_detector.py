@@ -10,7 +10,7 @@ Features:
 - Conversation continuity tracking
 - Addressed score calculation
 
-Part of Context-Aware Intent Classification v2.0
+Part of Context-Aware Intent Classification
 """
 
 import re

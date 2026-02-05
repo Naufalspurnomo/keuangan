@@ -1,8 +1,8 @@
 """
-handlers/smart_handler.py - Smart Message Handler v2.0
+handlers/smart_handler.py
 Orchestrates all intelligence layers (Semantic Engine).
 
-v2.0 Improvements:
+Improvements:
 - Added amount pattern detection for smarter triggers
 - Handles TRANSFER_FUNDS intent
 - Improved ambient talk filtering with rule-based overrides

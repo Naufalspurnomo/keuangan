@@ -118,32 +118,49 @@ def format_mention(sender_name: str, is_group: bool = False) -> str:
 
 
 def build_selection_prompt(transactions: list, mention: str = "") -> str:
-    """Build the selection prompt message with dompet/company options."""
+    """Build the selection prompt message with dompet/company options.
+    
+    Note: mention parameter is kept for backward compatibility but is ignored.
+    The send_reply() function already handles @mention via format_mention_body().
+    """
     tx_lines = []
     for t in transactions:
         is_in = t.get('tipe') == 'Pemasukan'
         emoji = "💰" if is_in else "💸"
         label = "PEMASUKAN" if is_in else "PENGELUARAN"
-        tx_lines.append(f"   {emoji} {label} {t.get('keterangan', '-')}: Rp {t.get('jumlah', 0):,}".replace(',', '.'))
+        # Clean and truncate keterangan to avoid OCR garbage
+        ket = t.get('keterangan', '-') or '-'
+        # Remove OCR artifacts
+        if 'Receipt/Struk' in ket or 'Here is the' in ket:
+            ket = 'Transfer'
+        # Truncate long descriptions
+        if len(ket) > 40:
+            ket = ket[:37] + '...'
+        amount = t.get('jumlah', 0)
+        tx_lines.append(f"   {emoji} {label}: Rp {amount:,}".replace(',', '.'))
+        tx_lines.append(f"      _{ket}_")
     tx_preview = '\n'.join(tx_lines)
     
     total = sum(t.get('jumlah', 0) for t in transactions)
-    
     item_count = len(transactions)
-    return f"""{mention}📋 Transaksi ({item_count} item)
+    
+    # Don't include mention here - send_reply() already adds it via format_mention_body()
+    return f"""📋 *TRANSAKSI TERDETEKSI*
+━━━━━━━━━━━━━━━━━━━━━
 {tx_preview}
-📊 Total: Rp {total:,}
+━━━━━━━━━━━━━━━━━━━━━
+📊 *Total: Rp {total:,}* ({item_count} item)
 
-❓ Simpan ke company mana? (1-4) atau pilih 5 untuk Operasional
+❓ *Simpan ke company mana?*
 
-📁 CV HB (101): 1️⃣ HOLLA | 2️⃣ HOJJA
-📁 TX SBY (216): 3️⃣ TEXTURIN-Surabaya
-📁 TX BALI (087): 4️⃣ TEXTURIN-Bali
+1️⃣ HOLLA _(CV HB)_
+2️⃣ HOJJA _(CV HB)_
+3️⃣ TEXTURIN-Surabaya _(TX SBY)_
+4️⃣ TEXTURIN-Bali _(TX BALI)_
+5️⃣ Operasional Kantor
 
-5️⃣ Ini ternyata Operasional Kantor
-
-⏳ Batas waktu: 15 menit
-💡 Salah pilih? /cancel lalu kirim ulang""".replace(',', '.')
+↩️ _Balas dengan angka 1-5_
+⏳ Batas waktu: 15 menit""".replace(',', '.')
 
 
 def format_success_reply(transactions: list, company_sheet: str) -> str:
@@ -183,8 +200,13 @@ def format_success_reply(transactions: list, company_sheet: str) -> str:
 
 
 def format_success_reply_new(transactions: list, dompet_sheet: str, company: str, mention: str = "") -> str:
-    """Format success reply message with dompet and company info."""
-    lines = [f"{mention}✅ Transaksi Tercatat!\n"]
+    """Format success reply message with dompet and company info.
+    
+    Note: mention parameter is kept for backward compatibility but should be empty string.
+    The send_reply() function already handles @mention via format_mention_body().
+    """
+    # Don't include mention here - send_reply() already adds it via format_mention_body()
+    lines = ["✅ Transaksi Tercatat!\n"]
     
     total = 0
     nama_projek_set = set()
@@ -226,13 +248,18 @@ def format_success_reply_new(transactions: list, dompet_sheet: str, company: str
 
 
 def format_draft_summary_operational(transactions: list, dompet_sheet: str, category: str, mention: str = "") -> str:
-    """Format draft confirmation for operational transactions."""
+    """Format draft confirmation for operational transactions.
+    
+    Note: mention parameter is kept for backward compatibility but is ignored.
+    The send_reply() function already handles @mention via format_mention_body().
+    """
     total = sum(int(t.get('jumlah', 0) or 0) for t in transactions)
     item = transactions[0].get('keterangan', '-') if transactions else '-'
     short_dompet = dompet_sheet or "-"
     
+    # Don't include mention here - send_reply() already adds it via format_mention_body()
     lines = [
-        f"{mention}🧾 Draft Operasional",
+        "🧾 Draft Operasional",
         f"📝 {item}",
         f"💰 Nominal: Rp {total:,}".replace(',', '.'),
         f"💼 Dompet: {short_dompet}",
@@ -248,15 +275,20 @@ def format_draft_summary_operational(transactions: list, dompet_sheet: str, cate
 
 
 def format_draft_summary_project(transactions: list, dompet_sheet: str, company: str, mention: str = "") -> str:
-    """Format draft confirmation for project transactions."""
+    """Format draft confirmation for project transactions.
+    
+    Note: mention parameter is kept for backward compatibility but is ignored.
+    The send_reply() function already handles @mention via format_mention_body().
+    """
     total = sum(int(t.get('jumlah', 0) or 0) for t in transactions)
     item = transactions[0].get('keterangan', '-') if transactions else '-'
     project_names = sorted({t.get('nama_projek') for t in transactions if t.get('nama_projek')})
     proj_display = ", ".join(project_names) if project_names else "-"
     short_dompet = dompet_sheet or "-"
     
+    # Don't include mention here - send_reply() already adds it via format_mention_body()
     lines = [
-        f"{mention}🧾 Draft Project",
+        "🧾 Draft Project",
         f"📝 {item}",
         f"💰 Nominal: Rp {total:,}".replace(',', '.'),
         f"💼 Dompet: {short_dompet}",

@@ -8,7 +8,7 @@ from services.state_manager import (
     clear_visual_buffer
 )
 from utils.formatters import (
-    format_mention, build_selection_prompt,
+    build_selection_prompt,
     format_draft_summary_operational, format_draft_summary_project,
     format_success_reply_new
 )
@@ -128,9 +128,8 @@ def _continue_project_after_name(transactions: list, dompet_sheet: str, company:
         }
     )
 
-    mention = format_mention(sender_name, is_group)
     response = format_draft_summary_project(
-        transactions, dompet_sheet, company, mention
+        transactions, dompet_sheet, company, ""
     )
     return {'response': response, 'completed': False}
 
@@ -198,8 +197,7 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
     if pending_data.get('pending_key'):
         clear_pending_transaction(pending_data.get('pending_key'))
 
-    mention = format_mention(sender_name, is_group)
-    response = format_success_reply_new(transactions, dompet_sheet, company, mention).replace('*', '')
+    response = format_success_reply_new(transactions, dompet_sheet, company, "").replace('*', '')
     tx_ids = [t.get('tx_id') for t in transactions if t.get('tx_id')]
     if tx_ids:
         response += f"\nðŸ†” TX: {', '.join(tx_ids)}"
@@ -240,9 +238,8 @@ def handle_pending_response(user_id: str, chat_id: str, text: str,
         clear_pending_confirmation(user_id, chat_id)
         clear_visual_buffer(user_id, chat_id)
         
-        mention = format_mention(sender_name, is_group)
         return {
-            'response': f'{mention}❌ Proses dibatalkan. Kirim ulang transaksinya ya! 🔄',
+            'response': '❌ Proses dibatalkan. Kirim ulang transaksinya ya! 🔄',
             'completed': True
         }
 
@@ -289,8 +286,7 @@ def handle_pending_response(user_id: str, chat_id: str, text: str,
         
         if pending_type in ['category_scope', 'category_scope_confirm']:
             # Offer to re-select category
-            mention = format_mention(sender_name, is_group)
-            response = f"""{mention}🔄 Oke, pilih lagi:
+            response = """🔄 Oke, pilih lagi:
 
 1️⃣ Operational Kantor
    (Gaji staff, listrik, wifi, ATK, dll)
@@ -321,15 +317,14 @@ Atau ketik /cancel untuk batal total"""
         
         elif pending_type in ['dompet_selection_operational', 'dompet_selection_project']:
             # Offer to re-select dompet
-            mention = format_mention(sender_name, is_group)
             
             if 'operational' in pending_type:
                 prompt_text = format_wallet_selection_prompt()
-                response = f"{mention}🔄 Oke, pilih dompet lagi:\n\n{prompt_text}"
+                response = "🔄 Oke, pilih dompet lagi:\n\n{prompt_text}"
             else:
                 transactions = pending_data.get('transactions', [])
-                response = build_selection_prompt(transactions, mention)
-                response = f"{mention}🔄 Oke, pilih ulang:\n" + response.replace(mention, "")
+                response = build_selection_prompt(transactions, "")
+                response = "🔄 Oke, pilih ulang:\n" + response
             
             return {
                 'response': response,
@@ -372,10 +367,9 @@ Atau ketik /cancel untuk batal total"""
                 }
             )
             
-            mention = format_mention(sender_name, is_group)
             prompt = format_wallet_selection_prompt() # From config/wallets.py
             
-            response = f"{mention}💼 Operational Kantor\n{prompt}"
+            response = "💼 Operational Kantor\n{prompt}"
             
             return {
                 'response': response,
@@ -397,8 +391,7 @@ Atau ketik /cancel untuk batal total"""
                 }
             )
             
-            mention = format_mention(sender_name, is_group)
-            response = build_selection_prompt(transactions, mention)
+            response = build_selection_prompt(transactions, "")
             
             return {
                 'response': response,
@@ -442,9 +435,8 @@ Atau ketik /cancel untuk batal total"""
                     'raw_text': pending_data.get('raw_text', '')
                 }
             )
-            mention = format_mention(sender_name, is_group)
             prompt = format_wallet_selection_prompt()
-            response = f"{mention}💼 Operational Kantor\n{prompt}"
+            response = "💼 Operational Kantor\n{prompt}"
             return {'response': response, 'completed': False}
         else:
             set_pending_confirmation(
@@ -459,8 +451,7 @@ Atau ketik /cancel untuk batal total"""
                     'raw_text': pending_data.get('raw_text', '')
                 }
             )
-            mention = format_mention(sender_name, is_group)
-            response = build_selection_prompt(transactions, mention)
+            response = build_selection_prompt(transactions, "")
             return {'response': response, 'completed': False}
     
     # ===================================
@@ -482,8 +473,7 @@ Atau ketik /cancel untuk batal total"""
                     'raw_text': pending_data.get('raw_text', '')
                 }
             )
-            mention = format_mention(sender_name, is_group)
-            response = build_selection_prompt(pending_data.get('transactions', []), mention)
+            response = build_selection_prompt(pending_data.get('transactions', []), "")
             return {'response': response, 'completed': False}
         
         # Parse dompet choice using config
@@ -522,9 +512,8 @@ Atau ketik /cancel untuk batal total"""
             }
         )
         
-        mention = format_mention(sender_name, is_group)
         response = format_draft_summary_operational(
-            transactions, dompet_sheet, kategori_final, mention
+            transactions, dompet_sheet, kategori_final, ""
         )
         
         return {
@@ -551,9 +540,8 @@ Atau ketik /cancel untuk batal total"""
                     'raw_text': pending_data.get('raw_text', '')
                 }
             )
-            mention = format_mention(sender_name, is_group)
             prompt = format_wallet_selection_prompt()
-            return {'response': f"{mention}ðŸ’¼ Operational Kantor\n{prompt}", 'completed': False}
+            return {'response': "ðŸ’¼ Operational Kantor\n{prompt}", 'completed': False}
         
         # Parse choice (1-4) using config
         try:
@@ -626,9 +614,8 @@ Atau ketik /cancel untuk batal total"""
             }
         )
         
-        mention = format_mention(sender_name, is_group)
         response = format_draft_summary_project(
-            transactions, dompet_sheet, company, mention
+            transactions, dompet_sheet, company, ""
         )
 
         return {
@@ -715,10 +702,9 @@ Atau ketik /cancel untuk batal total"""
                     'event_id': pending_data.get('event_id')
                 }
             )
-            mention = format_mention(sender_name, is_group)
             display_name = res.get('original') or lookup_name
             prompt = (
-                f"{mention}🆕 Project *{display_name}* belum ada.\n\n"
+                "🆕 Project *{display_name}* belum ada.\n\n"
                 "Buat Project Baru?\n"
                 "✅ Ya / ❌ Ganti Nama (Langsung Ketik Nama Baru)"
             )
@@ -772,9 +758,8 @@ Atau ketik /cancel untuk batal total"""
             }
         )
         
-        mention = format_mention(sender_name, is_group)
         response = format_draft_summary_project(
-            transactions, dompet_sheet, company, mention
+            transactions, dompet_sheet, company, ""
         )
 
         return {
@@ -827,9 +812,8 @@ Atau ketik /cancel untuk batal total"""
             }
         )
         
-        mention = format_mention(sender_name, is_group)
         response = format_draft_summary_project(
-            transactions, dompet_sheet, company, mention
+            transactions, dompet_sheet, company, ""
         )
         return {'response': response, 'completed': False}
 
@@ -957,9 +941,8 @@ Atau ketik /cancel untuk batal total"""
             }
         )
         
-        mention = format_mention(sender_name, is_group)
         response = format_draft_summary_operational(
-            transactions, dompet_sheet, category, mention
+            transactions, dompet_sheet, category, ""
         )
         return {'response': response, 'completed': False}
 
@@ -976,7 +959,6 @@ Atau ketik /cancel untuk batal total"""
             if transactions:
                 transactions[0]['jumlah'] = int(new_amt)
 
-            mention = format_mention(sender_name, is_group)
             response = format_draft_summary_operational(
                 transactions,
                 pending_data.get('source_wallet'),
@@ -1039,8 +1021,7 @@ Atau ketik /cancel untuk batal total"""
             total_amount = sum(int(t.get('jumlah', 0) or 0) for t in transactions)
             tx_ids = [t.get('tx_id') for t in transactions if t.get('tx_id')]
             tx_line = f"\n🆔 TX: {', '.join(tx_ids)}" if tx_ids else ""
-            mention = format_mention(sender_name, is_group)
-            response = f"""{mention}✅ Tersimpan di Operasional Kantor
+            response = """✅ Tersimpan di Operasional Kantor
 
 💼 {transactions[0].get('keterangan', '-')}: Rp {total_amount:,}
 💳 Dompet: {dompet_sheet}
@@ -1061,9 +1042,8 @@ Atau ketik /cancel untuk batal total"""
                     'event_id': pending_data.get('event_id')
                 }
             )
-            mention = format_mention(sender_name, is_group)
             prompt = format_wallet_selection_prompt()
-            return {'response': f"{mention}🪙 Pilih dompet lagi:\n\n{prompt}", 'completed': False}
+            return {'response': "🪙 Pilih dompet lagi:\n\n{prompt}", 'completed': False}
         
         if text_lower in ['3', 'ubah kategori', 'kategori']:
             set_pending_confirmation(
@@ -1106,9 +1086,8 @@ Atau ketik /cancel untuk batal total"""
             if main_tx:
                 main_tx['jumlah'] = int(new_amt)
 
-            mention = format_mention(sender_name, is_group)
             response = format_draft_summary_project(
-                transactions, pending_data.get('dompet'), pending_data.get('company'), mention
+                transactions, pending_data.get('dompet'), pending_data.get('company'), ""
             )
             return {'response': response, 'completed': False}
 
@@ -1191,8 +1170,7 @@ Atau ketik /cancel untuk batal total"""
             if pending_data.get('pending_key'):
                 clear_pending_transaction(pending_data.get('pending_key'))
             
-            mention = format_mention(sender_name, is_group)
-            response = format_success_reply_new(transactions, dompet_sheet, company, mention).replace('*', '')
+            response = format_success_reply_new(transactions, dompet_sheet, company, "").replace('*', '')
             tx_ids = [t.get('tx_id') for t in transactions if t.get('tx_id')]
             if tx_ids:
                 response += f"\n🆔 TX: {', '.join(tx_ids)}"
@@ -1217,8 +1195,7 @@ Atau ketik /cancel untuk batal total"""
                     'event_id': pending_data.get('event_id')
                 }
             )
-            mention = format_mention(sender_name, is_group)
-            response = build_selection_prompt(pending_data.get('transactions', []), mention)
+            response = build_selection_prompt(pending_data.get('transactions', []), "")
             return {'response': response, 'completed': False}
         
         if text_lower in ['3', 'ubah projek', 'projek', 'project']:
@@ -1280,9 +1257,8 @@ Atau ketik /cancel untuk batal total"""
                     'pending_key': pending_data.get('pending_key')
                 }
             )
-            mention = format_mention(sender_name, is_group)
             response = format_draft_summary_project(
-                transactions, dompet_locked, company_locked, mention
+                transactions, dompet_locked, company_locked, ""
             )
             return {'response': response, 'completed': False}
         
@@ -1307,9 +1283,8 @@ Atau ketik /cancel untuk batal total"""
                     'pending_key': pending_data.get('pending_key')
                 }
             )
-            mention = format_mention(sender_name, is_group)
             response = format_draft_summary_project(
-                transactions, dompet_input, company_input, mention
+                transactions, dompet_input, company_input, ""
             )
             return {'response': response, 'completed': False}
         
@@ -1344,9 +1319,8 @@ Atau ketik /cancel untuk batal total"""
                     'pending_key': pending_data.get('pending_key')
                 }
             )
-            mention = format_mention(sender_name, is_group)
             response = format_draft_summary_project(
-                transactions, dompet_sheet, company, mention
+                transactions, dompet_sheet, company, ""
             )
             return {'response': response, 'completed': False}
         
@@ -1366,9 +1340,8 @@ Atau ketik /cancel untuk batal total"""
                     'pending_key': pending_data.get('pending_key')
                 }
             )
-            mention = format_mention(sender_name, is_group)
             response = format_draft_summary_operational(
-                transactions, dompet_sheet, 'Lain Lain', mention
+                transactions, dompet_sheet, 'Lain Lain', ""
             )
             return {'response': response, 'completed': False}
         
@@ -1418,9 +1391,8 @@ Atau ketik /cancel untuk batal total"""
             }
         )
         
-        mention = format_mention(sender_name, is_group)
         response = format_draft_summary_operational(
-            transactions, dompet_sheet, 'Lain Lain', mention
+            transactions, dompet_sheet, 'Lain Lain', ""
         )
         return {'response': response, 'completed': False}
 
@@ -1461,9 +1433,8 @@ Atau ketik /cancel untuk batal total"""
             }
         )
         
-        mention = format_mention(sender_name, is_group)
         response = format_draft_summary_project(
-            transactions, dompet_sheet, company, mention
+            transactions, dompet_sheet, company, ""
         )
         return {'response': response, 'completed': False}
     

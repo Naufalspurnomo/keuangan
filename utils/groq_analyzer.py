@@ -1,5 +1,5 @@
 """
-utils/groq_analyzer.py - AI Intent Analyzer v2.0 (Cost Accounting Edition)
+utils/groq_analyzer.py - AI Intent Analyzer
 
 Major Improvements:
 - Added TRANSFER_FUNDS intent for internal wallet transfers
@@ -109,7 +109,6 @@ class GroqContextAnalyzer:
         Analyze message intent using Groq Llama 3.1.
         Decides: IGNORE, RECORD_TRANSACTION, TRANSFER_FUNDS, QUERY, REVISION, CONVERSATIONAL.
         
-        NEW v2.0:
         - Added TRANSFER_FUNDS for internal wallet transfers
         - Added category_scope for OPERATIONAL vs PROJECT detection
         - Strengthened ambient talk filtering

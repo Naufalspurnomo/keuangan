@@ -1,5 +1,5 @@
 """
-main.py - Financial Recording Bot (Enterprise Edition)
+main.py
 
 Features:
 - COST ACCOUNTING: Splits Operational (Fixed) vs Project (Variable) costs.
@@ -95,7 +95,7 @@ from utils.groq_analyzer import is_saldo_update
 from utils.formatters import (
     format_success_reply, format_success_reply_new,
     format_draft_summary_operational, format_draft_summary_project,
-    format_mention, build_selection_prompt,
+    build_selection_prompt,
     START_MESSAGE, HELP_MESSAGE,
     CATEGORIES_DISPLAY, SELECTION_DISPLAY,
 )
@@ -222,7 +222,7 @@ from services import state_manager as _state
 _pending_transactions = _state._pending_transactions
 
 
-# ===================== LOGIC CORE: SMART ROUTER v2.0 =====================
+# ===================== LOGIC CORE: SMART ROUTER =====================
 # Enhanced with amount pattern detection and AI category_scope integration
 from handlers.smart_handler import SmartHandler
 import services.state_manager as state_manager_module
@@ -237,7 +237,7 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
     """
     Detects context: PROJECT vs OPERATIONAL.
     
-    v2.0 Improvements:
+    Improvements:
     - Uses category_scope from AI layer when available
     - Checks for amount patterns in text
     - Better keyword matching with word boundaries
@@ -252,7 +252,7 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
     has_project_word = bool(re.search(r"\b(projek|project|proyek|prj)\b", text_lower))
     has_kantor_word = bool(re.search(r"\b(kantor|office|operasional|operational|ops)\b", text_lower))
     
-    # NEW v2.0: Trust AI's category_scope if available
+    # Trust AI's category_scope if available
     if category_scope == 'OPERATIONAL':
         # Detect which operational category
         detected_keywords = [kw for kw in OPERATIONAL_KEYWORDS if kw in text_lower]
@@ -390,7 +390,7 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
 def map_operational_category(keyword: str) -> str:
     """
     Maps keywords to standard Operational Categories.
-    v2.0: Expanded keyword matching.
+    Expanded keyword matching.
     """
     k = keyword.lower()
     
@@ -792,8 +792,7 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                         'original_message_id': pending.get('message_id')
                     }
                 )
-                mention = format_mention(pending.get('sender_name', sender_name), is_group)
-                response = f"""{mention}🤔 Ini untuk Operational Kantor atau Project?
+                response = """🤔 Ini untuk Operational Kantor atau Project?
 
 1️⃣ Operational Kantor
    (Gaji staff, listrik, wifi, ATK, dll)
@@ -865,9 +864,8 @@ Balas 1 atau 2"""
                     _pending_transactions.pop(pkey, None)
 
                     total_amount = sum(int(t.get('jumlah', 0) or 0) for t in txs)
-                    mention = format_mention(pending.get('sender_name', sender_name), is_group)
                     response = (
-                        f"{mention}✅ Tersimpan: Operasional — Rp {total_amount:,} — {source_wallet}\n"
+                        "✅ Tersimpan: Operasional — Rp {total_amount:,} — {source_wallet}\n"
                         "Ketik /undo jika salah."
                     ).replace(',', '.')
                     _send_and_track(response, event_id)
@@ -889,7 +887,6 @@ Balas 1 atau 2"""
                         'pending_key': pkey
                     }
                 )
-                mention = format_mention(pending.get('sender_name', sender_name), is_group)
                 draft_msg = format_draft_summary_operational(
                     txs, source_wallet, context.get('category'), mention
                 )
@@ -1123,9 +1120,7 @@ Balas 1 atau 2"""
 
                     invalidate_dashboard_cache()
                     _pending_transactions.pop(pkey, None)
-
-                    mention = format_mention(pending.get('sender_name', sender_name), is_group)
-                    response = format_success_reply_new(txs, dompet, detected_company, mention).replace('*', '')
+                    response = format_success_reply_new(txs, dompet, detected_company, "").replace('*', '')
                     if lock_note:
                         response += f"\n {lock_note}"
                     if new_project_expense_note:
@@ -1150,7 +1145,6 @@ Balas 1 atau 2"""
                         'pending_key': pkey
                     }
                 )
-                mention = format_mention(pending.get('sender_name', sender_name), is_group)
                 draft_msg = format_draft_summary_project(
                     txs, dompet, detected_company, mention
                 )
@@ -1356,14 +1350,13 @@ Balas 1 atau 2"""
                     from handlers.query_handler import handle_query_command
                     
                     # Send "analyzing" message first
-                    mention = format_mention(sender_name, is_group)
-                    send_reply(f"{mention}🤔 Menganalisis data...")
+                    send_reply("🤔 Menganalisis data...")
                     
                     # Get answer with real data
                     answer = handle_query_command(query, sender_number, chat_jid)
                     
                     # Send answer
-                    response = f"{mention}{answer}"
+                    response = "{answer}"
                     send_reply(response)
                     
                     return jsonify({'status': 'command_tanya_success'}), 200
@@ -1553,9 +1546,7 @@ Balas 1 atau 2"""
                                         'event_id': event_id
                                     }
                                 )
-                                
-                                mention = format_mention(sender_name, is_group)
-                                response = f"""{mention}🤔 Ini untuk Operational Kantor atau Project?
+                                response = """🤔 Ini untuk Operational Kantor atau Project?
  
  1️⃣ Operational Kantor
     (Gaji staff, listrik, wifi, ATK, dll)
@@ -1815,8 +1806,7 @@ Balas 1 atau 2"""
                     pending['operational_category'] = pending.get('operational_category', 'Lain Lain')
                     pending['project_confirmed'] = False
                     prompt = format_wallet_selection_prompt()
-                    mention = format_mention(pending.get('sender_name', sender_name), is_group)
-                    send_reply(f"{mention}🏢 Diganti ke Operasional Kantor\n\n{prompt}".replace('*', ''))
+                    send_reply("🏢 Diganti ke Operasional Kantor\n\n{prompt}".replace('*', ''))
                     return jsonify({'status': 'switch_to_operational'}), 200
                 valid, sel, err = parse_selection(text)
                 if not valid:
