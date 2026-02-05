@@ -116,14 +116,18 @@ def _continue_project_after_name(transactions: list, dompet_sheet: str, company:
             }
         )
         msg = (
-            f"⚠️ Project baru **{transactions[0].get('nama_projek', '-') }** tetapi transaksi pertama *Pengeluaran*.\n"
-            "Biasanya project baru dimulai dari DP (Pemasukan).\n\n"
-            "Pilih tindakan:\n"
-            "1️⃣ Lanjutkan sebagai project baru\n"
-            "2️⃣ Ubah jadi Operasional Kantor\n"
-            "3️⃣ Batal"
+            "\U0001F4C1 *PROJECT BARU*\n"
+            "--------------------\n\n"
+            f"Project *{transactions[0].get('nama_projek', '-') }* belum terdaftar.\n"
+            "\U0001F4B8 *Transaksi: Pengeluaran*\n\n"
+            "\U0001F4A1 Biasanya project baru dimulai dari *DP (Pemasukan)*\n\n"
+            "--------------------\n"
+            "Pilih tindakan:\n\n"
+            "\u0031\ufe0f\u20e3 Lanjutkan sebagai project baru\n"
+            "\u0032\ufe0f\u20e3 Ubah jadi Operasional Kantor\n"
+            "\u0033\ufe0f\u20e3 Batal"
         )
-        return {'response': msg.replace('*', ''), 'completed': False}
+        return {'response': msg, 'completed': False}
 
     set_pending_confirmation(
         user_id=user_id,
@@ -792,9 +796,9 @@ Atau ketik /cancel untuk batal total"""
                     "\U0001F4A1 Biasanya project baru dimulai dari *DP (Pemasukan)*\n\n"
                     "--------------------\n"
                     "Pilih tindakan:\n\n"
-                    "1. Lanjutkan sebagai project baru\n"
-                    "2. Ubah jadi Operasional Kantor\n"
-                    "3. Batal\n\n"
+                    "\u0031\ufe0f\u20e3 Lanjutkan sebagai project baru\n"
+                    "\u0032\ufe0f\u20e3 Ubah jadi Operasional Kantor\n"
+                    "\u0033\ufe0f\u20e3 Batal\n\n"
                     "Atau ketik *nama lain* untuk ganti"
                 )
             else:
@@ -954,10 +958,10 @@ Atau ketik /cancel untuk batal total"""
             if clean.isdigit():
                 return {'response': 'Balas 1/2/3 atau ketik nama project baru.', 'completed': False}
 
-        if not combined and clean.isdigit() and len(clean) <= 2:
+        if not combined and clean.isdigit() and len(clean) <= 2 and clean not in ['1']:
             return {'response': "Balas 'Ya' untuk membuat project baru, atau ketik nama project yang benar.", 'completed': False}
 
-        if clean in ['ya', 'y', 'yes', 'oke', 'ok', 'buat', 'lanjut']:
+        if clean in ['1', 'ya', 'y', 'yes', 'oke', 'ok', 'buat', 'lanjut']:
             # Proceed as new project
             return _continue_project_after_name(
                 transactions, dompet_sheet, company,

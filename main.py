@@ -1136,9 +1136,9 @@ Balas 1 atau 2"""
                                 f"\U0001F4A1 Biasanya project baru dimulai dari *DP (Pemasukan)*\n\n"
                                 f"--------------------\n"
                                 f"Pilih tindakan:\n\n"
-                                f"1. Lanjutkan sebagai project baru\n"
-                                f"2. Ubah jadi Operasional Kantor\n"
-                                f"3. Batal\n\n"
+                                f"\u0031\ufe0f\u20e3 Lanjutkan sebagai project baru\n"
+                                f"\u0032\ufe0f\u20e3 Ubah jadi Operasional Kantor\n"
+                                f"\u0033\ufe0f\u20e3 Batal\n\n"
                                 f"Atau ketik *nama lain* untuk ganti"
                             )
                             send_reply(msg)
@@ -1267,42 +1267,6 @@ Balas 1 atau 2"""
                             send_reply(msg)
                             return jsonify({'status': 'project_lock_mismatch'}), 200
 
-                # New project but first tx is expense ? confirm
-                    if pending.get('is_new_project'):
-                        has_income = any(t.get('tipe') == 'Pemasukan' for t in txs)
-                        if not has_income and not pending.get('new_project_first_expense_confirmed'):
-                            set_pending_confirmation(
-                                user_id=sender_number,
-                                chat_id=chat_jid,
-                                data={
-                                    'type': 'new_project_first_expense',
-                                    'transactions': txs,
-                                    'dompet': dompet,
-                                    'company': detected_company,
-                                    'debt_source_dompet': debt_source,
-                                    'raw_text': original_text,
-                                    'sender_name': pending.get('sender_name'),
-                                    'source': pending.get('source'),
-                                    'original_message_id': pending.get('message_id'),
-                                    'event_id': pending.get('event_id'),
-                                    'pending_key': pkey
-                            }
-                        )
-                        msg = (
-                            f"⚠️ *KONFIRMASI PROJECT BARU*\n"
-                            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                            f"📁 Project: *{p_name_check}*\n"
-                            f"💸 Transaksi: Pengeluaran\n\n"
-                            f"💡 _Biasanya project baru dimulai dari DP (Pemasukan)_\n\n"
-                            f"━━━━━━━━━━━━━━━━━━━━━\n"
-                            f"*Pilih tindakan:*\n\n"
-                            f"1️⃣  Lanjutkan sebagai project baru\n"
-                            f"2️⃣  Ubah jadi Operasional Kantor\n"
-                            f"3️⃣  Batal\n\n"
-                            f"↩️ _Balas dengan angka 1, 2, atau 3_"
-                        )
-                        send_reply(msg)
-                        return jsonify({'status': 'new_project_first_expense'}), 200
 
                 for t in txs:
                     pname = t.get('nama_projek')
@@ -2067,11 +2031,11 @@ Balas 1 atau 2"""
                     pending['project_validated'] = True
                     pending.pop('new_project_first_expense', None)
                     return finalize_transaction_workflow(pending, pending_pkey)
-                if clean.isdigit() and len(clean) <= 2:
+                if clean.isdigit() and len(clean) <= 2 and clean not in ['1']:
                     send_reply("Balas 'Ya' untuk membuat project baru, atau ketik nama project yang benar.")
                     return jsonify({'status': 'invalid'}), 200
 
-                if clean in ['ya', 'y', 'ok', 'siap', 'buat', 'lanjut']:
+                if clean in ['1', 'ya', 'y', 'ok', 'siap', 'buat', 'lanjut']:
                     # User confirmed it is new
                     pending['project_confirmed'] = True
                     pending['is_new_project'] = True  # Flag for lifecycle marker
