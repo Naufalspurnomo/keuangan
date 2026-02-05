@@ -1129,29 +1129,29 @@ Balas 1 atau 2"""
                         if not has_income:
                             pending['new_project_first_expense'] = True
                             msg = (
-                                f"[PROJECT BARU]\n"
+                                f"?? *PROJECT BARU*\n"
                                 f"--------------------\n\n"
-                                f"Project {res['original']} belum terdaftar.\n"
-                                f"Transaksi: Pengeluaran\n\n"
-                                f"Biasanya project baru dimulai dari DP (Pemasukan)\n\n"
+                                f"Project *{res['original']}* belum terdaftar.\n"
+                                f"?? *Transaksi: Pengeluaran*\n\n"
+                                f"?? Biasanya project baru dimulai dari *DP (Pemasukan)*\n\n"
                                 f"--------------------\n"
                                 f"Pilih tindakan:\n\n"
                                 f"1. Lanjutkan sebagai project baru\n"
                                 f"2. Ubah jadi Operasional Kantor\n"
                                 f"3. Batal\n\n"
-                                f"Atau ketik nama lain untuk ganti"
+                                f"Atau ketik *nama lain* untuk ganti"
                             )
                             send_reply(msg)
                             return jsonify({'status': 'asking_new_project'}), 200
                         msg = (
-                            f"[PROJECT BARU]\n"
+                            f"?? *PROJECT BARU*\n"
                             f"--------------------\n\n"
-                            f"Project {res['original']} belum terdaftar.\n\n"
+                            f"Project *{res['original']}* belum terdaftar.\n\n"
                             f"--------------------\n"
                             f"Pilih tindakan:\n\n"
-                            f"Ya - Buat project baru\n"
+                            f"Ya - *Buat project baru*\n"
                             f"Ketik nama lain untuk ganti\n\n"
-                            f"Balas 'Ya' atau ketik nama baru"
+                            f"Balas *Ya* atau ketik nama baru"
                         )
                         send_reply(msg)
                         return jsonify({'status': 'asking_new_project'}), 200
@@ -2067,6 +2067,9 @@ Balas 1 atau 2"""
                     pending['project_validated'] = True
                     pending.pop('new_project_first_expense', None)
                     return finalize_transaction_workflow(pending, pending_pkey)
+                if clean.isdigit() and len(clean) <= 2:
+                    send_reply("Balas 'Ya' untuk membuat project baru, atau ketik nama project yang benar.")
+                    return jsonify({'status': 'invalid'}), 200
 
                 if clean in ['ya', 'y', 'ok', 'siap', 'buat', 'lanjut']:
                     # User confirmed it is new

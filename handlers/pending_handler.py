@@ -785,30 +785,30 @@ Atau ketik /cancel untuk batal total"""
             )
             if is_first_expense:
                 prompt = (
-                    "[PROJECT BARU]\n"
+                    "?? *PROJECT BARU*\n"
                     "--------------------\n\n"
-                    f"Project {display_name} belum terdaftar.\n"
-                    "Transaksi: Pengeluaran\n\n"
-                    "Biasanya project baru dimulai dari DP (Pemasukan)\n\n"
+                    f"Project *{display_name}* belum terdaftar.\n"
+                    "?? *Transaksi: Pengeluaran*\n\n"
+                    "?? Biasanya project baru dimulai dari *DP (Pemasukan)*\n\n"
                     "--------------------\n"
                     "Pilih tindakan:\n\n"
                     "1. Lanjutkan sebagai project baru\n"
                     "2. Ubah jadi Operasional Kantor\n"
                     "3. Batal\n\n"
-                    "Atau ketik nama lain untuk ganti"
+                    "Atau ketik *nama lain* untuk ganti"
                 )
             else:
                 prompt = (
-                    "[PROJECT BARU]\n"
+                    "?? *PROJECT BARU*\n"
                     "--------------------\n\n"
-                    f"Project {display_name} belum terdaftar.\n\n"
+                    f"Project *{display_name}* belum terdaftar.\n\n"
                     "--------------------\n"
                     "Pilih tindakan:\n\n"
-                    "Ya - Buat project baru\n"
+                    "Ya - *Buat project baru*\n"
                     "Ketik nama lain untuk ganti\n\n"
-                    "Balas 'Ya' atau ketik nama baru"
+                    "Balas *Ya* atau ketik nama baru"
                 )
-            return {'response': prompt.replace('*', ''), 'completed': False}
+            return {'response': prompt, 'completed': False}
 
         for tx in transactions:
             tx['nama_projek'] = apply_company_prefix(final_name, dompet_sheet, company)
