@@ -268,25 +268,45 @@ Peringatan: Data yang dihapus tidak bisa dikembalikan!'''
 def process_undo_deletion(items: list) -> dict:
     """Helper to execute deletion"""
     deleted_count = 0
-    
+    if not items:
+        return {
+            'response': '❌ Tidak ada transaksi untuk dihapus.',
+            'completed': True
+        }
+
+    # Delete in descending row order per sheet to avoid row-shift issues
+    items_by_dompet = {}
+    target_count = 0
     for item in items:
         dompet = item.get('dompet')
         row = item.get('row')
-        
-        # Delete row from sheet
-        success = delete_transaction_row(dompet, row)
-        
-        if success:
-            deleted_count += 1
+        if not dompet or not row:
+            continue
+        target_count += 1
+        items_by_dompet.setdefault(dompet, []).append(item)
+
+    if target_count == 0:
+        return {
+            'response': '❌ Tidak ada transaksi yang valid untuk dihapus.',
+            'completed': True
+        }
+
+    for dompet, dompet_items in items_by_dompet.items():
+        dompet_items_sorted = sorted(dompet_items, key=lambda x: int(x.get('row') or 0), reverse=True)
+        for item in dompet_items_sorted:
+            row = item.get('row')
+            success = delete_transaction_row(dompet, row)
+            if success:
+                deleted_count += 1
     
-    if deleted_count == len(items):
+    if deleted_count == target_count:
         return {
             'response': f'✅ {deleted_count} transaksi berhasil dihapus.',
             'completed': True
         }
     else:
         return {
-            'response': f'⚠️ {deleted_count}/{len(items)} transaksi dihapus. Ada yang gagal.',
+            'response': f'⚠️ {deleted_count}/{target_count} transaksi dihapus. Ada yang gagal.',
             'completed': True
         }
 
