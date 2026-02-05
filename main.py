@@ -762,6 +762,15 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                     return 'ListrikAir'
                 return 'Lain Lain'
 
+            def _extract_debt_source(text: str) -> Optional[str]:
+                if not text:
+                    return None
+                lower = text.lower()
+                if not re.search(r"\b(utang|hutang|minjem|minjam|pinjam)\b", lower):
+                    return None
+                from config.wallets import resolve_dompet_from_text
+                return resolve_dompet_from_text(lower)
+
             def _send_and_track(response: str, event_id: str) -> None:
                 sent = send_reply(response)
                 bid = extract_bot_msg_id(sent)
@@ -991,6 +1000,10 @@ Balas 1 atau 2"""
 
             # 2. Save if Resolved
             if detected_company and dompet:
+                debt_source = _extract_debt_source(original_text)
+                if debt_source == dompet:
+                    debt_source = None
+
                 # Check Duplicates
                 t0 = txs[0]
                 is_dupe, warn = check_duplicate_transaction(
@@ -1015,6 +1028,8 @@ Balas 1 atau 2"""
                             dompet = locked_dompet
                             detected_company = locked_company
                             lock_note = f"Dompet disesuaikan ke {locked_dompet} (sesuai riwayat project)."
+                            if debt_source == dompet:
+                                debt_source = None
                         else:
                             # Ask user to confirm locked dompet or move project
                             set_pending_confirmation(
@@ -1027,6 +1042,8 @@ Balas 1 atau 2"""
                                     'company_input': detected_company,
                                     'dompet_locked': locked_dompet,
                                     'company_locked': locked_company,
+                                    'debt_source_dompet': debt_source,
+                                    'raw_text': original_text,
                                     'sender_name': pending.get('sender_name'),
                                     'source': pending.get('source'),
                                     'original_message_id': pending.get('message_id'),
@@ -1052,22 +1069,24 @@ Balas 1 atau 2"""
                             return jsonify({'status': 'project_lock_mismatch'}), 200
 
                 # New project but first tx is expense ? confirm
-                if pending.get('is_new_project'):
-                    has_income = any(t.get('tipe') == 'Pemasukan' for t in txs)
-                    if not has_income:
-                        set_pending_confirmation(
-                            user_id=sender_number,
-                            chat_id=chat_jid,
-                            data={
-                                'type': 'new_project_first_expense',
-                                'transactions': txs,
-                                'dompet': dompet,
-                                'company': detected_company,
-                                'sender_name': pending.get('sender_name'),
-                                'source': pending.get('source'),
-                                'original_message_id': pending.get('message_id'),
-                                'event_id': pending.get('event_id'),
-                                'pending_key': pkey
+                    if pending.get('is_new_project'):
+                        has_income = any(t.get('tipe') == 'Pemasukan' for t in txs)
+                        if not has_income:
+                            set_pending_confirmation(
+                                user_id=sender_number,
+                                chat_id=chat_jid,
+                                data={
+                                    'type': 'new_project_first_expense',
+                                    'transactions': txs,
+                                    'dompet': dompet,
+                                    'company': detected_company,
+                                    'debt_source_dompet': debt_source,
+                                    'raw_text': original_text,
+                                    'sender_name': pending.get('sender_name'),
+                                    'source': pending.get('source'),
+                                    'original_message_id': pending.get('message_id'),
+                                    'event_id': pending.get('event_id'),
+                                    'pending_key': pkey
                             }
                         )
                         msg = (
@@ -1116,6 +1135,24 @@ Balas 1 atau 2"""
                         if pname and pname.lower() not in ['saldo umum', 'operasional kantor', 'umum', 'unknown']:
                             set_project_lock(pname, dompet, actor=pending.get('sender_name', sender_name), reason='commit')
 
+                    # If funded by another dompet (utang), record lender outflow only
+                    if debt_source and debt_source != dompet:
+                        total_amount = sum(int(t.get('jumlah', 0) or 0) for t in txs)
+                        if total_amount > 0:
+                            debt_desc = f"Hutang ke dompet {dompet}"
+                            append_project_transaction(
+                                transaction={
+                                    'jumlah': total_amount,
+                                    'keterangan': debt_desc,
+                                    'tipe': 'Pengeluaran',
+                                    'message_id': f"{event_id}|UTANG"
+                                },
+                                sender_name=pending.get('sender_name', sender_name),
+                                source=pending.get('source', 'WhatsApp'),
+                                dompet_sheet=debt_source,
+                                project_name="Saldo Umum"
+                            )
+
                     if pending.get('is_new_project'):
                         raw_proj = txs[0].get('nama_projek') if txs else ''
                         if raw_proj:
@@ -1128,6 +1165,9 @@ Balas 1 atau 2"""
                         response += f"\n {lock_note}"
                     if new_project_expense_note:
                         response += f"\n {new_project_expense_note}"
+                    if debt_source and debt_source != dompet:
+                        total_amount = sum(int(t.get('jumlah', 0) or 0) for t in txs)
+                        response += f"\n💳 Utang dicatat: {debt_source} → {dompet} (Rp {total_amount:,})".replace(',', '.')
                     _send_and_track(response, event_id)
                     return jsonify({'status': 'saved_project'}), 200
 
@@ -1140,16 +1180,18 @@ Balas 1 atau 2"""
                         'transactions': txs,
                         'dompet': dompet,
                         'company': detected_company,
+                        'debt_source_dompet': debt_source,
                         'sender_name': pending.get('sender_name'),
                         'source': pending.get('source'),
                         'original_message_id': pending.get('message_id'),
                         'event_id': pending.get('event_id'),
                         'is_new_project': pending.get('is_new_project', False),
-                        'pending_key': pkey
+                        'pending_key': pkey,
+                        'raw_text': original_text
                     }
                 )
                 draft_msg = format_draft_summary_project(
-                    txs, dompet, detected_company, mention
+                    txs, dompet, detected_company, mention, debt_source or ""
                 )
                 send_reply(draft_msg)
                 return jsonify({'status': 'draft_project'}), 200

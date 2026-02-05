@@ -23,6 +23,15 @@ from config.wallets import get_company_name_from_sheet
 logger = logging.getLogger(__name__)
 
 
+def _is_debt_item(item: dict) -> bool:
+    ket = (item.get('keterangan') or '').lower()
+    if 'utang' in ket or 'hutang' in ket:
+        return True
+    if 'transfer ke dompet' in ket:
+        return True
+    return False
+
+
 def _build_revision_summary(items: list) -> str:
     if not items:
         return ""
@@ -97,6 +106,15 @@ def handle_revision_command(user_id: str, chat_id: str, text: str,
         return {
             'action': 'REPLY',
             'response': '❌ Data transaksi tidak ditemukan di spreadsheet.'
+        }
+
+    non_debt_items = [i for i in items if not _is_debt_item(i)]
+    if non_debt_items:
+        items = non_debt_items
+    else:
+        return {
+            'action': 'REPLY',
+            'response': '❌ Tidak ada transaksi utama untuk direvisi (hanya item utang).'
         }
     
     # ==========================================

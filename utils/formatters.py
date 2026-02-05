@@ -275,7 +275,8 @@ def format_draft_summary_operational(transactions: list, dompet_sheet: str, cate
     return "\n".join(lines)
 
 
-def format_draft_summary_project(transactions: list, dompet_sheet: str, company: str, mention: str = "") -> str:
+def format_draft_summary_project(transactions: list, dompet_sheet: str, company: str, mention: str = "",
+                                 debt_source: str = "") -> str:
     """Format draft confirmation for project transactions.
     
     Note: mention parameter is kept for backward compatibility but is ignored.
@@ -295,13 +296,17 @@ def format_draft_summary_project(transactions: list, dompet_sheet: str, company:
         f"💼 Dompet: {short_dompet}",
         f"🏢 Company: {company or '-'}",
         f"📋 Projek: {proj_display}",
+    ]
+    if debt_source:
+        lines.append(f"💳 Sumber dana (utang): {debt_source}")
+    lines.extend([
         "",
         "Konfirmasi simpan?",
         "1️⃣ Simpan",
         "2️⃣ Ganti dompet",
         "3️⃣ Ubah projek",
         "4️⃣ Batal"
-    ]
+    ])
     return "\n".join(lines)
 
 

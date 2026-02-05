@@ -1,4 +1,5 @@
 import re
+from typing import Optional
 from datetime import datetime
 from services.state_manager import (
     set_pending_confirmation,
@@ -29,7 +30,8 @@ from config.wallets import (
     get_company_name_from_sheet,
     apply_company_prefix,
     extract_company_prefix,
-    strip_company_prefix
+    strip_company_prefix,
+    resolve_dompet_from_text
 )
 
 def extract_project_name_from_text(text: str) -> str:
@@ -72,6 +74,15 @@ def _assign_tx_ids(transactions: list, event_id: str) -> list:
     return tx_ids
 
 
+def _extract_debt_source(text: str) -> Optional[str]:
+    if not text:
+        return None
+    lower = text.lower()
+    if not re.search(r"\b(utang|hutang|minjem|minjam|pinjam)\b", lower):
+        return None
+    return resolve_dompet_from_text(lower)
+
+
 def _apply_project_prefix(transactions: list, dompet_sheet: str, company: str) -> None:
     for tx in transactions:
         pname = tx.get('nama_projek')
@@ -83,7 +94,7 @@ def _continue_project_after_name(transactions: list, dompet_sheet: str, company:
                                  user_id: str, sender_name: str, source: str,
                                  original_message_id: str, event_id: str,
                                  is_new_project: bool, is_group: bool,
-                                 chat_id: str) -> dict:
+                                 chat_id: str, debt_source: Optional[str] = None) -> dict:
     """Continue project flow after project name is resolved."""
     _apply_project_prefix(transactions, dompet_sheet, company)
 
@@ -120,6 +131,7 @@ def _continue_project_after_name(transactions: list, dompet_sheet: str, company:
             'transactions': transactions,
             'dompet': dompet_sheet,
             'company': company,
+            'debt_source_dompet': debt_source,
             'sender_name': sender_name,
             'source': source,
             'original_message_id': original_message_id,
@@ -129,7 +141,7 @@ def _continue_project_after_name(transactions: list, dompet_sheet: str, company:
     )
 
     response = format_draft_summary_project(
-        transactions, dompet_sheet, company, ""
+        transactions, dompet_sheet, company, "", debt_source or ""
     )
     return {'response': response, 'completed': False}
 
@@ -160,6 +172,7 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
     is_new_project = pending_data.get('is_new_project', False)
     finish_decision = pending_data.get('finish_decision')
     allow_finish = finish_decision != 'SKIP'
+    debt_source = pending_data.get('debt_source_dompet')
 
     _assign_tx_ids(transactions, event_id)
 
@@ -181,6 +194,24 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
             project_name=p_name
         )
 
+    # If transaction is funded by another dompet (utang), record source outflow
+    if debt_source and debt_source != dompet_sheet:
+        total_amount = sum(int(t.get('jumlah', 0) or 0) for t in transactions)
+        if total_amount > 0:
+            debt_desc = f"Hutang ke dompet {dompet_sheet}"
+            append_project_transaction(
+                transaction={
+                    'jumlah': total_amount,
+                    'keterangan': debt_desc,
+                    'tipe': 'Pengeluaran',
+                    'message_id': f"{event_id}|UTANG"
+                },
+                sender_name=sender_name,
+                source=pending_data.get('source', 'WhatsApp'),
+                dompet_sheet=debt_source,
+                project_name="Saldo Umum"
+            )
+
     # If this is a revision move, delete old rows after re-save
     if pending_data.get('revision_delete'):
         for item in pending_data.get('revision_delete', []):
@@ -201,6 +232,9 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
     tx_ids = [t.get('tx_id') for t in transactions if t.get('tx_id')]
     if tx_ids:
         response += f"\nðŸ†” TX: {', '.join(tx_ids)}"
+    if debt_source and debt_source != dompet_sheet:
+        total_amount = sum(int(t.get('jumlah', 0) or 0) for t in transactions)
+        response += f"\nðŸ’³ Utang dicatat: {debt_source} â†’ {dompet_sheet} (Rp {total_amount:,})".replace(',', '.')
 
     # Lock project to dompet for consistency
     for t in transactions:
@@ -337,6 +371,8 @@ Atau ketik /cancel untuk batal total"""
     if pending_type == 'category_scope':
         
         category_scope = None
+        raw_text = pending_data.get('raw_text', '')
+        debt_source = _extract_debt_source(raw_text)
         # Parse user answer (accept tokens inside longer text)
         if any(k in text_lower for k in ['operational', 'operasional', 'kantor', 'ops']):
             category_scope = 'OPERATIONAL'
@@ -392,7 +428,8 @@ Atau ketik /cancel untuk batal total"""
                     'transactions': transactions,
                     'original_message_id': original_msg_id,
                     'event_id': event_id,
-                    'raw_text': pending_data.get('raw_text', '') # Pass raw text for project extraction later
+                    'raw_text': raw_text, # Pass raw text for project extraction later
+                    'debt_source_dompet': debt_source
                 }
             )
             
@@ -410,6 +447,8 @@ Atau ketik /cancel untuk batal total"""
         
         suggested = pending_data.get('suggested_scope')
         category_scope = None
+        raw_text = pending_data.get('raw_text', '')
+        debt_source = _extract_debt_source(raw_text)
         
         if text_lower in ['1', 'ya', 'yes', 'iya', 'betul']:
             # User confirm suggestion
@@ -453,7 +492,8 @@ Atau ketik /cancel untuk batal total"""
                     'transactions': transactions,
                     'original_message_id': original_msg_id,
                     'event_id': event_id,
-                    'raw_text': pending_data.get('raw_text', '')
+                    'raw_text': raw_text,
+                    'debt_source_dompet': debt_source
                 }
             )
             response = build_selection_prompt(transactions, "")
@@ -475,7 +515,8 @@ Atau ketik /cancel untuk batal total"""
                     'transactions': pending_data.get('transactions', []),
                     'original_message_id': pending_data.get('original_message_id'),
                     'event_id': pending_data.get('event_id'),
-                    'raw_text': pending_data.get('raw_text', '')
+                    'raw_text': pending_data.get('raw_text', ''),
+                    'debt_source_dompet': pending_data.get('debt_source_dompet')
                 }
             )
             response = build_selection_prompt(pending_data.get('transactions', []), "")
@@ -569,12 +610,17 @@ Atau ketik /cancel untuk batal total"""
         # Try to detect project name from original text
         # Check if project name is already in ALL transactions (from AI)
         all_have_project = all(t.get('nama_projek') for t in transactions)
-        
+        raw_text = pending_data.get('raw_text', '')
+        debt_source = pending_data.get('debt_source_dompet')
+        if not debt_source:
+            debt_source = _extract_debt_source(raw_text)
+        if debt_source == dompet_sheet:
+            debt_source = None
+
         if all_have_project:
              # Already have project name from AI extraction
              pass
         else:
-            raw_text = pending_data.get('raw_text', '')
             project_name = extract_project_name_from_text(raw_text)
             
             if not project_name:
@@ -587,6 +633,8 @@ Atau ketik /cancel untuk batal total"""
                         'dompet_sheet': dompet_sheet,
                         'company': company,
                         'transactions': transactions,
+                        'raw_text': raw_text,
+                        'debt_source_dompet': debt_source,
                         'original_message_id': pending_data.get('original_message_id')
                     }
                 )
@@ -612,15 +660,17 @@ Atau ketik /cancel untuk batal total"""
                 'transactions': transactions,
                 'dompet': dompet_sheet,
                 'company': company,
+                'debt_source_dompet': debt_source,
                 'sender_name': sender_name,
                 'source': pending_data.get('source', 'WhatsApp'),
                 'original_message_id': pending_data.get('original_message_id'),
-                'event_id': pending_data.get('event_id')
+                'event_id': pending_data.get('event_id'),
+                'raw_text': raw_text
             }
         )
         
         response = format_draft_summary_project(
-            transactions, dompet_sheet, company, ""
+            transactions, dompet_sheet, company, "", debt_source or ""
         )
 
         return {
@@ -636,6 +686,12 @@ Atau ketik /cancel untuk batal total"""
         project_name = text.strip()
         dompet_sheet = pending_data.get('dompet_sheet')
         company = pending_data.get('company')
+        raw_text = pending_data.get('raw_text', '')
+        debt_source = pending_data.get('debt_source_dompet')
+        if not debt_source:
+            debt_source = _extract_debt_source(raw_text)
+            if debt_source == dompet_sheet:
+                debt_source = None
         
         if text_lower in ['/cancel', 'batal']:
             clear_pending_confirmation(user_id, chat_id)
@@ -671,6 +727,8 @@ Atau ketik /cancel untuk batal total"""
                     'transactions': pending_data.get('transactions', []),
                     'dompet_sheet': dompet_sheet,
                     'company': company,
+                    'raw_text': raw_text,
+                    'debt_source_dompet': debt_source,
                     'original_message_id': pending_data.get('original_message_id'),
                     'event_id': pending_data.get('event_id')
                 }
@@ -701,6 +759,8 @@ Atau ketik /cancel untuk batal total"""
                     'transactions': transactions,
                     'dompet_sheet': dompet_sheet,
                     'company': company,
+                    'raw_text': raw_text,
+                    'debt_source_dompet': debt_source,
                     'sender_name': sender_name,
                     'source': pending_data.get('source', 'WhatsApp'),
                     'original_message_id': pending_data.get('original_message_id'),
@@ -730,6 +790,7 @@ Atau ketik /cancel untuk batal total"""
                     'transactions': transactions,
                     'dompet': dompet_sheet,
                     'company': company,
+                    'debt_source_dompet': debt_source,
                     'sender_name': sender_name,
                     'source': pending_data.get('source', 'WhatsApp'),
                     'original_message_id': pending_data.get('original_message_id'),
@@ -755,16 +816,18 @@ Atau ketik /cancel untuk batal total"""
                 'transactions': transactions,
                 'dompet': dompet_sheet,
                 'company': company,
+                'debt_source_dompet': debt_source,
                 'sender_name': sender_name,
                 'source': pending_data.get('source', 'WhatsApp'),
                 'original_message_id': pending_data.get('original_message_id'),
                 'event_id': pending_data.get('event_id'),
-                'is_new_project': is_new_project
+                'is_new_project': is_new_project,
+                'raw_text': raw_text
             }
         )
         
         response = format_draft_summary_project(
-            transactions, dompet_sheet, company, ""
+            transactions, dompet_sheet, company, "", debt_source or ""
         )
 
         return {
@@ -789,6 +852,8 @@ Atau ketik /cancel untuk batal total"""
                     'dompet_sheet': pending_data.get('dompet_sheet'),
                     'company': pending_data.get('company'),
                     'transactions': pending_data.get('transactions', []),
+                    'raw_text': pending_data.get('raw_text', ''),
+                    'debt_source_dompet': pending_data.get('debt_source_dompet'),
                     'original_message_id': pending_data.get('original_message_id'),
                     'event_id': pending_data.get('event_id')
                 }
@@ -798,6 +863,13 @@ Atau ketik /cancel untuk batal total"""
         transactions = pending_data.get('transactions', [])
         dompet_sheet = pending_data.get('dompet_sheet')
         company = pending_data.get('company')
+
+        debt_source = pending_data.get('debt_source_dompet')
+        if not debt_source:
+            raw_text = pending_data.get('raw_text', '')
+            debt_source = _extract_debt_source(raw_text)
+            if debt_source == dompet_sheet:
+                debt_source = None
         
         for tx in transactions:
             tx['nama_projek'] = final_name
@@ -810,15 +882,17 @@ Atau ketik /cancel untuk batal total"""
                 'transactions': transactions,
                 'dompet': dompet_sheet,
                 'company': company,
+                'debt_source_dompet': debt_source,
                 'sender_name': sender_name,
                 'source': pending_data.get('source', 'WhatsApp'),
                 'original_message_id': pending_data.get('original_message_id'),
-                'event_id': pending_data.get('event_id')
+                'event_id': pending_data.get('event_id'),
+                'raw_text': pending_data.get('raw_text', '')
             }
         )
         
         response = format_draft_summary_project(
-            transactions, dompet_sheet, company, ""
+            transactions, dompet_sheet, company, "", debt_source or ""
         )
         return {'response': response, 'completed': False}
 
@@ -831,6 +905,12 @@ Atau ketik /cancel untuk batal total"""
         company = pending_data.get('company')
         transactions = pending_data.get('transactions', [])
         project_name = pending_data.get('project_name')
+        debt_source = pending_data.get('debt_source_dompet')
+        if not debt_source:
+            raw_text = pending_data.get('raw_text', '')
+            debt_source = _extract_debt_source(raw_text)
+            if debt_source == dompet_sheet:
+                debt_source = None
 
         if clean in ['ya', 'y', 'yes', 'oke', 'ok', 'buat', 'lanjut']:
             # Proceed as new project
@@ -838,7 +918,7 @@ Atau ketik /cancel untuk batal total"""
                 transactions, dompet_sheet, company,
                 user_id, sender_name, pending_data.get('source', 'WhatsApp'),
                 pending_data.get('original_message_id'), pending_data.get('event_id'),
-                True, is_group, chat_id
+                True, is_group, chat_id, debt_source
             )
 
         if clean in ['tidak', 'no', 'ganti', 'bukan', 'salah']:
@@ -850,6 +930,8 @@ Atau ketik /cancel untuk batal total"""
                     'dompet_sheet': dompet_sheet,
                     'company': company,
                     'transactions': transactions,
+                    'raw_text': pending_data.get('raw_text', ''),
+                    'debt_source_dompet': debt_source,
                     'original_message_id': pending_data.get('original_message_id'),
                     'event_id': pending_data.get('event_id')
                 }
@@ -880,6 +962,8 @@ Atau ketik /cancel untuk batal total"""
                     'transactions': transactions,
                     'dompet_sheet': dompet_sheet,
                     'company': company,
+                    'raw_text': pending_data.get('raw_text', ''),
+                    'debt_source_dompet': debt_source,
                     'original_message_id': pending_data.get('original_message_id'),
                     'event_id': pending_data.get('event_id')
                 }
@@ -902,7 +986,7 @@ Atau ketik /cancel untuk batal total"""
             transactions, dompet_sheet, company,
             user_id, sender_name, pending_data.get('source', 'WhatsApp'),
             pending_data.get('original_message_id'), pending_data.get('event_id'),
-            (res.get('status') == 'NEW'), is_group, chat_id
+            (res.get('status') == 'NEW'), is_group, chat_id, debt_source
         )
 
     # ===================================
@@ -1092,7 +1176,24 @@ Atau ketik /cancel untuk batal total"""
                 main_tx['jumlah'] = int(new_amt)
 
             response = format_draft_summary_project(
-                transactions, pending_data.get('dompet'), pending_data.get('company'), ""
+                transactions, pending_data.get('dompet'), pending_data.get('company'), "",
+                pending_data.get('debt_source_dompet') or ""
+            )
+            return {'response': response, 'completed': False}
+
+        # Update debt source if user mentions utang + dompet
+        debt_from = _extract_debt_source(text_lower)
+        if debt_from:
+            if debt_from != pending_data.get('dompet'):
+                pending_data['debt_source_dompet'] = debt_from
+            else:
+                pending_data['debt_source_dompet'] = None
+            response = format_draft_summary_project(
+                pending_data.get('transactions', []),
+                pending_data.get('dompet'),
+                pending_data.get('company'),
+                "",
+                pending_data.get('debt_source_dompet') or ""
             )
             return {'response': response, 'completed': False}
 
@@ -1133,60 +1234,6 @@ Atau ketik /cancel untuk batal total"""
                 }
 
             return _commit_project_transactions(pending_data, sender_name, user_id, chat_id, is_group)
-            dompet_sheet = pending_data.get('dompet')
-            company = pending_data.get('company')
-            event_id = pending_data.get('event_id') or pending_data.get('original_message_id')
-            is_new_project = pending_data.get('is_new_project', False)
-            
-            _assign_tx_ids(transactions, event_id)
-            
-            for tx in transactions:
-                # Apply lifecycle markers
-                p_name = tx.get('nama_projek', '') or 'Umum'
-                p_name = apply_company_prefix(p_name, dompet_sheet, company)
-                p_name = apply_lifecycle_markers(p_name, tx, is_new_project=is_new_project)
-                
-                append_project_transaction(
-                    transaction={
-                        'jumlah': tx['jumlah'],
-                        'keterangan': tx['keterangan'],
-                        'tipe': tx.get('tipe', 'Pengeluaran'),
-                        'message_id': tx.get('message_id')
-                    },
-                    sender_name=sender_name,
-                    source=pending_data.get('source', 'WhatsApp'),
-                    dompet_sheet=dompet_sheet,
-                    project_name=p_name
-                )
-            
-            # If this is a revision move, delete old rows after re-save
-            if pending_data.get('revision_delete'):
-                for item in pending_data.get('revision_delete', []):
-                    delete_transaction_row(item.get('dompet'), item.get('row'))
-
-            # Update project cache if new
-            if is_new_project:
-                raw_proj = transactions[0].get('nama_projek')
-                if raw_proj:
-                    add_new_project_to_cache(raw_proj)
-            
-            invalidate_dashboard_cache()
-            clear_pending_confirmation(user_id, chat_id)
-            if pending_data.get('pending_key'):
-                clear_pending_transaction(pending_data.get('pending_key'))
-            
-            response = format_success_reply_new(transactions, dompet_sheet, company, "").replace('*', '')
-            tx_ids = [t.get('tx_id') for t in transactions if t.get('tx_id')]
-            if tx_ids:
-                response += f"\n🆔 TX: {', '.join(tx_ids)}"
-            
-            # Lock project to dompet for consistency
-            for t in transactions:
-                pname = t.get('nama_projek')
-                if pname and pname.lower() not in ['saldo umum', 'operasional kantor', 'umum', 'unknown']:
-                    set_project_lock(pname, dompet_sheet, actor=sender_name, reason="commit")
-            return {'response': response, 'completed': True, 'bot_ref_event_id': event_id}
-        
         if text_lower in ['2', 'ganti dompet', 'dompet']:
             # Re-select company/dompet
             set_pending_confirmation(
@@ -1196,13 +1243,34 @@ Atau ketik /cancel untuk batal total"""
                     'type': 'dompet_selection_project',
                     'category_scope': 'PROJECT',
                     'transactions': pending_data.get('transactions', []),
+                    'raw_text': pending_data.get('raw_text', ''),
+                    'debt_source_dompet': pending_data.get('debt_source_dompet'),
                     'original_message_id': pending_data.get('original_message_id'),
                     'event_id': pending_data.get('event_id')
                 }
             )
             response = build_selection_prompt(pending_data.get('transactions', []), "")
             return {'response': response, 'completed': False}
-        
+
+        # Dompet hint inside text (e.g., "utang tx surabaya")
+        dompet_hint = resolve_dompet_from_text(text_lower)
+        if dompet_hint and not re.search(r"\b(utang|hutang|minjem|minjam|pinjam)\b", text_lower):
+            set_pending_confirmation(
+                user_id=user_id,
+                chat_id=chat_id,
+                data={
+                    'type': 'dompet_selection_project',
+                    'category_scope': 'PROJECT',
+                    'transactions': pending_data.get('transactions', []),
+                    'raw_text': pending_data.get('raw_text', ''),
+                    'debt_source_dompet': pending_data.get('debt_source_dompet'),
+                    'original_message_id': pending_data.get('original_message_id'),
+                    'event_id': pending_data.get('event_id')
+                }
+            )
+            response = build_selection_prompt(pending_data.get('transactions', []), "")
+            return {'response': response, 'completed': False}
+
         if text_lower in ['3', 'ubah projek', 'projek', 'project']:
             set_pending_confirmation(
                 user_id=user_id,
@@ -1212,17 +1280,19 @@ Atau ketik /cancel untuk batal total"""
                     'dompet_sheet': pending_data.get('dompet'),
                     'company': pending_data.get('company'),
                     'transactions': pending_data.get('transactions', []),
+                    'raw_text': pending_data.get('raw_text', ''),
+                    'debt_source_dompet': pending_data.get('debt_source_dompet'),
                     'original_message_id': pending_data.get('original_message_id'),
                     'event_id': pending_data.get('event_id')
                 }
             )
             return {'response': '📝 Nama projeknya apa?', 'completed': False}
         
-        # Cancel
-        clear_pending_confirmation(user_id, chat_id)
-        if pending_data.get('pending_key'):
-            clear_pending_transaction(pending_data.get('pending_key'))
-        return {'response': '❌ Dibatalkan.', 'completed': True}
+        # Unknown input -> keep pending and ask again
+        return {
+            'response': 'Balas: 1 Simpan, 2 Ganti dompet, 3 Ubah projek, atau 4 Batal.',
+            'completed': False
+        }
 
     # ===================================
     # HANDLE: Project Dompet Mismatch
@@ -1244,8 +1314,13 @@ Atau ketik /cancel untuk batal total"""
         company_input = pending_data.get('company_input')
         transactions = pending_data.get('transactions', [])
         is_new_project = pending_data.get('is_new_project', False)
+        debt_source = pending_data.get('debt_source_dompet')
+        if not debt_source:
+            raw_text = pending_data.get('raw_text', '')
+            debt_source = _extract_debt_source(raw_text)
         
         if choice in ['1', 'gunakan', 'ya', 'yes']:
+            debt_use = None if debt_source == dompet_locked else debt_source
             set_pending_confirmation(
                 user_id=user_id,
                 chat_id=chat_id,
@@ -1254,16 +1329,18 @@ Atau ketik /cancel untuk batal total"""
                     'transactions': transactions,
                     'dompet': dompet_locked,
                     'company': company_locked,
+                    'debt_source_dompet': debt_use,
                     'sender_name': sender_name,
                     'source': pending_data.get('source', 'WhatsApp'),
                     'original_message_id': pending_data.get('original_message_id'),
                     'event_id': pending_data.get('event_id'),
                     'is_new_project': is_new_project,
-                    'pending_key': pending_data.get('pending_key')
+                    'pending_key': pending_data.get('pending_key'),
+                    'raw_text': pending_data.get('raw_text', '')
                 }
             )
             response = format_draft_summary_project(
-                transactions, dompet_locked, company_locked, ""
+                transactions, dompet_locked, company_locked, "", debt_use or ""
             )
             return {'response': response, 'completed': False}
         
@@ -1272,6 +1349,7 @@ Atau ketik /cancel untuk batal total"""
                 pname = transactions[0].get('nama_projek')
                 if pname:
                     set_project_lock(pname, dompet_input, actor=sender_name, reason="user_move", previous_dompet=dompet_locked)
+            debt_use = None if debt_source == dompet_input else debt_source
             set_pending_confirmation(
                 user_id=user_id,
                 chat_id=chat_id,
@@ -1280,16 +1358,18 @@ Atau ketik /cancel untuk batal total"""
                     'transactions': transactions,
                     'dompet': dompet_input,
                     'company': company_input,
+                    'debt_source_dompet': debt_use,
                     'sender_name': sender_name,
                     'source': pending_data.get('source', 'WhatsApp'),
                     'original_message_id': pending_data.get('original_message_id'),
                     'event_id': pending_data.get('event_id'),
                     'is_new_project': is_new_project,
-                    'pending_key': pending_data.get('pending_key')
+                    'pending_key': pending_data.get('pending_key'),
+                    'raw_text': pending_data.get('raw_text', '')
                 }
             )
             response = format_draft_summary_project(
-                transactions, dompet_input, company_input, ""
+                transactions, dompet_input, company_input, "", debt_use or ""
             )
             return {'response': response, 'completed': False}
         
@@ -1306,6 +1386,12 @@ Atau ketik /cancel untuk batal total"""
         transactions = pending_data.get('transactions', [])
         dompet_sheet = pending_data.get('dompet')
         company = pending_data.get('company')
+        debt_source = pending_data.get('debt_source_dompet')
+        if not debt_source:
+            raw_text = pending_data.get('raw_text', '')
+            debt_source = _extract_debt_source(raw_text)
+            if debt_source == dompet_sheet:
+                debt_source = None
         
         if choice in ['1', 'lanjut', 'ya', 'yes']:
             set_pending_confirmation(
@@ -1316,16 +1402,18 @@ Atau ketik /cancel untuk batal total"""
                     'transactions': transactions,
                     'dompet': dompet_sheet,
                     'company': company,
+                    'debt_source_dompet': debt_source,
                     'sender_name': sender_name,
                     'source': pending_data.get('source', 'WhatsApp'),
                     'original_message_id': pending_data.get('original_message_id'),
                     'event_id': pending_data.get('event_id'),
                     'is_new_project': True,
-                    'pending_key': pending_data.get('pending_key')
+                    'pending_key': pending_data.get('pending_key'),
+                    'raw_text': pending_data.get('raw_text', '')
                 }
             )
             response = format_draft_summary_project(
-                transactions, dompet_sheet, company, ""
+                transactions, dompet_sheet, company, "", debt_source or ""
             )
             return {'response': response, 'completed': False}
         
