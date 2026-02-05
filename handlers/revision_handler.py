@@ -52,7 +52,16 @@ def handle_revision_command(user_id: str, chat_id: str, text: str,
     
     text_lower = text.lower().strip()
     
-    # Get last bot report message if no quoted message
+    is_group = bool(chat_id and chat_id.endswith('@g.us'))
+
+    # Group: revision must reply a bot report (no fallback)
+    if is_group and not quoted_message_id:
+        return {
+            'action': 'REPLY',
+            'response': '💡 Di grup, /revisi harus reply pesan laporan bot (Transaksi Tercatat).'
+        }
+
+    # DM: allow last bot report fallback when no quoted message
     if not quoted_message_id:
         last_bot_msg = get_last_bot_report(chat_id)
         if last_bot_msg:
@@ -63,15 +72,16 @@ def handle_revision_command(user_id: str, chat_id: str, text: str,
     if quoted_message_id:
         original_tx_id = get_original_message_id(quoted_message_id) or ""
 
-    if not original_tx_id:
+    # DM fallback to last tx event when mapping missing
+    if not original_tx_id and not is_group:
         fallback_tx_id = get_last_tx_event(user_id, chat_id)
         if fallback_tx_id:
             original_tx_id = fallback_tx_id
 
-    if not quoted_message_id and not original_tx_id:
+    if not original_tx_id:
         return {
             'action': 'REPLY',
-            'response': '💡 Reply pesan laporan untuk merevisi, atau ketik /undo untuk batalkan transaksi terakhir.'
+            'response': '💡 Reply pesan laporan bot yang mau direvisi agar targetnya tepat.'
         }
     
     # Fetch transactions from sheet
