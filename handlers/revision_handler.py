@@ -92,24 +92,44 @@ def handle_revision_command(user_id: str, chat_id: str, text: str,
             # User request says: "find matching item"
             # But usually we have 1 transaction per message. Sometime multiple.
             
+            def _is_fee_item(item: dict) -> bool:
+                ket = (item.get('keterangan') or '').lower()
+                return any(k in ket for k in ['biaya transfer', 'biaya admin', 'fee', 'admin', 'charge'])
+
+            fee_request = bool(re.search(r"\b(fee|admin)\b", text_lower)) or (
+                'biaya transfer' in text_lower or 'biaya admin' in text_lower
+            )
+
             if len(items) == 1:
                 target = items[0]
-                success = update_transaction_amount(
-                    target['dompet'], 
-                    target['row'], 
-                    new_amount
-                )
-                if success:
-                    return {
-                        'action': 'REPLY',
-                        'response': f"✅ Revisi: {target.get('keterangan')} → Rp {new_amount:,}".replace(',', '.')
-                    }
-                else:
-                    return {'action': 'REPLY', 'response': '❌ Gagal update spreadsheet.'}
             else:
-                 # TODO: Match logic. For now, just ask which one.
-                 # Simplified for User Request Step 105 compliance
-                 pass
+                fee_items = [i for i in items if _is_fee_item(i)]
+                non_fee_items = [i for i in items if not _is_fee_item(i)]
+
+                if fee_request:
+                    if not fee_items:
+                        return {
+                            'action': 'REPLY',
+                            'response': '❌ Tidak ditemukan transaksi fee/biaya pada laporan ini.'
+                        }
+                    target = min(fee_items, key=lambda x: int(x.get('amount', 0) or 0))
+                else:
+                    if non_fee_items:
+                        target = max(non_fee_items, key=lambda x: int(x.get('amount', 0) or 0))
+                    else:
+                        target = max(items, key=lambda x: int(x.get('amount', 0) or 0))
+
+            success = update_transaction_amount(
+                target['dompet'],
+                target['row'],
+                new_amount
+            )
+            if success:
+                return {
+                    'action': 'REPLY',
+                    'response': f"✅ Revisi: {target.get('keterangan')} → Rp {new_amount:,}".replace(',', '.')
+                }
+            return {'action': 'REPLY', 'response': '❌ Gagal update spreadsheet.'}
 
     # 2. Category scope revision (OPERATIONAL <-> PROJECT)
     if any(word in text_lower for word in ['operational', 'operasional', 'project', 'projek']):
