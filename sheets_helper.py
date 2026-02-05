@@ -297,7 +297,7 @@ def get_dompet_sheet(dompet_name: str):
     """Get a specific dompet sheet by name, auto-create with Split Layout if missing.
     
     Args:
-        dompet_name: Name of the dompet sheet (e.g., 'CV HB (101)')
+        dompet_name: Name of the dompet sheet (e.g., 'CV HB(101)')
         
     Returns:
         gspread.Worksheet object
@@ -512,7 +512,7 @@ def append_operational_transaction(
         transaction: Dict with jumlah, keterangan, message_id
         sender_name: Name of person recording
         source: Source (WhatsApp/Telegram)
-        source_wallet: Source wallet name (e.g., "CV HB (101)")
+        source_wallet: Source wallet name (e.g., "CV HB(101)")
         category: Category (Gaji/ListrikAir/Konsumsi/Peralatan/Lain Lain)
         
     Returns:

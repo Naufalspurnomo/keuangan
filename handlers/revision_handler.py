@@ -223,7 +223,7 @@ def handle_revision_command(user_id: str, chat_id: str, text: str,
             
             return {
                 'action': 'REPLY',
-                'response': '🔄 Pindah ke Operational Kantor. Gunakan uang dari dompet mana?\n\n1. CV HB (101)\n2. TX SBY (216)\n3. TX BALI (087)\n\nBalas angka 1-3'
+                'response': '🔄 Pindah ke Operational Kantor. Gunakan uang dari dompet mana?\n\n1. CV HB(101)\n2. TX SBY (216)\n3. TX BALI (087)\n\nBalas angka 1-3'
             }
         
         else:  # new_scope == 'PROJECT'

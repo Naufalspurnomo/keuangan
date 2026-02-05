@@ -39,7 +39,7 @@ FIXTURE_DATA = [
         "jumlah": 7000000,
         "tipe": "Pemasukan",
         "nama_projek": "Rich Palace",
-        "company_sheet": "CV HB (101)",
+        "company_sheet": "CV HB(101)",
         "keterangan": "DP Rich Palace",
         "kategori": "Income",
     },
@@ -48,7 +48,7 @@ FIXTURE_DATA = [
         "jumlah": 2500000,
         "tipe": "Pengeluaran",
         "nama_projek": "Rich Palace",
-        "company_sheet": "CV HB (101)",
+        "company_sheet": "CV HB(101)",
         "keterangan": "Beli cat",
         "kategori": "Project Expense",
     },
@@ -120,7 +120,7 @@ def build_summary(data):
 
 def wallet_balances_fixture():
     return {
-        "CV HB (101)": {
+        "CV HB(101)": {
             "pemasukan": 7000000,
             "pengeluaran": 2500000,
             "saldo": 4500000,

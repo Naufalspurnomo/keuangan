@@ -14,14 +14,14 @@ import re
 # ===================== DOMPET SHEETS (Split Layout) =====================
 # These are the actual sheet names in Google Sheets
 DOMPET_SHEETS = [
-    "CV HB (101)",
+    "CV HB(101)",
     "TX SBY(216)",
     "TX BALI(087)"
 ]
 
 # Short names for display and reference
 DOMPET_SHORT_NAMES = {
-    "CV HB (101)": "CV HB",
+    "CV HB(101)": "CV HB",
     "TX SBY(216)": "TX SBY",
     "TX BALI(087)": "TX BALI"
 }
@@ -30,45 +30,45 @@ DOMPET_SHORT_NAMES = {
 # Lowercase for matching
 DOMPET_ALIASES = {
     # ==========================================
-    # CV HB (101) - Holja/Holla Variants
+    # CV HB(101) - Holja/Holla Variants
     # ==========================================
     # Standard names
-    "cv hb": "CV HB (101)",
-    "cvhb": "CV HB (101)",
-    "cv-hb": "CV HB (101)",
-    "cv.hb": "CV HB (101)",
-    "cv hb 101": "CV HB (101)",
+    "cv hb": "CV HB(101)",
+    "cvhb": "CV HB(101)",
+    "cv-hb": "CV HB(101)",
+    "cv.hb": "CV HB(101)",
+    "cv hb 101": "CV HB(101)",
     
     # Rekening number
-    "101": "CV HB (101)",
-    "rek 101": "CV HB (101)",
-    "rekening 101": "CV HB (101)",
-    "no 101": "CV HB (101)",
+    "101": "CV HB(101)",
+    "rek 101": "CV HB(101)",
+    "rekening 101": "CV HB(101)",
+    "no 101": "CV HB(101)",
     
     # Holja variants (original spelling)
-    "holja": "CV HB (101)",
-    "hollja": "CV HB (101)",
-    "hojja": "CV HB (101)",  # Common typo
-    "holjawall": "CV HB (101)",
-    "dompet holja": "CV HB (101)",
-    "dompet holjawall": "CV HB (101)",
+    "holja": "CV HB(101)",
+    "hollja": "CV HB(101)",
+    "hojja": "CV HB(101)",  # Common typo
+    "holjawall": "CV HB(101)",
+    "dompet holja": "CV HB(101)",
+    "dompet holjawall": "CV HB(101)",
     
     # Holla variants (alternative spelling)
-    "holla": "CV HB (101)",
-    "hollawall": "CV HB (101)",
-    "dompet holla": "CV HB (101)",
-    "dompet hollawall": "CV HB (101)",
+    "holla": "CV HB(101)",
+    "hollawall": "CV HB(101)",
+    "dompet holla": "CV HB(101)",
+    "dompet hollawall": "CV HB(101)",
     
     # Casual mentions
-    "hb": "CV HB (101)",
-    "cv": "CV HB (101)",
-    "dompet cv": "CV HB (101)",
-    "dompet hb": "CV HB (101)",
+    "hb": "CV HB(101)",
+    "cv": "CV HB(101)",
+    "dompet cv": "CV HB(101)",
+    "dompet hb": "CV HB(101)",
     
     # With spaces/typos
-    "hol ja": "CV HB (101)",
-    "hol la": "CV HB (101)",
-    "ho lja": "CV HB (101)",
+    "hol ja": "CV HB(101)",
+    "hol la": "CV HB(101)",
+    "ho lja": "CV HB(101)",
     
     # ==========================================
     # TX SBY (216) - Surabaya Variants
@@ -150,15 +150,15 @@ DOMPET_ALIASES = {
     # Common Typos & Abbreviations
     # ==========================================
     # Number typos
-    "1o1": "CV HB (101)",  # o instead of 0
-    "1O1": "CV HB (101)",
+    "1o1": "CV HB(101)",  # o instead of 0
+    "1O1": "CV HB(101)",
     "21e": "TX SBY(216)",  # e instead of 6
     "o87": "TX BALI(087)",  # o instead of 0
     "O87": "TX BALI(087)",
     
     # Indonesian spelling variants
-    "hojah": "CV HB (101)",
-    "hollah": "CV HB (101)",
+    "hojah": "CV HB(101)",
+    "hollah": "CV HB(101)",
     "texturein": "TX SBY(216)",  # Common typo
     "textureen": "TX SBY(216)",
     
@@ -171,8 +171,8 @@ DOMPET_ALIASES = {
     # ==========================================
     # When user says company numbers instead of dompet
     # (These map to company selection, not direct dompet)
-    "company 1": "CV HB (101)",  # HOLLA
-    "company 2": "CV HB (101)",  # HOJJA (same dompet)
+    "company 1": "CV HB(101)",  # HOLLA
+    "company 2": "CV HB(101)",  # HOJJA (same dompet)
     "company 3": "TX SBY(216)",  # TEXTURIN-Surabaya
     "company 4": "TX BALI(087)",  # TEXTURIN-Bali
     
@@ -180,10 +180,10 @@ DOMPET_ALIASES = {
     # CONTEXT-AWARE: Project/Company Names
     # ==========================================
     # These should be checked if mentioned WITH transaction
-    "holla project": "CV HB (101)",
-    "hojja project": "CV HB (101)",
-    "projek holla": "CV HB (101)",
-    "projek hojja": "CV HB (101)",
+    "holla project": "CV HB(101)",
+    "hojja project": "CV HB(101)",
+    "projek holla": "CV HB(101)",
+    "projek hojja": "CV HB(101)",
     
     "texturin sby project": "TX SBY(216)",
     "projek texturin": "TX SBY(216)",
@@ -195,22 +195,22 @@ DOMPET_ALIASES = {
 # Company -> Dompet mapping (for backward compatibility)
 # NOTE: KANTOR is NOT a company - it's operational expense category
 DOMPET_COMPANIES = {
-    "CV HB (101)": ["HOLLA", "HOJJA", "CV HB"],
+    "CV HB(101)": ["HOLLA", "HOJJA", "CV HB"],
     "TX SBY(216)": ["TEXTURIN-Surabaya", "TX SBY"],
     "TX BALI(087)": ["TEXTURIN-Bali", "TX BALI"]
 }
 
 # Flat selection options for 1-3 display in operational mode
 WALLET_SELECTION_OPTIONS = [
-    {"idx": 1, "dompet": "CV HB (101)", "short": "CV HB", "display": "1. CV HB (101)"},
+    {"idx": 1, "dompet": "CV HB(101)", "short": "CV HB", "display": "1. CV HB (101)"},
     {"idx": 2, "dompet": "TX SBY(216)", "short": "TX SBY", "display": "2. TX SBY (216)"},
     {"idx": 3, "dompet": "TX BALI(087)", "short": "TX BALI", "display": "3. TX BALI (087)"},
 ]
 
 # Project company/wallet selection (4 options - matching prompt)
 SELECTION_OPTIONS = [
-    {"idx": 1, "dompet": "CV HB (101)", "company": "HOLLA"},
-    {"idx": 2, "dompet": "CV HB (101)", "company": "HOJJA"},
+    {"idx": 1, "dompet": "CV HB(101)", "company": "HOLLA"},
+    {"idx": 2, "dompet": "CV HB(101)", "company": "HOJJA"},
     {"idx": 3, "dompet": "TX SBY(216)", "company": "TEXTURIN-Surabaya"},
     {"idx": 4, "dompet": "TX BALI(087)", "company": "TEXTURIN-Bali"},
 ]
@@ -245,7 +245,7 @@ def resolve_dompet_from_text(text: str) -> Optional[str]:
 
     # Detect dompet by account prefix (e.g., "216-073-7991")
     prefix_map = {
-        "101": "CV HB (101)",
+        "101": "CV HB(101)",
         "216": "TX SBY(216)",
         "087": "TX BALI(087)",
     }
@@ -290,7 +290,7 @@ def get_dompet_for_company(company_name: str) -> str:
     for dompet, companies in DOMPET_COMPANIES.items():
         if company_name in companies:
             return dompet
-    return "CV HB (101)"  # Fallback
+    return "CV HB(101)"  # Fallback
 
 
 def get_company_name_from_sheet(dompet_sheet: str) -> str:
@@ -339,7 +339,7 @@ def format_wallet_selection_prompt() -> str:
     return "\n".join(lines)
 
 
-PROJECT_PREFIX_DOMPETS = {"CV HB (101)"}
+PROJECT_PREFIX_DOMPETS = {"CV HB(101)"}
 PROJECT_PREFIX_COMPANIES = {"HOLLA", "HOJJA"}
 PROJECT_PREFIX_EXCLUDE = {"operasional kantor", "saldo umum", "umum", "unknown"}
 

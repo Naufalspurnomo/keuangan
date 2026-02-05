@@ -417,7 +417,7 @@ def _company_from_tx(tx: Dict) -> Optional[str]:
         return "Texturin Surabaya"
     if dompet == "TX BALI(087)":
         return "Texturin Bali"
-    if dompet == "CV HB (101)":
+    if dompet == "CV HB(101)":
         project_name = tx.get("nama_projek", "") or ""
         prefix = extract_company_prefix(project_name)
         if prefix == "HOJJA":

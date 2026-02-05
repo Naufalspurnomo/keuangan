@@ -27,8 +27,8 @@ from sheets_helper import (
 
 
 COMPANIES = [
-    {"name": "Hollawall", "dompet": "CV HB (101)", "prefix": "HOLLA"},
-    {"name": "Hojja", "dompet": "CV HB (101)", "prefix": "HOJJA"},
+    {"name": "Hollawall", "dompet": "CV HB(101)", "prefix": "HOLLA"},
+    {"name": "Hojja", "dompet": "CV HB(101)", "prefix": "HOJJA"},
     {"name": "Texturin Surabaya", "dompet": "TX SBY(216)", "prefix": None},
     {"name": "Texturin Bali", "dompet": "TX BALI(087)", "prefix": None},
 ]

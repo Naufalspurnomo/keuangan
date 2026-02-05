@@ -325,7 +325,7 @@ def build_pdf(output_path):
     story.append(
         Paragraph(
             "<b>Mode Project (pilih company):</b> 1 HOLLA, 2 HOJJA, 3 TEXTURIN-Surabaya, 4 TEXTURIN-Bali<br/>"
-            "<b>Mode Operasional (pilih dompet):</b> 1 CV HB (101), 2 TX SBY (216), 3 TX BALI (087)",
+            "<b>Mode Operasional (pilih dompet):</b> 1 CV HB(101), 2 TX SBY (216), 3 TX BALI (087)",
             styles["body"],
         )
     )

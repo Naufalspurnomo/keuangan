@@ -288,7 +288,7 @@ AVAILABLE INTENTS:
 3. **TRANSFER_FUNDS**
    - Moving money BETWEEN internal wallets.
    - WALLET BALANCE UPDATES (Isi dompet, isi saldo dompet, topup dompet).
-   - Examples: "Transfer ke TX SBY 1jt", "Update saldo dompet TX Bali 10jt", "Update saldo dompet TX SBY 10jt", "Update saldo dompet CV HB (101) 10jt", "Isi dompet"
+   - Examples: "Transfer ke TX SBY 1jt", "Update saldo dompet TX Bali 10jt", "Update saldo dompet TX SBY 10jt", "Update saldo dompet CV HB(101) 10jt", "Isi dompet"
 
     CRITICAL: If "Saldo Update Detected: True", ALWAYS classify as TRANSFER_FUNDS!
 
