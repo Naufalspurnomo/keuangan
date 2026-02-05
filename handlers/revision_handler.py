@@ -15,10 +15,27 @@ from services.state_manager import (
     get_last_bot_report,
     get_original_message_id
 )
-from utils.formatters import build_selection_prompt
+from utils.formatters import build_selection_prompt, format_success_reply_new
 from utils.parsers import parse_revision_amount
+from config.wallets import get_company_name_from_sheet
 
 logger = logging.getLogger(__name__)
+
+
+def _build_revision_summary(items: list) -> str:
+    if not items:
+        return ""
+    dompet_sheet = items[0].get('dompet') or ""
+    company = get_company_name_from_sheet(dompet_sheet) if dompet_sheet else "UMUM"
+    txs = []
+    for item in items:
+        txs.append({
+            'jumlah': int(item.get('amount', 0) or 0),
+            'keterangan': item.get('keterangan', '-') or '-',
+            'tipe': item.get('tipe', 'Pengeluaran') or 'Pengeluaran',
+            'nama_projek': item.get('nama_projek', '') or ''
+        })
+    return format_success_reply_new(txs, dompet_sheet or "-", company or "UMUM", "")
 
 def handle_revision_command(user_id: str, chat_id: str, text: str, 
                             quoted_message_id: str = None) -> dict:
@@ -125,12 +142,15 @@ def handle_revision_command(user_id: str, chat_id: str, text: str,
                 new_amount
             )
             if success:
+                target['amount'] = new_amount
+                summary = _build_revision_summary(items)
+                revision_line = f"Revisi: {target.get('keterangan')} -> Rp {new_amount:,}".replace(',', '.')
+                response_text = f"{revision_line}\n\n{summary}" if summary else revision_line
                 return {
                     'action': 'REPLY',
-                    'response': f"✅ Revisi: {target.get('keterangan')} → Rp {new_amount:,}".replace(',', '.')
+                    'response': response_text
                 }
-            return {'action': 'REPLY', 'response': '❌ Gagal update spreadsheet.'}
-
+            return {'action': 'REPLY', 'response': 'Gagal update spreadsheet.'}
     # 2. Category scope revision (OPERATIONAL <-> PROJECT)
     if any(word in text_lower for word in ['operational', 'operasional', 'project', 'projek']):
         
