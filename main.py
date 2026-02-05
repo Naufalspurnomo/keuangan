@@ -1129,11 +1129,11 @@ Balas 1 atau 2"""
                         if not has_income:
                             pending['new_project_first_expense'] = True
                             msg = (
-                                f"?? *PROJECT BARU*\n"
+                                f"\U0001F4C1 *PROJECT BARU*\n"
                                 f"--------------------\n\n"
                                 f"Project *{res['original']}* belum terdaftar.\n"
-                                f"?? *Transaksi: Pengeluaran*\n\n"
-                                f"?? Biasanya project baru dimulai dari *DP (Pemasukan)*\n\n"
+                                f"\U0001F4B8 *Transaksi: Pengeluaran*\n\n"
+                                f"\U0001F4A1 Biasanya project baru dimulai dari *DP (Pemasukan)*\n\n"
                                 f"--------------------\n"
                                 f"Pilih tindakan:\n\n"
                                 f"1. Lanjutkan sebagai project baru\n"
@@ -1144,7 +1144,7 @@ Balas 1 atau 2"""
                             send_reply(msg)
                             return jsonify({'status': 'asking_new_project'}), 200
                         msg = (
-                            f"?? *PROJECT BARU*\n"
+                            f"\U0001F4C1 *PROJECT BARU*\n"
                             f"--------------------\n\n"
                             f"Project *{res['original']}* belum terdaftar.\n\n"
                             f"--------------------\n"

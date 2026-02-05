@@ -785,11 +785,11 @@ Atau ketik /cancel untuk batal total"""
             )
             if is_first_expense:
                 prompt = (
-                    "?? *PROJECT BARU*\n"
+                    "\U0001F4C1 *PROJECT BARU*\n"
                     "--------------------\n\n"
                     f"Project *{display_name}* belum terdaftar.\n"
-                    "?? *Transaksi: Pengeluaran*\n\n"
-                    "?? Biasanya project baru dimulai dari *DP (Pemasukan)*\n\n"
+                    "\U0001F4B8 *Transaksi: Pengeluaran*\n\n"
+                    "\U0001F4A1 Biasanya project baru dimulai dari *DP (Pemasukan)*\n\n"
                     "--------------------\n"
                     "Pilih tindakan:\n\n"
                     "1. Lanjutkan sebagai project baru\n"
@@ -799,7 +799,7 @@ Atau ketik /cancel untuk batal total"""
                 )
             else:
                 prompt = (
-                    "?? *PROJECT BARU*\n"
+                    "\U0001F4C1 *PROJECT BARU*\n"
                     "--------------------\n\n"
                     f"Project *{display_name}* belum terdaftar.\n\n"
                     "--------------------\n"
