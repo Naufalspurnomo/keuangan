@@ -54,6 +54,7 @@ from services.state_manager import (
     store_visual_buffer, get_visual_buffer,
     clear_visual_buffer, has_visual_buffer,
     store_last_bot_report,
+    store_last_tx_event,
     # New Pending Confirmations
     get_pending_confirmation, set_pending_confirmation,
     find_pending_confirmation_in_chat,
@@ -767,6 +768,8 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 if bid:
                     store_bot_message_ref(bid, event_id)
                     store_last_bot_report(chat_jid, bid)
+                # Fallback: track last event per user/chat even if bot msg ID missing
+                store_last_tx_event(sender_number, chat_jid, event_id)
             
             # ROUTING CHECK
             original_text = pending.get('original_text', '')
@@ -1219,6 +1222,7 @@ Balas 1 atau 2"""
                         if bid:
                             store_bot_message_ref(bid, result.get('bot_ref_event_id'))
                             store_last_bot_report(chat_jid, bid)
+                        store_last_tx_event(sender_number, chat_jid, result.get('bot_ref_event_id'))
                 
                 if result.get('completed'):
                     # Flow finished (saved or cancelled)

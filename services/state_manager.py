@@ -324,6 +324,9 @@ def get_original_message_id(bot_msg_id: str) -> str:
 # Track last bot report per chat
 _last_bot_reports: Dict[str, str] = {}
 
+# Track last transaction event per user/chat (for /revisi fallback)
+_last_tx_events: Dict[str, str] = {}
+
 
 def store_last_bot_report(chat_id: str, bot_msg_id: str) -> None:
     """Track the most recent bot report ID for a chat."""
@@ -336,6 +339,27 @@ def store_last_bot_report(chat_id: str, bot_msg_id: str) -> None:
 def get_last_bot_report(chat_id: str) -> Optional[str]:
     """Get the most recent bot report ID for a chat."""
     return _last_bot_reports.get(str(chat_id))
+
+
+def _last_tx_key(user_id: str, chat_id: str) -> str:
+    return f"{chat_id}:{user_id}" if chat_id else user_id
+
+
+def store_last_tx_event(user_id: str, chat_id: str, event_id: str) -> None:
+    """Track last transaction event ID per user/chat for revision fallback."""
+    if not user_id or not event_id:
+        return
+    key = _last_tx_key(user_id, chat_id)
+    _last_tx_events[str(key)] = str(event_id)
+    _save_state()
+
+
+def get_last_tx_event(user_id: str, chat_id: str) -> Optional[str]:
+    """Get last transaction event ID per user/chat."""
+    if not user_id:
+        return None
+    key = _last_tx_key(user_id, chat_id)
+    return _last_tx_events.get(str(key))
 
 
 # ===================== CONVERSATION TRACKING =====================
@@ -430,6 +454,7 @@ def _save_state():
                     for item in v
                 ] for k, v in _visual_buffer.items()},
                 "last_bot_reports": _last_bot_reports,
+                "last_tx_events": _last_tx_events,
                 "pending_confirmations": {k: {**v, 'timestamp': v['timestamp'].isoformat(), 'expires_at': v['expires_at'].isoformat()} for k, v in PENDING_CONFIRMATIONS.items()}
             }
             
@@ -460,6 +485,7 @@ def _save_state():
             cloud_data["pending_message_refs"] = _trim_dict(cloud_data.get("pending_message_refs", {}), 200)
             cloud_data["bot_interactions"] = _trim_dict(cloud_data.get("bot_interactions", {}), 200)
             cloud_data["last_bot_reports"] = _trim_dict(cloud_data.get("last_bot_reports", {}), 200)
+            cloud_data["last_tx_events"] = _trim_dict(cloud_data.get("last_tx_events", {}), 200)
             cloud_data["audit_log"] = []  # Skip audit log for cloud to save space
 
             cloud_json = json.dumps(_sanitize_keys(cloud_data), default=str)
@@ -569,6 +595,10 @@ def _load_state():
                      
             if "last_bot_reports" in data:
                 _last_bot_reports.update(data["last_bot_reports"])
+
+            if "last_tx_events" in data:
+                if isinstance(data["last_tx_events"], dict):
+                    _last_tx_events.update(data["last_tx_events"])
 
             if "pending_confirmations" in data:
                 for k, v in data["pending_confirmations"].items():
@@ -780,6 +810,7 @@ def get_state_stats() -> Dict[str, Any]:
         'processed_count': len(_processed_messages),
         'bot_refs_count': len(_bot_message_refs),
         'pending_message_refs_count': len(_pending_message_refs),
+        'last_tx_events_count': len(_last_tx_events),
     }
 
 # For testing

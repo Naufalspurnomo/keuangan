@@ -13,7 +13,8 @@ from services.state_manager import (
     set_pending_confirmation,
     clear_pending_confirmation,
     get_last_bot_report,
-    get_original_message_id
+    get_original_message_id,
+    get_last_tx_event
 )
 from utils.formatters import build_selection_prompt, format_success_reply_new
 from utils.parsers import parse_revision_amount
@@ -56,25 +57,22 @@ def handle_revision_command(user_id: str, chat_id: str, text: str,
         last_bot_msg = get_last_bot_report(chat_id)
         if last_bot_msg:
             quoted_message_id = last_bot_msg
-    
-    if not quoted_message_id:
+
+    # Resolve original transaction ID (user message/event ID)
+    original_tx_id = ""
+    if quoted_message_id:
+        original_tx_id = get_original_message_id(quoted_message_id) or ""
+
+    if not original_tx_id:
+        fallback_tx_id = get_last_tx_event(user_id, chat_id)
+        if fallback_tx_id:
+            original_tx_id = fallback_tx_id
+
+    if not quoted_message_id and not original_tx_id:
         return {
             'action': 'REPLY',
             'response': '💡 Reply pesan laporan untuk merevisi, atau ketik /undo untuk batalkan transaksi terakhir.'
         }
-    
-    # Get original transaction ID (this is the original user message ID)
-    original_tx_id = get_original_message_id(quoted_message_id)
-    if not original_tx_id:
-        # Check if quoted_message_id IS the original or if the mapping is stored differently
-        # Sometimes quoted_message_id is the bot message ID, which maps to original ID
-        original_tx_id = get_original_message_id(quoted_message_id)
-        
-        if not original_tx_id:
-             return {
-                'action': 'REPLY',
-                'response': '❌ Data transaksi tidak ditemukan (ID mapping missing).'
-            }
     
     # Fetch transactions from sheet
     items = find_all_transactions_by_message_id(original_tx_id)
