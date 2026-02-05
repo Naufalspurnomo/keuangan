@@ -242,25 +242,42 @@ def resolve_dompet_from_text(text: str) -> Optional[str]:
     if not text:
         return None
     clean = text.lower()
+    has_dompet_context = bool(re.search(r"\b(dompet|wallet|saldo)\b", clean))
 
-    # Detect dompet by account prefix (e.g., "216-073-7991")
+    # Detect explicit dompet code in parentheses (e.g., "CV HB(101)")
     prefix_map = {
         "101": "CV HB(101)",
         "216": "TX SBY(216)",
         "087": "TX BALI(087)",
     }
-    m = re.search(r"\b(101|216|087)\s*[-–]\s*\d{3,}\b", clean)
-    if not m:
-        m = re.search(
-            r"\b(?:rekening|rek|virtual|va|account|rekening tujuan|no\.?\s*rekening)\b[^0-9]{0,10}(101|216|087)\b",
-            clean
-        )
+    m = re.search(r"\(\s*(101|216|087)\s*\)", clean)
     if m:
         return prefix_map.get(m.group(1))
+
+    # Detect dompet by account prefix only when dompet context is present
+    if has_dompet_context:
+        m = re.search(r"\b(101|216|087)\s*-\s*\d{3,}\b", clean)
+        if not m:
+            m = re.search(
+                r"\b(?:rekening|rek|virtual|va|account|rekening tujuan|no\.?\s*rekening)\b[^0-9]{0,10}(101|216|087)\b",
+                clean,
+            )
+        if m:
+            return prefix_map.get(m.group(1))
 
     candidates = []
     for alias, dompet in DOMPET_ALIASES.items():
         if alias in clean:
+            if any(token in alias for token in ("rek", "rekening", "no ") ) and not has_dompet_context:
+                continue
+            if alias.isdigit():
+                if not re.search(rf"\b{alias}\b", clean):
+                    continue
+                # Avoid matching account numbers like "216-0737991"
+                if re.search(rf"\b{alias}\s*[-/]\s*\d", clean):
+                    continue
+                if not has_dompet_context and not re.search(rf"\(\s*{alias}\s*\)", clean):
+                    continue
             candidates.append((alias, dompet))
 
     if not candidates:

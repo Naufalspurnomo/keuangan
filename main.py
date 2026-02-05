@@ -1183,6 +1183,12 @@ Balas 1 atau 2"""
                 else:
                     dompet = get_dompet_for_company(detected_company)
             
+            explicit_dompet = resolve_dompet_from_text(original_text)
+            if explicit_dompet:
+                from config.wallets import get_company_name_from_sheet
+                dompet = explicit_dompet
+                detected_company = get_company_name_from_sheet(dompet)
+
             # --- AUTO-RESOLVE COMPANY FROM PROJECT HISTORY (NEW) ---
             # If we know the project, but not the company, try to find where it was last used
             if not dompet and pending.get('project_confirmed'):
