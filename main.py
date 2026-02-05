@@ -14,6 +14,7 @@ import traceback
 import requests
 import re
 import threading
+import time
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -121,6 +122,7 @@ app = Flask(__name__)
 # Configuration Flags
 DEBUG = os.getenv('FLASK_DEBUG', '0') == '1'
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+IMAGE_GRACE_SECONDS = int(os.getenv('IMAGE_GRACE_SECONDS', '5'))
 
 # ===================== NETWORK HELPERS =====================
 
@@ -689,7 +691,8 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                              is_group: bool = False, chat_jid: str = None,
                              sender_jid: str = None, quoted_message_text: str = None,
                              send_reply=None, send_document=None,
-                             source_label: str = 'WhatsApp', reply_to=None):
+                             source_label: str = 'WhatsApp', reply_to=None,
+                             deferred: bool = False):
     try:
         # --- Helper: State Management ---
         def extract_bot_msg_id(sent):
@@ -732,6 +735,46 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             if t.startswith('bot') or '@bot' in t:
                 return True
             return False
+
+        def schedule_group_image_grace() -> None:
+            if IMAGE_GRACE_SECONDS <= 0:
+                return
+
+            def _worker():
+                time.sleep(IMAGE_GRACE_SECONDS)
+                buf = get_visual_buffer(sender_number, chat_jid)
+                if not buf:
+                    return
+                item = next((b for b in buf if b.get('message_id') == message_id), None)
+                if not item:
+                    return
+
+                pkey = pending_key(sender_number, chat_jid)
+                pending = _pending_transactions.get(pkey)
+                if pending and not pending_is_expired(pending):
+                    return
+
+                process_incoming_message(
+                    sender_number=sender_number,
+                    sender_name=sender_name,
+                    text=item.get('caption') or '',
+                    input_type='image',
+                    media_url=item.get('media_url'),
+                    local_media_path=item.get('media_path'),
+                    quoted_msg_id=quoted_msg_id,
+                    message_id=item.get('message_id') or message_id,
+                    is_group=is_group,
+                    chat_jid=chat_jid,
+                    sender_jid=sender_jid,
+                    quoted_message_text=quoted_message_text,
+                    send_reply=send_reply,
+                    send_document=send_document,
+                    source_label=source_label,
+                    reply_to=reply_to,
+                    deferred=True
+                )
+
+            threading.Thread(target=_worker, daemon=True).start()
 
         # Event envelope
         event_id = str(message_id) if message_id else f"evt_{uuid.uuid4().hex[:12]}"
@@ -1211,7 +1254,7 @@ Balas 1 atau 2"""
         if not allowed: return jsonify({'status': 'rate_limit'}), 200
         
         # 2. Visual Buffer (store all images for "catat diatas" binding)
-        if input_type == 'image':
+        if input_type == 'image' and not deferred:
             store_visual_buffer(
                 sender_number, chat_jid, media_url, message_id,
                 caption=text, media_path=local_media_path
@@ -2057,6 +2100,27 @@ Balas 1 atau 2"""
                      return jsonify({'status': 'error_pdf'}), 200
                  send_reply("❌ Gagal export PDF. Coba lagi beberapa saat.")
                  return jsonify({'status': 'error'}), 200
+ 
+        # Group image grace period: give users time to type after sending image
+        if (
+            input_type == 'image'
+            and is_group
+            and not has_pending
+            and not deferred
+        ):
+            caption_text = (text or "").strip()
+            caption_should_process = False
+            if caption_text:
+                caption_should_process, _ = should_respond_in_group(
+                    caption_text,
+                    is_group,
+                    has_media=False,
+                    has_pending=False,
+                    is_mentioned=is_explicit_bot_call(caption_text)
+                )
+            if not caption_should_process:
+                schedule_group_image_grace()
+                return jsonify({'status': 'queued_image'}), 200
 
         # 8. PROCESS NEW INPUT (AI)
         transactions = []
