@@ -95,11 +95,12 @@ def _continue_project_after_name(transactions: list, dompet_sheet: str, company:
                                  user_id: str, sender_name: str, source: str,
                                  original_message_id: str, event_id: str,
                                  is_new_project: bool, is_group: bool,
-                                 chat_id: str, debt_source: Optional[str] = None) -> dict:
+                                 chat_id: str, debt_source: Optional[str] = None,
+                                 skip_first_expense: bool = False) -> dict:
     """Continue project flow after project name is resolved."""
     _apply_project_prefix(transactions, dompet_sheet, company)
 
-    if is_new_project and not any(t.get('tipe') == 'Pemasukan' for t in transactions):
+    if is_new_project and not skip_first_expense and not any(t.get('tipe') == 'Pemasukan' for t in transactions):
         set_pending_confirmation(
             user_id=user_id,
             chat_id=chat_id,
@@ -755,18 +756,22 @@ Atau ketik /cancel untuk batal total"""
         else:
             final_name = apply_company_prefix(final_base, dompet_sheet, company)
         is_new_project = (res.get('status') == 'NEW')
+        transactions = pending_data.get('transactions', [])
+
+        for tx in transactions:
+            tx['nama_projek'] = final_name
         
         if is_new_project:
-            transactions = pending_data.get('transactions', [])
-            for tx in transactions:
-                tx['nama_projek'] = final_name
+            display_name = res.get('original') or lookup_name
+            is_first_expense = not any(t.get('tipe') == 'Pemasukan' for t in transactions)
             set_pending_confirmation(
                 user_id=user_id,
                 chat_id=chat_id,
                 data={
                     'type': 'project_new_confirm',
                     'project_name': final_name,
-                    'project_display': res.get('original') or lookup_name,
+                    'project_display': display_name,
+                    'new_project_first_expense': is_first_expense,
                     'transactions': transactions,
                     'dompet_sheet': dompet_sheet,
                     'company': company,
@@ -778,46 +783,35 @@ Atau ketik /cancel untuk batal total"""
                     'event_id': pending_data.get('event_id')
                 }
             )
-            display_name = res.get('original') or lookup_name
-            prompt = (
-                "🆕 Project *{display_name}* belum ada.\n\n"
-                "Buat Project Baru?\n"
-                "✅ Ya / ❌ Ganti Nama (Langsung Ketik Nama Baru)"
-            )
+            if is_first_expense:
+                prompt = (
+                    "[PROJECT BARU]\n"
+                    "--------------------\n\n"
+                    f"Project {display_name} belum terdaftar.\n"
+                    "Transaksi: Pengeluaran\n\n"
+                    "Biasanya project baru dimulai dari DP (Pemasukan)\n\n"
+                    "--------------------\n"
+                    "Pilih tindakan:\n\n"
+                    "1. Lanjutkan sebagai project baru\n"
+                    "2. Ubah jadi Operasional Kantor\n"
+                    "3. Batal\n\n"
+                    "Atau ketik nama lain untuk ganti"
+                )
+            else:
+                prompt = (
+                    "[PROJECT BARU]\n"
+                    "--------------------\n\n"
+                    f"Project {display_name} belum terdaftar.\n\n"
+                    "--------------------\n"
+                    "Pilih tindakan:\n\n"
+                    "Ya - Buat project baru\n"
+                    "Ketik nama lain untuk ganti\n\n"
+                    "Balas 'Ya' atau ketik nama baru"
+                )
             return {'response': prompt.replace('*', ''), 'completed': False}
 
-        transactions = pending_data.get('transactions', [])
-        
         for tx in transactions:
             tx['nama_projek'] = apply_company_prefix(final_name, dompet_sheet, company)
-        
-        # If new project but first tx is expense → ask
-        if is_new_project and not any(t.get('tipe') == 'Pemasukan' for t in transactions):
-            set_pending_confirmation(
-                user_id=user_id,
-                chat_id=chat_id,
-                data={
-                    'type': 'new_project_first_expense',
-                    'transactions': transactions,
-                    'dompet': dompet_sheet,
-                    'company': company,
-                    'debt_source_dompet': debt_source,
-                    'sender_name': sender_name,
-                    'source': pending_data.get('source', 'WhatsApp'),
-                    'original_message_id': pending_data.get('original_message_id'),
-                    'event_id': pending_data.get('event_id')
-                }
-            )
-            msg = (
-                f"⚠️ Project baru **{final_name}** tetapi transaksi pertama *Pengeluaran*.\n"
-                "Biasanya project baru dimulai dari DP (Pemasukan).\n\n"
-                "Pilih tindakan:\n"
-                "1️⃣ Lanjutkan sebagai project baru\n"
-                "2️⃣ Ubah jadi Operasional Kantor\n"
-                "3️⃣ Batal"
-            )
-            return {'response': msg.replace('*', ''), 'completed': False}
-        
         # Draft → Confirm → Commit
         set_pending_confirmation(
             user_id=user_id,
@@ -850,7 +844,7 @@ Atau ketik /cancel untuk batal total"""
     # HANDLE: Project Name Confirm (Ambiguous)
     # ===================================
     elif pending_type == 'project_name_confirm':
-        clean = text_lower
+        clean = text_lower.strip()
         if clean in ['ya', 'y', 'yes', 'oke', 'ok']:
             final_name = pending_data.get('suggested_project')
         else:
@@ -881,6 +875,7 @@ Atau ketik /cancel untuk batal total"""
             debt_source = _extract_debt_source(raw_text)
             if debt_source == dompet_sheet:
                 debt_source = None
+        combined = bool(pending_data.get('new_project_first_expense'))
         
         for tx in transactions:
             tx['nama_projek'] = final_name
@@ -922,6 +917,45 @@ Atau ketik /cancel untuk batal total"""
             debt_source = _extract_debt_source(raw_text)
             if debt_source == dompet_sheet:
                 debt_source = None
+
+        if combined:
+            if clean in ['1', 'ya', 'y', 'yes', 'oke', 'ok', 'buat', 'lanjut']:
+                return _continue_project_after_name(
+                    transactions, dompet_sheet, company,
+                    user_id, sender_name, pending_data.get('source', 'WhatsApp'),
+                    pending_data.get('original_message_id'), pending_data.get('event_id'),
+                    True, is_group, chat_id, debt_source, skip_first_expense=True
+                )
+            if clean in ['2', 'operasional', 'kantor']:
+                set_pending_confirmation(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    data={
+                        'type': 'confirm_commit_operational',
+                        'transactions': transactions,
+                        'source_wallet': dompet_sheet,
+                        'category': 'Lain Lain',
+                        'sender_name': sender_name,
+                        'source': pending_data.get('source', 'WhatsApp'),
+                        'original_message_id': pending_data.get('original_message_id'),
+                        'event_id': pending_data.get('event_id'),
+                        'pending_key': pending_data.get('pending_key')
+                    }
+                )
+                response = format_draft_summary_operational(
+                    transactions, dompet_sheet, 'Lain Lain', ""
+                )
+                return {'response': response, 'completed': False}
+            if clean in ['3', 'batal', 'cancel', 'tidak', 'no']:
+                clear_pending_confirmation(user_id, chat_id)
+                if pending_data.get('pending_key'):
+                    clear_pending_transaction(pending_data.get('pending_key'))
+                return {'response': 'âŒ Dibatalkan.', 'completed': True}
+            if clean.isdigit():
+                return {'response': 'Balas 1/2/3 atau ketik nama project baru.', 'completed': False}
+
+        if not combined and clean.isdigit() and len(clean) <= 2:
+            return {'response': "Balas 'Ya' untuk membuat project baru, atau ketik nama project yang benar.", 'completed': False}
 
         if clean in ['ya', 'y', 'yes', 'oke', 'ok', 'buat', 'lanjut']:
             # Proceed as new project
@@ -997,7 +1031,8 @@ Atau ketik /cancel untuk batal total"""
             transactions, dompet_sheet, company,
             user_id, sender_name, pending_data.get('source', 'WhatsApp'),
             pending_data.get('original_message_id'), pending_data.get('event_id'),
-            (res.get('status') == 'NEW'), is_group, chat_id, debt_source
+            (res.get('status') == 'NEW'), is_group, chat_id, debt_source,
+            skip_first_expense=combined
         )
 
     # ===================================
