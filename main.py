@@ -106,6 +106,11 @@ from utils.formatters import (
     CATEGORIES_DISPLAY, SELECTION_DISPLAY,
 )
 from utils.lifecycle import apply_lifecycle_markers
+from utils.wallet_updates import (
+    is_absolute_balance_update,
+    pick_wallet_target_amount,
+    compute_balance_adjustment,
+)
 
 # Configuration
 from config.constants import Commands, Timeouts, GROUP_TRIGGERS, SPREADSHEET_ID, OPERATIONAL_KEYWORDS, FAST_MODE
@@ -273,6 +278,10 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
     if category_scope == 'PROJECT':
         # AI is confident this is project-related
         return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
+
+    if category_scope == 'TRANSFER':
+        # Wallet balance updates are recorded to dompet with "Saldo Umum".
+        return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
     
     if category_scope == 'AMBIGUOUS':
         return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
@@ -283,6 +292,10 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
         # Use word boundary matching for better accuracy
         if re.search(r'\b' + re.escape(kw) + r'\b', text_lower):
             detected_keywords.append(kw)
+
+    # Mixed explicit keywords need confirmation
+    if has_project_word and has_kantor_word:
+        return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
 
     # Explicit project keyword should win
     if has_project_word:
@@ -1089,6 +1102,7 @@ Balas 1 atau 2"""
             # === JALUR 2: PROJECT (Standard) ===
             lock_note = None
             new_project_expense_note = None
+            wallet_set_note = None
             
             # --- VALIDATION: CHECK PROJECT EXISTENCE ---
             # Checks if project exists in Spreadsheet/Cache before proceeding
@@ -1209,18 +1223,67 @@ Balas 1 atau 2"""
                 if debt_source == dompet:
                     debt_source = None
 
+                is_transfer_flow = pending.get('category_scope') == 'TRANSFER'
+                is_wallet_set_mode = is_transfer_flow and is_absolute_balance_update(original_text)
+                skip_duplicate_check = False
+
+                if is_wallet_set_mode:
+                    target_amount = pick_wallet_target_amount(txs)
+                    if target_amount <= 0:
+                        send_reply("❗ Nominal target saldo belum terbaca. Contoh: update saldo dompet TX SBY 10jt")
+                        return jsonify({'status': 'wallet_set_missing_amount'}), 200
+
+                    balances = get_wallet_balances()
+                    dompet_info = balances.get(dompet, {})
+                    current_balance = int(dompet_info.get('saldo', 0) or 0)
+                    adjustment = compute_balance_adjustment(current_balance, target_amount)
+
+                    if int(adjustment.get('amount', 0) or 0) <= 0:
+                        _pending_transactions.pop(pkey, None)
+                        response = (
+                            f"ℹ️ Saldo {dompet} sudah sesuai target (Rp {target_amount:,}). "
+                            "Tidak ada transaksi penyesuaian."
+                        ).replace(',', '.')
+                        _send_and_track(response, pending.get('event_id') or pending.get('message_id'))
+                        return jsonify({'status': 'wallet_set_no_change'}), 200
+
+                    adj_amount = int(adjustment.get('amount', 0) or 0)
+                    adj_tipe = str(adjustment.get('tipe') or 'Pemasukan')
+                    adj_delta = int(adjustment.get('delta', 0) or 0)
+
+                    tx_template = dict(txs[0]) if txs else {}
+                    tx_template['jumlah'] = adj_amount
+                    tx_template['tipe'] = adj_tipe
+                    tx_template['nama_projek'] = 'Saldo Umum'
+                    tx_template['company'] = 'UMUM'
+                    tx_template['needs_project'] = False
+                    tx_template['keterangan'] = (
+                        f"Set saldo ke Rp {target_amount:,} (saldo sebelumnya Rp {current_balance:,})"
+                    ).replace(',', '.')
+                    txs[:] = [tx_template]
+                    pending['transactions'] = txs
+
+                    sign = "+" if adj_delta > 0 else "-"
+                    wallet_set_note = (
+                        f"Mode set saldo: target Rp {target_amount:,}, "
+                        f"saldo sebelumnya Rp {current_balance:,}, "
+                        f"penyesuaian {sign}Rp {abs(adj_delta):,}."
+                    ).replace(',', '.')
+                    skip_duplicate_check = True
+
                 # Check Duplicates
                 t0 = txs[0]
-                is_dupe, warn = check_duplicate_transaction(
-                    t0.get('jumlah', 0), t0.get('keterangan', ''),
-                    t0.get('nama_projek', ''), detected_company
-                )
-                
-                if is_dupe:
-                    pending['pending_type'] = 'confirmation_dupe'
-                    pending['selected_option'] = {'dompet': dompet, 'company': detected_company}
-                    send_reply(warn)
-                    return jsonify({'status': 'dupe_warning'}), 200
+                if not skip_duplicate_check:
+                    is_dupe, warn = check_duplicate_transaction(
+                        t0.get('jumlah', 0), t0.get('keterangan', ''),
+                        t0.get('nama_projek', ''), detected_company
+                    )
+
+                    if is_dupe:
+                        pending['pending_type'] = 'confirmation_dupe'
+                        pending['selected_option'] = {'dompet': dompet, 'company': detected_company}
+                        send_reply(warn)
+                        return jsonify({'status': 'dupe_warning'}), 200
 
                 # Project lock check (consistency across dompet)
                 p_name_check = t0.get('nama_projek', '')
@@ -1342,6 +1405,8 @@ Balas 1 atau 2"""
                         response += f"\n {lock_note}"
                     if new_project_expense_note:
                         response += f"\n {new_project_expense_note}"
+                    if wallet_set_note:
+                        response += f"\n {wallet_set_note}"
                     if debt_source and debt_source != dompet:
                         total_amount = sum(int(t.get('jumlah', 0) or 0) for t in txs)
                         response += f"\n💳 Utang dicatat: {debt_source} → {dompet} (Rp {total_amount:,})".replace(',', '.')
@@ -1370,6 +1435,8 @@ Balas 1 atau 2"""
                 draft_msg = format_draft_summary_project(
                     txs, dompet, detected_company, mention, debt_source or ""
                 )
+                if wallet_set_note:
+                    draft_msg += f"\n{wallet_set_note}"
                 send_reply(draft_msg)
                 return jsonify({'status': 'draft_project'}), 200
             
@@ -1606,7 +1673,7 @@ Balas 1 atau 2"""
                     answer = handle_query_command(query, sender_number, chat_jid)
                     
                     # Send answer
-                    response = "{answer}"
+                    response = answer
                     send_reply(response)
                     
                     return jsonify({'status': 'command_tanya_success'}), 200
@@ -2014,7 +2081,7 @@ Balas 1 atau 2"""
                         pending['project_confirmed'] = False
                         pending.pop('new_project_first_expense', None)
                         prompt = format_wallet_selection_prompt()
-                        send_reply("🏢 Diganti ke Operasional Kantor\n\n{prompt}".replace('*', ''))
+                        send_reply(f"🏢 Diganti ke Operasional Kantor\n\n{prompt}".replace('*', ''))
                         return jsonify({'status': 'switch_to_operational'}), 200
                     if clean in ['3', 'batal', 'cancel', 'tidak', 'no']:
                         _pending_transactions.pop(pending_pkey, None)
@@ -2102,7 +2169,7 @@ Balas 1 atau 2"""
                     pending['operational_category'] = pending.get('operational_category', 'Lain Lain')
                     pending['project_confirmed'] = False
                     prompt = format_wallet_selection_prompt()
-                    send_reply("🏢 Diganti ke Operasional Kantor\n\n{prompt}".replace('*', ''))
+                    send_reply(f"🏢 Diganti ke Operasional Kantor\n\n{prompt}".replace('*', ''))
                     return jsonify({'status': 'switch_to_operational'}), 200
                 valid, sel, err = parse_selection(text)
                 if not valid:

@@ -47,8 +47,8 @@ IF(D2:D="Operasional Kantor","OPERASIONAL KANTOR",
 IF(D2:D="TX BALI(087)","TX BALI",
 IF(D2:D="TX SBY(216)","TX SURABAYA",
 IF(D2:D="CV HB(101)",
- IF(REGEXMATCH(LOWER(F2:F),"^hojja(\\b|\\s*[-:])"),"HOJJA",
-  IF(REGEXMATCH(LOWER(F2:F),"^holla(wall)?(\\b|\\s*[-:])"),"HOLLA","")
+ IF(REGEXMATCH(LOWER(TRIM(F2:F)),"^hojja(\b|\s*[-:])"),"HOJJA",
+  IF(REGEXMATCH(LOWER(TRIM(F2:F)),"^holla(wall)?(\b|\s*[-:])"),"HOLLAWALL","")
  ),
 ""))))))
 ```
@@ -181,8 +181,59 @@ Letakkan output di `J24` (akan mengisi `J24:N`):
 
 ---
 
-## 7) Kolom Penyesuaian (kiri bawah)
+## 7) Tutorial Tabel Saldo Real (Dashboard `A25:E28`)
 
-Isi manual sesuai kebutuhan:
-- `A27:A29` dompet
-- `B27:B29` saldo seharusnya
+Tujuan:
+- Menampilkan saldo real 3 dompet sesuai logika bot:
+`Saldo Real = Internal Dompet - Debit Operasional + Hutang OPEN (borrower) + Hutang PAID (lender)`
+
+### 7.1 Layout tabel
+
+Isi header di `A25:E25`:
+`Dompet | Saldo Sistem | Penyesuaian | Saldo Seharusnya | Status`
+
+Isi dompet di `A26:A28`:
+- `CV HB(101)`
+- `TX SBY(216)`
+- `TX BALI(087)`
+
+### 7.2 Rumus Saldo Sistem (kolom B)
+
+Letakkan di `B26`, lalu copy ke `B27:B28`:
+```gs
+=LET(
+dompet,$A26,
+short,IF(dompet="CV HB(101)","CV HB",IF(dompet="TX SBY(216)","TX SBY",IF(dompet="TX BALI(087)","TX BALI",""))),
+masuk,SUMIFS(Data_Agregat!E:E,Data_Agregat!D:D,dompet,Data_Agregat!C:C,"Pemasukan"),
+keluar,SUMIFS(Data_Agregat!E:E,Data_Agregat!D:D,dompet,Data_Agregat!C:C,"Pengeluaran"),
+op,SUM(SUMIFS(Data_Agregat!E:E,Data_Agregat!D:D,"Operasional Kantor",Data_Agregat!C:C,{"Pengeluaran","Pengeluaran Operasional"},Data_Agregat!G:G,"*[Sumber: "&short&"]*")),
+hutang_open,SUMIFS(HUTANG!C:C,HUTANG!E:E,dompet,HUTANG!G:G,"OPEN"),
+hutang_paid,SUMIFS(HUTANG!C:C,HUTANG!F:F,dompet,HUTANG!G:G,"PAID"),
+masuk-keluar-op+hutang_open+hutang_paid
+)
+```
+
+### 7.3 Mode Recommended (cek saldo aktual bank)
+
+1. Isi manual `D26:D28` dengan saldo aktual bank.
+2. Letakkan di `C26`, lalu copy ke `C27:C28`:
+```gs
+=IF(D26="","",D26-B26)
+```
+3. Letakkan di `E26`, lalu copy ke `E27:E28`:
+```gs
+=IF(D26="","",IF(ABS(C26)<=1000,"MATCH","SELISIH "&TEXT(C26,"#,##0")))
+```
+
+Makna:
+- `C` positif: saldo aktual lebih besar dari saldo sistem.
+- `C` negatif: saldo aktual lebih kecil dari saldo sistem.
+
+### 7.4 Mode Alternatif (penyesuaian manual)
+
+Jika ingin isi penyesuaian manual:
+1. Isi `C26:C28` manual.
+2. Letakkan di `D26`, lalu copy ke `D27:D28`:
+```gs
+=B26+C26
+```

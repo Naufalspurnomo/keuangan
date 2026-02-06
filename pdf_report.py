@@ -409,7 +409,26 @@ def _project_display_name(name: str) -> str:
     stripped = strip_company_prefix(base) or base
     return stripped.strip()
 
+def _is_internal_transfer_tx(tx: Dict) -> bool:
+    """
+    Detect non-operational internal movements that should not affect
+    company/project profitability in PDF analytics.
+    """
+    proj_raw = (tx.get("nama_projek") or "").strip()
+    proj_base = _strip_project_markers(proj_raw).lower()
+    if proj_base in PROJECT_EXCLUDE_NAMES:
+        return True
+
+    desc = (tx.get("keterangan") or "").lower()
+    if "hutang ke dompet" in desc or "memberi hutang ke" in desc:
+        return True
+
+    return False
+
 def _company_from_tx(tx: Dict) -> Optional[str]:
+    if _is_internal_transfer_tx(tx):
+        return None
+
     dompet = tx.get("company_sheet")
     if dompet == OFFICE_SHEET_NAME:
         return None
@@ -435,6 +454,8 @@ def _summarize_period(period_txs: List[Dict]) -> Dict:
     expense_non_office = 0
     office_expense = 0
     for tx in period_txs:
+        if _is_internal_transfer_tx(tx):
+            continue
         amt = int(tx.get("jumlah", 0) or 0)
         if tx.get("company_sheet") == OFFICE_SHEET_NAME:
             if _is_expense(tx):
@@ -455,8 +476,16 @@ def _summarize_period(period_txs: List[Dict]) -> Dict:
     }
 
 def _summarize_company(company_txs: List[Dict]) -> Dict:
-    income = sum(int(t.get("jumlah", 0) or 0) for t in company_txs if _is_income(t))
-    expense = sum(int(t.get("jumlah", 0) or 0) for t in company_txs if _is_expense(t))
+    income = sum(
+        int(t.get("jumlah", 0) or 0)
+        for t in company_txs
+        if (not _is_internal_transfer_tx(t)) and _is_income(t)
+    )
+    expense = sum(
+        int(t.get("jumlah", 0) or 0)
+        for t in company_txs
+        if (not _is_internal_transfer_tx(t)) and _is_expense(t)
+    )
     return {"income_total": income, "expense_total": expense, "profit": income - expense}
 
 def _pct_change(curr: int, prev: int) -> Optional[float]:

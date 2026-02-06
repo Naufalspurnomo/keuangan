@@ -370,7 +370,7 @@ Atau ketik /cancel untuk batal total"""
             
             if 'operational' in pending_type:
                 prompt_text = format_wallet_selection_prompt()
-                response = "🔄 Oke, pilih dompet lagi:\n\n{prompt_text}"
+                response = f"🔄 Oke, pilih dompet lagi:\n\n{prompt_text}"
             else:
                 transactions = pending_data.get('transactions', [])
                 response = build_selection_prompt(transactions, "")
@@ -426,7 +426,7 @@ Atau ketik /cancel untuk batal total"""
             
             prompt = format_wallet_selection_prompt() # From config/wallets.py
             
-            response = "💼 Operational Kantor\n{prompt}"
+            response = f"Operational Kantor\n{prompt}"
             
             return {
                 'response': response,
@@ -496,7 +496,7 @@ Atau ketik /cancel untuk batal total"""
                 }
             )
             prompt = format_wallet_selection_prompt()
-            response = "💼 Operational Kantor\n{prompt}"
+            response = f"Operational Kantor\n{prompt}"
             return {'response': response, 'completed': False}
         else:
             set_pending_confirmation(
@@ -603,7 +603,7 @@ Atau ketik /cancel untuk batal total"""
                 }
             )
             prompt = format_wallet_selection_prompt()
-            return {'response': "ðŸ’¼ Operational Kantor\n{prompt}", 'completed': False}
+            return {'response': f"Operational Kantor\n{prompt}", 'completed': False}
         
         # Parse choice (1-4) using config
         try:
@@ -915,6 +915,7 @@ Atau ketik /cancel untuk batal total"""
         company = pending_data.get('company')
         transactions = pending_data.get('transactions', [])
         project_name = pending_data.get('project_name')
+        combined = bool(pending_data.get('new_project_first_expense'))
         debt_source = pending_data.get('debt_source_dompet')
         if not debt_source:
             raw_text = pending_data.get('raw_text', '')
@@ -1160,7 +1161,7 @@ Atau ketik /cancel untuk batal total"""
             total_amount = sum(int(t.get('jumlah', 0) or 0) for t in transactions)
             tx_ids = [t.get('tx_id') for t in transactions if t.get('tx_id')]
             tx_line = f"\n🆔 TX: {', '.join(tx_ids)}" if tx_ids else ""
-            response = """✅ Tersimpan di Operasional Kantor
+            response = f"""✅ Tersimpan di Operasional Kantor
 
 💼 {transactions[0].get('keterangan', '-')}: Rp {total_amount:,}
 💳 Dompet: {dompet_sheet}
@@ -1182,7 +1183,7 @@ Atau ketik /cancel untuk batal total"""
                 }
             )
             prompt = format_wallet_selection_prompt()
-            return {'response': "🪙 Pilih dompet lagi:\n\n{prompt}", 'completed': False}
+            return {'response': f"🪙 Pilih dompet lagi:\n\n{prompt}", 'completed': False}
         
         if text_lower in ['3', 'ubah kategori', 'kategori']:
             set_pending_confirmation(

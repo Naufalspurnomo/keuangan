@@ -1132,6 +1132,20 @@ def _parse_amount(amt_str):
     except:
         return 0
 
+
+def _is_internal_transfer_tx(tx: Dict) -> bool:
+    """
+    Internal movements (saldo bootstrap/topup debt bridge) that should not
+    be treated as company/project business performance.
+    """
+    proj = str(tx.get('nama_projek', '') or '').strip().lower()
+    if proj in {'saldo umum', 'umum'}:
+        return True
+    desc = str(tx.get('keterangan', '') or '').strip().lower()
+    if 'hutang ke dompet' in desc or 'memberi hutang ke' in desc:
+        return True
+    return False
+
 def get_all_data(days: int = 30) -> List[Dict]:
     """
     Get all transaction data from ALL dompet sheets.
@@ -1366,7 +1380,8 @@ def check_duplicate_transaction(new_amount: int, new_desc: str, new_project: str
 
 def get_summary(days: int = 30) -> Dict:
     """Get summary statistics for all transactions."""
-    data = get_all_data(days)
+    raw_data = get_all_data(days)
+    data = [d for d in raw_data if not _is_internal_transfer_tx(d)]
     
     total_pengeluaran = sum(d['jumlah'] for d in data if d.get('tipe') == 'Pengeluaran')
     total_pemasukan = sum(d['jumlah'] for d in data if d.get('tipe') == 'Pemasukan')
@@ -1474,7 +1489,8 @@ def format_data_for_ai(days: int = 30) -> str:
     Includes transaction details with nama_projek for specific queries.
     """
     # Get raw transaction data
-    data = get_all_data(days)
+    raw_data = get_all_data(days)
+    data = [d for d in raw_data if not _is_internal_transfer_tx(d)]
     
     if not data:
         return "Tidak ada data transaksi."
