@@ -1932,8 +1932,22 @@ Balas 1 atau 2"""
             
             # NEW: Merge concurrent transactions (e.g. multiple images)
             # If user sends another image/transaction while one is pending, ADD to it.
-            # Support Text Merge (heuristic: has digits) when AI is bypassed (intent=UNKNOWN)
-            is_potential_text_tx = (intent == 'UNKNOWN' and text and re.search(r'\d', text))
+            # Keep text-merge strict so short replies like "3" are not treated as new transactions.
+            clean_pending_reply = (text or "").strip().lower()
+            is_short_numeric_reply = bool(re.fullmatch(r"\d{1,2}", clean_pending_reply))
+            is_quick_control_reply = (
+                is_short_numeric_reply or
+                clean_pending_reply in {
+                    'ya', 'y', 'iya', 'yes', 'ok', 'oke',
+                    'tidak', 'no', 'bukan', 'batal', 'cancel', '/cancel', 'simpan'
+                }
+            )
+            is_potential_text_tx = (
+                intent == 'UNKNOWN'
+                and bool(text)
+                and bool(has_amount_pattern(text))
+                and not is_short_numeric_reply
+            )
             expects_selection_reply = ptype in {
                 'selection',
                 'select_source_wallet',
@@ -1942,6 +1956,12 @@ Balas 1 atau 2"""
                 'confirmation_dupe',
                 'needs_project',
             }
+
+            # Guard stale pending entries (e.g., confirmation state missing after restart/replica drift).
+            if ptype is None and is_quick_control_reply:
+                _pending_transactions.pop(pending_pkey, None)
+                send_reply("⚠️ Tidak ada pertanyaan aktif untuk balasan itu. Balas ke prompt bot terbaru atau kirim ulang transaksi.")
+                return jsonify({'status': 'stale_pending'}), 200
             
             if not expects_selection_reply and (
                 input_type == 'image'

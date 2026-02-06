@@ -400,10 +400,10 @@ Atau ketik /cancel untuk batal total"""
             if m:
                 category_scope = 'OPERATIONAL' if m.group(0) == '1' else 'PROJECT'
         if not category_scope:
-            # Invalid answer, return None to let main flow handle it (or ignore)
-            # Alternatively return a message asking to retry?
-            # User request says: "Invalid answer, ask again" -> return None (Will continue normal flow)
-            return None 
+            return {
+                'response': 'Balas 1 untuk Operational atau 2 untuk Project. Ketik /cancel untuk batal.',
+                'completed': False
+            }
         
         # Valid answer - proceed
         transactions = pending_data.get('transactions', [])
@@ -476,7 +476,10 @@ Atau ketik /cancel untuk batal total"""
             clear_pending_confirmation(user_id, chat_id)
             return {'response': '❌ Dibatalkan.', 'completed': True}
         else:
-            return None  # Invalid, continue normal flow
+            return {
+                'response': 'Balas 1 untuk setuju atau 2 untuk ganti pilihan. Ketik /cancel untuk batal.',
+                'completed': False
+            }
         
         # Same as above - ask dompet
         transactions = pending_data.get('transactions', [])
@@ -550,7 +553,10 @@ Atau ketik /cancel untuk batal total"""
             if text_lower in ['/cancel', 'batal']:
                 clear_pending_confirmation(user_id, chat_id)
                 return {'response': '❌ Dibatalkan.', 'completed': True}
-            return None
+            return {
+                'response': 'Pilih angka 1-4 untuk dompet operasional, atau ketik /cancel.',
+                'completed': False
+            }
         
         # Draft → Confirm → Commit
         transactions = pending_data.get('transactions', [])
@@ -619,7 +625,10 @@ Atau ketik /cancel untuk batal total"""
             if text_lower in ['/cancel', 'batal']:
                 clear_pending_confirmation(user_id, chat_id)
                 return {'response': '❌ Dibatalkan.', 'completed': True}
-            return None
+            return {
+                'response': 'Pilih angka 1-5 sesuai opsi, atau ketik /cancel.',
+                'completed': False
+            }
         
         transactions = pending_data.get('transactions', [])
         
@@ -1582,4 +1591,7 @@ Atau ketik /cancel untuk batal total"""
         )
         return {'response': response, 'completed': False}
     
-    return None  # Unknown pending type
+    return {
+        'response': 'Balasan belum sesuai format konfirmasi aktif. Ketik /cancel untuk batalkan sesi ini.',
+        'completed': False
+    }

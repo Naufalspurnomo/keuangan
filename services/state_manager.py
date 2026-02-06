@@ -11,6 +11,7 @@ State will be lost on restart. For production, consider external storage (Redis/
 """
 
 import threading
+import copy
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any, Tuple
 import json
@@ -469,7 +470,7 @@ def _save_state():
             # 3. BACKUP KE GOOGLE SHEETS (Asynchronous / Fire-and-Forget)
             # Pakai thread biar bot tidak lemot nungguin Google API
             # EXCLUDE visual_buffer from cloud backup (too large for base64 images)
-            cloud_data = data.copy()
+            cloud_data = copy.deepcopy(data)
             cloud_data.pop("visual_buffer", None)
             # Prune large fields for cloud backup to stay under cell limit (~50k chars)
             def _trim_dict(d: dict, max_items: int) -> dict:
@@ -480,15 +481,53 @@ def _save_state():
                 # Keep newest items by insertion order
                 return dict(list(d.items())[-max_items:])
 
+            def _prune_transactions(transactions: Any) -> Any:
+                if not isinstance(transactions, list):
+                    return transactions
+                for tx in transactions:
+                    if not isinstance(tx, dict):
+                        continue
+                    for noisy_key in ("ocr_text", "raw_ocr", "base64_images", "image_data", "raw_image"):
+                        tx.pop(noisy_key, None)
+                    ket = tx.get("keterangan")
+                    if isinstance(ket, str) and len(ket) > 500:
+                        tx["keterangan"] = ket[:500]
+                return transactions
+
+            def _prune_pending_entry(entry: Any) -> Any:
+                if not isinstance(entry, dict):
+                    return entry
+                entry["transactions"] = _prune_transactions(entry.get("transactions"))
+                attachments = entry.get("attachments")
+                if isinstance(attachments, dict):
+                    media_url = attachments.get("media_url")
+                    if isinstance(media_url, str) and media_url.startswith("data:"):
+                        attachments["media_url"] = ""
+                for text_key in ("original_text", "normalized_text", "caption", "raw_text"):
+                    value = entry.get(text_key)
+                    if isinstance(value, str) and len(value) > 500:
+                        entry[text_key] = value[:500]
+                return entry
+
             cloud_data["processed_messages"] = _trim_dict(cloud_data.get("processed_messages", {}), 500)
             cloud_data["bot_message_refs"] = _trim_dict(cloud_data.get("bot_message_refs", {}), 200)
             cloud_data["pending_message_refs"] = _trim_dict(cloud_data.get("pending_message_refs", {}), 200)
             cloud_data["bot_interactions"] = _trim_dict(cloud_data.get("bot_interactions", {}), 200)
             cloud_data["last_bot_reports"] = _trim_dict(cloud_data.get("last_bot_reports", {}), 200)
             cloud_data["last_tx_events"] = _trim_dict(cloud_data.get("last_tx_events", {}), 200)
+            cloud_data["pending_transactions"] = _trim_dict(cloud_data.get("pending_transactions", {}), 80)
+            cloud_data["pending_confirmations"] = _trim_dict(cloud_data.get("pending_confirmations", {}), 80)
             cloud_data["audit_log"] = []  # Skip audit log for cloud to save space
 
-            cloud_json = json.dumps(_sanitize_keys(cloud_data), default=str)
+            if isinstance(cloud_data.get("pending_transactions"), dict):
+                for key, pending in list(cloud_data["pending_transactions"].items()):
+                    cloud_data["pending_transactions"][key] = _prune_pending_entry(pending)
+
+            if isinstance(cloud_data.get("pending_confirmations"), dict):
+                for key, pending_conf in list(cloud_data["pending_confirmations"].items()):
+                    cloud_data["pending_confirmations"][key] = _prune_pending_entry(pending_conf)
+
+            cloud_json = json.dumps(_sanitize_keys(cloud_data), default=str, separators=(",", ":"))
             # If still too large, drop dedup + refs entirely
             if len(cloud_json) > 45000:
                 cloud_data["processed_messages"] = {}
@@ -496,7 +535,12 @@ def _save_state():
                 cloud_data["pending_message_refs"] = {}
                 cloud_data["bot_interactions"] = {}
                 cloud_data["last_bot_reports"] = {}
-                cloud_json = json.dumps(_sanitize_keys(cloud_data), default=str)
+                cloud_data["last_tx_events"] = {}
+                cloud_json = json.dumps(_sanitize_keys(cloud_data), default=str, separators=(",", ":"))
+            if len(cloud_json) > 45000:
+                cloud_data["pending_transactions"] = {}
+                cloud_data["pending_confirmations"] = {}
+                cloud_json = json.dumps(_sanitize_keys(cloud_data), default=str, separators=(",", ":"))
             
             threading.Thread(target=save_state_to_cloud, args=(cloud_json,), daemon=True).start()
                 

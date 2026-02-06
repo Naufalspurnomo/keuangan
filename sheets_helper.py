@@ -94,31 +94,84 @@ def save_state_to_cloud(json_state_string):
             try:
                 state = json.loads(json_state_string)
                 
-                # Clear processed_message_ids (keep only last 50)
-                if 'processed_message_ids' in state:
-                    ids = list(state['processed_message_ids']) if isinstance(state['processed_message_ids'], (list, set)) else []
-                    state['processed_message_ids'] = ids[-50:] if len(ids) > 50 else ids
-                
-                # Clear OCR texts from pending transactions
-                if 'pending_transactions' in state:
-                    for key in list(state['pending_transactions'].keys()):
-                        tx = state['pending_transactions'][key]
-                        if isinstance(tx, dict):
-                            # Remove large OCR text, keep only essential fields
-                            tx.pop('ocr_text', None)
-                            tx.pop('raw_ocr', None)
-                            tx.pop('base64_images', None)
-                            tx.pop('image_data', None)
-                
+                def _trim_dict(d: dict, max_items: int) -> dict:
+                    if not isinstance(d, dict):
+                        return d
+                    if len(d) <= max_items:
+                        return d
+                    return dict(list(d.items())[-max_items:])
+
+                def _prune_transactions(transactions):
+                    if not isinstance(transactions, list):
+                        return
+                    for tx in transactions:
+                        if not isinstance(tx, dict):
+                            continue
+                        for noisy_key in ("ocr_text", "raw_ocr", "base64_images", "image_data", "raw_image"):
+                            tx.pop(noisy_key, None)
+                        ket = tx.get("keterangan")
+                        if isinstance(ket, str) and len(ket) > 400:
+                            tx["keterangan"] = ket[:400]
+
+                def _prune_pending_dict(pending_dict):
+                    if not isinstance(pending_dict, dict):
+                        return
+                    for _, pending in list(pending_dict.items()):
+                        if not isinstance(pending, dict):
+                            continue
+                        _prune_transactions(pending.get("transactions"))
+                        attachments = pending.get("attachments")
+                        if isinstance(attachments, dict):
+                            media_url = attachments.get("media_url")
+                            if isinstance(media_url, str) and media_url.startswith("data:"):
+                                attachments["media_url"] = ""
+                        for text_key in ("original_text", "normalized_text", "caption", "raw_text"):
+                            value = pending.get(text_key)
+                            if isinstance(value, str) and len(value) > 400:
+                                pending[text_key] = value[:400]
+
+                # Dedup caches (actual key is processed_messages, keep old fallback key too)
+                state["processed_messages"] = _trim_dict(state.get("processed_messages", {}), 250)
+                if "processed_message_ids" in state:
+                    ids = list(state["processed_message_ids"]) if isinstance(state["processed_message_ids"], (list, set)) else []
+                    state["processed_message_ids"] = ids[-100:] if len(ids) > 100 else ids
+
+                # Trim references and noisy logs
+                state["bot_message_refs"] = _trim_dict(state.get("bot_message_refs", {}), 150)
+                state["pending_message_refs"] = _trim_dict(state.get("pending_message_refs", {}), 150)
+                state["bot_interactions"] = _trim_dict(state.get("bot_interactions", {}), 150)
+                state["last_bot_reports"] = _trim_dict(state.get("last_bot_reports", {}), 150)
+                state["last_tx_events"] = _trim_dict(state.get("last_tx_events", {}), 150)
+                if "audit_log" in state:
+                    state["audit_log"] = []
+
+                # Remove heavy media fields from pending states
+                state["pending_transactions"] = _trim_dict(state.get("pending_transactions", {}), 40)
+                state["pending_confirmations"] = _trim_dict(state.get("pending_confirmations", {}), 40)
+                _prune_pending_dict(state.get("pending_transactions"))
+                _prune_pending_dict(state.get("pending_confirmations"))
+
                 # Clear old combined_messages
-                if 'combined_messages' in state:
-                    combos = state['combined_messages']
+                if "combined_messages" in state:
+                    combos = state["combined_messages"]
                     if isinstance(combos, dict) and len(combos) > 20:
-                        # Keep only 20 most recent
                         keys = sorted(combos.keys())[-20:]
-                        state['combined_messages'] = {k: combos[k] for k in keys}
-                
-                json_state_string = json.dumps(state, default=str)
+                        state["combined_messages"] = {k: combos[k] for k in keys}
+
+                json_state_string = json.dumps(state, default=str, separators=(",", ":"))
+
+                # Aggressive fallback when still above Google cell limit
+                if len(json_state_string) > 49500:
+                    state["processed_messages"] = {}
+                    state["bot_message_refs"] = {}
+                    state["pending_message_refs"] = {}
+                    state["bot_interactions"] = {}
+                    state["last_bot_reports"] = {}
+                    state["last_tx_events"] = {}
+                    state["pending_transactions"] = {}
+                    state["pending_confirmations"] = {}
+                    state["combined_messages"] = {}
+                    json_state_string = json.dumps(state, default=str, separators=(",", ":"))
                 print(f"[INFO] State cleaned to {len(json_state_string)} chars")
                 
             except json.JSONDecodeError:
