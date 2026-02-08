@@ -1234,6 +1234,10 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             # ROUTING CHECK
             original_text = pending.get('original_text', '')
             category_scope = pending.get('category_scope', 'UNKNOWN')  # From AI layer
+            debt_source_hint = _extract_debt_source(original_text)
+            has_debt_context = bool(
+                re.search(r"\b(utang|hutang|minjem|minjam|pinjam)\b", (original_text or "").lower())
+            )
             
             # If already routed/flagged, respect it
             if pending.get('is_operational'):
@@ -1449,8 +1453,14 @@ Balas 1 atau 2"""
             dompet = None
             detected_dompet = next((t.get('detected_dompet') for t in txs if t.get('detected_dompet')), None)
             if detected_dompet:
-                dompet = detected_dompet
-                detected_company = get_company_name_from_sheet(dompet)
+                if has_debt_context and debt_source_hint and detected_dompet == debt_source_hint and not detected_company:
+                    secure_log(
+                        "INFO",
+                        f"Ignoring detected dompet {detected_dompet} as main dompet (treated as debt source context)"
+                    )
+                else:
+                    dompet = detected_dompet
+                    detected_company = get_company_name_from_sheet(dompet)
 
             if detected_company:
                 if detected_company == "UMUM":
@@ -1460,8 +1470,14 @@ Balas 1 atau 2"""
             
             explicit_dompet = resolve_dompet_from_text(original_text)
             if explicit_dompet:
-                dompet = explicit_dompet
-                detected_company = get_company_name_from_sheet(dompet)
+                if has_debt_context and debt_source_hint and explicit_dompet == debt_source_hint:
+                    secure_log(
+                        "INFO",
+                        f"Ignoring explicit dompet {explicit_dompet} as main dompet (treated as debt source context)"
+                    )
+                else:
+                    dompet = explicit_dompet
+                    detected_company = get_company_name_from_sheet(dompet)
 
             # --- AUTO-RESOLVE COMPANY FROM PROJECT HISTORY (NEW) ---
             # If we know the project, but not the company, try to find where it was last used
@@ -1483,7 +1499,7 @@ Balas 1 atau 2"""
 
             # 2. Save if Resolved
             if detected_company and dompet:
-                debt_source = _extract_debt_source(original_text)
+                debt_source = debt_source_hint
 
                 is_transfer_flow = pending.get('category_scope') == 'TRANSFER'
                 is_wallet_set_mode = is_transfer_flow and is_absolute_balance_update(original_text)
