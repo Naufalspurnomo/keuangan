@@ -1756,9 +1756,12 @@ Balas 1 atau 2"""
         # STEP 0: CHECK PENDING CONFIRMATION (New Logic)
         # ========================================
         from handlers.pending_handler import handle_pending_response
+        quoted_pending_key = ''
+        if is_group and quoted_msg_id:
+            quoted_pending_key = get_pending_key_from_message(quoted_msg_id) or ''
 
         pending_conf = get_pending_confirmation(sender_number, chat_jid)
-        if not pending_conf and is_group and text:
+        if not pending_conf and is_group and text and not quoted_msg_id:
             # Allow other group members to answer if only one pending confirmation exists
             t = text.strip().lower()
             has_choice_token = bool(re.search(r"(?<!\d)[12](?![\d.,])", t))
@@ -1768,8 +1771,18 @@ Balas 1 atau 2"""
                 t in ['ya', 'y', 'iya', 'ok', 'oke', 'yes', 'no', 'tidak', 'bukan',
                       'simpan', 'batal', 'cancel', '/cancel']
             )
-            if quoted_msg_id or is_quick_reply:
-                _, pending_conf = find_pending_confirmation_in_chat(chat_jid)
+            if is_quick_reply:
+                conf_key, conf_data = find_pending_confirmation_in_chat(chat_jid)
+                if conf_data:
+                    # Safety: do not allow cross-user quick reply to execute destructive undo flow.
+                    own_conf_key = f"{chat_jid}:{sender_number}"
+                    if conf_key != own_conf_key and conf_data.get('type') == 'undo_confirmation':
+                        secure_log(
+                            "INFO",
+                            f"Skip cross-user undo confirmation in group for {sender_number} (owner={conf_key})"
+                        )
+                    else:
+                        pending_conf = conf_data
         if pending_conf:
             # Check if handled by pending handler
             result = handle_pending_response(
@@ -1802,7 +1815,7 @@ Balas 1 atau 2"""
         sender_pkey = pending_key(sender_number, chat_jid)
         pending_pkey = sender_pkey
         if is_group and quoted_msg_id:
-            mapped = get_pending_key_from_message(quoted_msg_id)
+            mapped = quoted_pending_key or get_pending_key_from_message(quoted_msg_id)
             if mapped: pending_pkey = mapped
             
         pending_data = _pending_transactions.get(pending_pkey)
