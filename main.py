@@ -487,7 +487,7 @@ def _pick_dompet_by_prep(text: str, preps: List[str]) -> Optional[str]:
     aliases = sorted(DOMPET_ALIASES.items(), key=lambda x: -len(x[0]))
     for prep in preps:
         for alias, dompet in aliases:
-            pattern = rf"\\b{re.escape(prep)}\\b[^a-z0-9]{{0,10}}(?:dompet|rekening|rek|wallet)?\\s*{re.escape(alias)}\\b"
+            pattern = rf"\b{re.escape(prep)}\b[^a-z0-9]{{0,10}}(?:dompet|rekening|rek|wallet)?\s*{re.escape(alias)}\b"
             if re.search(pattern, lower):
                 return dompet
     return None
@@ -505,7 +505,7 @@ def _handle_auto_hutang_payment(text: str) -> Optional[str]:
     if re.search(r"\b(projek|project|proyek|prj)\b", lower):
         return None
     # Allow direct "no 3" or "nomor 3"
-    m_no = re.search(r"\\b(?:no|nomor)\\.?\\s*(\\d+)\\b", lower)
+    m_no = re.search(r"\b(?:no|nomor)\.?\s*(\d+)\b", lower)
     if m_no:
         info = update_hutang_status_by_no(int(m_no.group(1)), "PAID")
         if not info:
@@ -1206,6 +1206,20 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 if _is_debt_payment_text(lower):
                     if not _pick_dompet_by_prep(lower, ["dari", "dr"]):
                         return None
+                # Prefer explicit lender markers to avoid clashing with project/company words
+                by_prep = _pick_dompet_by_prep(lower, ["dari", "dr", "ke", "kepada", "kpd"])
+                if by_prep:
+                    return by_prep
+
+                # Fallback: only parse the text tail that starts from debt keyword
+                m = re.search(r"\b(utang|hutang|minjem|minjam|pinjam)\b", lower)
+                if m:
+                    tail = lower[m.start():]
+                    from_tail = resolve_dompet_from_text(tail)
+                    if from_tail:
+                        return from_tail
+
+                # Last resort: full text parse
                 return resolve_dompet_from_text(lower)
 
             def _send_and_track(response: str, event_id: str) -> None:
@@ -1470,8 +1484,6 @@ Balas 1 atau 2"""
             # 2. Save if Resolved
             if detected_company and dompet:
                 debt_source = _extract_debt_source(original_text)
-                if debt_source == dompet:
-                    debt_source = None
 
                 is_transfer_flow = pending.get('category_scope') == 'TRANSFER'
                 is_wallet_set_mode = is_transfer_flow and is_absolute_balance_update(original_text)
@@ -1545,8 +1557,6 @@ Balas 1 atau 2"""
                             dompet = locked_dompet
                             detected_company = locked_company
                             lock_note = f"Dompet disesuaikan ke {locked_dompet} (sesuai riwayat project)."
-                            if debt_source == dompet:
-                                debt_source = None
                         else:
                             # Ask user to confirm locked dompet or move project
                             set_pending_confirmation(
@@ -1584,6 +1594,10 @@ Balas 1 atau 2"""
                             )
                             send_reply(msg)
                             return jsonify({'status': 'project_lock_mismatch'}), 200
+
+                # Normalize debt_source only after final dompet is resolved
+                if debt_source == dompet:
+                    debt_source = None
 
 
                 for t in txs:

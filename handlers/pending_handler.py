@@ -82,6 +82,23 @@ def _extract_debt_source(text: str) -> Optional[str]:
     lower = text.lower()
     if not re.search(r"\b(utang|hutang|minjem|minjam|pinjam)\b", lower):
         return None
+
+    # Prefer explicit lender marker to avoid matching project/company words.
+    for prep in ['dari', 'dr', 'ke', 'kepada', 'kpd']:
+        m = re.search(rf"\b{prep}\b(.+)", lower)
+        if m:
+            candidate = resolve_dompet_from_text(m.group(1))
+            if candidate:
+                return candidate
+
+    # Fallback: parse only segment from debt keyword onward.
+    m = re.search(r"\b(utang|hutang|minjem|minjam|pinjam)\b", lower)
+    if m:
+        candidate = resolve_dompet_from_text(lower[m.start():])
+        if candidate:
+            return candidate
+
+    # Last resort full parse.
     return resolve_dompet_from_text(lower)
 
 

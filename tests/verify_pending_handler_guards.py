@@ -1,10 +1,18 @@
 import unittest
 from unittest.mock import patch
 
-from handlers.pending_handler import handle_pending_response
+from handlers.pending_handler import handle_pending_response, _extract_debt_source
 
 
 class PendingHandlerGuardsTest(unittest.TestCase):
+    def test_extract_debt_source_prefers_context_after_utang(self):
+        text = "beli kuas untuk hollawall, utang dari tx surabaya, project taman arda"
+        self.assertEqual(_extract_debt_source(text), "TX SBY(216)")
+
+    def test_extract_debt_source_without_debt_keyword_returns_none(self):
+        text = "beli kuas untuk hollawall, project taman arda"
+        self.assertIsNone(_extract_debt_source(text))
+
     def test_category_scope_invalid_choice_stays_in_pending(self):
         pending_data = {
             "type": "category_scope",
