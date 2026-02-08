@@ -2263,7 +2263,7 @@ Balas 1 atau 2"""
                 }
             )
             is_potential_text_tx = (
-                intent == 'UNKNOWN'
+                intent in {'UNKNOWN', 'RECORD_TRANSACTION'}
                 and bool(text)
                 and bool(has_amount_pattern(text))
                 and not is_short_numeric_reply
@@ -2283,10 +2283,20 @@ Balas 1 atau 2"""
                 send_reply("⚠️ Tidak ada pertanyaan aktif untuk balasan itu. Balas ke prompt bot terbaru atau kirim ulang transaksi.")
                 return jsonify({'status': 'stale_pending'}), 200
             
-            if not expects_selection_reply and (
+            if (
                 input_type == 'image'
-                or (intent == 'RECORD_TRANSACTION' and not is_reply_to_bot)
-                or is_potential_text_tx
+                or (
+                    not expects_selection_reply
+                    and (
+                        # Keep text-merge strict during pending to avoid group chatter being queued.
+                        is_potential_text_tx
+                        or (
+                            explicit_catat
+                            and bool(text)
+                            and not is_short_numeric_reply
+                        )
+                    )
+                )
             ):
                 if input_type == 'image' and not _claim_visual_source_once():
                     return jsonify({'status': 'duplicate_visual_reference'}), 200
@@ -2362,6 +2372,24 @@ Balas 1 atau 2"""
                 except Exception:
                     amt = 0
                 if not amt:
+                    # In busy groups, ignore normal chatter while waiting nominal.
+                    # Reply only when user is clearly interacting with this pending flow.
+                    if is_group:
+                        explicit_call = False
+                        try:
+                            explicit_call = is_explicit_bot_call(text)
+                        except Exception:
+                            explicit_call = False
+
+                        is_pending_interaction = bool(
+                            is_reply_to_bot
+                            or explicit_call
+                            or has_amount_pattern(text)
+                            or is_command_match(text, Commands.CANCEL, is_group)
+                        )
+                        if not is_pending_interaction:
+                            return jsonify({'status': 'ignored_pending_chatter'}), 200
+
                     send_reply("❗ Nominalnya berapa? (contoh: 150rb)")
                     return jsonify({'status': 'asking_amount'}), 200
                 
