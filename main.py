@@ -21,6 +21,7 @@ from typing import Dict, List, Optional, Tuple
 
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
+from werkzeug.exceptions import RequestEntityTooLarge
 
 # Load environment variables
 load_dotenv()
@@ -140,6 +141,16 @@ app = Flask(__name__)
 DEBUG = os.getenv('FLASK_DEBUG', '0') == '1'
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 IMAGE_GRACE_SECONDS = int(os.getenv('IMAGE_GRACE_SECONDS', '5'))
+MAX_WEBHOOK_BYTES = int(os.getenv('MAX_WEBHOOK_BYTES', str(25 * 1024 * 1024)))
+app.config['MAX_CONTENT_LENGTH'] = MAX_WEBHOOK_BYTES
+app.config['MAX_FORM_MEMORY_SIZE'] = MAX_WEBHOOK_BYTES
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def handle_request_entity_too_large(_err):
+    secure_log("WARNING", f"Webhook payload too large (>{MAX_WEBHOOK_BYTES} bytes)")
+    # Return 200 to prevent provider retry storm for oversized payloads.
+    return jsonify({'status': 'payload_too_large'}), 200
 
 # ===================== NETWORK HELPERS =====================
 
@@ -586,7 +597,11 @@ def webhook_wuzapi():
         import json
         
         # 1. Parse Data
-        json_data_raw = request.form.get('jsonData')
+        try:
+            json_data_raw = request.form.get('jsonData')
+        except RequestEntityTooLarge:
+            secure_log("WARNING", f"Webhook payload too large while reading form (>{MAX_WEBHOOK_BYTES} bytes)")
+            return jsonify({'status': 'payload_too_large'}), 200
         if not json_data_raw: return jsonify({'status': 'no_data'}), 200
         
         try:
@@ -662,6 +677,17 @@ def webhook_wuzapi():
                     local_media_path = download_wuzapi_image(info.get('ID'), chat_jid)
                 except Exception:
                     local_media_path = None
+
+            # Some WuzAPI events declare image type but provide neither base64 nor downloadable media.
+            # Avoid passing empty media source to OCR pipeline.
+            if not media_url and not local_media_path:
+                if (text or '').strip():
+                    secure_log("WARNING", "Webhook image payload missing media; fallback to caption-only text extraction")
+                    input_type = 'text'
+                else:
+                    secure_log("WARNING", "Webhook image payload missing media and caption; skipping message")
+                    return jsonify({'status': 'image_missing_media'}), 200
+
             secure_log(
                 "INFO",
                 f"Webhook: Image message received (caption_len={len(text or '')}, "
@@ -2736,6 +2762,14 @@ Balas 1 atau 2"""
         # 8. PROCESS NEW INPUT (AI)
         transactions = []
         try:
+            if input_type == 'image' and not (media_url or local_media_path):
+                if (text or '').strip():
+                    secure_log("WARNING", "Image input without media payload; fallback to text-only extraction")
+                    input_type = 'text'
+                else:
+                    send_reply("❗ Gambar tidak bisa diunduh. Tolong kirim ulang struk atau tambahkan caption transaksi.")
+                    return jsonify({'status': 'image_missing_media'}), 200
+
             if input_type == 'image' and not _claim_visual_source_once():
                 return jsonify({'status': 'duplicate_visual_reference'}), 200
             if not processing_ack_sent:

@@ -481,15 +481,15 @@ REMEMBER:
                     result['should_respond'] = True
                     result['confidence'] = 0.90
 
-            # ==== POST-PROCESSING: Zero Amount Filter ====
-            # Never allow 0 amount transactions
+            # ==== POST-PROCESSING: Zero Amount Guard ====
+            # Keep RECORD_TRANSACTION even when amount is 0/unknown so downstream
+            # flow can request nominal from user (instead of silently ignoring).
             extracted = result.get('extracted_data', {})
             if result.get('intent') == 'RECORD_TRANSACTION':
                 amount = extracted.get('amount', 0)
                 if amount == 0:
-                    logger.warning(f"AI detected transaction with 0 amount. Forcing IGNORE.")
-                    result['intent'] = 'IGNORE'
-                    result['should_respond'] = False
+                    logger.info("AI detected transaction without nominal. Keeping RECORD_TRANSACTION for follow-up amount prompt.")
+                    result['should_respond'] = True
 
             # ===== POST-PROCESSING: Intent Boosting =====
             # If pre-analysis shows strong signals, boost confidence
