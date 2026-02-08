@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from handlers.pending_handler import handle_pending_response
 
@@ -59,6 +60,36 @@ class PendingHandlerGuardsTest(unittest.TestCase):
         self.assertIsInstance(result, dict)
         self.assertFalse(result.get("completed"))
         self.assertIn("Ketik /cancel", result.get("response", ""))
+
+    @patch("handlers.pending_handler.append_project_transaction")
+    @patch("handlers.pending_handler.append_operational_transaction")
+    def test_confirm_commit_operational_rejects_zero_amount(
+        self,
+        mock_append_operational,
+        mock_append_project,
+    ):
+        pending_data = {
+            "type": "confirm_commit_operational",
+            "transactions": [{"keterangan": "Biaya", "jumlah": 0}],
+            "source_wallet": "TEXTURIN-Surabaya",
+            "category": "Lain Lain",
+            "event_id": "evt_zero",
+            "pending_key": "120363@g.us:6281",
+        }
+
+        result = handle_pending_response(
+            user_id="6281",
+            chat_id="120363@g.us",
+            text="ya",
+            pending_data=pending_data,
+            sender_name="Tester",
+        )
+
+        self.assertIsInstance(result, dict)
+        self.assertFalse(result.get("completed"))
+        self.assertIn("belum valid", result.get("response", "").lower())
+        mock_append_operational.assert_not_called()
+        mock_append_project.assert_not_called()
 
 
 if __name__ == "__main__":

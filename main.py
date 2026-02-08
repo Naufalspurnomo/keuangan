@@ -124,6 +124,7 @@ from config.wallets import (
     apply_company_prefix,
     strip_company_prefix,
     DOMPET_ALIASES,
+    get_company_name_from_sheet,
     resolve_dompet_from_text,
 )
 
@@ -871,6 +872,138 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 send_reply(f"⚠️ AI sedang sibuk (limit). Coba lagi dalam {wait}.")
                 return None
 
+        def _normalize_amount(value) -> int:
+            """Best-effort parse amount to non-negative integer."""
+            try:
+                if value is None:
+                    return 0
+                if isinstance(value, bool):
+                    return int(value)
+                if isinstance(value, int):
+                    return abs(value)
+                if isinstance(value, float):
+                    return abs(int(value))
+                raw = str(value).strip()
+                if not raw:
+                    return 0
+                parsed = parse_revision_amount(raw)
+                if parsed > 0:
+                    return parsed
+                raw = raw.replace("rp", "").replace("Rp", "").replace("RP", "")
+                digits = re.sub(r"[^0-9]", "", raw)
+                return int(digits) if digits else 0
+            except Exception:
+                return 0
+
+        def _normalize_key_text(value) -> str:
+            text_value = sanitize_input(str(value or "")).lower().strip()
+            return re.sub(r"\s+", " ", text_value)
+
+        def _normalize_transaction(tx: dict) -> Optional[dict]:
+            if not isinstance(tx, dict):
+                return None
+
+            normalized = dict(tx)
+            normalized["jumlah"] = _normalize_amount(normalized.get("jumlah", 0))
+
+            ket = sanitize_input(str(normalized.get("keterangan", "") or "")).strip()
+            normalized["keterangan"] = ket[:200] if ket else "Transaksi"
+
+            tipe = normalized.get("tipe", "Pengeluaran")
+            if tipe not in ("Pemasukan", "Pengeluaran"):
+                tipe = "Pengeluaran"
+            normalized["tipe"] = tipe
+
+            if normalized["jumlah"] <= 0:
+                normalized["needs_amount"] = True
+            else:
+                normalized.pop("needs_amount", None)
+            return normalized
+
+        def _tx_content_key(tx: dict) -> Tuple[str, str, str, str]:
+            project = strip_company_prefix(str(tx.get("nama_projek", "") or ""))
+            return (
+                _normalize_key_text(tx.get("tipe", "Pengeluaran")),
+                _normalize_key_text(tx.get("keterangan", "")),
+                _normalize_key_text(project),
+                _normalize_key_text(tx.get("kategori", "")),
+            )
+
+        def _tx_identity_key(tx: dict) -> Tuple[str, str, str, str, int]:
+            content = _tx_content_key(tx)
+            amount = int(tx.get("jumlah", 0) or 0)
+            return (content[0], content[1], content[2], content[3], amount)
+
+        def _merge_transaction_queue(existing: list, incoming: list) -> Tuple[list, dict]:
+            """
+            Merge queue safely:
+            - normalize every tx
+            - drop exact duplicates
+            - prefer valid amount (>0) over zero for the same content
+            """
+            merged: List[dict] = []
+            identity_index: Dict[Tuple[str, str, str, str, int], int] = {}
+            content_index: Dict[Tuple[str, str, str, str], int] = {}
+            meta = {"added": 0, "duplicates": 0, "upgraded": 0}
+
+            def _upsert(raw_tx, is_incoming: bool) -> None:
+                tx = _normalize_transaction(raw_tx)
+                if not tx:
+                    if is_incoming:
+                        meta["duplicates"] += 1
+                    return
+
+                identity = _tx_identity_key(tx)
+                if identity in identity_index:
+                    if is_incoming:
+                        meta["duplicates"] += 1
+                    return
+
+                content = _tx_content_key(tx)
+                prev_idx = content_index.get(content)
+                if prev_idx is not None:
+                    prev_tx = merged[prev_idx]
+                    prev_amt = int(prev_tx.get("jumlah", 0) or 0)
+                    new_amt = int(tx.get("jumlah", 0) or 0)
+
+                    if prev_amt <= 0 < new_amt:
+                        prev_identity = _tx_identity_key(prev_tx)
+                        merged[prev_idx] = tx
+                        identity_index.pop(prev_identity, None)
+                        identity_index[identity] = prev_idx
+                        if is_incoming:
+                            meta["upgraded"] += 1
+                        return
+
+                    if new_amt <= 0 < prev_amt:
+                        if is_incoming:
+                            meta["duplicates"] += 1
+                        return
+
+                insert_idx = len(merged)
+                merged.append(tx)
+                identity_index[identity] = insert_idx
+                content_index.setdefault(content, insert_idx)
+                if is_incoming:
+                    meta["added"] += 1
+
+            for old_tx in existing or []:
+                _upsert(old_tx, is_incoming=False)
+            for new_tx in incoming or []:
+                _upsert(new_tx, is_incoming=True)
+
+            return merged, meta
+
+        def _first_missing_amount_tx(transactions: list) -> Optional[dict]:
+            for tx in transactions or []:
+                try:
+                    amount = int(tx.get("jumlah", 0) or 0)
+                except Exception:
+                    amount = 0
+                if tx.get("needs_amount") or amount <= 0:
+                    return tx
+            return None
+
         def is_explicit_bot_call(msg: str) -> bool:
             if not msg:
                 return False
@@ -928,8 +1061,18 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
 
         # --- CORE WORKFLOW: FINALIZE TRANSACTION ---
         def finalize_transaction_workflow(pending: dict, pkey: str):
-            txs = pending.get('transactions', [])
-            if not txs: return jsonify({'status': 'error_no_tx'}), 200
+            raw_txs = pending.get('transactions', [])
+            txs, _ = _merge_transaction_queue(raw_txs, [])
+            pending['transactions'] = txs
+            if not txs:
+                return jsonify({'status': 'error_no_tx'}), 200
+
+            missing_tx = _first_missing_amount_tx(txs)
+            if missing_tx:
+                pending['pending_type'] = 'needs_amount'
+                item = missing_tx.get('keterangan', 'Transaksi')
+                send_reply(f"Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
+                return jsonify({'status': 'asking_amount'}), 200
 
             def _assign_tx_ids(transactions: list, event_id: str) -> None:
                 base = event_id or f"evt_{datetime.now().strftime('%Y%m%d%H%M%S')}"
@@ -962,7 +1105,6 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 if _is_debt_payment_text(lower):
                     if not _pick_dompet_by_prep(lower, ["dari", "dr"]):
                         return None
-                from config.wallets import resolve_dompet_from_text
                 return resolve_dompet_from_text(lower)
 
             def _send_and_track(response: str, event_id: str) -> None:
@@ -1187,7 +1329,6 @@ Balas 1 atau 2"""
             dompet = None
             detected_dompet = next((t.get('detected_dompet') for t in txs if t.get('detected_dompet')), None)
             if detected_dompet:
-                from config.wallets import get_company_name_from_sheet
                 dompet = detected_dompet
                 detected_company = get_company_name_from_sheet(dompet)
 
@@ -1199,7 +1340,6 @@ Balas 1 atau 2"""
             
             explicit_dompet = resolve_dompet_from_text(original_text)
             if explicit_dompet:
-                from config.wallets import get_company_name_from_sheet
                 dompet = explicit_dompet
                 detected_company = get_company_name_from_sheet(dompet)
 
@@ -1289,8 +1429,16 @@ Balas 1 atau 2"""
                 p_name_check = t0.get('nama_projek', '')
                 if p_name_check and p_name_check.lower() not in ['saldo umum', 'operasional kantor', 'umum', 'unknown']:
                     locked_dompet = get_project_lock(p_name_check)
+                    if not locked_dompet:
+                        try:
+                            from sheets_helper import find_company_for_project
+                            hist_dompet, _hist_company = find_company_for_project(p_name_check)
+                            if hist_dompet:
+                                locked_dompet = hist_dompet
+                                secure_log("INFO", f"Project lock fallback from history: '{p_name_check}' -> {locked_dompet}")
+                        except Exception as e:
+                            secure_log("WARNING", f"Project history fallback check failed: {e}")
                     if locked_dompet and locked_dompet != dompet:
-                        from config.wallets import get_company_name_from_sheet
                         locked_company = get_company_name_from_sheet(locked_dompet)
                         if FAST_MODE:
                             dompet = locked_dompet
@@ -1547,6 +1695,8 @@ Balas 1 atau 2"""
                 if is_group and chat_jid:
                     candidates = []
                     for pkey, pval in _pending_transactions.items():
+                        if not isinstance(pkey, str):
+                            continue
                         if pkey.startswith(chat_jid) and pval and not pending_is_expired(pval):
                             candidates.append((pkey, pval))
                     if len(candidates) == 1:
@@ -1832,11 +1982,29 @@ Balas 1 atau 2"""
                         # Force logic for Transfer/Saldo logic
                         if smart_result.get('layer_response'):
                              text = smart_result.get('layer_response')
-                        
-                        layer_category_scope = "TRANSFER" 
-                        # Try to resolve dompet directly from text to avoid extra prompts
-                        from config.wallets import resolve_dompet_from_text
-                        transfer_dompet = resolve_dompet_from_text(text)
+
+                        text_lower = (text or "").lower()
+                        has_project_context = bool(re.search(r"\b(projek|project|proyek|prj)\b", text_lower))
+                        has_spending_context = bool(
+                            re.search(
+                                r"\b(beli|pembelian|bayar|biaya|material|upah|jasa|ongkir|transport|belanja|buat|untuk)\b",
+                                text_lower
+                            )
+                        )
+
+                        # Safety: don't force TRANSFER for project expense text that only mentions a dompet.
+                        if has_project_context and has_spending_context and not is_saldo_update(text):
+                            intent = "RECORD_TRANSACTION"
+                            layer_category_scope = "PROJECT"
+                            transfer_dompet = resolve_dompet_from_text(text)
+                            secure_log(
+                                "INFO",
+                                "Transfer intent downgraded to RECORD_TRANSACTION due project expense context"
+                            )
+                        else:
+                            layer_category_scope = "TRANSFER"
+                            # Try to resolve dompet directly from text to avoid extra prompts
+                            transfer_dompet = resolve_dompet_from_text(text)
 
                     if intent == "RECORD_TRANSACTION":
                         # Logic continues to Step 8 (Extraction) with refined text/scope
@@ -1978,20 +2146,40 @@ Balas 1 atau 2"""
                 if new_txs is None:
                     return jsonify({'status': 'rate_limit'}), 200
                 if new_txs:
-                    send_reply("➕ Menambahkan ke antrian transaksi...")
-                    # Merge with existing
-                    pending['transactions'].extend(new_txs)
-                    
-                    # Deduplicate based on exact content to avoid double-processing same webhook
-                    # Simple hash check on amount + desc
-                    unique = {f"{t['jumlah']}_{t['keterangan']}": t for t in pending['transactions']}.values()
-                    pending['transactions'] = list(unique)
-                    
-                    # Update pending state
-                    state_manager_module.set_pending_transaction(pending_key, pending)
-                    
+                    merged_txs, merge_meta = _merge_transaction_queue(
+                        pending.get('transactions', []),
+                        new_txs
+                    )
+                    pending['transactions'] = merged_txs
+
+                    if merge_meta.get('added', 0) > 0 or merge_meta.get('upgraded', 0) > 0:
+                        send_reply("Menambahkan ke antrian transaksi...")
+                    else:
+                        send_reply("Item terdeteksi duplikat. Antrian tidak berubah.")
+
+                    if merge_meta.get('duplicates', 0) > 0 or merge_meta.get('upgraded', 0) > 0:
+                        secure_log(
+                            "INFO",
+                            (
+                                f"Pending merge {pending_pkey}: "
+                                f"added={merge_meta.get('added', 0)}, "
+                                f"upgraded={merge_meta.get('upgraded', 0)}, "
+                                f"duplicates={merge_meta.get('duplicates', 0)}"
+                            )
+                        )
+
+                    state_manager_module.set_pending_transaction(pending_pkey, pending)
+
+                    missing_tx = _first_missing_amount_tx(merged_txs)
+                    if missing_tx:
+                        pending['pending_type'] = 'needs_amount'
+                        state_manager_module.set_pending_transaction(pending_pkey, pending)
+                        item = missing_tx.get('keterangan', 'Transaksi')
+                        send_reply(f"Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
+                        return jsonify({'status': 'asking_amount'}), 200
+
                     # Re-send updated prompt
-                    reply = build_selection_prompt(pending['transactions'])
+                    reply = build_selection_prompt(merged_txs)
                     if is_group: reply += "\n\n↩️ Reply angka 1-5"
                     send_reply(reply)
                     return jsonify({'status': 'merged'}), 200
@@ -2454,6 +2642,18 @@ Balas 1 atau 2"""
             transactions = safe_extract(inp, input_type, sender_name, media_list, caption)
             if transactions is None:
                 return jsonify({'status': 'rate_limit'}), 200
+
+            transactions, extracted_meta = _merge_transaction_queue([], transactions or [])
+            if extracted_meta.get('duplicates', 0) > 0 or extracted_meta.get('upgraded', 0) > 0:
+                secure_log(
+                    "INFO",
+                    (
+                        f"Extract normalization: "
+                        f"added={extracted_meta.get('added', 0)}, "
+                        f"upgraded={extracted_meta.get('upgraded', 0)}, "
+                        f"duplicates={extracted_meta.get('duplicates', 0)}"
+                    )
+                )
             
             if not transactions:
                 if message_id:
@@ -2504,12 +2704,16 @@ Balas 1 atau 2"""
                     return jsonify({'status': 'confirm_amount'}), 200
 
             # If amount missing/zero, ask user before proceeding
-            missing_amount = [t for t in transactions if int(t.get('jumlah', 0) or 0) <= 0]
-            if missing_amount:
-                for t in missing_amount:
-                    t['needs_amount'] = True
+            missing_tx = _first_missing_amount_tx(transactions)
+            if missing_tx:
+                for t in transactions:
+                    try:
+                        if int(t.get('jumlah', 0) or 0) <= 0:
+                            t['needs_amount'] = True
+                    except Exception:
+                        t['needs_amount'] = True
                 _pending_transactions[sender_pkey]['pending_type'] = 'needs_amount'
-                item = missing_amount[0].get('keterangan', 'Transaksi')
+                item = missing_tx.get('keterangan', 'Transaksi')
                 send_reply(f"❗ Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
                 return jsonify({'status': 'asking_amount'}), 200
 
@@ -2518,12 +2722,17 @@ Balas 1 atau 2"""
             
             # Check for Needs Project (Manual override from AI)
             if layer_category_scope == 'TRANSFER':
-                if not is_saldo_update(text):
-                    has_proj_name = any(t.get('nama_projek') for t in transactions if t.get('nama_projek'))
-                    if has_proj_name:
-                        layer_category_scope = 'PROJECT'
-                    else:
-                        layer_category_scope = 'UNKNOWN'
+                text_lower = (text or "").lower()
+                has_project_context = bool(re.search(r"\b(projek|project|proyek|prj)\b", text_lower))
+                has_non_saldo_project = any(
+                    (t.get('nama_projek') or '').strip()
+                    and (t.get('nama_projek') or '').strip().lower() not in {'saldo umum', 'umum', 'operasional kantor'}
+                    for t in transactions
+                )
+                if has_project_context or has_non_saldo_project:
+                    layer_category_scope = 'PROJECT'
+                elif not is_saldo_update(text):
+                    layer_category_scope = 'UNKNOWN'
 
             if layer_category_scope == 'TRANSFER':
                 # Force "Saldo Umum" for explicit wallet updates

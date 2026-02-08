@@ -40,6 +40,7 @@ from security import (
     MAX_TRANSACTIONS_PER_MESSAGE,
 )
 from utils.parsers import parse_revision_amount, extract_project_name_from_text
+from utils.amounts import has_amount_pattern
 from config.constants import KNOWN_COMPANY_NAMES, PROJECT_STOPWORDS
 from config.wallets import resolve_dompet_from_text
 
@@ -681,8 +682,29 @@ def _is_wallet_update_context(clean_text: str) -> bool:
     if WALLET_UPDATE_REGEX.search(clean_text) or DOMPET_UPDATE_REGEX.search(clean_text):
         return True
 
-    # Fallback: saldo/dompet mention (non-question) -> treat as update
-    if "saldo" in text_lower or "dompet" in text_lower:
+    # Guardrail: explicit project expense language should remain project transaction
+    has_project_context = bool(re.search(r"\b(projek|project|proyek|prj)\b", text_lower))
+    has_spending_context = bool(
+        re.search(
+            r"\b(beli|pembelian|bayar|biaya|material|upah|jasa|ongkir|transport|belanja|buat|untuk)\b",
+            text_lower
+        )
+    )
+    if has_project_context and has_spending_context and "saldo umum" not in text_lower:
+        return False
+    if has_project_context and "saldo umum" not in text_lower:
+        return False
+
+    wallet_alias_detected = bool(resolve_dompet_from_text(text_lower))
+    has_amount = has_amount_pattern(text_lower)
+    has_wallet_action = bool(
+        re.search(r"\b(update|set|isi|top\s*up|topup|tambah|tarik|ambil|pindah|transfer|kirim)\b", text_lower)
+    )
+
+    # Flexible shorthand: "saldo tx sby 10jt", "dompet tx sby 10jt"
+    if "saldo" in text_lower and wallet_alias_detected and (has_amount or has_wallet_action):
+        return True
+    if "dompet" in text_lower and wallet_alias_detected and has_amount and not has_spending_context:
         return True
 
     return False
@@ -979,6 +1001,23 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                     is_valid, _, sanitized_fee = validate_transaction_data(fee_tx)
                     if is_valid:
                         validated_transactions.append(sanitized_fee)
+
+            # OCR clarity rule:
+            # fee/admin transactions with amount <= 0 should not be reported.
+            cleaned_fee_txs = []
+            dropped_zero_fee = 0
+            for t in validated_transactions:
+                try:
+                    amt = int(t.get("jumlah", 0) or 0)
+                except Exception:
+                    amt = 0
+                if _is_fee_tx(t) and amt <= 0:
+                    dropped_zero_fee += 1
+                    continue
+                cleaned_fee_txs.append(t)
+            if dropped_zero_fee:
+                secure_log("INFO", f"Dropped {dropped_zero_fee} zero-value fee transaction(s)")
+            validated_transactions = cleaned_fee_txs
 
             if inferred_project:
                 for t in validated_transactions:

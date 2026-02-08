@@ -149,7 +149,10 @@ def find_pending_by_bot_msg(chat_jid: str, bot_msg_id: str) -> tuple:
         return None, None
     
     # Search all pending transactions for this chat
-    for pkey, pending in _pending_transactions.items():
+    for pkey, pending in list(_pending_transactions.items()):
+        if not isinstance(pkey, str):
+            _pending_transactions.pop(pkey, None)
+            continue
         # Match by chat_jid prefix and bot_msg_id
         if pkey.startswith(chat_jid) or pkey == chat_jid:
             if pending.get("bot_msg_id") == bot_msg_id:
@@ -181,6 +184,8 @@ def pending_is_expired(pending: dict) -> bool:
 
 def get_pending_transactions(pkey: str) -> Optional[Dict]:
     """Get pending transaction data for a key, checking expiry."""
+    if not isinstance(pkey, str) or not pkey.strip():
+        return None
     pending = _pending_transactions.get(pkey)
     if pending and pending_is_expired(pending):
         _pending_transactions.pop(pkey, None)
@@ -190,11 +195,18 @@ def get_pending_transactions(pkey: str) -> Optional[Dict]:
 
 def set_pending_transaction(pkey: str, data: Dict) -> None:
     """Set pending transaction data."""
-    _pending_transactions[pkey] = data
+    if not isinstance(pkey, str):
+        return
+    key = pkey.strip()
+    if not key:
+        return
+    _pending_transactions[key] = data
 
 
 def clear_pending_transaction(pkey: str) -> None:
     """Clear pending transaction for a key."""
+    if not isinstance(pkey, str) or not pkey.strip():
+        return
     _pending_transactions.pop(pkey, None)
 
 

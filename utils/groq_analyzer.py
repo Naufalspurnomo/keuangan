@@ -11,6 +11,7 @@ import json
 import logging
 import re
 from config.constants import Timeouts, OPERATIONAL_KEYWORDS
+from config.wallets import resolve_dompet_from_text
 from utils.context_detector import ContextDetector
 from utils.amounts import has_amount_pattern
 
@@ -751,8 +752,29 @@ def is_saldo_update(text: str) -> bool:
     if any(kw in text_lower for kw in saldo_update_keywords):
         return True
 
-    # Fallback: if mentions saldo/dompet (non-question), treat as update
-    if "saldo" in text_lower or "dompet" in text_lower:
+    # Guardrail: explicit project expense language should NOT become wallet update
+    has_project_context = bool(re.search(r"\b(projek|project|proyek|prj)\b", text_lower))
+    has_spending_context = bool(
+        re.search(
+            r"\b(beli|pembelian|bayar|biaya|material|upah|jasa|ongkir|transport|belanja|buat|untuk)\b",
+            text_lower
+        )
+    )
+    if has_project_context and has_spending_context and "saldo umum" not in text_lower:
+        return False
+    if has_project_context and "saldo umum" not in text_lower:
+        return False
+
+    wallet_alias_detected = bool(resolve_dompet_from_text(text_lower))
+    has_amount = has_amount_pattern(text_lower)
+    has_wallet_action = bool(
+        re.search(r"\b(update|set|isi|top\s*up|topup|tambah|tarik|ambil|pindah|transfer|kirim)\b", text_lower)
+    )
+
+    # Flexible shorthand: "saldo tx sby 10jt", "dompet tx sby 10jt"
+    if "saldo" in text_lower and wallet_alias_detected and (has_amount or has_wallet_action):
+        return True
+    if "dompet" in text_lower and wallet_alias_detected and has_amount and not has_spending_context:
         return True
 
     return False

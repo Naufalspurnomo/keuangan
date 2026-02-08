@@ -169,6 +169,17 @@ def _detect_operational_category(keterangan: str) -> str:
     return 'Lain Lain'
 
 
+def _first_invalid_amount_tx(transactions: list) -> Optional[dict]:
+    for tx in transactions or []:
+        try:
+            amt = int(tx.get('jumlah', 0) or 0)
+        except Exception:
+            amt = 0
+        if tx.get('needs_amount') or amt <= 0:
+            return tx
+    return None
+
+
 def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: str, chat_id: str, is_group: bool) -> dict:
     """Commit project transactions with lifecycle markers and cleanup."""
     transactions = pending_data.get('transactions', [])
@@ -179,6 +190,14 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
     finish_decision = pending_data.get('finish_decision')
     allow_finish = finish_decision != 'SKIP'
     debt_source = pending_data.get('debt_source_dompet')
+
+    missing_tx = _first_invalid_amount_tx(transactions)
+    if missing_tx:
+        item = missing_tx.get('keterangan', 'Transaksi')
+        return {
+            'response': f"❗ Nominal untuk \"{item}\" belum valid. Balas nominal dulu (contoh: 150rb).",
+            'completed': False
+        }
 
     _assign_tx_ids(transactions, event_id)
 
@@ -1124,6 +1143,14 @@ Atau ketik /cancel untuk batal total"""
             else:
                 category = _detect_operational_category(transactions[0].get('keterangan', '') if transactions else '')
             event_id = pending_data.get('event_id') or pending_data.get('original_message_id')
+
+            missing_tx = _first_invalid_amount_tx(transactions)
+            if missing_tx:
+                item = missing_tx.get('keterangan', 'Transaksi')
+                return {
+                    'response': f"❗ Nominal untuk \"{item}\" belum valid. Balas nominal dulu (contoh: 150rb).",
+                    'completed': False
+                }
             
             _assign_tx_ids(transactions, event_id)
             
