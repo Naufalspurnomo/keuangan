@@ -358,11 +358,15 @@ def format_wallet_selection_prompt() -> str:
 
 PROJECT_PREFIX_DOMPETS = {"CV HB(101)"}
 PROJECT_PREFIX_COMPANIES = {"HOLLA", "HOJJA"}
+PROJECT_PREFIX_DISPLAY = {
+    "HOLLA": "Holla",
+    "HOJJA": "Hojja",
+}
 PROJECT_PREFIX_EXCLUDE = {"operasional kantor", "saldo umum", "umum", "unknown"}
 
 
 def extract_company_prefix(project_name: str) -> Optional[str]:
-    """Return HOLLA/HOJJA if project name starts with a company prefix."""
+    """Return canonical HOLLA/HOJJA key if project starts with that prefix."""
     if not project_name:
         return None
     match = re.match(r"^\s*(HOLLA|HOJJA)\s*[-:]\s*", project_name, re.IGNORECASE)
@@ -372,7 +376,7 @@ def extract_company_prefix(project_name: str) -> Optional[str]:
 
 
 def strip_company_prefix(project_name: str) -> str:
-    """Remove HOLLA/HOJJA prefix from project name if present."""
+    """Remove HOLLA/HOJJA/Holla/Hojja prefix from project name if present."""
     if not project_name:
         return project_name
     return re.sub(r"^\s*(HOLLA|HOJJA)\s*[-:]\s*", "", project_name, flags=re.IGNORECASE).strip()
@@ -380,8 +384,8 @@ def strip_company_prefix(project_name: str) -> str:
 
 def apply_company_prefix(project_name: str, dompet_sheet: str, company: str) -> str:
     """
-    Add HOLLA/HOJJA prefix for CV HB projects, if not already prefixed.
-    Keeps the original name if prefix is already present.
+    Add Holla/Hojja prefix for CV HB projects.
+    Normalizes existing HOLLA/HOJJA prefixes to display style.
     """
     if not project_name:
         return project_name
@@ -394,9 +398,14 @@ def apply_company_prefix(project_name: str, dompet_sheet: str, company: str) -> 
         return project_name
     if project_name.strip().lower() in PROJECT_PREFIX_EXCLUDE:
         return project_name
-    if extract_company_prefix(project_name):
-        return project_name
-    return f"{company_clean} - {project_name.strip()}"
+    existing_prefix = extract_company_prefix(project_name)
+    if existing_prefix:
+        base_name = strip_company_prefix(project_name)
+        display_prefix = PROJECT_PREFIX_DISPLAY.get(existing_prefix, existing_prefix.title())
+        return f"{display_prefix} - {base_name}" if base_name else display_prefix
+
+    display_prefix = PROJECT_PREFIX_DISPLAY.get(company_clean, company_clean.title())
+    return f"{display_prefix} - {project_name.strip()}"
 
 
 # For testing
