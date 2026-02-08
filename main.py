@@ -126,6 +126,7 @@ from config.wallets import (
     WALLET_SELECTION_OPTIONS,
     get_dompet_short_name,
     apply_company_prefix,
+    extract_company_prefix,
     strip_company_prefix,
     DOMPET_ALIASES,
     get_company_name_from_sheet,
@@ -1332,25 +1333,30 @@ Balas 1 atau 2"""
                     # Resolve Name
                     lookup_name = strip_company_prefix(p_name_raw)
                     res = resolve_project_name(lookup_name)
-                    if res['status'] == 'AMBIGUOUS' and FAST_MODE:
-                        t['nama_projek'] = res.get('final_name') or res.get('original')
-                        pending['project_confirmed'] = True
-                        continue
-
-                    
                     if res['status'] == 'AMBIGUOUS':
-                         pending['pending_type'] = 'confirmation_project'
-                         pending['suggested_project'] = res['final_name']
-                         msg = (
+                        # Safety: never auto-pick ambiguous project names unless the user
+                        # explicitly gave a trusted prefix (HOLLA/HOJJA) that resolves exactly.
+                        raw_prefix = extract_company_prefix(p_name_raw or "")
+                        if FAST_MODE and raw_prefix:
+                            prefixed_candidate = f"{raw_prefix} - {lookup_name}"
+                            prefixed_res = resolve_project_name(prefixed_candidate)
+                            if prefixed_res.get('status') in ['EXACT', 'AUTO_FIX']:
+                                t['nama_projek'] = prefixed_res.get('final_name') or prefixed_candidate
+                                pending['project_confirmed'] = True
+                                continue
+
+                        pending['pending_type'] = 'confirmation_project'
+                        pending['suggested_project'] = res.get('final_name') or res.get('original') or lookup_name
+                        msg = (
                              f"🤔 *KONFIRMASI PROJECT*\n"
                              f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                             f"Maksudnya *{res['final_name']}*?\n\n"
+                             f"Maksudnya *{pending['suggested_project']}*?\n\n"
                              f"━━━━━━━━━━━━━━━━━━━━━\n"
                              f"✅ *Ya* — Lanjutkan\n"
                              f"❌ *Bukan* — Langsung ketik nama yang benar"
                          )
-                         send_reply(msg)
-                         return jsonify({'status': 'asking_project_confirm'}), 200
+                        send_reply(msg)
+                        return jsonify({'status': 'asking_project_confirm'}), 200
                     
                     elif res['status'] == 'NEW':
                         has_income = any(t.get('tipe') == 'Pemasukan' for t in txs)
@@ -1427,7 +1433,13 @@ Balas 1 atau 2"""
                     if found_dompet:
                         dompet = found_dompet
                         detected_company = found_comp
-                        secure_log("INFO", f"Auto-resolved project exact-match '{p_name_check}' to {found_comp}")
+                        if found_comp:
+                            secure_log("INFO", f"Auto-resolved project exact-match '{p_name_check}' to {found_comp}")
+                        else:
+                            secure_log(
+                                "INFO",
+                                f"Auto-resolved dompet for project '{p_name_check}' to {found_dompet}; company remains ambiguous"
+                            )
 
             # 2. Save if Resolved
             if detected_company and dompet:

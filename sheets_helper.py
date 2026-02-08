@@ -2219,8 +2219,23 @@ def find_company_for_project_exact(project_name: str) -> tuple:
         return None, None
 
     try:
-        from config.wallets import DOMPET_SHEETS, get_company_name_from_sheet
+        from config.wallets import DOMPET_SHEETS, get_company_name_from_sheet, extract_company_prefix
         from config.constants import SPLIT_PEMASUKAN, SPLIT_PENGELUARAN
+
+        requested_prefix = extract_company_prefix(str(project_name or ""))
+        matches = []
+        seen = set()
+
+        def _append_match(dompet_name: str, raw_project_value: str) -> None:
+            company_name = get_company_name_from_sheet(dompet_name)
+            pref = extract_company_prefix(raw_project_value or "")
+            if pref:
+                company_name = pref
+            key = (dompet_name, company_name)
+            if key in seen:
+                return
+            seen.add(key)
+            matches.append(key)
 
         for dompet in DOMPET_SHEETS:
             sheet = get_dompet_sheet(dompet)
@@ -2230,14 +2245,31 @@ def find_company_for_project_exact(project_name: str) -> tuple:
             pemasukan_projects = sheet.col_values(SPLIT_PEMASUKAN['PROJECT'])
             for p in pemasukan_projects:
                 if _normalize_project_lookup_name(p) == clean_target:
-                    comp = get_company_name_from_sheet(dompet)
-                    return dompet, comp
+                    _append_match(dompet, p)
 
             pengeluaran_projects = sheet.col_values(SPLIT_PENGELUARAN['PROJECT'])
             for p in pengeluaran_projects:
                 if _normalize_project_lookup_name(p) == clean_target:
-                    comp = get_company_name_from_sheet(dompet)
-                    return dompet, comp
+                    _append_match(dompet, p)
+
+        if not matches:
+            return None, None
+
+        # If user typed explicit prefix, prioritize that exact company.
+        if requested_prefix:
+            pref_matches = [m for m in matches if str(m[1] or "").upper() == requested_prefix.upper()]
+            if len(pref_matches) == 1:
+                return pref_matches[0]
+            return None, None
+
+        if len(matches) == 1:
+            return matches[0]
+
+        dompet_candidates = {m[0] for m in matches}
+        if len(dompet_candidates) == 1:
+            # Same dompet but multiple company prefixes (e.g. HOLLA vs HOJJA).
+            # Keep dompet hint but force downstream company confirmation.
+            return next(iter(dompet_candidates)), None
 
     except Exception as e:
         secure_log("ERROR", f"find_company_for_project_exact error: {e}")
