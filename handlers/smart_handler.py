@@ -216,7 +216,53 @@ class SmartHandler:
                 }
         
         if not analysis.get('should_respond', False):
-            # If media is attached and there are transactional hints, force processing
+            query_words = ['berapa', 'gimana', 'bagaimana', 'apa', 'kapan', 'kenapa', 'cek', 'check', 'lihat', 'tunjukkan']
+            query_finance_hints = ['saldo', 'dompet', 'pemasukan', 'pengeluaran', 'omset', 'profit', 'hutang', 'piutang', 'laporan', 'status', 'rekap', 'total']
+            has_question_signal = ('?' in text_lower) or any(
+                re.search(rf"\b{re.escape(word)}\b", text_lower) for word in query_words
+            )
+            has_query_finance_hint = any(hint in text_lower for hint in query_finance_hints)
+
+            if analysis.get('intent') == 'QUERY_STATUS' or (has_question_signal and has_query_finance_hint):
+                secure_log(
+                    "INFO",
+                    "SmartHandler override: forcing QUERY_STATUS for financial question signal"
+                )
+                return {
+                    "action": "PROCESS",
+                    "intent": "QUERY_STATUS",
+                    "normalized_text": text,
+                    "layer_response": text
+                }
+
+            question_words = ['berapa', 'gimana', 'bagaimana', 'apa', 'kapan', 'kenapa', 'cek', 'check', 'lihat', 'tunjukkan']
+            looks_like_query = ('?' in text_lower) or any(qw in text_lower for qw in question_words)
+            has_tx_signal = has_amount and (has_finance_keyword or has_project_word or has_kantor_word)
+
+            # Text-only fallback: if signal is clearly transactional, don't drop it.
+            if has_tx_signal and not is_future and not looks_like_query:
+                forced_scope = analysis.get('category_scope')
+                if not forced_scope or forced_scope == 'UNKNOWN':
+                    if has_kantor_word:
+                        forced_scope = "OPERATIONAL"
+                    elif has_project_word:
+                        forced_scope = "PROJECT"
+                    else:
+                        forced_scope = "UNKNOWN"
+                secure_log(
+                    "INFO",
+                    f"SmartHandler override: forcing PROCESS for strong text transaction signal "
+                    f"(amount={has_amount}, finance_kw={has_finance_keyword}, scope={forced_scope})"
+                )
+                return {
+                    "action": "PROCESS",
+                    "intent": "RECORD_TRANSACTION",
+                    "normalized_text": text,
+                    "layer_response": text,
+                    "category_scope": forced_scope
+                }
+
+            # Media fallback: if media is attached and there are transactional hints, force processing
             if has_media and (has_amount or has_finance_keyword or has_project_word or has_kantor_word):
                 forced_scope = analysis.get('category_scope')
                 if not forced_scope or forced_scope == 'UNKNOWN':

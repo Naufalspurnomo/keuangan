@@ -21,6 +21,15 @@ ACTION_VERBS = [
 ]
 ACTION_VERBS.append('fee')
 
+QUERY_WORDS = [
+    'berapa', 'gimana', 'bagaimana', 'apa', 'kapan', 'kenapa',
+    'cek', 'check', 'lihat', 'tunjukkan', 'berdasarkan', 'analisa', 'analisis'
+]
+QUERY_FINANCE_HINTS = [
+    'saldo', 'dompet', 'pemasukan', 'pengeluaran', 'omset', 'profit',
+    'hutang', 'piutang', 'lunas', 'laporan', 'status', 'rekap', 'total'
+]
+
 # Use centralized timeouts
 PENDING_TTL_SECONDS = Timeouts.PENDING_TRANSACTION
 
@@ -156,6 +165,13 @@ def should_respond_in_group(message: str, is_group: bool, has_media: bool = Fals
         return True, message
     # 3.6. Project keywords should trigger processing (even without amount)
     if re.search(r"\b(projek|project|proyek|prj)\b", message_lower):
+        return True, message
+    # 3.7. Financial query should also trigger processing (without /tanya)
+    has_query_word = ('?' in message_lower) or any(
+        re.search(rf"\b{re.escape(word)}\b", message_lower) for word in QUERY_WORDS
+    )
+    has_finance_hint = any(hint in message_lower for hint in QUERY_FINANCE_HINTS)
+    if has_query_word and has_finance_hint:
         return True, message
 
     # 4. Smart Financial Scoring
