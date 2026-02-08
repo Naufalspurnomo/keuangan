@@ -2195,6 +2195,56 @@ def delete_transaction_row(dompet_sheet: str, row: int) -> bool:
         secure_log("ERROR", f"Delete transaction error: {type(e).__name__} - {str(e)}")
         return False
 
+def _normalize_project_lookup_name(project_name: str) -> str:
+    """Normalize project names for safe cross-sheet matching."""
+    if not project_name:
+        return ""
+    try:
+        from config.wallets import strip_company_prefix
+        cleaned = strip_company_prefix(str(project_name).strip()) or str(project_name).strip()
+    except Exception:
+        cleaned = str(project_name).strip()
+    cleaned = re.sub(r"\((start|finish)\)", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip().lower()
+    return cleaned
+
+
+def find_company_for_project_exact(project_name: str) -> tuple:
+    """
+    Exact project resolver across dompet sheets.
+    Returns: (dompet_name, company_name) or (None, None)
+    """
+    clean_target = _normalize_project_lookup_name(project_name)
+    if not clean_target:
+        return None, None
+
+    try:
+        from config.wallets import DOMPET_SHEETS, get_company_name_from_sheet
+        from config.constants import SPLIT_PEMASUKAN, SPLIT_PENGELUARAN
+
+        for dompet in DOMPET_SHEETS:
+            sheet = get_dompet_sheet(dompet)
+            if not sheet:
+                continue
+
+            pemasukan_projects = sheet.col_values(SPLIT_PEMASUKAN['PROJECT'])
+            for p in pemasukan_projects:
+                if _normalize_project_lookup_name(p) == clean_target:
+                    comp = get_company_name_from_sheet(dompet)
+                    return dompet, comp
+
+            pengeluaran_projects = sheet.col_values(SPLIT_PENGELUARAN['PROJECT'])
+            for p in pengeluaran_projects:
+                if _normalize_project_lookup_name(p) == clean_target:
+                    comp = get_company_name_from_sheet(dompet)
+                    return dompet, comp
+
+    except Exception as e:
+        secure_log("ERROR", f"find_company_for_project_exact error: {e}")
+
+    return None, None
+
+
 def find_company_for_project(project_name: str) -> tuple:
     """
     Search all wallets to find which company contains the project history.
@@ -2207,14 +2257,11 @@ def find_company_for_project(project_name: str) -> tuple:
     """
     if not project_name: return None, None
     
-    clean_target = project_name.strip().lower()
-    # Remove markers like (Start) or (Finish) for matching
-    clean_target = clean_target.replace('(start)', '').replace('(finish)', '').strip()
+    clean_target = _normalize_project_lookup_name(project_name)
     
     try:
-        from config.wallets import DOMPET_SHEETS, DOMPET_COMPANIES, get_company_name_from_sheet, strip_company_prefix
+        from config.wallets import DOMPET_SHEETS, DOMPET_COMPANIES, get_company_name_from_sheet
         from config.constants import SPLIT_PEMASUKAN, SPLIT_PENGELUARAN, SPLIT_LAYOUT_DATA_START
-        clean_target = strip_company_prefix(clean_target) or clean_target
 
         for dompet in DOMPET_SHEETS:
             sheet = get_dompet_sheet(dompet)
@@ -2226,7 +2273,8 @@ def find_company_for_project(project_name: str) -> tuple:
             # 1. Check Pemasukan (Col 5 / E)
             pemasukan_projects = sheet.col_values(SPLIT_PEMASUKAN['PROJECT'])
             for p in pemasukan_projects:
-                if p and clean_target in p.strip().lower():
+                normalized = _normalize_project_lookup_name(p)
+                if normalized and clean_target in normalized:
                     # Found match!
                     comp = get_company_name_from_sheet(dompet)
                     return dompet, comp
@@ -2234,7 +2282,8 @@ def find_company_for_project(project_name: str) -> tuple:
             # 2. Check Pengeluaran (Col 14 / N)
             pengeluaran_projects = sheet.col_values(SPLIT_PENGELUARAN['PROJECT'])
             for p in pengeluaran_projects:
-                if p and clean_target in p.strip().lower():
+                normalized = _normalize_project_lookup_name(p)
+                if normalized and clean_target in normalized:
                     comp = get_company_name_from_sheet(dompet)
                     return dompet, comp
                     

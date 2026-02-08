@@ -46,6 +46,7 @@ from sheets_helper import (
     cancel_hutang_by_event_id,
     find_open_hutang,
     get_all_data,
+    find_company_for_project_exact,
 )
 
 # Services
@@ -58,6 +59,9 @@ from services.state_manager import (
     get_pending_key_from_message,
     store_visual_buffer, get_visual_buffer,
     clear_visual_buffer, has_visual_buffer,
+    get_visual_buffer_by_message, remove_visual_buffer_by_message,
+    mark_visual_message_consumed, clear_visual_message_consumed,
+    is_visual_message_consumed,
     store_last_bot_report,
     store_last_tx_event,
     # New Pending Confirmations
@@ -1028,6 +1032,9 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 item = next((b for b in buf if b.get('message_id') == message_id), None)
                 if not item:
                     return
+                item_message_id = item.get('message_id') or message_id
+                if item_message_id and is_visual_message_consumed(chat_jid, item_message_id):
+                    return
 
                 pkey = pending_key(sender_number, chat_jid)
                 pending = _pending_transactions.get(pkey)
@@ -1042,7 +1049,7 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                     media_url=item.get('media_url'),
                     local_media_path=item.get('media_path'),
                     quoted_msg_id=quoted_msg_id,
-                    message_id=item.get('message_id') or message_id,
+                    message_id=item_message_id,
                     is_group=is_group,
                     chat_jid=chat_jid,
                     sender_jid=sender_jid,
@@ -1058,6 +1065,73 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
 
         # Event envelope
         event_id = str(message_id) if message_id else f"evt_{uuid.uuid4().hex[:12]}"
+        claimed_visual_source_id = None
+        bound_visual_message_id = None
+
+        def _resolve_visual_source_message_id() -> Optional[str]:
+            if bound_visual_message_id:
+                return str(bound_visual_message_id)
+            if input_type != 'image':
+                return None
+            if message_id:
+                return str(message_id)
+            if quoted_msg_id:
+                quoted_item = get_visual_buffer_by_message(chat_jid, quoted_msg_id)
+                if quoted_item and quoted_item.get('message_id'):
+                    return str(quoted_item.get('message_id'))
+            return None
+
+        def _claim_visual_source_once() -> bool:
+            nonlocal claimed_visual_source_id
+            visual_source_id = _resolve_visual_source_message_id()
+            if not visual_source_id:
+                return True
+            if claimed_visual_source_id == visual_source_id:
+                return True
+            if not mark_visual_message_consumed(chat_jid, visual_source_id):
+                send_reply("ℹ️ Struk ini sudah diproses. Gunakan /revisi atau /undo jika perlu koreksi.")
+                return False
+            claimed_visual_source_id = visual_source_id
+            return True
+
+        def _release_visual_source_claim() -> None:
+            nonlocal claimed_visual_source_id
+            if not claimed_visual_source_id:
+                return
+            clear_visual_message_consumed(chat_jid, claimed_visual_source_id)
+            claimed_visual_source_id = None
+
+        def _has_wallet_context_hint(raw_text: str) -> bool:
+            lower = (raw_text or "").lower().strip()
+            if not lower:
+                return False
+            if not resolve_dompet_from_text(lower):
+                return False
+            if re.search(r"\b(dompet|wallet|saldo|utang|hutang|minjem|minjam|pinjam|dari|dr|pakai)\b", lower):
+                return True
+            return bool(re.search(r"\b(tx\s*sby|tx\s*bali|cv\s*hb|101|216|087)\b", lower))
+
+        def _should_bind_visual_text(raw_text: str) -> bool:
+            clean = (raw_text or "").strip()
+            if not clean:
+                return False
+            lower = clean.lower()
+            if re.search(r"\b(catat\s+(di\s+)?(atas|tadi|sebelumnya)|catat\s+itu)\b", lower):
+                return True
+            if is_explicit_bot_call(clean):
+                return True
+            if has_amount_pattern(clean):
+                return True
+            if _has_wallet_context_hint(clean):
+                return True
+            should, _ = should_respond_in_group(
+                clean,
+                is_group,
+                has_media=False,
+                has_pending=False,
+                is_mentioned=is_explicit_bot_call(clean)
+            )
+            return should
 
         # --- CORE WORKFLOW: FINALIZE TRANSACTION ---
         def finalize_transaction_workflow(pending: dict, pkey: str):
@@ -1346,16 +1420,14 @@ Balas 1 atau 2"""
             # --- AUTO-RESOLVE COMPANY FROM PROJECT HISTORY (NEW) ---
             # If we know the project, but not the company, try to find where it was last used
             if not dompet and pending.get('project_confirmed'):
-                from sheets_helper import find_company_for_project
-                
                 # Check first transaction's project
                 p_name_check = txs[0].get('nama_projek')
                 if p_name_check:
-                    found_dompet, found_comp = find_company_for_project(p_name_check)
+                    found_dompet, found_comp = find_company_for_project_exact(p_name_check)
                     if found_dompet:
                         dompet = found_dompet
                         detected_company = found_comp
-                        secure_log("INFO", f"Auto-resolved project '{p_name_check}' to {found_comp}")
+                        secure_log("INFO", f"Auto-resolved project exact-match '{p_name_check}' to {found_comp}")
 
             # 2. Save if Resolved
             if detected_company and dompet:
@@ -1429,15 +1501,6 @@ Balas 1 atau 2"""
                 p_name_check = t0.get('nama_projek', '')
                 if p_name_check and p_name_check.lower() not in ['saldo umum', 'operasional kantor', 'umum', 'unknown']:
                     locked_dompet = get_project_lock(p_name_check)
-                    if not locked_dompet:
-                        try:
-                            from sheets_helper import find_company_for_project
-                            hist_dompet, _hist_company = find_company_for_project(p_name_check)
-                            if hist_dompet:
-                                locked_dompet = hist_dompet
-                                secure_log("INFO", f"Project lock fallback from history: '{p_name_check}' -> {locked_dompet}")
-                        except Exception as e:
-                            secure_log("WARNING", f"Project history fallback check failed: {e}")
                     if locked_dompet and locked_dompet != dompet:
                         locked_company = get_company_name_from_sheet(locked_dompet)
                         if FAST_MODE:
@@ -1713,7 +1776,13 @@ Balas 1 atau 2"""
         # If user recently sent an image, allow follow-up text to bind.
         raw_text = text or ""
         explicit_catat = bool(re.match(r'^\s*\+?catat\b', raw_text, re.IGNORECASE))
-        has_visual = has_visual_buffer(sender_number, chat_jid) if is_group else False
+        quoted_visual_item = None
+        if is_group and quoted_msg_id:
+            quoted_visual_item = get_visual_buffer_by_message(chat_jid, quoted_msg_id)
+        quoted_visual_actionable = bool(quoted_visual_item and _should_bind_visual_text(text))
+        has_visual = (
+            has_visual_buffer(sender_number, chat_jid) or quoted_visual_actionable
+        ) if is_group else False
         if is_group and not has_pending:
             is_mentioned = False
             try:
@@ -2012,6 +2081,8 @@ Balas 1 atau 2"""
                         # PRE-EMPTIVE CONFIRMATION FOR AMBIGUOUS SCOPE
                         # If AI is unsure (AMBIGUOUS) or UNKNOWN, ask user before extraction/saving
                         if layer_category_scope in ['UNKNOWN', 'AMBIGUOUS']:
+                            if input_type == 'image' and not _claim_visual_source_once():
+                                return jsonify({'status': 'duplicate_visual_reference'}), 200
                             # Extract temporarily to show context
                             inp, media_list, caption = build_extraction_inputs(
                                 text, input_type, media_url, local_media_path
@@ -2021,6 +2092,8 @@ Balas 1 atau 2"""
                             )
                             
                             if temp_txs is None:
+                                if input_type == 'image':
+                                    _release_visual_source_claim()
                                 return jsonify({'status': 'rate_limit'}), 200
                             if temp_txs:
                                 # REMOVED local import of format_mention to fix UnboundLocalError
@@ -2049,31 +2122,42 @@ Balas 1 atau 2"""
             
             # Check visual link
             if input_type == 'text':
-                buf = get_visual_buffer(sender_number, chat_jid)
-                if buf:
-                    # Only auto-bind if text looks like transaction intent
-                    should_bind, _ = should_respond_in_group(
-                        text or "",
-                        is_group,
-                        has_media=True,
-                        has_pending=False,
-                        is_mentioned=is_explicit_bot_call(text)
-                    )
-                    if should_bind:
-                        # Handle both list and dict format from buffer
-                        item = buf[0] if isinstance(buf, list) else buf
-                        media_url = item.get('media_url')
-                        local_media_path = item.get('media_path')
-                        buf_caption = item.get('caption') or ''
-                        
-                        # If user says "catat diatas" and caption exists, use caption as text
-                        ref_phrase = re.search(r'\b(catat\s+(di\s+)?(atas|tadi|sebelumnya)|catat\s+itu)\b', text.lower())
-                        if ref_phrase and buf_caption.strip():
-                            text = buf_caption.strip()
-                        
-                        input_type = 'image'
-                        clear_visual_buffer(sender_number, chat_jid)
- 
+                visual_item = quoted_visual_item if quoted_msg_id else None
+                if quoted_msg_id and not visual_item:
+                    visual_item = get_visual_buffer_by_message(chat_jid, quoted_msg_id)
+                if quoted_msg_id and not visual_item and _should_bind_visual_text(text):
+                    if is_visual_message_consumed(chat_jid, quoted_msg_id):
+                        send_reply("ℹ️ Struk ini sudah diproses. Gunakan /revisi atau /undo jika perlu koreksi.")
+                        return jsonify({'status': 'duplicate_visual_reference'}), 200
+
+                if not visual_item:
+                    user_buf = get_visual_buffer(sender_number, chat_jid)
+                    for item in user_buf:
+                        candidate_id = item.get('message_id')
+                        if candidate_id and is_visual_message_consumed(chat_jid, candidate_id):
+                            continue
+                        visual_item = item
+                        break
+
+                if visual_item and _should_bind_visual_text(text):
+                    candidate_id = str(visual_item.get('message_id') or "")
+                    if candidate_id and is_visual_message_consumed(chat_jid, candidate_id):
+                        send_reply("ℹ️ Struk ini sudah diproses. Gunakan /revisi atau /undo jika perlu koreksi.")
+                        return jsonify({'status': 'duplicate_visual_reference'}), 200
+
+                    media_url = visual_item.get('media_url')
+                    local_media_path = visual_item.get('media_path')
+                    buf_caption = visual_item.get('caption') or ''
+
+                    # If user says "catat diatas" and caption exists, use caption as text
+                    ref_phrase = re.search(r'\b(catat\s+(di\s+)?(atas|tadi|sebelumnya)|catat\s+itu)\b', (text or '').lower())
+                    if ref_phrase and buf_caption.strip():
+                        text = buf_caption.strip()
+
+                    input_type = 'image'
+                    if candidate_id:
+                        bound_visual_message_id = candidate_id
+
         # 5. REVISION HANDLER (New)
         if quoted_msg_id or is_command_match(text, Commands.UNDO, is_group) or is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):
             from handlers.revision_handler import handle_revision_command, handle_undo_command
@@ -2136,6 +2220,8 @@ Balas 1 atau 2"""
                 or (intent == 'RECORD_TRANSACTION' and not is_reply_to_bot)
                 or is_potential_text_tx
             ):
+                if input_type == 'image' and not _claim_visual_source_once():
+                    return jsonify({'status': 'duplicate_visual_reference'}), 200
                 inp, media_list, caption = build_extraction_inputs(
                     text, input_type, media_url, local_media_path
                 )
@@ -2144,6 +2230,8 @@ Balas 1 atau 2"""
                 )
                 
                 if new_txs is None:
+                    if input_type == 'image':
+                        _release_visual_source_claim()
                     return jsonify({'status': 'rate_limit'}), 200
                 if new_txs:
                     merged_txs, merge_meta = _merge_transaction_queue(
@@ -2169,6 +2257,8 @@ Balas 1 atau 2"""
                         )
 
                     state_manager_module.set_pending_transaction(pending_pkey, pending)
+                    if claimed_visual_source_id:
+                        remove_visual_buffer_by_message(chat_jid, claimed_visual_source_id)
 
                     missing_tx = _first_missing_amount_tx(merged_txs)
                     if missing_tx:
@@ -2187,6 +2277,7 @@ Balas 1 atau 2"""
                 # If image provided no transaction data during pending state, IGNORE it.
                 # Don't let it fall through to 'selection' validation which would error.
                 if input_type == 'image':
+                    _release_visual_source_claim()
                     return jsonify({'status': 'ignored_image'}), 200
 
             # Cancel
@@ -2633,6 +2724,8 @@ Balas 1 atau 2"""
         # 8. PROCESS NEW INPUT (AI)
         transactions = []
         try:
+            if input_type == 'image' and not _claim_visual_source_once():
+                return jsonify({'status': 'duplicate_visual_reference'}), 200
             if not processing_ack_sent:
                 send_reply("🔍 Scan...")
             
@@ -2641,6 +2734,8 @@ Balas 1 atau 2"""
             )
             transactions = safe_extract(inp, input_type, sender_name, media_list, caption)
             if transactions is None:
+                if input_type == 'image':
+                    _release_visual_source_claim()
                 return jsonify({'status': 'rate_limit'}), 200
 
             transactions, extracted_meta = _merge_transaction_queue([], transactions or [])
@@ -2656,6 +2751,8 @@ Balas 1 atau 2"""
                 )
             
             if not transactions:
+                if input_type == 'image':
+                    _release_visual_source_claim()
                 if message_id:
                     clear_message_duplicate(message_id)
                 if input_type == 'image': send_reply("❓ Tidak terbaca.")
@@ -2663,7 +2760,10 @@ Balas 1 atau 2"""
             
             # Clear visual buffer on successful extraction to avoid double-binding
             if input_type == 'image':
-                clear_visual_buffer(sender_number, chat_jid)
+                if claimed_visual_source_id:
+                    remove_visual_buffer_by_message(chat_jid, claimed_visual_source_id)
+                else:
+                    clear_visual_buffer(sender_number, chat_jid)
             
             # Setup New Pending State
             _pending_transactions[sender_pkey] = {
@@ -2757,6 +2857,8 @@ Balas 1 atau 2"""
         except ValueError as e:
             msg = str(e)
             secure_log("WARNING", f"AI Proc ValueError: {msg}")
+            if input_type == 'image':
+                _release_visual_source_claim()
             if message_id:
                 clear_message_duplicate(message_id)
             if input_type == 'image':
@@ -2771,6 +2873,8 @@ Balas 1 atau 2"""
             return jsonify({'status': 'error'}), 200
         except Exception as e:
             secure_log("ERROR", f"AI Proc Error: {e}")
+            if input_type == 'image':
+                _release_visual_source_claim()
             if message_id:
                 clear_message_duplicate(message_id)
             send_reply("❌ Error sistem.")

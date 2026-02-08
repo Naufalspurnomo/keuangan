@@ -26,15 +26,18 @@ MAX_BOT_REFS = Timeouts.BOT_REFS_MAX
 
 # Visual Buffer TTL (2 minutes - photos expire quickly)
 VISUAL_BUFFER_TTL_SECONDS = 120
+VISUAL_CONSUMED_TTL_SECONDS = 6 * 60 * 60
 
 # Thread lock for dedup operations
 _dedup_lock = threading.Lock()
+_visual_lock = threading.Lock()
 
 # ===================== VISUAL BUFFER (Grand Design Layer 2) =====================
 # Stores unprocessed photos for linking with later text commands
 # Format: {user_key: [ {'media_url': str, 'caption': str, ...}, ... ]}
 # user_key = "chat_jid:sender_number" for groups OR sender_number for DM
 _visual_buffer: Dict[str, list] = {}
+_consumed_visual_messages: Dict[str, datetime] = {}
 
 # ===================== PENDING CONFIRMATIONS (NEW) =====================
 # For AI Ambiguity Checks (Step 0 & Step 2)
@@ -48,18 +51,54 @@ def visual_buffer_key(sender_number: str, chat_jid: str) -> str:
     return sender_number
 
 
+def _visual_item_is_valid(item: dict, now: Optional[datetime] = None) -> bool:
+    created = item.get('created_at') if isinstance(item, dict) else None
+    if not isinstance(created, datetime):
+        return False
+    now = now or datetime.now()
+    return (now - created).total_seconds() <= VISUAL_BUFFER_TTL_SECONDS
+
+
+def _prune_visual_buffer_locked(now: Optional[datetime] = None) -> None:
+    now = now or datetime.now()
+    for key, items in list(_visual_buffer.items()):
+        if not isinstance(items, list):
+            _visual_buffer.pop(key, None)
+            continue
+        valid_items = [item for item in items if _visual_item_is_valid(item, now)]
+        if valid_items:
+            _visual_buffer[key] = valid_items
+        else:
+            _visual_buffer.pop(key, None)
+
+
+def _visual_consumed_key(chat_jid: str, message_id: str) -> str:
+    mid = str(message_id or "").strip()
+    if not mid:
+        return ""
+    chat = str(chat_jid or "").strip()
+    return f"{chat}:{mid}" if chat else mid
+
+
+def _prune_consumed_visual_locked(now: Optional[datetime] = None) -> None:
+    now = now or datetime.now()
+    expired = []
+    for key, ts in _consumed_visual_messages.items():
+        if not isinstance(ts, datetime):
+            expired.append(key)
+            continue
+        if (now - ts).total_seconds() > VISUAL_CONSUMED_TTL_SECONDS:
+            expired.append(key)
+    for key in expired:
+        _consumed_visual_messages.pop(key, None)
+
+
 def store_visual_buffer(sender_number: str, chat_jid: str, media_url: str,
                         message_id: str, caption: str = None,
                         media_path: str = None) -> None:
     """Store photo in visual buffer for later linking (Appends to list)."""
     key = visual_buffer_key(sender_number, chat_jid)
-    
-    # Initialize list if not exists
-    if key not in _visual_buffer:
-        _visual_buffer[key] = []
-        
-    # Append new item
-    _visual_buffer[key].append({
+    item = {
         'media_url': media_url,
         'media_path': media_path,
         'message_id': message_id,
@@ -67,10 +106,23 @@ def store_visual_buffer(sender_number: str, chat_jid: str, media_url: str,
         'chat_jid': chat_jid,
         'sender_number': sender_number,
         'created_at': datetime.now()
-    })
-    
-    # Sort by created_at to ensure order
-    _visual_buffer[key].sort(key=lambda x: x['created_at'])
+    }
+    with _visual_lock:
+        _prune_visual_buffer_locked()
+        if key not in _visual_buffer:
+            _visual_buffer[key] = []
+
+        replaced = False
+        if message_id:
+            for idx, existing in enumerate(_visual_buffer[key]):
+                if existing.get('message_id') == message_id:
+                    _visual_buffer[key][idx] = item
+                    replaced = True
+                    break
+        if not replaced:
+            _visual_buffer[key].append(item)
+
+        _visual_buffer[key].sort(key=lambda x: x.get('created_at') or datetime.min)
 
 
 def get_visual_buffer(sender_number: str, chat_jid: str) -> list:
@@ -79,33 +131,101 @@ def get_visual_buffer(sender_number: str, chat_jid: str) -> list:
     Returns list of dicts.
     """
     key = visual_buffer_key(sender_number, chat_jid)
-    items = _visual_buffer.get(key, [])
-    
-    if not items:
-        return []
-        
-    # Filter expired items
-    valid_items = []
+    with _visual_lock:
+        _prune_visual_buffer_locked()
+        items = _visual_buffer.get(key, [])
+        return list(items) if items else []
+
+
+def get_visual_buffer_by_message(chat_jid: str, message_id: str) -> Optional[dict]:
+    """
+    Find buffered visual item by message ID across users in the same chat.
+    Useful for group reply flows (A sends image, B replies with text).
+    """
+    if not message_id:
+        return None
+    target_msg_id = str(message_id)
+    target_chat = str(chat_jid or "")
+    with _visual_lock:
+        _prune_visual_buffer_locked()
+        for items in _visual_buffer.values():
+            for item in items:
+                if str(item.get('message_id') or "") != target_msg_id:
+                    continue
+                item_chat = str(item.get('chat_jid') or "")
+                if target_chat and item_chat != target_chat:
+                    continue
+                return dict(item)
+    return None
+
+
+def remove_visual_buffer_by_message(chat_jid: str, message_id: str) -> bool:
+    """Remove a buffered visual item by message ID."""
+    if not message_id:
+        return False
+    removed = False
+    target_msg_id = str(message_id)
+    target_chat = str(chat_jid or "")
+    with _visual_lock:
+        _prune_visual_buffer_locked()
+        for key, items in list(_visual_buffer.items()):
+            kept = []
+            for item in items:
+                same_msg = str(item.get('message_id') or "") == target_msg_id
+                same_chat = not target_chat or str(item.get('chat_jid') or "") == target_chat
+                if same_msg and same_chat:
+                    removed = True
+                    continue
+                kept.append(item)
+            if kept:
+                _visual_buffer[key] = kept
+            else:
+                _visual_buffer.pop(key, None)
+    return removed
+
+
+def mark_visual_message_consumed(chat_jid: str, message_id: str) -> bool:
+    """
+    Mark a visual message as consumed once processing starts.
+    Returns False if already consumed within TTL.
+    """
+    key = _visual_consumed_key(chat_jid, message_id)
+    if not key:
+        return True
     now = datetime.now()
-    
-    for item in items:
-        created = item.get('created_at')
-        if created and (now - created).total_seconds() <= VISUAL_BUFFER_TTL_SECONDS:
-            valid_items.append(item)
-            
-    # Update buffer with only valid items (cleanup)
-    if not valid_items:
-        _visual_buffer.pop(key, None)
-    else:
-        _visual_buffer[key] = valid_items
-        
-    return valid_items
+    with _visual_lock:
+        _prune_consumed_visual_locked(now)
+        if key in _consumed_visual_messages:
+            return False
+        _consumed_visual_messages[key] = now
+    return True
+
+
+def clear_visual_message_consumed(chat_jid: str, message_id: str) -> None:
+    """Clear consumed mark (used when processing fails and should be retryable)."""
+    key = _visual_consumed_key(chat_jid, message_id)
+    if not key:
+        return
+    with _visual_lock:
+        _consumed_visual_messages.pop(key, None)
+
+
+def is_visual_message_consumed(chat_jid: str, message_id: str) -> bool:
+    """Check whether a visual message has been consumed recently."""
+    key = _visual_consumed_key(chat_jid, message_id)
+    if not key:
+        return False
+    now = datetime.now()
+    with _visual_lock:
+        _prune_consumed_visual_locked(now)
+        return key in _consumed_visual_messages
 
 
 def clear_visual_buffer(sender_number: str, chat_jid: str) -> None:
     """Clear photos from visual buffer after processing."""
     key = visual_buffer_key(sender_number, chat_jid)
-    _visual_buffer.pop(key, None)
+    with _visual_lock:
+        _visual_buffer.pop(key, None)
 
 
 def has_visual_buffer(sender_number: str, chat_jid: str) -> bool:
@@ -767,8 +887,8 @@ def get_project_lock(project_name: str) -> Optional[str]:
         return _project_registry.get(key)
     # Lazy resolve from sheets if exists
     try:
-        from sheets_helper import find_company_for_project
-        found_dompet, _ = find_company_for_project(project_name)
+        from sheets_helper import find_company_for_project_exact
+        found_dompet, _ = find_company_for_project_exact(project_name)
         if found_dompet:
             _project_registry[key] = found_dompet
             _save_state()

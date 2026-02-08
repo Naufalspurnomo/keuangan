@@ -15,6 +15,7 @@ from utils.formatters import (
 )
 from utils.lifecycle import apply_lifecycle_markers
 from utils.parsers import parse_revision_amount
+from utils.amounts import has_amount_pattern
 from services.project_service import add_new_project_to_cache, resolve_project_name
 from services.state_manager import set_project_lock
 from sheets_helper import (
@@ -1131,9 +1132,30 @@ Atau ketik /cancel untuk batal total"""
                 transactions,
                 pending_data.get('source_wallet'),
                 pending_data.get('category'),
-                mention
+                ""
             )
             return {'response': response, 'completed': False}
+
+        # Allow plain nominal replies (e.g., "150rb") without forcing /revisi.
+        plain_digits = re.sub(r"[^\d]", "", text_lower)
+        looks_like_plain_amount = plain_digits.isdigit() and len(plain_digits) >= 3
+        if text_lower not in {'1', '2', '3', '4'} and (has_amount_pattern(text) or looks_like_plain_amount):
+            new_amt = parse_revision_amount(text)
+            if new_amt:
+                transactions = pending_data.get('transactions', [])
+                target_tx = _first_invalid_amount_tx(transactions)
+                if not target_tx and transactions:
+                    target_tx = transactions[0]
+                if target_tx:
+                    target_tx['jumlah'] = int(new_amt)
+                    target_tx.pop('needs_amount', None)
+                response = format_draft_summary_operational(
+                    transactions,
+                    pending_data.get('source_wallet'),
+                    pending_data.get('category'),
+                    ""
+                )
+                return {'response': response, 'completed': False}
 
         if text_lower in ['1', 'ya', 'yes', 'simpan', 'ok', 'oke']:
             transactions = pending_data.get('transactions', [])
