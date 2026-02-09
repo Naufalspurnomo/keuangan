@@ -774,7 +774,7 @@ Atau ketik /cancel untuk batal total"""
         res = resolve_project_name(lookup_name)
         
         # If ambiguous, ask confirmation
-        if res.get('status') == 'AMBIGUOUS':
+        if res.get('status') == 'AMBIGUOUS' and int(res.get('match_count', 2) or 2) != 1:
             suggested = res.get('final_name')
             if prefix:
                 suggested = f"{prefix} - {suggested}".strip()
@@ -1043,7 +1043,7 @@ Atau ketik /cancel untuk batal total"""
         lookup_name = strip_company_prefix(new_name) if prefix else new_name
         res = resolve_project_name(lookup_name)
 
-        if res.get('status') == 'AMBIGUOUS':
+        if res.get('status') == 'AMBIGUOUS' and int(res.get('match_count', 2) or 2) != 1:
             suggested = res.get('final_name')
             if prefix:
                 suggested = f"{prefix} - {suggested}".strip()

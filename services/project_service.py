@@ -142,6 +142,11 @@ def resolve_project_name(candidate):
     best_match = None
     highest_score = 0.0
     is_substring_match = False
+    close_matches = set()
+
+    # Threshold kita naikkan biar ga lebay
+    AUTO_FIX_THRESHOLD = 0.92  # Typo sangat minim (Puraan -> Purana)
+    AMBIGUOUS_THRESHOLD = 0.8  # Mirip banget atau Substring
     
     for existing in existing_projects:
         # 1. EXACT MATCH (Case Insensitive)
@@ -158,6 +163,7 @@ def resolve_project_name(candidate):
             # Tandai ini kandidat kuat untuk konfirmasi
             is_substring_match = True
             best_match = existing
+            close_matches.add(existing)
             # Kita break loop? Belum tentu, cari yang paling mirip dulu.
             # Tapi biasanya substring match itu prioritas tinggi.
             highest_score = 0.85 # Set score manual biar masuk kategori AMBIGUOUS
@@ -169,29 +175,31 @@ def resolve_project_name(candidate):
         len_diff = abs(len(candidate_clean) - len(existing))
         if len_diff <= 3: # Panjang cuma beda dikit (indikasi typo)
             score = calculate_similarity(candidate_clean, existing)
+            if score >= AMBIGUOUS_THRESHOLD:
+                close_matches.add(existing)
             if score > highest_score:
                 highest_score = score
                 best_match = existing
 
     # --- DECISION LOGIC ---
-
-    # Threshold kita naikkan biar ga lebay
-    AUTO_FIX_THRESHOLD = 0.92  # Typo sangat minim (Puraan -> Purana)
-    AMBIGUOUS_THRESHOLD = 0.8  # Mirip banget atau Substring
     
     if highest_score >= AUTO_FIX_THRESHOLD:
         return {
             'status': 'AUTO_FIX',
             'final_name': best_match,
             'confidence': highest_score,
+            'match_count': 1,
             'original': candidate_clean
         }
     elif highest_score >= AMBIGUOUS_THRESHOLD or is_substring_match:
         # Case "Vadim Purana" vs "Purana" masuk sini
+        if best_match:
+            close_matches.add(best_match)
         return {
             'status': 'AMBIGUOUS',
             'final_name': best_match,
             'confidence': highest_score,
+            'match_count': len(close_matches) if close_matches else 1,
             'original': candidate_clean
         }
     else:
@@ -199,5 +207,6 @@ def resolve_project_name(candidate):
         return {
             'status': 'NEW',
             'final_name': candidate_clean,
+            'match_count': 0,
             'original': candidate_clean
         }

@@ -1560,6 +1560,14 @@ Balas 1 atau 2"""
                                 t['nama_projek'] = prefixed_res.get('final_name') or prefixed_candidate
                                 pending['project_confirmed'] = True
                                 continue
+                        explicit_project_signal = bool(
+                            re.search(r"\b(projek|project|proyek|prj)\b", (original_text or "").lower())
+                        )
+                        unique_candidate = int(res.get('match_count', 2) or 2) == 1
+                        if FAST_MODE and explicit_project_signal and unique_candidate and res.get('final_name'):
+                            t['nama_projek'] = res.get('final_name')
+                            pending['project_confirmed'] = True
+                            continue
 
                         pending['pending_type'] = 'confirmation_project'
                         pending['suggested_project'] = res.get('final_name') or res.get('original') or lookup_name
@@ -2841,6 +2849,14 @@ Balas 1 atau 2"""
                 res = resolve_project_name(strip_company_prefix(proj))
                 
                 if res['status'] == 'AMBIGUOUS':
+                    unique_candidate = int(res.get('match_count', 2) or 2) == 1
+                    if FAST_MODE and unique_candidate and res.get('final_name'):
+                        final = res['final_name']
+                        for t in pending['transactions']:
+                            t['nama_projek'] = final
+                        pending['project_confirmed'] = True
+                        pending['project_validated'] = True
+                        return finalize_transaction_workflow(pending, pending_pkey)
                     pending['pending_type'] = 'confirmation_project'
                     pending['suggested_project'] = res['final_name']
                     send_reply(f"???? Maksudnya **{res['final_name']}**?\n??? Ya / ??? Bukan")
