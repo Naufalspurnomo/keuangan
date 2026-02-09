@@ -763,7 +763,7 @@ def webhook_wuzapi():
             ctx_info = event_data['event']['ContextInfo']
         
         if ctx_info:
-            quoted_msg_id = ctx_info.get('stanzaId') or ctx_info.get('StanzaId') or ''
+            quoted_msg_id = ctx_info.get('stanzaId') or ctx_info.get('StanzaId') or ctx_info.get('stanzaID') or ''
             if quoted_msg_id:
                 secure_log("INFO", f"Webhook: Quoted message detected: {quoted_msg_id[:20]}...")
             else:
