@@ -2468,7 +2468,29 @@ Balas 1 atau 2"""
                         bound_visual_message_id = candidate_id
 
         # 5. REVISION HANDLER (New)
-        if quoted_msg_id or is_command_match(text, Commands.UNDO, is_group) or is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):
+        clean_text = (text or "").strip().lower()
+        digit_count = sum(ch.isdigit() for ch in clean_text)
+        is_quick_control_reply = (
+            bool(re.fullmatch(r"\d{1,2}", clean_text)) or
+            clean_text in {
+                'ya', 'y', 'iya', 'yes', 'ok', 'oke',
+                'tidak', 'no', 'bukan', 'batal', 'cancel', '/cancel', 'simpan'
+            }
+        )
+        has_revision_keyword = any(
+            kw in clean_text for kw in {
+                'revisi', 'ubah', 'ganti', 'koreksi', 'salah',
+                'operasional', 'operational', 'project', 'projek'
+            }
+        )
+        is_likely_amount_revision = (digit_count >= 2 and not is_quick_control_reply)
+        should_try_quoted_revision = (
+            bool(quoted_msg_id) and
+            (not has_pending) and
+            (has_revision_keyword or is_likely_amount_revision)
+        )
+
+        if should_try_quoted_revision or is_command_match(text, Commands.UNDO, is_group) or is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):
             from handlers.revision_handler import handle_revision_command, handle_undo_command
             
             revision_result = None
@@ -2478,7 +2500,7 @@ Balas 1 atau 2"""
                  revision_result = handle_undo_command(sender_number, chat_jid)
             
             # Check for /revisi command or reply revision
-            elif quoted_msg_id or is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):
+            elif should_try_quoted_revision or is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):
                  revision_result = handle_revision_command(sender_number, chat_jid, text, quoted_msg_id)
  
             if revision_result:
