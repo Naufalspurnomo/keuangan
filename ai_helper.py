@@ -86,6 +86,79 @@ def extract_project_from_description(description: str) -> str:
     return ""
 
 
+_EXPENSE_SALARY_TERMS = {"gaji", "gajian", "upah", "honor", "thr", "bonus"}
+_EXPENSE_LABOR_TERMS = {"tukang", "mandor", "kuli", "helper", "pekerja", "borongan"}
+_INCOME_HINT_TERMS = {"pemasukan", "terima", "diterima", "transfer masuk", "dp masuk", "refund", "cashback"}
+
+
+def _extract_explicit_project_hint(text: str) -> str:
+    """
+    Extract explicit project name after keyword proyek/project/projek/prj.
+    This is stronger than generic token scanning and helps avoid person-name capture.
+    """
+    if not text:
+        return ""
+
+    m = re.search(r"\b(?:projek|project|proyek|prj)\b\s+(.+)", text, flags=re.IGNORECASE)
+    if not m:
+        return ""
+
+    tail = m.group(1).split("\n", 1)[0]
+    tail = re.split(r"[;|]", tail, maxsplit=1)[0]
+    tail = re.split(
+        r"\b(?:dari|dr|pakai|via|dompet|wallet|rekening|rek|rp|sebesar|senilai)\b",
+        tail,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    tail = re.sub(
+        r"\b\d[\d\.,]*(?:\s*(?:rb|ribu|k|jt|juta))?\b.*$",
+        "",
+        tail,
+        flags=re.IGNORECASE,
+    )
+    candidate = sanitize_input(tail).strip(" ,.:;-")
+    if not candidate:
+        return ""
+
+    # Keep it concise and avoid over-capturing trailing clauses.
+    parts = candidate.split()
+    candidate = " ".join(parts[:4]).strip()
+    if len(candidate) < 3:
+        return ""
+
+    lower = candidate.lower()
+    if lower in KNOWN_COMPANY_NAMES or lower in PROJECT_STOPWORDS:
+        return ""
+    return candidate
+
+
+def _enforce_transaction_type_semantics(tx: Dict, clean_text: str) -> None:
+    """
+    Deterministic guardrail for wrong AI direction (Pemasukan vs Pengeluaran).
+    """
+    if not isinstance(tx, dict):
+        return
+
+    tipe = str(tx.get("tipe") or "Pengeluaran")
+    if tipe not in {"Pemasukan", "Pengeluaran"}:
+        tipe = "Pengeluaran"
+    ket = str(tx.get("keterangan") or "").lower()
+    text_lower = (clean_text or "").lower()
+
+    has_salary_signal = any(term in ket for term in _EXPENSE_SALARY_TERMS) or bool(
+        re.search(r"\b(gaji|gajian|upah)\b", text_lower)
+    )
+    has_labor_fee_signal = ("fee" in ket and any(term in ket for term in _EXPENSE_LABOR_TERMS))
+    has_income_hint = any(term in ket for term in _INCOME_HINT_TERMS) or any(
+        term in text_lower for term in _INCOME_HINT_TERMS
+    )
+
+    if tipe == "Pemasukan" and (has_salary_signal or has_labor_fee_signal) and not has_income_hint:
+        tx["tipe"] = "Pengeluaran"
+        secure_log("INFO", f"Type corrected to Pengeluaran by semantic guard: '{ket[:60]}'")
+
+
 def extract_transfer_fee(text: str) -> int:
     """
     Extract transfer fee from text. Supports:
@@ -808,6 +881,7 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
         # This covers cases where AI might miss the specific wallet name
         # or returns generic "UMUM" without detecting the dompet.
         regex_wallet = detect_wallet_from_text(clean_text)
+        explicit_project_hint = _extract_explicit_project_hint(clean_text)
 
         for t in transactions:
             is_valid, error, sanitized = validate_transaction_data(t)
@@ -846,6 +920,17 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                     secure_log("INFO", "Transaction missing project name - will ask user")
                 else:
                     sanitized["nama_projek"] = proj[:100]
+
+                # If user explicitly says "projek X", prioritize X over model guess.
+                if explicit_project_hint:
+                    current_proj = (sanitized.get("nama_projek") or "").strip()
+                    if current_proj.lower() != explicit_project_hint.lower():
+                        sanitized["nama_projek"] = explicit_project_hint[:100]
+                        sanitized.pop("needs_project", None)
+                        secure_log(
+                            "INFO",
+                            f"Project corrected by explicit hint: '{current_proj}' -> '{explicit_project_hint}'",
+                        )
 
             # 2) company sanitize (boleh None, nanti kamu map di layer pemilihan dompet/company)
             if sanitized.get("company") is not None:
@@ -892,6 +977,9 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                 ):
                     secure_log("WARNING", f"Keterangan mismatch ('{keterangan[:30]}...'), fallback to original text")
                     sanitized["keterangan"] = (user_note or clean_text[:200])
+
+            # 3d. Deterministic guardrail for wrong direction (Pemasukan/Pengeluaran).
+            _enforce_transaction_type_semantics(sanitized, clean_text)
 
             # 4. DETERMINISTIC FALLBACK: Check if AI confused company with project
             # If nama_projek matches a known company name, re-extract from description
@@ -964,7 +1052,11 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
             # Identify fee transaction (if any)
             def _is_fee_tx(tx: dict) -> bool:
                 ket = (tx.get("keterangan", "") or "").lower()
-                return "biaya transfer" in ket or "fee" in ket or "biaya admin" in ket
+                return (
+                    "biaya transfer" in ket
+                    or "biaya admin" in ket
+                    or bool(re.search(r"\bfee\s*(transfer|admin|bank)\b", ket))
+                )
 
             fee_tx = next((t for t in validated_transactions if _is_fee_tx(t)), None)
             main_tx = next((t for t in validated_transactions if t is not fee_tx), None)
