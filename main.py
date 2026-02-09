@@ -1107,10 +1107,15 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                     )
                     return
 
+                deferred_text = item.get('caption') or ''
+                if not deferred_text:
+                    item_ctx = item.get('context') if isinstance(item.get('context'), dict) else {}
+                    deferred_text = (item_ctx.get('original_text') or '').strip()
+
                 process_incoming_message(
                     sender_number=sender_number,
                     sender_name=sender_name,
-                    text=item.get('caption') or '',
+                    text=deferred_text,
                     input_type='image',
                     media_url=item.get('media_url'),
                     local_media_path=item.get('media_path'),
@@ -1836,12 +1841,29 @@ Balas 1 atau 2"""
         # 1. Rate Limit
         allowed, wait = rate_limit_check(sender_number)
         if not allowed: return jsonify({'status': 'rate_limit'}), 200
+
+        recent_text_for_image = ""
+        recent_scope_hint = None
         
         # 2. Visual Buffer (store all images for "catat diatas" binding)
         if input_type == 'image' and not deferred:
+            recent_text_for_image = (get_user_last_message(sender_number, chat_jid, max_age_seconds=30) or "").strip()
+            if recent_text_for_image:
+                recent_lower = recent_text_for_image.lower()
+                if re.search(r"\b(operasional|kantor|operational|office|ops)\b", recent_lower):
+                    recent_scope_hint = "OPERATIONAL"
+                elif re.search(r"\b(projek|project|proyek|prj)\b", recent_lower):
+                    recent_scope_hint = "PROJECT"
+
+            visual_context = {}
+            if recent_scope_hint:
+                visual_context["category_scope"] = recent_scope_hint
+            if recent_text_for_image:
+                visual_context["original_text"] = recent_text_for_image
+
             store_visual_buffer(
                 sender_number, chat_jid, media_url, message_id,
-                caption=text, media_path=local_media_path
+                caption=text, media_path=local_media_path, context=visual_context
             )
         
         has_visual = has_visual_buffer(sender_number, chat_jid)
@@ -1859,6 +1881,17 @@ Balas 1 atau 2"""
             active_sessions = _count_active_group_sessions(chat_jid)
             if active_sessions > 0:
                 quoted_pending_ref = get_pending_key_from_message(quoted_msg_id) if quoted_msg_id else ''
+                if not quoted_pending_ref and quoted_msg_id:
+                    # Fallback: user replied, but prompt->pending mapping might be missing.
+                    # If user still has own pending confirmation, let flow continue.
+                    user_pending_conf = get_pending_confirmation(sender_number, chat_jid)
+                    if user_pending_conf:
+                        quoted_pending_ref = f"{chat_jid}:{sender_number}"
+                    else:
+                        user_pending_key = pending_key(sender_number, chat_jid)
+                        user_pending_data = _pending_transactions.get(user_pending_key)
+                        if user_pending_data and not pending_is_expired(user_pending_data):
+                            quoted_pending_ref = user_pending_key
                 if not quoted_pending_ref:
                     if should_send_group_reply_hint(chat_jid, sender_number, "reply_required_for_answers"):
                         send_reply("⚠️ Untuk jawaban (angka/ya/nominal), wajib *reply* ke pesan bot yang ingin dijawab.")
@@ -2296,6 +2329,18 @@ Balas 1 atau 2"""
 
                     if intent == "RECORD_TRANSACTION":
                         # Logic continues to Step 8 (Extraction) with refined text/scope
+                        if (
+                            input_type == 'image'
+                            and layer_category_scope in ['UNKNOWN', 'AMBIGUOUS']
+                            and recent_scope_hint in {'OPERATIONAL', 'PROJECT'}
+                        ):
+                            layer_category_scope = recent_scope_hint
+                            if not (text or '').strip() and recent_text_for_image:
+                                text = recent_text_for_image
+                            secure_log(
+                                "INFO",
+                                f"Applied recent text scope hint for image: {layer_category_scope}"
+                            )
                         
                         # PRE-EMPTIVE CONFIRMATION FOR AMBIGUOUS SCOPE
                         # If AI is unsure (AMBIGUOUS) or UNKNOWN, ask user before extraction/saving

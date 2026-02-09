@@ -95,14 +95,16 @@ def _prune_consumed_visual_locked(now: Optional[datetime] = None) -> None:
 
 def store_visual_buffer(sender_number: str, chat_jid: str, media_url: str,
                         message_id: str, caption: str = None,
-                        media_path: str = None) -> None:
+                        media_path: str = None, context: Optional[dict] = None) -> None:
     """Store photo in visual buffer for later linking (Appends to list)."""
     key = visual_buffer_key(sender_number, chat_jid)
+    safe_context = context if isinstance(context, dict) else {}
     item = {
         'media_url': media_url,
         'media_path': media_path,
         'message_id': message_id,
         'caption': caption,
+        'context': safe_context,
         'chat_jid': chat_jid,
         'sender_number': sender_number,
         'created_at': datetime.now()
