@@ -1432,6 +1432,16 @@ Balas 1 atau 2"""
             # === JALUR 1: OPERATIONAL ===
             if context['mode'] == 'OPERATIONAL':
                 source_wallet = pending.get('selected_source_wallet')
+                if not source_wallet:
+                    # Auto-pick wallet when user already mentions it in text/AI extraction.
+                    source_wallet = next(
+                        (t.get('detected_dompet') for t in txs if t.get('detected_dompet')),
+                        None,
+                    )
+                    if not source_wallet:
+                        source_wallet = resolve_dompet_from_text(original_text)
+                    if source_wallet:
+                        pending['selected_source_wallet'] = source_wallet
                 
                 # Step 1: Ask Wallet if missing
                 if not source_wallet:
@@ -2691,15 +2701,33 @@ Balas 1 atau 2"""
                         return jsonify({'status': 'switch_to_project'}), 200
                     return finalize_transaction_workflow(pending, pending_pkey)
                 try:
-                    sel = int(text.strip())
+                    # Numeric quick reply (1-3)
+                    sel = int(clean)
                     opt = get_wallet_selection_by_idx(sel)
-                    if not opt: raise ValueError()
-                    
+                    if not opt:
+                        raise ValueError()
+                except:
+                    opt = None
+
+                # Text alias reply (e.g., "tx bali", "tx sby", "cv hb", "087")
+                if not opt:
+                    opt_dompet = resolve_dompet_from_text(clean)
+                    if not opt_dompet and clean in {"101", "216", "087", "87"}:
+                        opt_dompet = {
+                            "101": "CV HB(101)",
+                            "216": "TX SBY(216)",
+                            "087": "TX BALI(087)",
+                            "87": "TX BALI(087)",
+                        }.get(clean)
+                    if opt_dompet:
+                        opt = {"dompet": opt_dompet}
+
+                if opt:
                     pending['selected_source_wallet'] = opt['dompet']
                     return finalize_transaction_workflow(pending, pending_pkey)
-                except:
-                    send_reply("❌ Pilih angka 1-4.")
-                    return jsonify({'status': 'invalid'}), 200
+
+                send_reply("❌ Pilih angka 1-4 atau ketik dompet (contoh: TX BALI).")
+                return jsonify({'status': 'invalid'}), 200
             
             # B. Project Confirmation (Existing - Ambiguous Name)
             if ptype == 'confirmation_project':
