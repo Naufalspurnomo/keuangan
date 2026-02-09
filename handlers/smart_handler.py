@@ -24,15 +24,40 @@ from utils.semantic_matcher import find_matching_item, extract_revision_entities
 from layers.context_detector import get_full_context, record_interaction
 from security import secure_log
 from ai_helper import groq_client, is_generic_caption
+from config.wallets import resolve_dompet_from_text
 from sheets_helper import update_transaction_amount  # Fixed missing import
 
 logger = logging.getLogger(__name__)
+
+DEBT_PAYMENT_KEYWORDS = ("bayar", "lunas", "lunasi", "pelunasan", "cicil", "cicilan", "angsuran")
 
 
 def pending_key(user_id: str, chat_id: str = None) -> str:
     if chat_id:
         return f"{chat_id}:{user_id}"
     return user_id
+
+
+def _is_debt_payment_request(text: str) -> bool:
+    """Detect hutang payment intent even when amount is omitted."""
+    lower = (text or "").lower()
+    if not lower:
+        return False
+
+    if not re.search(r"\b(utang|hutang)\b", lower):
+        return False
+    if not any(re.search(rf"\b{re.escape(kw)}\b", lower) for kw in DEBT_PAYMENT_KEYWORDS):
+        return False
+
+    # Let explicit project sentences continue through project flow.
+    if re.search(r"\b(projek|project|proyek|prj)\b", lower):
+        return False
+
+    # Require wallet context to avoid grabbing generic debt chatter.
+    has_wallet_word = bool(re.search(r"\b(dompet|wallet|saldo)\b", lower))
+    has_wallet_alias = bool(resolve_dompet_from_text(lower))
+    has_direction = bool(re.search(r"\b(dari|dr|ke|kepada|kpd)\b", lower))
+    return has_wallet_alias or (has_wallet_word and has_direction)
 
 
 class SmartHandler:
@@ -237,7 +262,21 @@ class SmartHandler:
 
             question_words = ['berapa', 'gimana', 'bagaimana', 'apa', 'kapan', 'kenapa', 'cek', 'check', 'lihat', 'tunjukkan']
             looks_like_query = ('?' in text_lower) or any(qw in text_lower for qw in question_words)
+            is_debt_payment_text = _is_debt_payment_request(text)
             has_tx_signal = has_amount and (has_finance_keyword or has_project_word or has_kantor_word)
+
+            if is_debt_payment_text and not is_future and not looks_like_query:
+                secure_log(
+                    "INFO",
+                    "SmartHandler override: forcing PROCESS for debt-payment text without amount"
+                )
+                return {
+                    "action": "PROCESS",
+                    "intent": "RECORD_TRANSACTION",
+                    "normalized_text": text,
+                    "layer_response": text,
+                    "category_scope": "UNKNOWN"
+                }
 
             # Text-only fallback: if signal is clearly transactional, don't drop it.
             if has_tx_signal and not is_future and not looks_like_query:
