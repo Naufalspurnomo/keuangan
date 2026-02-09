@@ -262,6 +262,44 @@ def format_success_reply_new(transactions: list, dompet_sheet: str, company: str
     return '\n'.join(lines)
 
 
+def format_success_reply_operational(transactions: list, dompet_sheet: str, category: str = "", mention: str = "") -> str:
+    """Format success reply message for operational transactions.
+
+    Note: mention parameter is kept for backward compatibility but should be empty string.
+    The send_reply() function already handles @mention via format_mention_body().
+    """
+    lines = ["✅ Transaksi Operasional Tercatat!\n"]
+
+    total = 0
+    for t in transactions:
+        amount = int(t.get('jumlah', 0) or 0)
+        total += amount
+        is_in = t.get('tipe') == 'Pemasukan'
+        tipe_icon = "💰" if is_in else "💸"
+        label = "PEMASUKAN" if is_in else "PENGELUARAN"
+        ket = _clean_preview_keterangan(t.get('keterangan', '-') or '-')
+        lines.append(f"{tipe_icon} {label} {ket}: Rp {amount:,}".replace(',', '.'))
+
+    lines.append(f"\n📊 Total: Rp {total:,}".replace(',', '.'))
+    lines.append(f"📍 {dompet_sheet} → Operasional Kantor")
+    lines.append(f"📂 Kategori: {category or 'Lain Lain'}")
+    lines.append("📋 Projek: Operasional Kantor")
+
+    tx_ids = [t.get('tx_id') for t in transactions if t.get('tx_id')]
+    if tx_ids:
+        lines.append(f"🆔 TX: {', '.join(tx_ids)}")
+
+    now = now_wib().strftime("%d %b %Y, %H:%M")
+    lines.append(f"⏱️ {now}")
+
+    lines.append("\n↩️ Batalkan: /undo")
+    lines.append("💡 Ralat jumlah utama: reply /revisi 150rb")
+    lines.append("💡 Ralat fee: reply /revisi fee 3rb")
+    lines.append("📊 Cek ringkas: /status | /saldo")
+
+    return '\n'.join(lines)
+
+
 def format_draft_summary_operational(transactions: list, dompet_sheet: str, category: str, mention: str = "") -> str:
     """Format draft confirmation for operational transactions.
     

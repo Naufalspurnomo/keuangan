@@ -105,7 +105,7 @@ from utils.parsers import (
 )
 from utils.groq_analyzer import is_saldo_update
 from utils.formatters import (
-    format_success_reply, format_success_reply_new,
+    format_success_reply, format_success_reply_new, format_success_reply_operational,
     format_draft_summary_operational, format_draft_summary_project,
     build_selection_prompt,
     START_MESSAGE, HELP_MESSAGE,
@@ -1498,11 +1498,12 @@ Balas 1 atau 2"""
                     invalidate_dashboard_cache()
                     _pending_transactions.pop(pkey, None)
 
-                    total_amount = sum(int(t.get('jumlah', 0) or 0) for t in txs)
-                    response = (
-                        f"✅ Tersimpan: Operasional — Rp {total_amount:,} — {source_wallet}\n"
-                        "Ketik /undo jika salah."
-                    ).replace(',', '.')
+                    response = format_success_reply_operational(
+                        txs,
+                        source_wallet,
+                        category,
+                        "",
+                    ).replace('*', '')
                     _send_and_track(response, event_id)
                     return jsonify({'status': 'saved_operational'}), 200
 

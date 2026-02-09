@@ -11,7 +11,7 @@ from services.state_manager import (
 from utils.formatters import (
     build_selection_prompt,
     format_draft_summary_operational, format_draft_summary_project,
-    format_success_reply_new
+    format_success_reply_new, format_success_reply_operational
 )
 from utils.lifecycle import apply_lifecycle_markers
 from utils.parsers import parse_revision_amount
@@ -1233,15 +1233,12 @@ Atau ketik /cancel untuk batal total"""
             if pending_data.get('pending_key'):
                 clear_pending_transaction(pending_data.get('pending_key'))
             
-            total_amount = sum(int(t.get('jumlah', 0) or 0) for t in transactions)
-            tx_ids = [t.get('tx_id') for t in transactions if t.get('tx_id')]
-            tx_line = f"\n🆔 TX: {', '.join(tx_ids)}" if tx_ids else ""
-            response = f"""✅ Tersimpan di Operasional Kantor
-
-💼 {transactions[0].get('keterangan', '-')}: Rp {total_amount:,}
-💳 Dompet: {dompet_sheet}
-📂 Kategori: {category}
-{tx_line}""".replace(',', '.')
+            response = format_success_reply_operational(
+                transactions,
+                dompet_sheet,
+                category,
+                "",
+            ).replace('*', '')
             return {'response': response, 'completed': True, 'bot_ref_event_id': event_id}
         
         if text_lower in ['2', 'ganti dompet', 'dompet']:
