@@ -242,6 +242,10 @@ def has_visual_buffer(sender_number: str, chat_jid: str) -> bool:
 # This allows multiple pending transactions per group (one per user)
 _pending_transactions: Dict[str, Dict] = {}
 
+# Bot prompt message ID -> pending key mapping
+# Format: {bot_msg_id: "chat@g.us:628xxx" or "628xxx"}
+_pending_message_refs: Dict[str, str] = {}
+
 
 def pending_key(sender_number: str, chat_jid: str) -> str:
     """
@@ -340,9 +344,47 @@ def has_pending_transaction(pkey: str) -> bool:
 # ===================== PENDING MESSAGE REFS =====================
 
 
+def store_pending_message_ref(bot_msg_id: str, pending_key_ref: str) -> None:
+    """Store mapping from bot prompt message ID to pending key."""
+    bid = str(bot_msg_id or "").strip()
+    pref = str(pending_key_ref or "").strip()
+    if not bid or not pref:
+        return
+    _pending_message_refs[bid] = pref
+
+    # Keep cache bounded to avoid unbounded growth.
+    if len(_pending_message_refs) > MAX_BOT_REFS:
+        keys_to_remove = list(_pending_message_refs.keys())[:500]
+        for key in keys_to_remove:
+            _pending_message_refs.pop(key, None)
+
+
+def get_pending_key_from_message(bot_msg_id: str) -> str:
+    """Resolve pending key from bot prompt message ID."""
+    bid = str(bot_msg_id or "").strip()
+    if not bid:
+        return ""
+
+    # Fast path: exact key.
+    pending_ref = _pending_message_refs.get(bid)
+    if pending_ref:
+        return str(pending_ref)
+
+    # Fallback for providers that change casing or whitespace around IDs.
+    alt = bid.lower()
+    if alt != bid:
+        pending_ref = _pending_message_refs.get(alt)
+        if pending_ref:
+            return str(pending_ref)
+    return ""
+
+
 def clear_pending_message_ref(bot_msg_id: str) -> None:
     """Remove a pending message reference."""
-    _pending_message_refs.pop(str(bot_msg_id), None)
+    bid = str(bot_msg_id or "").strip()
+    if not bid:
+        return
+    _pending_message_refs.pop(bid, None)
 
 
 # ===================== MESSAGE DEDUP =====================
@@ -980,4 +1022,3 @@ def get_state_stats() -> Dict[str, Any]:
 if __name__ == '__main__':
     print("State Manager Tests")
     # ... tests omitted ...
-
