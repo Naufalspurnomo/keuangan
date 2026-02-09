@@ -67,6 +67,7 @@ from services.state_manager import (
     store_last_tx_event,
     # New Pending Confirmations
     get_pending_confirmation, set_pending_confirmation,
+    has_pending_confirmation,
     find_pending_confirmation_in_chat,
     store_user_message, get_user_last_message, clear_user_last_message,
     get_project_lock, set_project_lock
@@ -141,6 +142,38 @@ app = Flask(__name__)
 DEBUG = os.getenv('FLASK_DEBUG', '0') == '1'
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 IMAGE_GRACE_SECONDS = int(os.getenv('IMAGE_GRACE_SECONDS', '5'))
+GROUP_REPLY_HINT_COOLDOWN_SECONDS = int(os.getenv('GROUP_REPLY_HINT_COOLDOWN_SECONDS', '25'))
+_group_reply_hint_cache: Dict[str, datetime] = {}
+_group_reply_hint_lock = threading.Lock()
+
+
+def should_send_group_reply_hint(chat_jid: str, sender_number: str, hint_type: str) -> bool:
+    """
+    Throttle repetitive group guidance messages per user/chat/hint type.
+    Returns True when hint should be sent, False when it should be suppressed.
+    """
+    if not chat_jid or not sender_number:
+        return True
+
+    now = datetime.now()
+    key = f"{chat_jid}:{sender_number}:{hint_type}"
+    ttl = max(1, GROUP_REPLY_HINT_COOLDOWN_SECONDS)
+
+    with _group_reply_hint_lock:
+        # Lightweight cleanup to keep cache bounded in long-running process
+        stale_keys = [
+            k for k, ts in _group_reply_hint_cache.items()
+            if not isinstance(ts, datetime) or (now - ts).total_seconds() > (ttl * 8)
+        ]
+        for k in stale_keys:
+            _group_reply_hint_cache.pop(k, None)
+
+        last_sent = _group_reply_hint_cache.get(key)
+        if last_sent and (now - last_sent).total_seconds() < ttl:
+            return False
+
+        _group_reply_hint_cache[key] = now
+        return True
 MAX_WEBHOOK_BYTES = int(os.getenv('MAX_WEBHOOK_BYTES', str(25 * 1024 * 1024)))
 app.config['MAX_CONTENT_LENGTH'] = MAX_WEBHOOK_BYTES
 app.config['MAX_FORM_MEMORY_SIZE'] = MAX_WEBHOOK_BYTES
@@ -1067,6 +1100,12 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 pending = _pending_transactions.get(pkey)
                 if pending and not pending_is_expired(pending):
                     return
+                if has_pending_confirmation(sender_number, chat_jid):
+                    secure_log(
+                        "INFO",
+                        f"Skip deferred image {message_id}: pending confirmation is active"
+                    )
+                    return
 
                 process_incoming_message(
                     sender_number=sender_number,
@@ -1159,6 +1198,68 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 is_mentioned=is_explicit_bot_call(clean)
             )
             return should
+
+        def _get_pending_confirmation_by_key(conf_key: str) -> Optional[dict]:
+            """Resolve pending confirmation by exact key format: '<chat_id>:<user_id>'."""
+            if not conf_key or ":" not in conf_key:
+                return None
+            chat_part, user_part = conf_key.split(":", 1)
+            if not chat_part or not user_part:
+                return None
+            return get_pending_confirmation(user_part, chat_part)
+
+        def _count_active_group_sessions(target_chat_id: str) -> int:
+            """Count active pending transaction + confirmation sessions in a group chat."""
+            if not target_chat_id:
+                return 0
+
+            total = 0
+            now = datetime.now()
+
+            # Pending transaction sessions (group keys are prefixed with '<chat_id>:')
+            for pkey, pdata in list(_pending_transactions.items()):
+                if not isinstance(pkey, str) or not pkey.startswith(f"{target_chat_id}:"):
+                    continue
+                if pdata and not pending_is_expired(pdata):
+                    total += 1
+
+            # Pending confirmation sessions
+            for ckey, cdata in list(state_manager_module.PENDING_CONFIRMATIONS.items()):
+                if not isinstance(ckey, str) or not ckey.startswith(f"{target_chat_id}:"):
+                    continue
+                expires = cdata.get('expires_at') if isinstance(cdata, dict) else None
+                if isinstance(expires, datetime) and now > expires:
+                    continue
+                total += 1
+
+            return total
+
+        def _looks_like_ambiguous_reply(raw_text: str) -> bool:
+            """
+            Detect short/ambiguous reply-like messages in group chat
+            that should be tied to a specific prompt via reply.
+            """
+            clean = (raw_text or "").strip().lower()
+            if not clean:
+                return False
+
+            if bool(re.fullmatch(r"\d{1,2}", clean)):
+                return True
+
+            if clean in {
+                'ya', 'y', 'iya', 'ok', 'oke', 'yes',
+                'no', 'tidak', 'bukan',
+                'simpan', 'batal', 'cancel', '/cancel',
+                'operasional', 'operational', 'ops', 'kantor',
+                'project', 'projek'
+            }:
+                return True
+
+            # Bare amount replies like "150rb" / "rp 41.852" are ambiguous in busy groups.
+            if bool(re.fullmatch(r"(rp\s*)?\d[\d\.,\s]*(rb|ribu|k|jt|juta)?", clean)):
+                return True
+
+            return False
 
         # --- CORE WORKFLOW: FINALIZE TRANSACTION ---
         def finalize_transaction_workflow(pending: dict, pkey: str):
@@ -1268,7 +1369,10 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
    (Material, upah tukang, transport ke site)
 
 Balas 1 atau 2"""
-                send_reply(response)
+                sent = send_reply(response)
+                bid = extract_bot_msg_id(sent)
+                if bid:
+                    store_pending_message_ref(bid, f"{pending.get('chat_jid', chat_jid)}:{pending.get('sender_number', sender_number)}")
                 return jsonify({'status': 'asking_scope'}), 200
 
             # === JALUR 1: OPERATIONAL ===
@@ -1749,6 +1853,17 @@ Balas 1 atau 2"""
                 send_reply("❗ Belum ada gambar/struk sebelumnya. Tolong reply struknya atau kirim ulang.")
                 return jsonify({'status': 'missing_reference'}), 200
 
+        # Strict group mode: answer-like texts must reply to a mapped bot prompt.
+        # This avoids cross-session mistakes when multiple users interact concurrently.
+        if is_group and input_type == 'text' and _looks_like_ambiguous_reply(text):
+            active_sessions = _count_active_group_sessions(chat_jid)
+            if active_sessions > 0:
+                quoted_pending_ref = get_pending_key_from_message(quoted_msg_id) if quoted_msg_id else ''
+                if not quoted_pending_ref:
+                    if should_send_group_reply_hint(chat_jid, sender_number, "reply_required_for_answers"):
+                        send_reply("⚠️ Untuk jawaban (angka/ya/nominal), wajib *reply* ke pesan bot yang ingin dijawab.")
+                    return jsonify({'status': 'reply_required_for_answers'}), 200
+
         # ========================================
         # STEP 0: CHECK PENDING CONFIRMATION (New Logic)
         # ========================================
@@ -1757,10 +1872,22 @@ Balas 1 atau 2"""
         # ========================================
         from handlers.pending_handler import handle_pending_response
         quoted_pending_key = ''
+        pending_conf_key = ''
         if is_group and quoted_msg_id:
             quoted_pending_key = get_pending_key_from_message(quoted_msg_id) or ''
 
-        pending_conf = get_pending_confirmation(sender_number, chat_jid)
+        pending_conf = None
+        if is_group and quoted_pending_key:
+            # Reply to bot prompt takes precedence and can target any user's session.
+            pending_conf = _get_pending_confirmation_by_key(quoted_pending_key)
+            if pending_conf:
+                pending_conf_key = quoted_pending_key
+
+        if not pending_conf:
+            pending_conf = get_pending_confirmation(sender_number, chat_jid)
+            if pending_conf:
+                pending_conf_key = f"{chat_jid}:{sender_number}"
+
         if not pending_conf and is_group and text and not quoted_msg_id:
             # Allow other group members to answer if only one pending confirmation exists
             t = text.strip().lower()
@@ -1783,7 +1910,14 @@ Balas 1 atau 2"""
                         )
                     else:
                         pending_conf = conf_data
+                        pending_conf_key = conf_key
         if pending_conf:
+            if input_type == 'image' and not (text or '').strip():
+                secure_log(
+                    "INFO",
+                    f"Buffered image {message_id} while pending confirmation is active; waiting user reply"
+                )
+                return jsonify({'status': 'buffered_image_pending_confirmation'}), 200
             # Check if handled by pending handler
             result = handle_pending_response(
                 user_id=sender_number,
@@ -1796,9 +1930,13 @@ Balas 1 atau 2"""
             if result:
                 if result.get('response'):
                     sent = send_reply(result['response'])
+                    bid = extract_bot_msg_id(sent)
+                    if bid and pending_conf_key:
+                        # Allow next answer to be routed by replying bot prompt message.
+                        store_pending_message_ref(bid, pending_conf_key)
                     # Store bot message ref for revision tracking if provided
                     if result.get('bot_ref_event_id'):
-                        bid = extract_bot_msg_id(sent)
+                        bid = bid or extract_bot_msg_id(sent)
                         if bid:
                             store_bot_message_ref(bid, result.get('bot_ref_event_id'))
                             store_last_bot_report(chat_jid, bid)
@@ -2198,7 +2336,10 @@ Balas 1 atau 2"""
     (Material, upah tukang, transport ke site)
  
  Balas 1 atau 2"""
-                                send_reply(response)
+                                sent = send_reply(response)
+                                bid = extract_bot_msg_id(sent)
+                                if bid:
+                                    store_pending_message_ref(bid, f"{chat_jid}:{sender_number}")
                                 return jsonify({'status': 'asking_scope'}), 200
             
             # Check visual link

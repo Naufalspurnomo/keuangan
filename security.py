@@ -422,6 +422,10 @@ def validate_transaction_data(transaction: Dict) -> Tuple[bool, Optional[str], D
         jumlah = abs(int(float(str(jumlah).replace(".", "").replace(",", ""))))
         if jumlah > 999999999999:
             jumlah = 999999999999
+        # Reject transactions with trivially small amounts (< Rp 100)
+        # This filters out OCR misreads like Kurs Valas (1.00), exchange rates, etc.
+        if jumlah < 100:
+            return False, f"Amount too small ({jumlah}), likely OCR misread", {}
         sanitized["jumlah"] = jumlah
     except (ValueError, TypeError):
         return False, "Invalid amount", {}

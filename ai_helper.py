@@ -1496,8 +1496,10 @@ CRITICAL LOGIC RULES:
    - ONLY extract amounts that have "IDR", "Rp", "Amount:", "Fee:", "Jumlah:" prefix
    - ❌ NEVER extract year numbers (2024, 2025, 2026) as amounts - these are dates!
    - ❌ NEVER extract account numbers as amounts
+   - ❌ NEVER extract "Kurs Valas", "Kurs", "Exchange Rate" values - these are currency exchange rates (e.g., 1.00), NOT money!
+   - ❌ NEVER create transactions for amounts below Rp 100 - these are likely OCR misreads of non-monetary data
    - ✅ "Amount: IDR 200,000.00" -> jumlah: 200000
-   - ✅ "Fee: IDR 2,500.00" -> separate transaction with jumlah: 2500
+   - ✅ "Fee: IDR 2,500.00" -> separate transaction with jumlah: 2500 (only if >= Rp 100)
    - If "Remarks:" field exists, use it for project name extraction
    - Create maximum 2 transactions from receipt: main transfer + fee (if any)
 
@@ -1626,6 +1628,15 @@ RECEIPT_KEYWORDS = {
     "struk", "nota", "receipt", "pembayaran", "tanggal", "trx"
 }
 
+OCR_BOILERPLATE_PREFIXES = (
+    "based on the provided image",
+    "here is the extracted information",
+    "from the provided image",
+    "the main transaction amount is listed",
+    "the transfer receipt shows",
+    "in the required format",
+)
+
 
 def is_generic_caption(caption: str) -> bool:
     if not caption:
@@ -1643,13 +1654,29 @@ def is_generic_caption(caption: str) -> bool:
     return False
 
 
+def _is_ocr_boilerplate_line(line: str) -> bool:
+    if not line:
+        return True
+    lower = line.lower().strip()
+    if not lower:
+        return True
+    if lower.startswith("```") or lower.startswith("#"):
+        return True
+    if any(lower.startswith(prefix) for prefix in OCR_BOILERPLATE_PREFIXES):
+        return True
+    # Drop label-only fields without value.
+    if re.match(r"^(amount|fee|beneficiary|to account|from account|date|remarks|status)\s*:\s*$", lower):
+        return True
+    return False
+
+
 def normalize_ocr_text(text: str) -> str:
     if not text:
         return ""
     lines = []
     for raw in text.splitlines():
         line = re.sub(r"\s+", " ", raw).strip()
-        if not line:
+        if _is_ocr_boilerplate_line(line):
             continue
         if len(line) <= 2 and not re.search(r"\d", line):
             continue

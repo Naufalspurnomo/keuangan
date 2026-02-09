@@ -119,6 +119,21 @@ def format_mention(sender_name: str, is_group: bool = False) -> str:
     return ""
 
 
+def _clean_preview_keterangan(value: str) -> str:
+    """Normalize noisy OCR/LLM boilerplate for user-facing previews."""
+    ket = (value or "-").strip()
+    lower = ket.lower()
+    noisy_markers = (
+        "receipt/struk content:",
+        "based on the provided image",
+        "here is the extracted information",
+        "the main transaction amount is listed",
+    )
+    if any(marker in lower for marker in noisy_markers):
+        return "Transfer"
+    return ket
+
+
 def build_selection_prompt(transactions: list, mention: str = "") -> str:
     """Build the selection prompt message with dompet/company options.
     
@@ -131,10 +146,7 @@ def build_selection_prompt(transactions: list, mention: str = "") -> str:
         emoji = "💰" if is_in else "💸"
         label = "PEMASUKAN" if is_in else "PENGELUARAN"
         # Clean and truncate keterangan to avoid OCR garbage
-        ket = t.get('keterangan', '-') or '-'
-        # Remove OCR artifacts
-        if 'Receipt/Struk' in ket or 'Here is the' in ket:
-            ket = 'Transfer'
+        ket = _clean_preview_keterangan(t.get('keterangan', '-') or '-')
         # Truncate long descriptions
         if len(ket) > 40:
             ket = ket[:37] + '...'
@@ -257,7 +269,7 @@ def format_draft_summary_operational(transactions: list, dompet_sheet: str, cate
     The send_reply() function already handles @mention via format_mention_body().
     """
     total = sum(int(t.get('jumlah', 0) or 0) for t in transactions)
-    item = transactions[0].get('keterangan', '-') if transactions else '-'
+    item = _clean_preview_keterangan(transactions[0].get('keterangan', '-') if transactions else '-')
     short_dompet = dompet_sheet or "-"
     
     # Don't include mention here - send_reply() already adds it via format_mention_body()
@@ -285,7 +297,7 @@ def format_draft_summary_project(transactions: list, dompet_sheet: str, company:
     The send_reply() function already handles @mention via format_mention_body().
     """
     total = sum(int(t.get('jumlah', 0) or 0) for t in transactions)
-    item = transactions[0].get('keterangan', '-') if transactions else '-'
+    item = _clean_preview_keterangan(transactions[0].get('keterangan', '-') if transactions else '-')
     project_names = sorted({t.get('nama_projek') for t in transactions if t.get('nama_projek')})
     proj_display = ", ".join(project_names) if project_names else "-"
     short_dompet = dompet_sheet or "-"
