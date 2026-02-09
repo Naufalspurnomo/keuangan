@@ -537,7 +537,7 @@ def _pick_dompet_by_prep(text: str, preps: List[str]) -> Optional[str]:
     return None
 
 
-def _handle_auto_hutang_payment(text: str) -> Optional[str]:
+def _handle_auto_hutang_payment(text: str, user_id: str = "", chat_id: str = "") -> Optional[str]:
     """
     Auto mark hutang as PAID based on natural language.
     Returns response text if handled, otherwise None.
@@ -603,6 +603,40 @@ def _handle_auto_hutang_payment(text: str) -> Optional[str]:
         return "❌ Tidak ada hutang OPEN yang cocok. Tulis contoh: bayar hutang ke TX SBY 2jt."
 
     if len(candidates) > 1:
+        if user_id and chat_id:
+            shown = candidates[:8]
+            compact_candidates = []
+            lines = ["🤔 Ketemu beberapa hutang OPEN. Pilih yang mau dilunasi:"]
+            for idx, item in enumerate(shown, start=1):
+                amount = int(item.get('amount', 0) or 0)
+                no = str(item.get('no', '') or '').strip()
+                borrower = str(item.get('yang_hutang', '-') or '-')
+                lender = str(item.get('yang_dihutangi', '-') or '-')
+                ket = str(item.get('keterangan', '-') or '-')
+                compact_candidates.append({
+                    'no': no,
+                    'yang_hutang': borrower,
+                    'yang_dihutangi': lender,
+                    'amount': amount,
+                    'keterangan': ket,
+                })
+                lines.append(
+                    f"{idx}. #{no} {borrower} → {lender} Rp {amount:,} ({ket})"
+                )
+            lines.append("")
+            lines.append(f"Balas angka 1-{len(compact_candidates)} (langsung lunas).")
+            lines.append("Ketik /cancel untuk batal.")
+            set_pending_confirmation(
+                user_id=user_id,
+                chat_id=chat_id,
+                data={
+                    'type': 'hutang_payment_selection',
+                    'candidates': compact_candidates,
+                    'raw_text': text,
+                }
+            )
+            return "\n".join(lines).replace(',', '.')
+
         lines = ["🤔 Ada beberapa hutang OPEN. Balas dengan format: `bayar hutang no 3`."]
         for item in candidates[:5]:
             lines.append(
@@ -2358,7 +2392,7 @@ Balas 1 atau 2"""
                     return jsonify({'status': 'replied'}), 200
                 if action == "PROCESS":
                     if intent == "RECORD_TRANSACTION":
-                        auto_hutang = _handle_auto_hutang_payment(text)
+                        auto_hutang = _handle_auto_hutang_payment(text, sender_number, chat_jid)
                         if auto_hutang:
                             send_reply(auto_hutang)
                             return jsonify({'status': 'auto_hutang_paid'}), 200

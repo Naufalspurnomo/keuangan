@@ -22,6 +22,7 @@ from sheets_helper import (
     append_operational_transaction,
     append_project_transaction,
     append_hutang_entry,
+    update_hutang_status_by_no,
     invalidate_dashboard_cache,
     delete_transaction_row
 )
@@ -322,6 +323,20 @@ def handle_pending_response(user_id: str, chat_id: str, text: str,
     text_lower = text.lower().strip()
     is_group = chat_id.endswith('@g.us')
     event_id = pending_data.get('event_id') or pending_data.get('original_message_id')
+
+    def _format_hutang_selection(candidates: list) -> str:
+        lines = ["🤔 Ketemu beberapa hutang OPEN. Pilih yang mau dilunasi:"]
+        for idx, item in enumerate(candidates or [], start=1):
+            amount = int(item.get('amount', 0) or 0)
+            no = str(item.get('no', '-') or '-')
+            borrower = str(item.get('yang_hutang', '-') or '-')
+            lender = str(item.get('yang_dihutangi', '-') or '-')
+            ket = str(item.get('keterangan', '-') or '-')
+            lines.append(f"{idx}. #{no} {borrower} → {lender} Rp {amount:,} ({ket})")
+        lines.append("")
+        lines.append(f"Balas angka 1-{len(candidates or [])} (langsung lunas).")
+        lines.append("Ketik /cancel untuk batal.")
+        return "\n".join(lines).replace(',', '.')
     
     # ==========================================
     # CANCEL/UNDO Commands (works anytime)
@@ -371,6 +386,59 @@ def handle_pending_response(user_id: str, chat_id: str, text: str,
             'response': 'Balas *1* untuk hapus atau *2* untuk batal.',
             'completed': False
         }
+
+    # ==========================================
+    # HANDLE: Hutang Payment Selection (Quick pick)
+    # ==========================================
+    if pending_type == 'hutang_payment_selection':
+        candidates = pending_data.get('candidates') or []
+        if not candidates:
+            clear_pending_confirmation(user_id, chat_id)
+            return {
+                'response': '⚠️ Daftar hutang sudah tidak tersedia. Ulangi perintah bayar hutang.',
+                'completed': True
+            }
+
+        m = re.search(r"(?<!\d)(\d{1,2})(?!\d)", text_lower)
+        if not m:
+            return {
+                'response': _format_hutang_selection(candidates),
+                'completed': False
+            }
+
+        choice = int(m.group(1))
+        if choice < 1 or choice > len(candidates):
+            return {
+                'response': f"Balas angka 1-{len(candidates)} atau /cancel.",
+                'completed': False
+            }
+
+        selected = candidates[choice - 1]
+        no_raw = str(selected.get('no', '') or '').strip()
+        if not no_raw.isdigit():
+            clear_pending_confirmation(user_id, chat_id)
+            return {
+                'response': '⚠️ Nomor hutang tidak valid. Ulangi perintah bayar hutang.',
+                'completed': True
+            }
+
+        info = update_hutang_status_by_no(int(no_raw), "PAID")
+        if not info:
+            clear_pending_confirmation(user_id, chat_id)
+            return {
+                'response': f"❌ Hutang #{no_raw} tidak ditemukan atau sudah lunas.",
+                'completed': True
+            }
+
+        invalidate_dashboard_cache()
+        clear_pending_confirmation(user_id, chat_id)
+        response = (
+            f"✅ Hutang #{info['no']} ditandai PAID.\n"
+            f"{info.get('keterangan', '-')}\n"
+            f"{info.get('yang_hutang', '-')} → {info.get('yang_dihutangi', '-')}\n"
+            f"Rp {info.get('amount', 0):,}"
+        ).replace(',', '.')
+        return {'response': response, 'completed': True}
 
     # ==========================================
     # REVISION during confirmation
