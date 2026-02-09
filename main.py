@@ -1161,25 +1161,28 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                     item_ctx = item.get('context') if isinstance(item.get('context'), dict) else {}
                     deferred_text = (item_ctx.get('original_text') or '').strip()
 
-                process_incoming_message(
-                    sender_number=sender_number,
-                    sender_name=sender_name,
-                    text=deferred_text,
-                    input_type='image',
-                    media_url=item.get('media_url'),
-                    local_media_path=item.get('media_path'),
-                    quoted_msg_id=quoted_msg_id,
-                    message_id=item_message_id,
-                    is_group=is_group,
-                    chat_jid=chat_jid,
-                    sender_jid=sender_jid,
-                    quoted_message_text=quoted_message_text,
-                    send_reply=send_reply,
-                    send_document=send_document,
-                    source_label=source_label,
-                    reply_to=reply_to,
-                    deferred=True
-                )
+                # Deferred worker runs outside request context; provide app context
+                # because process_incoming_message uses Flask helpers (jsonify).
+                with app.app_context():
+                    process_incoming_message(
+                        sender_number=sender_number,
+                        sender_name=sender_name,
+                        text=deferred_text,
+                        input_type='image',
+                        media_url=item.get('media_url'),
+                        local_media_path=item.get('media_path'),
+                        quoted_msg_id=quoted_msg_id,
+                        message_id=item_message_id,
+                        is_group=is_group,
+                        chat_jid=chat_jid,
+                        sender_jid=sender_jid,
+                        quoted_message_text=quoted_message_text,
+                        send_reply=send_reply,
+                        send_document=send_document,
+                        source_label=source_label,
+                        reply_to=reply_to,
+                        deferred=True
+                    )
 
             threading.Thread(target=_worker, daemon=True).start()
 
