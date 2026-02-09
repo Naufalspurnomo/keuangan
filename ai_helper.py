@@ -1060,6 +1060,26 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
 
             fee_tx = next((t for t in validated_transactions if _is_fee_tx(t)), None)
             main_tx = next((t for t in validated_transactions if t is not fee_tx), None)
+            lower_clean_text = (clean_text or "").lower()
+
+            non_fee_txs = [t for t in validated_transactions if not _is_fee_tx(t)]
+            single_income_main = (
+                len(non_fee_txs) == 1
+                and str(non_fee_txs[0].get("tipe") or "") == "Pemasukan"
+            )
+            incoming_hint = bool(
+                re.search(
+                    r"\b(dp|down payment|termin|pelunasan|transfer masuk|pemasukan|diterima|uang masuk|pembayaran client)\b",
+                    lower_clean_text,
+                )
+            )
+            outgoing_hint = bool(
+                re.search(
+                    r"\b(transfer ke|kirim uang|transfer keluar|pengeluaran|biaya transfer kami|fee transfer kami|topup dompet|isi dompet)\b",
+                    lower_clean_text,
+                )
+            )
+            should_record_fee_tx = not ((single_income_main or incoming_hint) and not outgoing_hint)
 
             # Adjust main amount based on OCR base/total
             base_amt = receipt_amounts.get("base", 0)
@@ -1078,8 +1098,15 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                 validated_transactions = [t for t in validated_transactions if t is not fee_tx]
                 fee_tx = None
 
+            # Incoming receipts (DP/termin/transfer masuk) usually show sender-side fee.
+            # Do not record it as our own expense.
+            if fee_tx and transfer_fee > 0 and not should_record_fee_tx:
+                validated_transactions = [t for t in validated_transactions if t is not fee_tx]
+                secure_log("INFO", "Dropped transfer fee for incoming context (external sender fee)")
+                fee_tx = None
+
             # Ensure fee transaction exists with corrected amount
-            if transfer_fee > 0:
+            if transfer_fee > 0 and should_record_fee_tx:
                 if fee_tx:
                     fee_tx["jumlah"] = transfer_fee
                 else:
