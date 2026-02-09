@@ -338,21 +338,6 @@ def has_pending_transaction(pkey: str) -> bool:
 
 
 # ===================== PENDING MESSAGE REFS =====================
-# Store bot prompt message IDs -> pending key mapping
-# Format: {bot_msg_id: pending_key}
-_pending_message_refs: Dict[str, str] = {}
-
-
-def store_pending_message_ref(bot_msg_id: str, pkey: str) -> None:
-    """Store reference from bot's prompt message ID to pending key."""
-    if not bot_msg_id or not pkey:
-        return
-    _pending_message_refs[str(bot_msg_id)] = str(pkey)
-
-
-def get_pending_key_from_message(bot_msg_id: str) -> str:
-    """Get pending key from bot's prompt message ID."""
-    return _pending_message_refs.get(str(bot_msg_id), '')
 
 
 def clear_pending_message_ref(bot_msg_id: str) -> None:

@@ -749,21 +749,31 @@ def webhook_wuzapi():
         # Priority 1: extendedTextMessage (reply to text/media)
         if message_obj.get('extendedTextMessage', {}).get('contextInfo'):
             ctx_info = message_obj['extendedTextMessage']['contextInfo']
-        # Priority 2: imageMessage (reply with image)
+        # Priority 2: plain text reply metadata (some WuzAPI builds)
+        elif message_obj.get('messageContextInfo'):
+            ctx_info = message_obj['messageContextInfo']
+        # Priority 3: imageMessage (reply with image)
         elif message_obj.get('imageMessage', {}).get('contextInfo'):
             ctx_info = message_obj['imageMessage']['contextInfo']
-        # Priority 3: direct contextInfo on message
+        # Priority 4: direct contextInfo on message
         elif message_obj.get('contextInfo'):
             ctx_info = message_obj['contextInfo']
-        # Priority 4: Check in event.Info (some WuzAPI versions)
+        # Priority 5: Check in event.Info (some WuzAPI versions)
         elif info.get('ContextInfo'):
             ctx_info = info['ContextInfo']
-        # Priority 5: Check event root level
+        # Priority 6: Check event root level
         elif event_data.get('event', {}).get('ContextInfo'):
             ctx_info = event_data['event']['ContextInfo']
         
         if ctx_info:
-            quoted_msg_id = ctx_info.get('stanzaId') or ctx_info.get('StanzaId') or ctx_info.get('stanzaID') or ''
+            quoted_msg_id = (
+                ctx_info.get('stanzaId')
+                or ctx_info.get('StanzaId')
+                or ctx_info.get('stanzaID')
+                or ctx_info.get('quotedMessageID')
+                or ctx_info.get('quotedMessageId')
+                or ''
+            )
             if quoted_msg_id:
                 secure_log("INFO", f"Webhook: Quoted message detected: {quoted_msg_id[:20]}...")
             else:
@@ -1936,6 +1946,10 @@ Balas 1 atau 2"""
         pending_conf_key = ''
         if is_group and quoted_msg_id:
             quoted_pending_key = get_pending_key_from_message(quoted_msg_id) or ''
+            if quoted_pending_key:
+                secure_log("DEBUG", f"Found pending ref: {quoted_msg_id[:20]}... -> {quoted_pending_key}")
+            else:
+                secure_log("DEBUG", f"No pending ref for quoted_msg_id: {quoted_msg_id[:20]}...")
 
         pending_conf = None
         if is_group and quoted_pending_key:
