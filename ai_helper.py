@@ -106,11 +106,12 @@ def _extract_explicit_project_hint(text: str) -> str:
     tail = m.group(1).split("\n", 1)[0]
     tail = re.split(r"[;|]", tail, maxsplit=1)[0]
     tail = re.split(
-        r"\b(?:dari|dr|pakai|via|dompet|wallet|rekening|rek|rp|sebesar|senilai)\b",
+        r"\b(?:utang|hutang|minjam|minjem|pinjam|dari|dr|pakai|via|dompet|wallet|rekening|rek|rp|sebesar|senilai)\b",
         tail,
         maxsplit=1,
         flags=re.IGNORECASE,
     )[0]
+    tail = re.sub(r"\b(?:utang|hutang|minjam|minjem|pinjam)\b.*$", "", tail, flags=re.IGNORECASE)
     tail = re.sub(
         r"\b\d[\d\.,]*(?:\s*(?:rb|ribu|k|jt|juta))?\b.*$",
         "",

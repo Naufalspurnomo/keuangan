@@ -377,6 +377,26 @@ def extract_project_name_from_text(text: str) -> str:
     """
     if not text:
         return None
+
+    def _clean_project_name(raw_name: str) -> str:
+        if not raw_name:
+            return ""
+        name = raw_name.strip()
+        # Stop when debt/source phrases begin.
+        name = re.split(
+            r"\b(?:utang|hutang|minjam|minjem|pinjam|dari|dr|pakai|via|dompet|wallet|rekening|rek)\b",
+            name,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0].strip()
+        # Trim any trailing amount fragments.
+        name = re.sub(
+            r"\b\d[\d\.,]*(?:\s*(?:rb|ribu|k|jt|juta))?\b.*$",
+            "",
+            name,
+            flags=re.IGNORECASE,
+        ).strip()
+        return name
         
     # Strategy 1: After "projek/project/untuk/buat" + capitalized word
     patterns = [
@@ -391,6 +411,7 @@ def extract_project_name_from_text(text: str) -> str:
             project_name = match.group(1).strip()
             # Clean up (remove trailing numbers, etc)
             project_name = re.sub(r'\s+\d+.*$', '', project_name).strip()
+            project_name = _clean_project_name(project_name)
             if len(project_name) >= 3:  # Min 3 chars
                 return project_name
     
@@ -398,7 +419,9 @@ def extract_project_name_from_text(text: str) -> str:
     # Example: "Taman Indah Puncak"
     capitalized_phrase = re.search(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b', text)
     if capitalized_phrase:
-        return capitalized_phrase.group(1).strip()
+        project_name = _clean_project_name(capitalized_phrase.group(1).strip())
+        if len(project_name) >= 3:
+            return project_name
     
     # Strategy 3: Single capitalized word (not at sentence start)
     words = text.split()
@@ -407,8 +430,10 @@ def extract_project_name_from_text(text: str) -> str:
         if i > 0 and word[0].isupper() and len(word) >= 4:
             # Check if it's not a common stopword or month
             # (Basic heuristic, improved by list check later)
-            return word
-    
+            project_name = _clean_project_name(word)
+            if len(project_name) >= 3:
+                return project_name
+
     return None
 
 
