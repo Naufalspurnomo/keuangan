@@ -87,9 +87,9 @@ INJECTION_PATTERNS = [
     r"__import__",
     r"system\s*\(",
     
-    # Data exfiltration
+    # Data exfiltration (skip URL pattern - OCR receipts often contain merchant URLs)
     r"send\s*(to|data|info)\s*(external|outside|url|webhook)",
-    r"http(s)?://",  # Block URLs in transaction input
+    # r"http(s)?://",  # REMOVED: OCR receipts often contain merchant URLs - this was too aggressive
     r"webhook",
     
     # Jailbreak attempts
