@@ -143,6 +143,7 @@ DEBUG = os.getenv('FLASK_DEBUG', '0') == '1'
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 IMAGE_GRACE_SECONDS = int(os.getenv('IMAGE_GRACE_SECONDS', '5'))
 GROUP_REPLY_HINT_COOLDOWN_SECONDS = int(os.getenv('GROUP_REPLY_HINT_COOLDOWN_SECONDS', '25'))
+GROUP_REPLY_HINT_CHAT_COOLDOWN_SECONDS = int(os.getenv('GROUP_REPLY_HINT_CHAT_COOLDOWN_SECONDS', '12'))
 _group_reply_hint_cache: Dict[str, datetime] = {}
 _group_reply_hint_lock = threading.Lock()
 
@@ -156,8 +157,11 @@ def should_send_group_reply_hint(chat_jid: str, sender_number: str, hint_type: s
         return True
 
     now = datetime.now()
-    key = f"{chat_jid}:{sender_number}:{hint_type}"
-    ttl = max(1, GROUP_REPLY_HINT_COOLDOWN_SECONDS)
+    key_user = f"{chat_jid}:{sender_number}:{hint_type}"
+    key_chat = f"{chat_jid}:*:{hint_type}"
+    ttl_user = max(1, GROUP_REPLY_HINT_COOLDOWN_SECONDS)
+    ttl_chat = max(1, GROUP_REPLY_HINT_CHAT_COOLDOWN_SECONDS)
+    ttl = max(ttl_user, ttl_chat)
 
     with _group_reply_hint_lock:
         # Lightweight cleanup to keep cache bounded in long-running process
@@ -168,11 +172,18 @@ def should_send_group_reply_hint(chat_jid: str, sender_number: str, hint_type: s
         for k in stale_keys:
             _group_reply_hint_cache.pop(k, None)
 
-        last_sent = _group_reply_hint_cache.get(key)
-        if last_sent and (now - last_sent).total_seconds() < ttl:
+        # Chat-level throttle first: avoid spam burst in busy groups.
+        last_sent_chat = _group_reply_hint_cache.get(key_chat)
+        if last_sent_chat and (now - last_sent_chat).total_seconds() < ttl_chat:
             return False
 
-        _group_reply_hint_cache[key] = now
+        # User-level throttle: avoid repeating hint to the same user.
+        last_sent_user = _group_reply_hint_cache.get(key_user)
+        if last_sent_user and (now - last_sent_user).total_seconds() < ttl_user:
+            return False
+
+        _group_reply_hint_cache[key_chat] = now
+        _group_reply_hint_cache[key_user] = now
         return True
 MAX_WEBHOOK_BYTES = int(os.getenv('MAX_WEBHOOK_BYTES', str(25 * 1024 * 1024)))
 app.config['MAX_CONTENT_LENGTH'] = MAX_WEBHOOK_BYTES
