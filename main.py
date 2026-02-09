@@ -111,7 +111,7 @@ from utils.formatters import (
     START_MESSAGE, HELP_MESSAGE,
     CATEGORIES_DISPLAY, SELECTION_DISPLAY,
 )
-from utils.lifecycle import apply_lifecycle_markers
+from utils.lifecycle import apply_lifecycle_markers, select_start_marker_indexes
 from utils.wallet_updates import (
     is_absolute_balance_update,
     pick_wallet_target_amount,
@@ -1805,11 +1805,19 @@ Balas 1 atau 2"""
                 if FAST_MODE:
                     event_id = pending.get('event_id') or pending.get('message_id')
                     _assign_tx_ids(txs, event_id)
-                    for tx in txs:
+                    is_new_project_batch = bool(pending.get('is_new_project', False))
+                    start_marker_indexes = (
+                        select_start_marker_indexes(txs) if is_new_project_batch else set()
+                    )
+                    for idx, tx in enumerate(txs):
                         pname = tx.get('nama_projek') or 'Umum'
                         pname = apply_company_prefix(pname, dompet, detected_company)
                         pname = apply_lifecycle_markers(
-                            pname, tx, is_new_project=pending.get('is_new_project', False), allow_finish=True
+                            pname,
+                            tx,
+                            is_new_project=is_new_project_batch,
+                            allow_finish=True,
+                            allow_start=(not is_new_project_batch) or (idx in start_marker_indexes),
                         )
                         append_project_transaction(
                             transaction={

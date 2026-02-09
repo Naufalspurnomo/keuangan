@@ -13,7 +13,7 @@ from utils.formatters import (
     format_draft_summary_operational, format_draft_summary_project,
     format_success_reply_new, format_success_reply_operational
 )
-from utils.lifecycle import apply_lifecycle_markers
+from utils.lifecycle import apply_lifecycle_markers, select_start_marker_indexes
 from utils.parsers import parse_revision_amount
 from utils.amounts import has_amount_pattern
 from services.project_service import add_new_project_to_cache, resolve_project_name
@@ -219,10 +219,21 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
 
     _assign_tx_ids(transactions, event_id)
 
-    for tx in transactions:
+    is_new_project_batch = bool(is_new_project)
+    start_marker_indexes = (
+        select_start_marker_indexes(transactions) if is_new_project_batch else set()
+    )
+
+    for idx, tx in enumerate(transactions):
         p_name = tx.get('nama_projek', '') or 'Umum'
         p_name = apply_company_prefix(p_name, dompet_sheet, company)
-        p_name = apply_lifecycle_markers(p_name, tx, is_new_project=is_new_project, allow_finish=allow_finish)
+        p_name = apply_lifecycle_markers(
+            p_name,
+            tx,
+            is_new_project=is_new_project_batch,
+            allow_finish=allow_finish,
+            allow_start=(not is_new_project_batch) or (idx in start_marker_indexes),
+        )
 
         append_project_transaction(
             transaction={
