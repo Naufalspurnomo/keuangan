@@ -696,6 +696,14 @@ def webhook_wuzapi():
             return jsonify({'status': f'ignored_type_{msg_type}'}), 200
         
         # Text extraction logic
+        # DEBUG: Log message structure for reply debugging
+        if msg_type == 'text':
+            msg_keys = list(message_obj.keys()) if isinstance(message_obj, dict) else []
+            secure_log("DEBUG", f"Webhook: text msg_keys={msg_keys}")
+            if message_obj.get('extendedTextMessage'):
+                ext_keys = list(message_obj['extendedTextMessage'].keys())
+                secure_log("DEBUG", f"Webhook: extendedTextMessage keys={ext_keys}")
+
         if msg_type == 'text':
             text = message_obj.get('conversation') or \
                    message_obj.get('extendedTextMessage', {}).get('text', '')
@@ -736,11 +744,31 @@ def webhook_wuzapi():
         # LOG THE INCOMING MESSAGE
         secure_log("INFO", f"Webhook: Msg from {sender_number} (Group: {is_group}): {text[:50]}...")
 
-        # Quoted info
-        ctx_info = message_obj.get('extendedTextMessage', {}).get('contextInfo', {}) or \
-                   message_obj.get('contextInfo', {})
+        # Quoted info - check multiple possible locations in WuzAPI payload
+        ctx_info = None
+        # Priority 1: extendedTextMessage (reply to text/media)
+        if message_obj.get('extendedTextMessage', {}).get('contextInfo'):
+            ctx_info = message_obj['extendedTextMessage']['contextInfo']
+        # Priority 2: imageMessage (reply with image)
+        elif message_obj.get('imageMessage', {}).get('contextInfo'):
+            ctx_info = message_obj['imageMessage']['contextInfo']
+        # Priority 3: direct contextInfo on message
+        elif message_obj.get('contextInfo'):
+            ctx_info = message_obj['contextInfo']
+        # Priority 4: Check in event.Info (some WuzAPI versions)
+        elif info.get('ContextInfo'):
+            ctx_info = info['ContextInfo']
+        # Priority 5: Check event root level
+        elif event_data.get('event', {}).get('ContextInfo'):
+            ctx_info = event_data['event']['ContextInfo']
+        
         if ctx_info:
-            quoted_msg_id = ctx_info.get('stanzaId')
+            quoted_msg_id = ctx_info.get('stanzaId') or ctx_info.get('StanzaId') or ''
+            if quoted_msg_id:
+                secure_log("INFO", f"Webhook: Quoted message detected: {quoted_msg_id[:20]}...")
+            else:
+                # Debug: log what keys are in contextInfo
+                secure_log("DEBUG", f"Webhook: contextInfo found but no stanzaId. Keys: {list(ctx_info.keys())}")
 
         # 6. Deduplication (allow upgrade for richer payloads)
         message_id = info.get('ID', '')
