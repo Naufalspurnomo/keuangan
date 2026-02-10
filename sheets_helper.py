@@ -1405,7 +1405,7 @@ def get_all_data(days: int = 30) -> List[Dict]:
             
             # Operasional uses standard layout starting at row 2
             # Indices (0-based): TANGGAL=1, JUMLAH=2, KET=3, OLEH=4, SOURCE=5, KAT=6
-            for row in op_rows[OPERASIONAL_DATA_START-1:]:
+            for idx, row in enumerate(op_rows[OPERASIONAL_DATA_START-1:], start=OPERASIONAL_DATA_START):
                 if len(row) < 3: continue
                 try:
                     date_str = row[OPERASIONAL_COLS['TANGGAL']-1]
@@ -1435,7 +1435,9 @@ def get_all_data(days: int = 30) -> List[Dict]:
                         'oleh': row[OPERASIONAL_COLS['OLEH']-1] if len(row) >= OPERASIONAL_COLS['OLEH'] else '',
                         'kategori': row[OPERASIONAL_COLS['KATEGORI']-1] if len(row) >= OPERASIONAL_COLS['KATEGORI'] else 'Lain-lain',
                         'company_sheet': 'Operasional Kantor',
-                        'nama_projek': 'Operasional'
+                        'nama_projek': 'Operasional',
+                        'sheet_name': OPERASIONAL_SHEET_NAME,
+                        'sheet_row': idx
                     })
                 except:
                     continue
@@ -1454,7 +1456,7 @@ def get_all_data(days: int = 30) -> List[Dict]:
                 company_name = next((k for k,v in DOMPET_COMPANIES.items() if k.lower() in dompet.lower()), dompet)
                 
                 # Skip up to data start
-                for row in all_values[SPLIT_LAYOUT_DATA_START-1:]:
+                for idx, row in enumerate(all_values[SPLIT_LAYOUT_DATA_START-1:], start=SPLIT_LAYOUT_DATA_START):
                     if not row: continue
                     
                     # --- A. CHECK PEMASUKAN LEFT BLOCK ---
@@ -1485,7 +1487,9 @@ def get_all_data(days: int = 30) -> List[Dict]:
                                     'tipe': 'Pemasukan',
                                     'nama_projek': row[SPLIT_PEMASUKAN['PROJECT']-1] if len(row) >= SPLIT_PEMASUKAN['PROJECT'] else '',
                                     'company_sheet': company_name,
-                                    'kategori': 'Income'
+                                    'kategori': 'Income',
+                                    'sheet_name': dompet,
+                                    'sheet_row': idx
                                 })
                     except: pass
                     
@@ -1517,7 +1521,9 @@ def get_all_data(days: int = 30) -> List[Dict]:
                                     'tipe': 'Pengeluaran',
                                     'nama_projek': row[SPLIT_PENGELUARAN['PROJECT']-1] if len(row) >= SPLIT_PENGELUARAN['PROJECT'] else '',
                                     'company_sheet': company_name,
-                                    'kategori': 'Project Expense'
+                                    'kategori': 'Project Expense',
+                                    'sheet_name': dompet,
+                                    'sheet_row': idx
                                 })
                     except: pass
                         
