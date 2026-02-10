@@ -369,10 +369,8 @@ def _handle_project_query(query: str, norm_text: str, days: int, period_label: s
 
     lines = [f"Projek {project_name} ({period_label}){dompet_txt}"]
 
-    is_scoped_by_descriptor = bool(descriptor_tokens and filtered_rows is not project_rows)
-    if is_scoped_by_descriptor:
+    if descriptor_tokens and filtered_rows is not project_rows:
         lines.append(f"Filter deskripsi: {', '.join(descriptor_tokens)}")
-        lines.append(f"Match transaksi: {len(filtered_rows)} dari {len(project_rows)} transaksi projek")
 
     if wants_income and not wants_expense:
         lines.append(f"Pemasukan: {_format_idr(income)}")
@@ -384,12 +382,8 @@ def _handle_project_query(query: str, norm_text: str, days: int, period_label: s
     if wants_profit or (not wants_income and not wants_expense):
         lines.append(f"Laba/Rugi: {_format_idr(profit)} ({status})")
 
-    # Beri evidence list saat query difilter deskripsi agar jawaban lebih kredibel.
-    should_show_evidence = (is_scoped_by_descriptor and len(filtered_rows) > 1) or wants_detail
-    if should_show_evidence and filtered_rows:
-        sorted_rows = sorted(filtered_rows, key=lambda d: _parse_date(d.get("tanggal", "")), reverse=True)
-        show_limit = 5 if is_scoped_by_descriptor else 3
-        recents = sorted_rows[:show_limit]
+    if wants_detail and filtered_rows:
+        recents = _recent_transactions(filtered_rows, 3)
         if recents:
             title = "Transaksi yang dihitung:" if is_scoped_by_descriptor else "Transaksi terakhir:"
             lines.append(title)
