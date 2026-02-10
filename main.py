@@ -3121,25 +3121,38 @@ Balas 1 atau 2"""
                 income = sum(int(t.get('jumlah', 0) or 0) for t in data if str(t.get('tipe')) == 'Pemasukan')
                 expense = sum(int(t.get('jumlah', 0) or 0) for t in data if str(t.get('tipe')) == 'Pengeluaran')
                 profit = income - expense
+                open_count = int(hutang.get('open_count', 0) or 0)
+                open_total = int(hutang.get('open_total', 0) or 0)
+                created_count = int(hutang.get('created_period_count', 0) or 0)
+                created_total = int(hutang.get('created_period_total', 0) or 0)
+                paid_period_count = int(hutang.get('paid_period_count', 0) or 0)
+                paid_period_total = int(hutang.get('paid_period_total', 0) or 0)
+                paid_count = int(hutang.get('paid_count', 0) or 0)
+                paid_total = int(hutang.get('paid_total', 0) or 0)
+                has_hutang_data = any([open_count, open_total, created_count, created_total, paid_period_count, paid_period_total, paid_count, paid_total])
 
                 title = f"LAPORAN {'BULANAN (30 HARI)' if days == 30 else 'MINGGUAN (7 HARI)'}"
-                msg = f"{title}\n"
-                msg += f"{'=' * len(title)}\n\n"
-                msg += f"Pemasukan       : Rp {income:,}\n"
-                msg += f"Pengeluaran     : Rp {expense:,}\n"
-                msg += f"Profit          : Rp {profit:,}\n"
-                msg += f"Jumlah Transaksi: {len(data)}\n"
-                msg += "\n[HUTANG ANTAR DOMPET]\n"
-                msg += f"OPEN (saat ini) : {hutang.get('open_count', 0)} item | Rp {int(hutang.get('open_total', 0) or 0):,}\n"
-                msg += f"Dibuat {days} hari : {hutang.get('created_period_count', 0)} item | Rp {int(hutang.get('created_period_total', 0) or 0):,}\n"
-                msg += f"Lunas {days} hari  : {hutang.get('paid_period_count', 0)} item | Rp {int(hutang.get('paid_period_total', 0) or 0):,}\n"
-                msg += f"PAID (all-time) : {hutang.get('paid_count', 0)} item | Rp {int(hutang.get('paid_total', 0) or 0):,}\n"
+                msg = f"{title}\n{'=' * len(title)}\n\n"
+                msg += f"💰 Pemasukan: Rp {income:,}\n"
+                msg += f"💸 Pengeluaran: Rp {expense:,}\n"
+                msg += f"📈 Profit: Rp {profit:,}\n"
+                msg += f"📝 Total Tx: {len(data)}\n"
+
+                msg += "\nStatus Hutang Antar Dompet:\n"
+                if has_hutang_data:
+                    msg += f"🟡 OPEN saat ini: {open_count} item (Rp {open_total:,})\n"
+                    msg += f"🆕 Dibuat {days} hari: {created_count} item (Rp {created_total:,})\n"
+                    msg += f"✅ Lunas {days} hari: {paid_period_count} item (Rp {paid_period_total:,})\n"
+                    msg += f"📚 Total PAID: {paid_count} item (Rp {paid_total:,})\n"
+                else:
+                    msg += "ℹ️ Belum ada data hutang antar dompet.\n"
+
                 msg += "\nCatatan: hutang antar dompet dipisah dari metrik profit.\n"
                 msg = msg.replace(',', '.')
                 send_reply(msg)
                 return jsonify({'status': 'command_laporan'}), 200
             except Exception as e:
-                send_reply(f"Error: {str(e)}")
+                send_reply(f"❌ Error: {str(e)}")
                 return jsonify({'status': 'error'}), 200
 
         if is_command_match(text, Commands.LINK, is_group):

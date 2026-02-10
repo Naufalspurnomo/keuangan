@@ -1944,43 +1944,50 @@ def get_wallet_balances() -> Dict:
 
 def format_dashboard_message(summary: Dict) -> str:
     """Format dashboard summary as chat message."""
-    lines = ["=== DASHBOARD KEUANGAN ===", ""]
+    lines = ["DASHBOARD KEUANGAN", "=" * 25, ""]
 
-    lines.append(f"Income          : Rp {summary['total_income']:,}".replace(',', '.'))
-    lines.append(f"Expense         : Rp {summary['total_expense']:,}".replace(',', '.'))
-    lines.append(f"Balance         : Rp {summary['balance']:,}".replace(',', '.'))
-    lines.append(f"Total Transaksi : {summary['total_transactions']}")
-
+    # Global Summary
+    lines.append(f"💰 Income: Rp {summary['total_income']:,}".replace(',', '.'))
+    lines.append(f"💸 Expense: Rp {summary['total_expense']:,}".replace(',', '.'))
+    lines.append(f"📈 Balance: Rp {summary['balance']:,}".replace(',', '.'))
+    lines.append(f"📝 Total Tx: {summary['total_transactions']}")
     lines.append("")
-    lines.append("[SALDO DOMPET - REAL]")
+
+    lines.append("Status Saldo Dompet (Real):")
     for dompet, stats in summary['dompet_summary'].items():
         short = get_dompet_short_name(dompet)
         bal = int(stats.get('bal', 0) or 0)
-        marker = "[+]" if bal >= 0 else "[-]"
-        lines.append(f"{marker} {short:<14} Rp {bal:,}".replace(',', '.'))
+        icon = "🟢" if bal >= 0 else "🔴"
+        lines.append(f"{icon} {short}: Rp {bal:,}".replace(',', '.'))
 
     hutang = get_hutang_summary(days=0)
-    lines.append("")
-    lines.append("[HUTANG ANTAR DOMPET]")
-    lines.append(
-        f"OPEN            : {hutang.get('open_count', 0)} item | Rp {int(hutang.get('open_total', 0) or 0):,}".replace(',', '.')
-    )
-    lines.append(
-        f"PAID            : {hutang.get('paid_count', 0)} item | Rp {int(hutang.get('paid_total', 0) or 0):,}".replace(',', '.')
-    )
-    lines.append(
-        f"CANCELLED       : {hutang.get('cancelled_count', 0)} item | Rp {int(hutang.get('cancelled_total', 0) or 0):,}".replace(',', '.')
-    )
+    open_count = int(hutang.get('open_count', 0) or 0)
+    open_total = int(hutang.get('open_total', 0) or 0)
+    paid_count = int(hutang.get('paid_count', 0) or 0)
+    paid_total = int(hutang.get('paid_total', 0) or 0)
+    cancelled_count = int(hutang.get('cancelled_count', 0) or 0)
+    cancelled_total = int(hutang.get('cancelled_total', 0) or 0)
+    has_hutang_data = any([open_count, open_total, paid_count, paid_total, cancelled_count, cancelled_total])
 
     lines.append("")
-    lines.append("[STATUS PROJECTS - EST]")
+    lines.append("Status Hutang Antar Dompet:")
+    if has_hutang_data:
+        lines.append(f"🟡 OPEN: {open_count} item | Rp {open_total:,}".replace(',', '.'))
+        lines.append(f"✅ PAID: {paid_count} item | Rp {paid_total:,}".replace(',', '.'))
+        if cancelled_count > 0 or cancelled_total > 0:
+            lines.append(f"⚪ CANCELLED: {cancelled_count} item | Rp {cancelled_total:,}".replace(',', '.'))
+    else:
+        lines.append("ℹ️ Belum ada data hutang antar dompet.")
+
+    lines.append("")
+    lines.append("Status Projects (Est):")
     for company, stats in summary['company_summary'].items():
         bal = int(stats.get('bal', 0) or 0)
-        marker = "[+]" if bal >= 0 else "[-]"
-        lines.append(f"{marker} {company:<14} Rp {bal:,}".replace(',', '.'))
+        icon = "📈" if bal >= 0 else "📉"
+        lines.append(f"{icon} {company}: Rp {bal:,}".replace(',', '.'))
 
     lines.append("")
-    lines.append(f"Last Update     : {datetime.now().strftime('%H:%M')} WIB")
+    lines.append(f"Last Update: {datetime.now().strftime('%H:%M')} WIB")
 
     return "\n".join(lines)
 
