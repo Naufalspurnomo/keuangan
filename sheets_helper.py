@@ -542,6 +542,90 @@ def update_hutang_status_by_no(no: int, status: str = "PAID") -> Optional[Dict]:
         return None
 
 
+def settle_hutang(no: int, sender_name: str = "System", source: str = "WhatsApp") -> Optional[Dict]:
+    """
+    Full hutang settlement: mark PAID + create reverse transactions for correct balances.
+
+    When hutang was created:
+      - Borrower's dompet: got the project expense recorded
+      - Lender's dompet: Pengeluaran "Hutang ke dompet X" (money went out)
+      - HUTANG sheet: OPEN
+
+    When settling (PAID):
+      - HUTANG sheet: OPEN → PAID  ✅
+      - Borrower's dompet: Pengeluaran "Bayar hutang ke [lender]" (money goes out to repay)
+      - Lender's dompet: Pemasukan "Terima pelunasan dari [borrower]" (money comes back)
+
+    This keeps all wallet balances mathematically correct.
+
+    Returns:
+        Dict with hutang info + settlement details, or None if not found.
+    """
+    # 1. Mark as PAID
+    info = update_hutang_status_by_no(no, "PAID")
+    if not info:
+        return None
+
+    amount = int(info.get('amount', 0) or 0)
+    borrower = str(info.get('yang_hutang', '') or '').strip()
+    lender = str(info.get('yang_dihutangi', '') or '').strip()
+    keterangan = str(info.get('keterangan', '') or '').strip()
+    msg_id = f"HUTANG_PAID_{no}_{now_wib().strftime('%Y%m%d%H%M%S')}"
+
+    if amount <= 0 or not borrower or not lender:
+        secure_log("WARNING", f"settle_hutang #{no}: incomplete data, skipping reverse txs")
+        return info
+
+    # 2. Borrower: Pengeluaran → money goes out to repay lender
+    short_lender = get_dompet_short_name(lender)
+    borrower_desc = f"Bayar hutang ke {short_lender}"
+    if keterangan:
+        borrower_desc += f" ({keterangan[:80]})"
+
+    try:
+        append_project_transaction(
+            transaction={
+                'jumlah': amount,
+                'keterangan': borrower_desc,
+                'tipe': 'Pengeluaran',
+                'message_id': f"{msg_id}|BAYAR"
+            },
+            sender_name=sender_name,
+            source=source,
+            dompet_sheet=borrower,
+            project_name="Saldo Umum"
+        )
+        secure_log("INFO", f"settle_hutang #{no}: Borrower {borrower} Pengeluaran Rp{amount:,}")
+    except Exception as e:
+        secure_log("ERROR", f"settle_hutang #{no}: Borrower TX failed: {e}")
+
+    # 3. Lender: Pemasukan → money comes back from borrower
+    short_borrower = get_dompet_short_name(borrower)
+    lender_desc = f"Terima pelunasan hutang dari {short_borrower}"
+    if keterangan:
+        lender_desc += f" ({keterangan[:80]})"
+
+    try:
+        append_project_transaction(
+            transaction={
+                'jumlah': amount,
+                'keterangan': lender_desc,
+                'tipe': 'Pemasukan',
+                'message_id': f"{msg_id}|TERIMA"
+            },
+            sender_name=sender_name,
+            source=source,
+            dompet_sheet=lender,
+            project_name="Saldo Umum"
+        )
+        secure_log("INFO", f"settle_hutang #{no}: Lender {lender} Pemasukan Rp{amount:,}")
+    except Exception as e:
+        secure_log("ERROR", f"settle_hutang #{no}: Lender TX failed: {e}")
+
+    info['settled'] = True
+    return info
+
+
 def find_open_hutang(
     yang_hutang: Optional[str] = None,
     yang_dihutangi: Optional[str] = None,

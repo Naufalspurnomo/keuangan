@@ -23,6 +23,7 @@ from sheets_helper import (
     append_project_transaction,
     append_hutang_entry,
     update_hutang_status_by_no,
+    settle_hutang,
     invalidate_dashboard_cache,
     delete_transaction_row
 )
@@ -101,6 +102,28 @@ def _extract_debt_source(text: str) -> Optional[str]:
 
     # Last resort full parse.
     return resolve_dompet_from_text(lower)
+
+
+def _format_hutang_paid_response(info: dict) -> str:
+    """Format response for a settled hutang with balance details."""
+    amount = int(info.get('amount', 0) or 0)
+    borrower = info.get('yang_hutang', '-')
+    lender = info.get('yang_dihutangi', '-')
+    ket = info.get('keterangan', '-')
+
+    lines = [
+        f"✅ Hutang #{info['no']} ditandai PAID.",
+        f"📝 {ket}",
+        f"💰 {borrower} → {lender}",
+        f"💵 Rp {amount:,}",
+    ]
+    if info.get('settled'):
+        lines.append("")
+        lines.append("📊 Saldo diperbarui:")
+        lines.append(f"   💸 {borrower}: Pengeluaran Rp {amount:,}")
+        lines.append(f"   💰 {lender}: Pemasukan Rp {amount:,}")
+
+    return "\n".join(lines).replace(',', '.')
 
 
 def _apply_project_prefix(transactions: list, dompet_sheet: str, company: str) -> None:
@@ -422,7 +445,7 @@ def handle_pending_response(user_id: str, chat_id: str, text: str,
                 'completed': True
             }
 
-        info = update_hutang_status_by_no(int(no_raw), "PAID")
+        info = settle_hutang(int(no_raw), sender_name=sender_name, source='WhatsApp')
         if not info:
             clear_pending_confirmation(user_id, chat_id)
             return {
@@ -432,12 +455,7 @@ def handle_pending_response(user_id: str, chat_id: str, text: str,
 
         invalidate_dashboard_cache()
         clear_pending_confirmation(user_id, chat_id)
-        response = (
-            f"✅ Hutang #{info['no']} ditandai PAID.\n"
-            f"{info.get('keterangan', '-')}\n"
-            f"{info.get('yang_hutang', '-')} → {info.get('yang_dihutangi', '-')}\n"
-            f"Rp {info.get('amount', 0):,}"
-        ).replace(',', '.')
+        response = _format_hutang_paid_response(info)
         return {'response': response, 'completed': True}
 
     # ==========================================

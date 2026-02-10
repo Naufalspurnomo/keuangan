@@ -44,6 +44,7 @@ from sheets_helper import (
     append_operational_transaction,
     append_hutang_entry,
     update_hutang_status_by_no,
+    settle_hutang,
     cancel_hutang_by_event_id,
     find_open_hutang,
     get_all_data,
@@ -132,6 +133,7 @@ from config.wallets import (
     extract_company_prefix,
     strip_company_prefix,
     DOMPET_ALIASES,
+    DOMPET_COMPANIES,
     get_company_name_from_sheet,
     resolve_dompet_from_text,
 )
@@ -545,6 +547,28 @@ def _pick_dompet_by_prep(text: str, preps: List[str]) -> Optional[str]:
     return None
 
 
+def _format_hutang_paid_response(info: Dict) -> str:
+    """Format response for a settled hutang with balance details."""
+    amount = int(info.get('amount', 0) or 0)
+    borrower = info.get('yang_hutang', '-')
+    lender = info.get('yang_dihutangi', '-')
+    ket = info.get('keterangan', '-')
+
+    lines = [
+        f"✅ Hutang #{info['no']} ditandai PAID.",
+        f"📝 {ket}",
+        f"💰 {borrower} → {lender}",
+        f"💵 Rp {amount:,}",
+    ]
+    if info.get('settled'):
+        lines.append("")
+        lines.append(f"📊 Saldo diperbarui:")
+        lines.append(f"   💸 {borrower}: Pengeluaran Rp {amount:,}")
+        lines.append(f"   💰 {lender}: Pemasukan Rp {amount:,}")
+
+    return "\n".join(lines).replace(',', '.')
+
+
 def _handle_auto_hutang_payment(text: str, user_id: str = "", chat_id: str = "") -> Optional[str]:
     """
     Auto mark hutang as PAID based on natural language.
@@ -559,16 +583,11 @@ def _handle_auto_hutang_payment(text: str, user_id: str = "", chat_id: str = "")
     # Allow direct "no 3" or "nomor 3"
     m_no = re.search(r"\b(?:no|nomor)\.?\s*(\d+)\b", lower)
     if m_no:
-        info = update_hutang_status_by_no(int(m_no.group(1)), "PAID")
+        info = settle_hutang(int(m_no.group(1)), sender_name="System", source="WhatsApp")
         if not info:
             return "❌ No hutang tidak ditemukan."
         invalidate_dashboard_cache()
-        return (
-            f"✅ Hutang #{info['no']} ditandai PAID.\n"
-            f"{info.get('keterangan', '-')}\n"
-            f"{info.get('yang_hutang', '-')} → {info.get('yang_dihutangi', '-')}\n"
-            f"Rp {info.get('amount', 0):,}"
-        ).replace(',', '.')
+        return _format_hutang_paid_response(info)
 
     amount = parse_revision_amount(text) or 0
     lender = _pick_dompet_by_prep(text, ["ke", "kepada", "kpd", "untuk"])
@@ -654,16 +673,11 @@ def _handle_auto_hutang_payment(text: str, user_id: str = "", chat_id: str = "")
         return "\n".join(lines).replace(',', '.')
 
     chosen = candidates[0]
-    info = update_hutang_status_by_no(int(chosen.get('no', 0)), "PAID")
+    info = settle_hutang(int(chosen.get('no', 0)), sender_name="System", source="WhatsApp")
     if not info:
         return "❌ Gagal menandai hutang PAID."
     invalidate_dashboard_cache()
-    return (
-        f"✅ Hutang #{info['no']} ditandai PAID.\n"
-        f"{info.get('keterangan', '-')}\n"
-        f"{info.get('yang_hutang', '-')} → {info.get('yang_dihutangi', '-')}\n"
-        f"Rp {info.get('amount', 0):,}"
-    ).replace(',', '.')
+    return _format_hutang_paid_response(info)
 
 
 
@@ -1416,10 +1430,26 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 lower = text.lower()
                 if not re.search(r"\b(utang|hutang|minjem|minjam|pinjam)\b", lower):
                     return None
-                # If this looks like paying a debt, do not treat as new borrowing
-                if _is_debt_payment_text(lower):
-                    if not _pick_dompet_by_prep(lower, ["dari", "dr"]):
+
+                # If project context exists, this is a project expense funded by debt
+                # (e.g., "bayar fee sugeng, project vadim, utang CV HB")
+                # → NOT a debt repayment, so skip the payment-text guard.
+                has_project_context = bool(
+                    re.search(r"\b(projek|project|proyek|prj)\b", lower)
+                )
+
+                # If this looks like paying a debt (and NOT a project expense), skip
+                if not has_project_context and _is_debt_payment_text(lower):
+                    # Only treat as debt payment if the payment keyword is near the debt keyword
+                    # "bayar hutang ke TX SBY" = debt payment
+                    # "bayar fee sugeng ... utang CV HB" = project expense + borrowing
+                    debt_payment_near = bool(re.search(
+                        r"\b(bayar|lunas|lunasi|pelunasan|cicil)\s+(?:\w+\s+){0,2}(utang|hutang)\b",
+                        lower
+                    ))
+                    if debt_payment_near and not _pick_dompet_by_prep(lower, ["dari", "dr"]):
                         return None
+
                 # Prefer explicit lender markers to avoid clashing with project/company words
                 by_prep = _pick_dompet_by_prep(lower, ["dari", "dr", "ke", "kepada", "kpd"])
                 if by_prep:
@@ -1683,7 +1713,9 @@ Balas 1 atau 2"""
                     )
                 else:
                     dompet = detected_dompet
-                    detected_company = get_company_name_from_sheet(dompet)
+                    # Only override company if not already detected by AI
+                    if not detected_company:
+                        detected_company = get_company_name_from_sheet(dompet)
 
             if detected_company:
                 if detected_company == "UMUM":
@@ -1700,7 +1732,14 @@ Balas 1 atau 2"""
                     )
                 else:
                     dompet = explicit_dompet
-                    detected_company = get_company_name_from_sheet(dompet)
+                    # Only override company if not already detected by AI,
+                    # OR if AI company doesn't belong to the resolved dompet.
+                    if detected_company:
+                        valid_companies = DOMPET_COMPANIES.get(dompet, [])
+                        if detected_company not in valid_companies:
+                            detected_company = get_company_name_from_sheet(dompet)
+                    else:
+                        detected_company = get_company_name_from_sheet(dompet)
 
             # --- AUTO-RESOLVE COMPANY FROM PROJECT HISTORY (NEW) ---
             # If we know the project, but not the company, try to find where it was last used
@@ -2227,18 +2266,12 @@ Balas 1 atau 2"""
                         send_reply("Format: /lunas NO_HUTANG (contoh: /lunas 3)")
                         return jsonify({'status': 'command_lunas_invalid'}), 200
                     no = int(match.group(1))
-                    info = update_hutang_status_by_no(no, "PAID")
+                    info = settle_hutang(no, sender_name=sender_name, source='WhatsApp')
                     if not info:
                         send_reply("No hutang tidak ditemukan.")
                         return jsonify({'status': 'command_lunas_not_found'}), 200
                     invalidate_dashboard_cache()
-                    msg = (
-                        f"Hutang #{info['no']} ditandai PAID.\n"
-                        f"{info.get('keterangan', '-')}\n"
-                        f"{info.get('yang_hutang', '-')} -> {info.get('yang_dihutangi', '-')}\n"
-                        f"Rp {info.get('amount', 0):,}"
-                    )
-                    send_reply(msg.replace(',', '.'))
+                    send_reply(_format_hutang_paid_response(info))
                     return jsonify({'status': 'command_lunas'}), 200
                 except Exception as e:
                     send_reply(f"Error: {str(e)}")
@@ -3067,18 +3100,12 @@ Balas 1 atau 2"""
                     send_reply("Format: /lunas NO_HUTANG (contoh: /lunas 3)")
                     return jsonify({'status': 'command_lunas_invalid'}), 200
                 no = int(match.group(1))
-                info = update_hutang_status_by_no(no, "PAID")
+                info = settle_hutang(no, sender_name=sender_name, source='WhatsApp')
                 if not info:
                     send_reply("No hutang tidak ditemukan.")
                     return jsonify({'status': 'command_lunas_not_found'}), 200
                 invalidate_dashboard_cache()
-                msg = (
-                    f"Hutang #{info['no']} ditandai PAID.\n"
-                    f"{info.get('keterangan', '-')}\n"
-                    f"{info.get('yang_hutang', '-')} -> {info.get('yang_dihutangi', '-')}\n"
-                    f"Rp {info.get('amount', 0):,}"
-                )
-                send_reply(msg.replace(',', '.'))
+                send_reply(_format_hutang_paid_response(info))
                 return jsonify({'status': 'command_lunas'}), 200
             except Exception as e:
                 send_reply(f"Error: {str(e)}")

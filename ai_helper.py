@@ -176,6 +176,142 @@ def _dedupe_text_level_duplicates(transactions: List[Dict], source_text: str) ->
     return deduped
 
 
+_SHORTHAND_AMOUNT_RE = re.compile(
+    r"\b\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta|perak)\b",
+    re.IGNORECASE,
+)
+_DEBT_PREFIX_RE = re.compile(r"^\s*(?:utang|hutang|minjam|minjem|pinjam)\b", re.IGNORECASE)
+_DEBT_WORD_RE = re.compile(r"\b(?:utang|hutang|minjam|minjem|pinjam)\b", re.IGNORECASE)
+
+
+def _extract_shorthand_amounts_from_text(source_text: str) -> List[int]:
+    """Extract unique shorthand amounts (rb/jt/k/etc.) from source text."""
+    if not source_text:
+        return []
+    values = []
+    seen = set()
+    for match in _SHORTHAND_AMOUNT_RE.finditer(source_text):
+        parsed = parse_revision_amount(match.group(0))
+        if parsed <= 0 or parsed in seen:
+            continue
+        seen.add(parsed)
+        values.append(parsed)
+    return values
+
+
+def _repair_text_amount_scale(transactions: List[Dict], source_text: str) -> List[Dict]:
+    """
+    Fix common scale mistakes from AI (e.g. 250rb interpreted as 250.000.000).
+    Applied only when source text contains exactly one explicit shorthand amount.
+    """
+    if not transactions:
+        return transactions
+
+    shorthand_amounts = _extract_shorthand_amounts_from_text(source_text)
+    if len(shorthand_amounts) != 1:
+        return transactions
+
+    expected = int(shorthand_amounts[0] or 0)
+    if expected <= 0:
+        return transactions
+
+    corrected = 0
+    for tx in transactions:
+        try:
+            amount = int(tx.get("jumlah", 0) or 0)
+        except Exception:
+            continue
+
+        if amount <= expected or amount % expected != 0:
+            continue
+
+        ratio = amount // expected
+        if ratio not in {10, 100, 1000}:
+            continue
+
+        tx["jumlah"] = expected
+        tx.pop("needs_amount", None)
+        corrected += 1
+
+    if corrected:
+        secure_log(
+            "WARNING",
+            f"Amount scale corrected from shorthand text: expected={expected}, corrected={corrected}",
+        )
+    return transactions
+
+
+def _is_debt_context_artifact_desc(description: str) -> bool:
+    """
+    Detect short debt-source phrases that should not become separate transactions.
+    Example artifact: "Pinjam TX SBY"
+    """
+    desc = (description or "").strip().lower()
+    if not desc or not _DEBT_PREFIX_RE.search(desc):
+        return False
+    if len(desc.split()) > 6:
+        return False
+    if resolve_dompet_from_text(desc):
+        return True
+    return bool(re.search(r"\b(dompet|wallet|tx|cv|kantor|holla|hojja|texturin)\b", desc))
+
+
+def _drop_debt_context_artifacts(transactions: List[Dict], source_text: str) -> List[Dict]:
+    """
+    Drop debt-context artifacts when a proper main transaction already exists.
+    """
+    if len(transactions) < 2:
+        return transactions
+    if not _DEBT_WORD_RE.search((source_text or "").lower()):
+        return transactions
+
+    drop_indexes = set()
+    for i, tx in enumerate(transactions):
+        desc_i = str(tx.get("keterangan", "") or "")
+        if not _is_debt_context_artifact_desc(desc_i):
+            continue
+
+        tipe_i = str(tx.get("tipe") or "")
+        proj_i = (tx.get("nama_projek") or "").strip().lower()
+        try:
+            amount_i = int(tx.get("jumlah", 0) or 0)
+        except Exception:
+            amount_i = 0
+        if amount_i <= 0:
+            continue
+
+        for j, other in enumerate(transactions):
+            if i == j:
+                continue
+            if _is_debt_context_artifact_desc(str(other.get("keterangan", "") or "")):
+                continue
+
+            tipe_j = str(other.get("tipe") or "")
+            if tipe_i != tipe_j:
+                continue
+
+            proj_j = (other.get("nama_projek") or "").strip().lower()
+            if proj_i and proj_j and proj_i != proj_j:
+                continue
+
+            try:
+                amount_j = int(other.get("jumlah", 0) or 0)
+            except Exception:
+                amount_j = 0
+            if amount_i != amount_j:
+                continue
+
+            drop_indexes.add(i)
+            break
+
+    if not drop_indexes:
+        return transactions
+
+    filtered = [tx for idx, tx in enumerate(transactions) if idx not in drop_indexes]
+    secure_log("INFO", f"Dropped debt-context artifacts: {len(drop_indexes)}")
+    return filtered
+
+
 def _is_labor_fee_narrative(text: str) -> bool:
     """
     Detect phrases like "fee azen ... projek X" (labor/payment narrative),
@@ -258,11 +394,21 @@ def _enforce_transaction_type_semantics(tx: Dict, clean_text: str) -> None:
         re.search(r"\b(gaji|gajian|upah)\b", text_lower)
     )
     has_labor_fee_signal = ("fee" in ket and any(term in ket for term in _EXPENSE_LABOR_TERMS))
+
+    # "fee" is ALWAYS Pengeluaran — it's paying for labor/services (like gaji for projects).
+    # Exception: "biaya transfer"/"fee transfer"/"fee admin" are bank fees, already handled
+    # as separate Pengeluaran transactions elsewhere.
+    _bank_fee_pattern = re.compile(r"\bfee\s+(transfer|admin|bank)\b")
+    has_fee_signal = (
+        bool(re.search(r"\bfee\b", ket) or re.search(r"\bfee\b", text_lower))
+        and not _bank_fee_pattern.search(ket)
+    )
+
     has_income_hint = any(term in ket for term in _INCOME_HINT_TERMS) or any(
         term in text_lower for term in _INCOME_HINT_TERMS
     )
 
-    if tipe == "Pemasukan" and (has_salary_signal or has_labor_fee_signal) and not has_income_hint:
+    if tipe == "Pemasukan" and (has_salary_signal or has_labor_fee_signal or has_fee_signal) and not has_income_hint:
         tx["tipe"] = "Pengeluaran"
         secure_log("INFO", f"Type corrected to Pengeluaran by semantic guard: '{ket[:60]}'")
 
@@ -1277,6 +1423,14 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
 
         # Text-only safety: remove duplicate artifacts from generic fallback lines.
         if validated_transactions and "Receipt/Struk content:" not in clean_text:
+            validated_transactions = _repair_text_amount_scale(
+                validated_transactions,
+                clean_text,
+            )
+            validated_transactions = _drop_debt_context_artifacts(
+                validated_transactions,
+                clean_text,
+            )
             validated_transactions = _dedupe_text_level_duplicates(
                 validated_transactions,
                 clean_text,
@@ -1696,6 +1850,9 @@ MANDATORY NORMALIZATION RULES:
    IMPORTANT: 
    - "Pelunasan Projek" or "Pelunasan dari Client" = PEMASUKAN
    - "Bayar Pelunasan Hutang" or "Pelunasan Tagihan ke Vendor" = PENGELUARAN
+   - "fee [NAME]" = ALWAYS PENGELUARAN. Fee means paying for labor/services (like gaji but for project workers).
+     Examples: "fee sugeng", "fee sanex", "fee azen projek vadim" = all PENGELUARAN
+   - Transfer with "Beneficiary Name" = PENGELUARAN (outgoing transfer to someone)
 
 CRITICAL LOGIC RULES:
 
@@ -1745,6 +1902,11 @@ CRITICAL LOGIC RULES:
    - IF user mentions "Dompet Evan" AND NOT "Saldo Umum" context: Output "company": "KANTOR" (Default).
    - IF user mentions "Dompet CV HB" AND NOT "Saldo Umum" context: Output "company": "CV HB" (Default).
    - IF user explicitly mentions company (e.g., TEXTURIN-Bali), use that.
+
+7. DEBT SOURCE CONTEXT (IMPORTANT):
+   - Phrases like "utang/pinjam dari TX SBY" are funding context for the MAIN transaction.
+   - DO NOT create a separate transaction with description like "Pinjam TX SBY".
+   - Keep only the main expense/income transaction amount; debt logging is handled downstream.
 
 CONTEXT:
 - Today: {current_date}
