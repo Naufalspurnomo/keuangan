@@ -1299,6 +1299,20 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 return None
             return get_pending_confirmation(user_part, chat_part)
 
+        def _get_pending_owner_user_from_key(conf_key: str, expected_chat_id: str, fallback_user: str) -> str:
+            """
+            Resolve pending owner user-id from confirmation key '<chat_id>:<user_id>'.
+            Falls back to current sender when key is invalid/mismatched.
+            """
+            if not conf_key or ":" not in conf_key:
+                return fallback_user
+            chat_part, user_part = conf_key.split(":", 1)
+            if not user_part:
+                return fallback_user
+            if expected_chat_id and chat_part and chat_part != expected_chat_id:
+                return fallback_user
+            return user_part
+
         def _count_active_group_sessions(target_chat_id: str) -> int:
             """Count active pending transaction + confirmation sessions in a group chat."""
             if not target_chat_id:
@@ -2062,6 +2076,11 @@ Balas 1 atau 2"""
                         pending_conf = conf_data
                         pending_conf_key = conf_key
         if pending_conf:
+            pending_conf_user = _get_pending_owner_user_from_key(
+                pending_conf_key,
+                chat_jid,
+                sender_number
+            )
             if input_type == 'image' and not (text or '').strip():
                 secure_log(
                     "INFO",
@@ -2070,7 +2089,7 @@ Balas 1 atau 2"""
                 return jsonify({'status': 'buffered_image_pending_confirmation'}), 200
             # Check if handled by pending handler
             result = handle_pending_response(
-                user_id=sender_number,
+                user_id=pending_conf_user,
                 chat_id=chat_jid,
                 text=text,
                 pending_data=pending_conf,
@@ -2090,7 +2109,7 @@ Balas 1 atau 2"""
                         if bid:
                             store_bot_message_ref(bid, result.get('bot_ref_event_id'))
                             store_last_bot_report(chat_jid, bid)
-                        store_last_tx_event(sender_number, chat_jid, result.get('bot_ref_event_id'))
+                        store_last_tx_event(pending_conf_user, chat_jid, result.get('bot_ref_event_id'))
                 
                 if result.get('completed'):
                     # Flow finished (saved or cancelled)

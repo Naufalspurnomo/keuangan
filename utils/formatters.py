@@ -29,83 +29,83 @@ SELECTION_DISPLAY = """  📁 CV HB (101):
 # Group chat triggers
 GROUP_TRIGGERS = ["+catat", "+bot", "+input", "/catat"]
 
-START_MESSAGE = f"""💼 *Bot Keuangan*
+START_MESSAGE = f"""BOT Keuangan
 
-*Smart. Simple. Sat-set.*
+Smart. Simple. Sat-set.
 
-*━━ Cara Pakai ━━*
-💬 *Ketik Biasa:* `Beli semen 500rb`
-📷 *Kirim Foto:* Struk/Nota (bisa banyak!)
-🗣️ *Voice Note:* "Bayar tukang 2 juta"
+Cara pakai:
+- Ketik biasa: `beli semen 500rb projek Taman Indah`
+- Kirim foto struk/nota (boleh banyak)
+- Voice note juga bisa
 
-*━━ Di Group Chat ━━*
-Gak perlu kode-kodean! Bot otomatis muncul kalau ada transaksi.
-Contoh: `Bayar listrik 500rb` (Bot langsung respon)
-*Bot cuek?* Mention `@Bot` atau pakai `+catat`
+Di group chat:
+- Bot auto respon jika ada nominal + konteks transaksi
+- Kalau bot diam, mention `@Bot` atau pakai `+catat` / `/catat`
 
-*━━ Dompet & Company ━━*
+Dompet & Company:
 {SELECTION_DISPLAY}
 
-*━━ Menu ━━*
-`/status` Dashboard  •  `/saldo` Cek saldo
-`/list` Riwayat  •  `/laporan` Report 7 hari
-`/lunas <no>` Tandai hutang lunas
-`/tanya ...` Tanya AI  •  `/link` Buka Sheets
+Perintah cepat:
+`/status` `/saldo` `/list` `/laporan` `/laporan30`
+`/exportpdf` `/lunas <no>` `/tanya ...` `/link`
 
-*━━ Tips Akurasi ━━*
-- Jika transaksi *project*, tulis kata **projek/project** + nama projek  
-  contoh: `bayar fee Nopal projek Taman Cafe Bali`
-- Jika *operasional*, tulis kata **kantor**  
-  contoh: `bayar gaji Nopal kantor`
-- Jika ambigu, bot akan tanya dulu
+Koreksi cepat (reply pesan bot):
+- `/revisi 150rb` (ubah nominal utama)
+- `/revisi fee 3rb` (ubah fee/admin)
+- `/revisi operational` atau `/revisi project Nama Projek`
+- `/undo` (hapus transaksi terakhir)
+- `/cancel` (batalkan sesi aktif)
 
-💡 Reply transaksi + `/revisi` buat koreksi
+Ketik `/help` untuk panduan lengkap.
 """
 
 
-HELP_MESSAGE = f"""📖 *Panduan Bot Keuangan*
+HELP_MESSAGE = f"""Panduan Bot Keuangan
 
-*━━ Input Transaksi ━━*
-✅ `Beli material 500rb buat Renovasi`
-✅ `Bayar gaji tukang 2jt`
-✅ `Isi dompet holja 10jt`
-✅ 📷 Foto struk (langsung kirim aja!)
+Input transaksi (contoh):
+- Project: `bayar tukang 2jt projek Taman Indah`
+- Operasional: `bayar listrik kantor 850rb`
+- Transfer/update saldo: `transfer 5jt dari CV HB ke TX SBY`
+- Foto struk: kirim langsung, bot OCR lalu konfirmasi jika perlu
 
-*━━ Fitur Grup Pintar ━━*
-Bot otomatis baca pesan yang ada *angka* & *kata kerja*.
-• `Beli kopi 25rb` → ✅ Bot respon
-• `Halo pagi` → ❌ Bot diam (anti-spam)
+Fitur grup:
+- Bot auto baca pesan transaksi (ada nominal + kata kerja)
+- Jika bot diam, mention `@Bot ...` atau pakai `/catat ...`
 
-*Kalau darurat/bot diam:*
-• Mention: `@Bot catat ini dong...`
-• Perintah: `/catat ...`
-
-*━━ Pilih Company (1-4) ━━*
+Dompet & Company:
 {SELECTION_DISPLAY}
 
-*━━ Kategori (Auto Detect) ━━*
+Kategori auto-detect:
 {', '.join(ALLOWED_CATEGORIES)}
 
-*━━ Tips Akurasi ━━*
-- Project: selalu tulis **projek/project** + nama projek
-- Operasional: tulis **kantor** untuk biaya kantor
-- Jika sinyal bentrok, bot akan minta konfirmasi
+Alur simpan:
+1. Bot analisis dan minta data yang kurang
+2. Pilih dompet/company
+3. Bot kirim draft (`Draft Operasional` / `Draft Project`)
+4. Balas angka untuk simpan/ubah/batal
 
-*━━ Menu Lengkap ━━*
-📊 `/status` - Dashboard
-💰 `/saldo` - Saldo tiap dompet
-📋 `/list` - Riwayat transaksi
-📈 `/laporan` - Report mingguan
-📈 `/laporan30` - Report bulanan
-- `/lunas <no>` - Tandai hutang lunas
-🤖 `/tanya [pertanyaan]` - Analisa AI
-🔗 `/link` - Link Spreadsheet
-📄 `/exportpdf` - Download PDF
+Perintah utama:
+`/start`, `/help`, `/status`, `/saldo`, `/list`
+`/laporan`, `/laporan30`, `/exportpdf`, `/lunas <no>`
+`/tanya ...`, `/link`
 
-*━━ Koreksi ━━*
-Salah input? Reply pesannya, ketik:
-`/revisi 150rb` (untuk ubah nominal)
-`/cancel` (untuk batal)"""
+Contoh export PDF:
+`/exportpdf 2026-01`
+`/exportpdf 2025-09-22 2025-10-22`
+
+Koreksi (reply pesan bot):
+- `/revisi 150rb` (nominal utama)
+- `/revisi fee 3rb` (fee/admin)
+- `/revisi operational` (pindah ke operasional)
+- `/revisi project Nama Projek` (pindah ke project)
+- `/undo` (hapus transaksi terakhir)
+- `/cancel` (batalkan sesi aktif)
+
+Catatan akurasi:
+- Project: tulis kata `projek/project` + nama projek
+- Operasional: tulis kata `kantor`
+- Project baru ditandai `(Start)`, pelunasan bisa ditandai `(Finish)`
+"""
 
 
 def format_mention(sender_name: str, is_group: bool = False) -> str:
