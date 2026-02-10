@@ -108,13 +108,55 @@ INJECTION_PATTERNS = [
     r"(kosongkan|bersihkan|wipe|destroy|reset)\s+(sheet|project|proyek|data|transaksi)",
     r"(drop|truncate)\s+(table|sheet|project)",
     r"(edit|ubah|ganti|modify)\s+(budget|anggaran|saldo|total)",
-    r"(admin|sudo|root|superuser|override)",
+    # Privilege-escalation keywords (avoid blocking normal phrases like "biaya admin")
+    r"\b(?:sudo|root|superuser)\b",
+    r"\boverride\b(?:\s+(?:system|prompt|instructions?|rules?|filter|safety))?\b",
+    r"\badmin\b\s*(?:mode|access|akses|override)\b",
 ]
 
 # Compile patterns for efficiency
 COMPILED_INJECTION_PATTERNS = [
     re.compile(pattern, re.IGNORECASE) for pattern in INJECTION_PATTERNS
 ]
+
+# High-risk patterns that must stay blocked even for transaction-like text.
+STRICT_INJECTION_PATTERNS = [
+    r"ignore\s*(all\s*)?(previous|prior|above)\s*(instructions?|prompts?|rules?)",
+    r"disregard\s*(all\s*)?(previous|prior|above)",
+    r"(show|reveal|display|print|output)\s*(your\s*)?(system\s*prompt|instructions?|rules?)",
+    r"(show|reveal|display|print|give|tell)\s*(me\s*)?(the\s*)?(api\s*key|token|secret|password|credential)",
+    r"(what|where)\s*(is|are)\s*(the\s*)?(api\s*key|token|secret)",
+    r"\.env",
+    r"environment\s*variable",
+    r"groq.?api.?key",
+    r"telegram.?token",
+    r"exec(ute)?\s*\(",
+    r"eval\s*\(",
+    r"import\s+os",
+    r"import\s+subprocess",
+    r"__import__",
+    r"system\s*\(",
+    r"send\s*(to|data|info)\s*(external|outside|url|webhook)",
+    r"webhook",
+    r";\s*(drop|delete|update|insert)\s+",
+    r"(hapus|delete|remove|clear)\s+(sheet|project|proyek|dashboard|data|transaksi|all|semua)",
+    r"(kosongkan|bersihkan|wipe|destroy|reset)\s+(sheet|project|proyek|data|transaksi)",
+    r"(drop|truncate)\s+(table|sheet|project)",
+    r"\b(?:sudo|root|superuser)\b",
+]
+COMPILED_STRICT_INJECTION_PATTERNS = [
+    re.compile(pattern, re.IGNORECASE) for pattern in STRICT_INJECTION_PATTERNS
+]
+
+_FINANCE_SIGNAL_RE = re.compile(
+    r"\b(?:bayar|beli|fee|biaya|admin|gaji|upah|dp|transfer|utang|hutang|pinjam|minjam|"
+    r"operasional|kantor|projek|project|proyek|dompet|saldo|pemasukan|pengeluaran)\b",
+    re.IGNORECASE,
+)
+_AMOUNT_SIGNAL_RE = re.compile(
+    r"\b(?:rp\s*)?\d[\d\.,\s]*(?:rb|ribu|k|jt|juta|m|milyar|b|bn)?\b",
+    re.IGNORECASE,
+)
 
 
 # ===================== SENSITIVE DATA PATTERNS =====================
@@ -195,6 +237,15 @@ def detect_prompt_injection(text: str) -> Tuple[bool, Optional[str]]:
 
     t = text.lower()
 
+    # Always block strict/high-risk prompts.
+    for pattern in COMPILED_STRICT_INJECTION_PATTERNS:
+        if pattern.search(t):
+            return True, "strict_suspicious_pattern_detected"
+
+    # Loosen guardrail for normal transaction-like messages.
+    if _FINANCE_SIGNAL_RE.search(t) and _AMOUNT_SIGNAL_RE.search(t):
+        return False, None
+
     for pattern in COMPILED_INJECTION_PATTERNS:
         if pattern.search(t):
             return True, "suspicious_pattern_detected"
@@ -203,7 +254,7 @@ def detect_prompt_injection(text: str) -> Tuple[bool, Optional[str]]:
     allowed = set(" .,;:!?-+/()[]{}'\"@#&%=_\n\t")
     special = sum(1 for c in text if (not c.isalnum()) and (c not in allowed))
     ratio = special / max(len(text), 1)
-    if ratio > 0.35:
+    if ratio > 0.55:
         return True, "excessive_special_characters"
 
     return False, None
