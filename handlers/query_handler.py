@@ -385,10 +385,15 @@ def _handle_project_query(query: str, norm_text: str, days: int, period_label: s
     if wants_detail and filtered_rows:
         recents = _recent_transactions(filtered_rows, 3)
         if recents:
-            lines.append("Transaksi terakhir:")
+            title = "Transaksi yang dihitung:" if is_scoped_by_descriptor else "Transaksi terakhir:"
+            lines.append(title)
             for d in recents:
                 amt = _format_idr(d.get("jumlah", 0))
-                lines.append(f"- {d.get('tanggal','')} {d.get('tipe','')} {amt} | {d.get('keterangan','')}")
+                ket = (d.get("keterangan", "") or "").strip()
+                ket = ket[:90] + "..." if len(ket) > 93 else ket
+                lines.append(f"- {d.get('tanggal','')} {d.get('tipe','')} {amt} | {ket}")
+            if is_scoped_by_descriptor and len(filtered_rows) > show_limit:
+                lines.append(f"... {len(filtered_rows) - show_limit} transaksi lain sesuai filter")
 
     return "\n".join(lines)
 
