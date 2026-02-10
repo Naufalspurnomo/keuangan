@@ -27,6 +27,15 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DAYS = 30
 
+PROJECT_PREFIX_RE = re.compile(r"^\s*(holla|hojja)\s*[-:]\s*", re.IGNORECASE)
+PROJECT_PHASE_RE = re.compile(r"\s*\((start|finish)\)\s*$", re.IGNORECASE)
+PROJECT_QUERY_STOPWORDS = {
+    "bot", "tolong", "dong", "berapa", "gimana", "bagaimana", "cek", "check", "lihat",
+    "pengeluaran", "pemasukan", "income", "expense", "biaya", "total", "rekap", "status",
+    "projek", "project", "proyek", "projectnya", "projeknya", "hari", "ini", "kemarin",
+    "minggu", "bulan", "tahun", "terakhir", "detail", "rinci", "transaksi", "laporan", "berapa?",
+}
+
 
 def _format_idr(amount: int) -> str:
     try:
@@ -37,6 +46,33 @@ def _format_idr(amount: int) -> str:
 
 def _normalize_text(text: str) -> str:
     return " ".join((text or "").split()).casefold()
+
+
+def _normalize_project_label(name: str) -> str:
+    """Normalize project names so queries can match prefixed/suffixed project labels."""
+    if not name:
+        return ""
+    normalized = _normalize_text(name)
+    normalized = PROJECT_PREFIX_RE.sub("", normalized)
+    normalized = PROJECT_PHASE_RE.sub("", normalized)
+    normalized = normalized.replace(" - ", " ").replace("_", " ")
+    normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+    return " ".join(normalized.split())
+
+
+def _extract_query_descriptor_tokens(query: str, project_name: str = "") -> list:
+    """Get descriptive tokens from query (e.g., 'fee', 'sugeng') excluding boilerplate words."""
+    query_tokens = re.findall(r"[a-zA-Z0-9]{3,}", _normalize_text(query))
+    project_tokens = set(re.findall(r"[a-zA-Z0-9]{3,}", _normalize_project_label(project_name)))
+
+    tokens = []
+    for token in query_tokens:
+        if token in PROJECT_QUERY_STOPWORDS:
+            continue
+        if token in project_tokens:
+            continue
+        tokens.append(token)
+    return sorted(set(tokens))
 
 
 def _parse_date(date_str: str) -> datetime:
@@ -114,31 +150,45 @@ def _match_project_name(query: str, by_projek: dict) -> tuple:
         return None, 0.0
 
     query_norm = _normalize_text(query)
-
-    for info in by_projek.values():
-        name = info.get("name", "")
-        if name and _normalize_text(name) in query_norm:
-            return info, 1.0
-
-    candidate = extract_project_name_from_text(query) or ""
-    candidate_norm = _normalize_text(candidate)
+    query_project_hint = _normalize_project_label(extract_project_name_from_text(query) or "")
+    query_without_keyword = _normalize_project_label(
+        re.sub(r"\b(?:projek|project|proyek)\b", " ", query_norm, flags=re.IGNORECASE)
+    )
 
     best = None
     best_score = 0.0
+
     for info in by_projek.values():
         name = info.get("name", "")
-        name_norm = _normalize_text(name)
-        if not name_norm:
+        if not name:
             continue
-        if candidate_norm and (candidate_norm in name_norm or name_norm in candidate_norm):
-            score = 0.95
-        else:
-            score = SequenceMatcher(None, candidate_norm or query_norm, name_norm).ratio()
+
+        name_norm = _normalize_text(name)
+        base_name = _normalize_project_label(name)
+        if not base_name:
+            continue
+
+        score = 0.0
+
+        if name_norm in query_norm or base_name in query_norm:
+            score = max(score, 1.0)
+
+        if query_project_hint:
+            if query_project_hint in base_name or base_name in query_project_hint:
+                score = max(score, 0.96)
+            else:
+                score = max(score, SequenceMatcher(None, query_project_hint, base_name).ratio())
+
+        if query_without_keyword:
+            score = max(score, SequenceMatcher(None, query_without_keyword, base_name).ratio() * 0.9)
+
+        score = max(score, SequenceMatcher(None, query_norm, name_norm).ratio() * 0.75)
+
         if score > best_score:
             best = info
             best_score = score
 
-    if best_score >= 0.6:
+    if best_score >= 0.48:
         return best, best_score
 
     return None, 0.0
@@ -280,21 +330,47 @@ def _handle_project_query(query: str, norm_text: str, days: int, period_label: s
         return "Nama projek belum ditemukan di data. Coba tulis nama projek lebih spesifik."
 
     project_name = match.get("name", "Projek")
-    income = match.get("income", 0)
-    expense = match.get("expense", 0)
-    profit = match.get("profit_loss", 0)
-    status = "UNTUNG" if profit > 0 else "RUGI" if profit < 0 else "NETRAL"
+    target_base_name = _normalize_project_label(project_name)
 
     data = get_all_data(days) if days is not None else get_all_data(None)
-    project_rows = [
-        d for d in data
-        if _normalize_text(d.get("nama_projek", "")) == _normalize_text(project_name)
-        or _normalize_text(project_name) in _normalize_text(d.get("nama_projek", ""))
-    ]
-    dompet_hint = _project_dompet_hint(project_rows)
+    project_rows = []
+    for d in data:
+        row_project_name = d.get("nama_projek", "")
+        row_base_name = _normalize_project_label(row_project_name)
+        if not row_base_name:
+            continue
+        if row_base_name == target_base_name or target_base_name in row_base_name or row_base_name in target_base_name:
+            project_rows.append(d)
+
+    # If query has descriptor words (e.g. fee/sugeng), filter by keterangan for better specificity.
+    descriptor_tokens = _extract_query_descriptor_tokens(query, project_name)
+    filtered_rows = project_rows
+    if descriptor_tokens:
+        scoped_rows = []
+        for row in project_rows:
+            haystack = f"{_normalize_text(row.get('keterangan', ''))} {_normalize_text(row.get('nama_projek', ''))}"
+            if all(token in haystack for token in descriptor_tokens):
+                scoped_rows.append(row)
+        if not scoped_rows:
+            for row in project_rows:
+                haystack = f"{_normalize_text(row.get('keterangan', ''))} {_normalize_text(row.get('nama_projek', ''))}"
+                if any(token in haystack for token in descriptor_tokens):
+                    scoped_rows.append(row)
+        if scoped_rows:
+            filtered_rows = scoped_rows
+
+    income = sum(d.get("jumlah", 0) for d in filtered_rows if d.get("tipe") == "Pemasukan")
+    expense = sum(d.get("jumlah", 0) for d in filtered_rows if d.get("tipe") == "Pengeluaran")
+    profit = income - expense
+    status = "UNTUNG" if profit > 0 else "RUGI" if profit < 0 else "NETRAL"
+
+    dompet_hint = _project_dompet_hint(filtered_rows or project_rows)
     dompet_txt = f" | Dompet: {dompet_hint}" if dompet_hint else ""
 
     lines = [f"Projek {project_name} ({period_label}){dompet_txt}"]
+
+    if descriptor_tokens and filtered_rows is not project_rows:
+        lines.append(f"Filter deskripsi: {', '.join(descriptor_tokens)}")
 
     if wants_income and not wants_expense:
         lines.append(f"Pemasukan: {_format_idr(income)}")
@@ -306,8 +382,8 @@ def _handle_project_query(query: str, norm_text: str, days: int, period_label: s
     if wants_profit or (not wants_income and not wants_expense):
         lines.append(f"Laba/Rugi: {_format_idr(profit)} ({status})")
 
-    if wants_detail and project_rows:
-        recents = _recent_transactions(project_rows, 3)
+    if wants_detail and filtered_rows:
+        recents = _recent_transactions(filtered_rows, 3)
         if recents:
             lines.append("Transaksi terakhir:")
             for d in recents:
