@@ -372,18 +372,20 @@ def handle_query_command(query: str, user_id: str, chat_id: str, raw_query: str 
 
         dompet = resolve_dompet_from_text(raw_norm)
         wants_operational = any(k in norm for k in ["operasional", "kantor", "overhead"])
-        wants_project = any(k in norm for k in ["projek", "project", "proyek"]) or bool(
-            extract_project_name_from_text(detect_query)
-        )
+        project_hint = extract_project_name_from_text(detect_query)
+        wants_project = any(k in norm for k in ["projek", "project", "proyek"]) or bool(project_hint)
+
+        # Priority: explicit project query should NOT be hijacked by dompet keywords in project names.
+        # Example: "pengeluaran projek Vadim Bali berapa" must resolve to project report,
+        # even if "Bali" also maps to wallet TX BALI.
+        if wants_project:
+            return _handle_project_query(detect_query, norm, days, period_label)
 
         if dompet:
             return _handle_wallet_query(dompet, norm, days, period_label)
 
         if wants_operational:
             return _handle_operational_query(norm, days, period_label)
-
-        if wants_project:
-            return _handle_project_query(detect_query, norm, days, period_label)
 
         return _handle_general_query(norm, days, period_label)
 

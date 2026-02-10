@@ -12,7 +12,13 @@ Contains:
 import re
 from datetime import datetime
 
-from config.constants import Timeouts, GROUP_TRIGGERS
+from config.constants import Timeouts, GROUP_TRIGGERS, OPERATIONAL_KEYWORDS
+
+ACTION_VERBS = [
+    'beli', 'bayar', 'transfer', 'kirim', 'terima', 'dp',
+    'lunasin', 'kasih', 'isi', 'topup', 'top up', 'tarik',
+    'catat', 'simpan', 'input', 'masukin', 'tambah'
+]
 
 # Use centralized timeouts
 PENDING_TTL_SECONDS = Timeouts.PENDING_TRANSACTION
@@ -68,12 +74,7 @@ def calculate_financial_score(message: str, has_media: bool = False, is_mentione
          score += 40
              
     # Factor 2: Action Verb Pattern (+30)
-    action_verbs = [
-        'beli', 'bayar', 'transfer', 'kirim', 'terima', 'dp', 
-        'lunasin', 'kasih', 'isi', 'topup', 'top up', 'tarik',
-        'catat', 'simpan', 'input', 'masukin', 'tambah'
-    ]
-    if any(verb in message_lower for verb in action_verbs):
+    if any(verb in message_lower for verb in ACTION_VERBS):
         score += 30
         
     # Grand Design Threshold Logic:
@@ -132,6 +133,10 @@ def should_respond_in_group(message: str, is_group: bool, has_media: bool = Fals
     # 1. Active Session Bonus (+50 equivalent) -> Always processing pending flow
     if has_pending:
         return True, message
+
+    # 1.5. If media is present (receipt/nota), allow processing even without text
+    if has_media and not message_lower:
+        return True, message
         
     # 2. Explicit Group Triggers
     for trigger in GROUP_TRIGGERS:
@@ -143,6 +148,12 @@ def should_respond_in_group(message: str, is_group: bool, has_media: bool = Fals
     if message_lower.startswith('/'):
         return True, message
         
+    # 3.5. Allow action verbs or operational keywords even without amount
+    if any(re.search(rf"\\b{re.escape(verb)}\\b", message_lower) for verb in ACTION_VERBS):
+        return True, message
+    if any(kw in message_lower for kw in OPERATIONAL_KEYWORDS):
+        return True, message
+
     # 4. Smart Financial Scoring
     score = calculate_financial_score(message, has_media, is_mentioned)
     
