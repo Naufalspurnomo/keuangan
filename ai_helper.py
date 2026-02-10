@@ -91,6 +91,113 @@ _EXPENSE_LABOR_TERMS = {"tukang", "mandor", "kuli", "helper", "pekerja", "borong
 _INCOME_HINT_TERMS = {"pemasukan", "terima", "diterima", "transfer masuk", "dp masuk", "refund", "cashback"}
 
 
+def _normalize_text_compare(text: str) -> str:
+    """Normalize free text for lightweight duplicate comparisons."""
+    cleaned = re.sub(r"[^a-z0-9\s]", " ", (text or "").lower())
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def _dedupe_text_level_duplicates(transactions: List[Dict], source_text: str) -> List[Dict]:
+    """
+    Deduplicate text-extraction artifacts where AI returns:
+    - one generic/full-input transaction, and
+    - one specific transaction with the same amount/type/project.
+    """
+    if len(transactions) < 2:
+        return transactions
+
+    normalized_source = _normalize_text_compare(source_text)
+    source_tokens = set(normalized_source.split()) if normalized_source else set()
+
+    # Pass 1: exact dedupe on normalized fields.
+    exact_unique = []
+    seen = set()
+    for t in transactions:
+        key = (
+            str(t.get("tipe") or ""),
+            int(t.get("jumlah", 0) or 0),
+            (t.get("nama_projek") or "").strip().lower(),
+            _normalize_text_compare(t.get("keterangan", "")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        exact_unique.append(t)
+
+    if len(exact_unique) < 2 or not source_tokens:
+        return exact_unique
+
+    def _is_generic_fallback(desc_norm: str) -> bool:
+        if not desc_norm:
+            return False
+        if desc_norm == normalized_source:
+            return True
+        desc_tokens = set(desc_norm.split())
+        if not desc_tokens:
+            return False
+        overlap = len(desc_tokens & source_tokens) / max(1, len(source_tokens))
+        return overlap >= 0.8 and len(desc_norm) >= max(20, int(0.6 * len(normalized_source)))
+
+    keep_flags = [True] * len(exact_unique)
+    for i, tx_i in enumerate(exact_unique):
+        desc_i = _normalize_text_compare(tx_i.get("keterangan", ""))
+        if not _is_generic_fallback(desc_i):
+            continue
+
+        core_i = (
+            str(tx_i.get("tipe") or ""),
+            int(tx_i.get("jumlah", 0) or 0),
+            (tx_i.get("nama_projek") or "").strip().lower(),
+        )
+        for j, tx_j in enumerate(exact_unique):
+            if i == j:
+                continue
+            core_j = (
+                str(tx_j.get("tipe") or ""),
+                int(tx_j.get("jumlah", 0) or 0),
+                (tx_j.get("nama_projek") or "").strip().lower(),
+            )
+            if core_i != core_j:
+                continue
+            desc_j = _normalize_text_compare(tx_j.get("keterangan", ""))
+            if not desc_j or desc_j == desc_i:
+                continue
+            if not _is_generic_fallback(desc_j):
+                keep_flags[i] = False
+                break
+
+    deduped = [tx for idx, tx in enumerate(exact_unique) if keep_flags[idx]]
+    if len(deduped) != len(transactions):
+        secure_log(
+            "INFO",
+            f"Text dedupe applied: {len(transactions)} -> {len(deduped)}",
+        )
+    return deduped
+
+
+def _is_labor_fee_narrative(text: str) -> bool:
+    """
+    Detect phrases like "fee azen ... projek X" (labor/payment narrative),
+    which must NOT be treated as bank transfer/admin fee.
+    """
+    lower = (text or "").lower()
+    if not lower:
+        return False
+
+    has_fee_word = bool(re.search(r"\bfee\b", lower))
+    has_person_like_after_fee = bool(re.search(r"\bfee\s+[a-z][a-z0-9._-]{1,}\b", lower))
+    has_project_context = bool(re.search(r"\b(projek|project|proyek|prj)\b", lower))
+    has_transfer_admin_context = bool(
+        re.search(
+            r"\b(transfer|admin|bank|m-?banking|receipt|struk|idr|biaya\s+transfer|biaya\s+admin|fee\s+transfer)\b",
+            lower,
+        )
+    )
+
+    return has_fee_word and has_person_like_after_fee and has_project_context and not has_transfer_admin_context
+
+
 def _extract_explicit_project_hint(text: str) -> str:
     """
     Extract explicit project name after keyword proyek/project/projek/prj.
@@ -1045,8 +1152,13 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                 "base_keyword_found": False
             }
 
+            lower_clean_text = (clean_text or "").lower()
             fee_keyword_found = bool(receipt_amounts.get("fee_keyword_found"))
             transfer_fee = receipt_amounts.get("fee", 0) or extract_transfer_fee(clean_text)
+            if ocr_text == "" and _is_labor_fee_narrative(lower_clean_text):
+                transfer_fee = 0
+                fee_keyword_found = False
+                secure_log("INFO", "Labor fee narrative detected; skip transfer-fee augmentation")
             if fee_keyword_found and transfer_fee <= 0:
                 secure_log("INFO", "Fee keyword found but amount missing; fee ignored")
 
@@ -1061,7 +1173,6 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
 
             fee_tx = next((t for t in validated_transactions if _is_fee_tx(t)), None)
             main_tx = next((t for t in validated_transactions if t is not fee_tx), None)
-            lower_clean_text = (clean_text or "").lower()
 
             non_fee_txs = [t for t in validated_transactions if not _is_fee_tx(t)]
             single_income_main = (
@@ -1163,6 +1274,13 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                     if amt > OCR_MAX_AMOUNT:
                         t["jumlah"] = 0
                         t["needs_amount"] = True
+
+        # Text-only safety: remove duplicate artifacts from generic fallback lines.
+        if validated_transactions and "Receipt/Struk content:" not in clean_text:
+            validated_transactions = _dedupe_text_level_duplicates(
+                validated_transactions,
+                clean_text,
+            )
 
         secure_log("INFO", f"Extracted {len(validated_transactions)} valid transactions")
         return validated_transactions
