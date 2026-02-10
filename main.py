@@ -3122,16 +3122,19 @@ Balas 1 atau 2"""
                 expense = sum(int(t.get('jumlah', 0) or 0) for t in data if str(t.get('tipe')) == 'Pengeluaran')
                 profit = income - expense
 
-                msg = f"Laporan {'Bulanan (30 Hari)' if days == 30 else 'Mingguan (7 Hari)'}\n\n"
-                msg += f"Pemasukan: Rp {income:,}\n"
-                msg += f"Pengeluaran: Rp {expense:,}\n"
-                msg += f"Profit: Rp {profit:,}\n\n"
+                title = f"LAPORAN {'BULANAN (30 HARI)' if days == 30 else 'MINGGUAN (7 HARI)'}"
+                msg = f"{title}\n"
+                msg += f"{'=' * len(title)}\n\n"
+                msg += f"Pemasukan       : Rp {income:,}\n"
+                msg += f"Pengeluaran     : Rp {expense:,}\n"
+                msg += f"Profit          : Rp {profit:,}\n"
                 msg += f"Jumlah Transaksi: {len(data)}\n"
-                msg += "\nHutang Antar Dompet\n"
-                msg += f"OPEN saat ini: {hutang.get('open_count', 0)} item (Rp {int(hutang.get('open_total', 0) or 0):,})\n"
-                msg += f"Dibuat {days} hari: {hutang.get('created_period_count', 0)} item (Rp {int(hutang.get('created_period_total', 0) or 0):,})\n"
-                msg += f"Lunas {days} hari: {hutang.get('paid_period_count', 0)} item (Rp {int(hutang.get('paid_period_total', 0) or 0):,})\n"
-                msg += "_Catatan: hutang antar dompet dipisah dari metrik profit._\n"
+                msg += "\n[HUTANG ANTAR DOMPET]\n"
+                msg += f"OPEN (saat ini) : {hutang.get('open_count', 0)} item | Rp {int(hutang.get('open_total', 0) or 0):,}\n"
+                msg += f"Dibuat {days} hari : {hutang.get('created_period_count', 0)} item | Rp {int(hutang.get('created_period_total', 0) or 0):,}\n"
+                msg += f"Lunas {days} hari  : {hutang.get('paid_period_count', 0)} item | Rp {int(hutang.get('paid_period_total', 0) or 0):,}\n"
+                msg += f"PAID (all-time) : {hutang.get('paid_count', 0)} item | Rp {int(hutang.get('paid_total', 0) or 0):,}\n"
+                msg += "\nCatatan: hutang antar dompet dipisah dari metrik profit.\n"
                 msg = msg.replace(',', '.')
                 send_reply(msg)
                 return jsonify({'status': 'command_laporan'}), 200
