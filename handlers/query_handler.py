@@ -15,8 +15,10 @@ from security import sanitize_input, detect_prompt_injection
 from sheets_helper import (
     format_data_for_ai,
     get_all_data,
+    get_hutang_summary,
     get_summary,
     get_wallet_balances,
+    find_open_hutang,
 )
 from utils.normalizer import normalize_nyeleneh_text
 from utils.parsers import extract_project_name_from_text
@@ -230,6 +232,38 @@ def _handle_operational_query(norm_text: str, days: int, period_label: str) -> s
     return "\n".join(lines)
 
 
+def _handle_hutang_query(norm_text: str, days: int, period_label: str, dompet: str = None) -> str:
+    # days is not strictly applied for OPEN entries, but keep period label for consistency.
+    if dompet:
+        open_as_borrower = find_open_hutang(yang_hutang=dompet)
+        open_as_lender = find_open_hutang(yang_dihutangi=dompet)
+
+        borrower_total = sum(int(row.get("jumlah", 0) or 0) for row in open_as_borrower)
+        lender_total = sum(int(row.get("jumlah", 0) or 0) for row in open_as_lender)
+        net = lender_total - borrower_total
+
+        lines = [
+            f"Status utang dompet {dompet} ({period_label}):",
+            f"- Masih berutang (sebagai peminjam): {_format_idr(borrower_total)} ({len(open_as_borrower)} transaksi)",
+            f"- Piutang belum lunas (sebagai pemberi): {_format_idr(lender_total)} ({len(open_as_lender)} transaksi)",
+            f"- Posisi bersih utang/piutang: {_format_idr(net)}",
+        ]
+        return "\n".join(lines)
+
+    summary = get_hutang_summary(days=days or 0)
+    lines = [f"Ringkas utang antar dompet ({period_label}):"]
+    lines.append(
+        f"OPEN: {_format_idr(summary.get('open_total', 0))} ({summary.get('open_count', 0)} transaksi)"
+    )
+    lines.append(
+        f"PAID: {_format_idr(summary.get('paid_total', 0))} ({summary.get('paid_count', 0)} transaksi)"
+    )
+    lines.append(
+        f"CANCELLED: {_format_idr(summary.get('cancelled_total', 0))} ({summary.get('cancelled_count', 0)} transaksi)"
+    )
+    return "\n".join(lines)
+
+
 def _handle_project_query(query: str, norm_text: str, days: int, period_label: str) -> str:
     wants_profit = any(k in norm_text for k in ["untung", "rugi", "laba", "profit"])
     wants_income = any(k in norm_text for k in ["pemasukan", "income", "masuk"])
@@ -371,10 +405,20 @@ def handle_query_command(query: str, user_id: str, chat_id: str, raw_query: str 
         days, period_label = _extract_days(norm)
 
         dompet = resolve_dompet_from_text(raw_norm)
+        wants_hutang = any(k in norm for k in ["hutang", "utang", "piutang"])
         wants_operational = any(k in norm for k in ["operasional", "kantor", "overhead"])
-        wants_project = any(k in norm for k in ["projek", "project", "proyek"]) or bool(
+        has_project_keyword = any(k in norm for k in ["projek", "project", "proyek"])
+        wants_project = has_project_keyword or bool(
             extract_project_name_from_text(detect_query)
         )
+
+        # Prioritize explicit project questions over dompet alias collisions
+        # e.g. "pengeluaran projek Vadim Bali" should be project scope, not dompet TX BALI.
+        if wants_project and has_project_keyword:
+            return _handle_project_query(detect_query, norm, days, period_label)
+
+        if wants_hutang:
+            return _handle_hutang_query(norm, days, period_label, dompet)
 
         if dompet:
             return _handle_wallet_query(dompet, norm, days, period_label)
