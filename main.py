@@ -346,6 +346,13 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
         return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
     
     if category_scope == 'AMBIGUOUS':
+        # Deterministic override: explicit scope words should beat AI ambiguity.
+        if has_project_word and not has_kantor_word:
+            return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
+        if has_kantor_word and not has_project_word:
+            detected_keywords = [kw for kw in OPERATIONAL_KEYWORDS if kw in text_lower]
+            category = map_operational_category(detected_keywords[0]) if detected_keywords else 'Lain Lain'
+            return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
         return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
 
     # Pre-compute operational keywords for quick routing
@@ -1533,19 +1540,6 @@ Balas 1 atau 2"""
                             source_wallet=source_wallet,
                             category=kategori
                         )
-                        # Debit dompet sheet (Pengeluaran)
-                        append_project_transaction(
-                            transaction={
-                                'jumlah': tx['jumlah'],
-                                'keterangan': tx['keterangan'],
-                                'tipe': 'Pengeluaran',
-                                'message_id': tx.get('message_id')
-                            },
-                            sender_name=pending.get('sender_name', sender_name),
-                            source=pending.get('source', 'WhatsApp'),
-                            dompet_sheet=source_wallet,
-                            project_name="Operasional Kantor"
-                        )
 
                     invalidate_dashboard_cache()
                     _pending_transactions.pop(pkey, None)
@@ -2479,8 +2473,24 @@ Balas 1 atau 2"""
                                 f"Applied recent text scope hint for image: {layer_category_scope}"
                             )
                         
+                        # Deterministic override: explicit scope words should beat AI ambiguity.
+                        if layer_category_scope in ['UNKNOWN', 'AMBIGUOUS']:
+                            text_scope_lower = (text or "").lower()
+                            explicit_project_scope = bool(
+                                re.search(r"\b(projek|project|proyek|prj)\b", text_scope_lower)
+                            )
+                            explicit_operational_scope = bool(
+                                re.search(r"\b(kantor|office|operasional|operational|ops)\b", text_scope_lower)
+                            )
+                            if explicit_project_scope and not explicit_operational_scope:
+                                layer_category_scope = "PROJECT"
+                                secure_log("INFO", "Scope override: explicit project keyword")
+                            elif explicit_operational_scope and not explicit_project_scope:
+                                layer_category_scope = "OPERATIONAL"
+                                secure_log("INFO", "Scope override: explicit operational keyword")
+
                         # PRE-EMPTIVE CONFIRMATION FOR AMBIGUOUS SCOPE
-                        # If AI is unsure (AMBIGUOUS) or UNKNOWN, ask user before extraction/saving
+                        # If AI is still unsure (AMBIGUOUS/UNKNOWN), ask user before extraction/saving
                         if layer_category_scope in ['UNKNOWN', 'AMBIGUOUS']:
                             if input_type == 'image' and not _claim_visual_source_once():
                                 return jsonify({'status': 'duplicate_visual_reference'}), 200

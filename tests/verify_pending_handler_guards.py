@@ -99,6 +99,42 @@ class PendingHandlerGuardsTest(unittest.TestCase):
         mock_append_operational.assert_not_called()
         mock_append_project.assert_not_called()
 
+    @patch("handlers.pending_handler.invalidate_dashboard_cache")
+    @patch("handlers.pending_handler.clear_pending_transaction")
+    @patch("handlers.pending_handler.clear_pending_confirmation")
+    @patch("handlers.pending_handler.append_project_transaction")
+    @patch("handlers.pending_handler.append_operational_transaction")
+    def test_confirm_commit_operational_only_writes_operational_sheet(
+        self,
+        mock_append_operational,
+        mock_append_project,
+        _mock_clear_pending_confirmation,
+        _mock_clear_pending_transaction,
+        _mock_invalidate_dashboard,
+    ):
+        pending_data = {
+            "type": "confirm_commit_operational",
+            "transactions": [{"keterangan": "Cicilan rumah", "jumlah": 8700000}],
+            "source_wallet": "CV HB(101)",
+            "category": "Lain Lain",
+            "event_id": "evt_ok",
+            "pending_key": "120363@g.us:6281",
+            "source": "WhatsApp",
+        }
+
+        result = handle_pending_response(
+            user_id="6281",
+            chat_id="120363@g.us",
+            text="ya",
+            pending_data=pending_data,
+            sender_name="Tester",
+        )
+
+        self.assertIsInstance(result, dict)
+        self.assertTrue(result.get("completed"))
+        mock_append_operational.assert_called_once()
+        mock_append_project.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

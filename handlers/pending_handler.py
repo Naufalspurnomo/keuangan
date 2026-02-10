@@ -844,8 +844,8 @@ Atau ketik /cancel untuk batal total"""
              # For now just save as "Operasional Kantor" project? 
              # User prompt says: (atau ketik "OPERASIONAL" jika ini operasional)
              # This implies we should treat it as operational.
-             # But we already selected a company/dompet. 
-             # If it's pure operational, it should go to Operational Sheet + Dompet Sheet (Pengeluaran).
+             # But we already selected a company/dompet.
+             # If it's pure operational, it should be recorded in Operasional Ktr only.
              pass 
         
         prefix = extract_company_prefix(project_name)
@@ -1286,20 +1286,6 @@ Atau ketik /cancel untuk batal total"""
                     source=pending_data.get('source', 'WhatsApp'),
                     source_wallet=dompet_sheet,
                     category=kategori
-                )
-                
-                # 2) Debit dompet sheet (Pengeluaran)
-                append_project_transaction(
-                    transaction={
-                        'jumlah': tx['jumlah'],
-                        'keterangan': tx['keterangan'],
-                        'tipe': 'Pengeluaran',
-                        'message_id': tx.get('message_id')
-                    },
-                    sender_name=sender_name,
-                    source=pending_data.get('source', 'WhatsApp'),
-                    dompet_sheet=dompet_sheet,
-                    project_name="Operasional Kantor"
                 )
             
             # If this is a revision move, delete old rows after re-save
