@@ -588,6 +588,95 @@ def find_open_hutang(
         return []
 
 
+def _parse_hutang_date(value: str) -> Optional[datetime]:
+    """Parse date from hutang sheet fields safely."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%d-%m-%Y", "%m-%d-%Y"):
+        try:
+            return datetime.strptime(raw, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def get_hutang_summary(days: int = 0) -> Dict:
+    """
+    Summarize hutang antar dompet.
+
+    Args:
+        days: Optional period window for "created" and "paid" metrics.
+              0 or negative means no period filter.
+    """
+    summary = {
+        "open_count": 0,
+        "open_total": 0,
+        "paid_count": 0,
+        "paid_total": 0,
+        "cancelled_count": 0,
+        "cancelled_total": 0,
+        "created_period_count": 0,
+        "created_period_total": 0,
+        "paid_period_count": 0,
+        "paid_period_total": 0,
+    }
+
+    try:
+        sheet = get_or_create_hutang_sheet()
+        rows = sheet.get_all_values()[HUTANG_DATA_START - 1:]  # Skip header
+
+        cutoff = None
+        if int(days or 0) > 0:
+            cutoff = (now_wib() - timedelta(days=int(days))).replace(
+                hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+            )
+
+        for row in rows:
+            if len(row) < HUTANG_COLS["STATUS"]:
+                continue
+
+            status = (row[HUTANG_COLS["STATUS"] - 1] or "").strip().upper()
+            if not status:
+                continue
+
+            amount = _parse_amount(
+                row[HUTANG_COLS["NOMINAL"] - 1] if len(row) >= HUTANG_COLS["NOMINAL"] else 0
+            )
+            if amount <= 0:
+                continue
+
+            created_dt = _parse_hutang_date(
+                row[HUTANG_COLS["TANGGAL"] - 1] if len(row) >= HUTANG_COLS["TANGGAL"] else ""
+            )
+            paid_dt = _parse_hutang_date(
+                row[HUTANG_COLS["TGL_LUNAS"] - 1] if len(row) >= HUTANG_COLS["TGL_LUNAS"] else ""
+            )
+
+            if status == "OPEN":
+                summary["open_count"] += 1
+                summary["open_total"] += amount
+            elif status == "PAID":
+                summary["paid_count"] += 1
+                summary["paid_total"] += amount
+            elif status == "CANCELLED":
+                summary["cancelled_count"] += 1
+                summary["cancelled_total"] += amount
+
+            if cutoff and created_dt and created_dt >= cutoff:
+                summary["created_period_count"] += 1
+                summary["created_period_total"] += amount
+
+            if cutoff and status == "PAID" and paid_dt and paid_dt >= cutoff:
+                summary["paid_period_count"] += 1
+                summary["paid_period_total"] += amount
+
+        return summary
+    except Exception as e:
+        secure_log("ERROR", f"get_hutang_summary failed: {type(e).__name__}: {str(e)}")
+        return summary
+
+
 def cancel_hutang_by_event_id(event_id: str) -> int:
     """Mark hutang entries as CANCELLED by matching MessageID prefix."""
     if not event_id:
@@ -1855,35 +1944,42 @@ def get_wallet_balances() -> Dict:
 
 def format_dashboard_message(summary: Dict) -> str:
     """Format dashboard summary as chat message."""
-    lines = ["� *DASHBOARD KEUANGAN*", "=" * 25, ""]
-    
-    # Global Summary
-    lines.append(f"💰 Income: Rp {summary['total_income']:,}".replace(',', '.'))
-    lines.append(f"💸 Expense: Rp {summary['total_expense']:,}".replace(',', '.'))
-    lines.append(f"📈 Balance: Rp {summary['balance']:,}".replace(',', '.'))
-    lines.append(f"📝 Total Tx: {summary['total_transactions']}")
+    lines = ["*DASHBOARD KEUANGAN*", "=" * 25, ""]
+
+    lines.append(f"Income: Rp {summary['total_income']:,}".replace(',', '.'))
+    lines.append(f"Expense: Rp {summary['total_expense']:,}".replace(',', '.'))
+    lines.append(f"Balance: Rp {summary['balance']:,}".replace(',', '.'))
+    lines.append(f"Total Tx: {summary['total_transactions']}")
     lines.append("")
-    
-    # Validasi Dompet (Real vs Virtual) -> Update: Just say Real
+
     lines.append("*Status Saldo Dompet (Real)*:")
     for dompet, stats in summary['dompet_summary'].items():
         short = get_dompet_short_name(dompet)
         bal = stats['bal']
-        icon = "🟢" if bal >= 0 else "🔴"
-        lines.append(f"{icon} {short}: Rp {bal:,}".replace(',', '.'))
-        
+        marker = "+" if bal >= 0 else "-"
+        lines.append(f"{marker} {short}: Rp {bal:,}".replace(',', '.'))
+
+    hutang = get_hutang_summary(days=0)
+    lines.append("")
+    lines.append("*Status Hutang Antar Dompet:*")
+    lines.append(
+        f"OPEN: {hutang.get('open_count', 0)} item | Rp {int(hutang.get('open_total', 0) or 0):,}".replace(',', '.')
+    )
+    lines.append(
+        f"PAID: {hutang.get('paid_count', 0)} item | Rp {int(hutang.get('paid_total', 0) or 0):,}".replace(',', '.')
+    )
+
     lines.append("")
     lines.append("*Status Projects (Est)*:")
     for company, stats in summary['company_summary'].items():
         bal = stats['bal']
-        icon = "📈" if bal >= 0 else "📉"
-        lines.append(f"{icon} {company}: Rp {bal:,}".replace(',', '.'))
-        
+        marker = "+" if bal >= 0 else "-"
+        lines.append(f"{marker} {company}: Rp {bal:,}".replace(',', '.'))
+
     lines.append("")
     lines.append(f"_Last Update: {datetime.now().strftime('%H:%M')}_")
-    
-    return "\n".join(lines)
 
+    return "\n".join(lines)
 
 def _parse_amount(value) -> int:
     """Parse amount string to integer, handling various formats."""

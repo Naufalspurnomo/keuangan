@@ -47,6 +47,7 @@ from sheets_helper import (
     cancel_hutang_by_event_id,
     find_open_hutang,
     get_all_data,
+    get_hutang_summary,
     find_company_for_project_exact,
 )
 
@@ -3110,27 +3111,32 @@ Balas 1 atau 2"""
             except Exception as e:
                 send_reply(f"❌ Error: {str(e)}")
                 return jsonify({'status': 'error'}), 200
-
         if is_command_match(text, Commands.LAPORAN, is_group) or is_command_match(text, Commands.LAPORAN_30, is_group):
             try:
                 is_30 = '30' in text
                 days = 30 if is_30 else 7
                 data = get_all_data(days=days)
-                
-                income = sum(int(t.get('jumlah',0) or 0) for t in data if str(t.get('tipe')) == 'Pemasukan')
-                expense = sum(int(t.get('jumlah',0) or 0) for t in data if str(t.get('tipe')) == 'Pengeluaran')
+                hutang = get_hutang_summary(days=days)
+
+                income = sum(int(t.get('jumlah', 0) or 0) for t in data if str(t.get('tipe')) == 'Pemasukan')
+                expense = sum(int(t.get('jumlah', 0) or 0) for t in data if str(t.get('tipe')) == 'Pengeluaran')
                 profit = income - expense
-                
-                msg = f"📊 *Laporan {'Bulanan (30 Hari)' if days==30 else 'Mingguan (7 Hari)'}*\n\n"
-                msg += f"💰 Pemasukan: Rp {income:,}\n"
-                msg += f"💸 Pengeluaran: Rp {expense:,}\n"
-                msg += f"📈 Profit: Rp {profit:,}\n\n"
+
+                msg = f"Laporan {'Bulanan (30 Hari)' if days == 30 else 'Mingguan (7 Hari)'}\n\n"
+                msg += f"Pemasukan: Rp {income:,}\n"
+                msg += f"Pengeluaran: Rp {expense:,}\n"
+                msg += f"Profit: Rp {profit:,}\n\n"
                 msg += f"Jumlah Transaksi: {len(data)}\n"
+                msg += "\nHutang Antar Dompet\n"
+                msg += f"OPEN saat ini: {hutang.get('open_count', 0)} item (Rp {int(hutang.get('open_total', 0) or 0):,})\n"
+                msg += f"Dibuat {days} hari: {hutang.get('created_period_count', 0)} item (Rp {int(hutang.get('created_period_total', 0) or 0):,})\n"
+                msg += f"Lunas {days} hari: {hutang.get('paid_period_count', 0)} item (Rp {int(hutang.get('paid_period_total', 0) or 0):,})\n"
+                msg += "_Catatan: hutang antar dompet dipisah dari metrik profit._\n"
                 msg = msg.replace(',', '.')
                 send_reply(msg)
                 return jsonify({'status': 'command_laporan'}), 200
             except Exception as e:
-                send_reply(f"❌ Error: {str(e)}")
+                send_reply(f"Error: {str(e)}")
                 return jsonify({'status': 'error'}), 200
 
         if is_command_match(text, Commands.LINK, is_group):
