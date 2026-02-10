@@ -34,8 +34,6 @@ PROJECT_QUERY_STOPWORDS = {
     "pengeluaran", "pemasukan", "income", "expense", "biaya", "total", "rekap", "status",
     "projek", "project", "proyek", "projectnya", "projeknya", "hari", "ini", "kemarin",
     "minggu", "bulan", "tahun", "terakhir", "detail", "rinci", "transaksi", "laporan", "berapa?",
-    "yang", "ada", "terkait", "soal", "buat", "untuk", "dari", "apa", "aja", "semua", "keyword",
-    "keterangan", "deskripsi", "catatan", "nominal", "rupiah", "projects",
 }
 
 
@@ -69,39 +67,12 @@ def _extract_query_descriptor_tokens(query: str, project_name: str = "") -> list
 
     tokens = []
     for token in query_tokens:
-        if token.isdigit():
-            continue
-        if token in {"idr", "rp", "ribu", "rb", "juta", "jt"}:
-            continue
         if token in PROJECT_QUERY_STOPWORDS:
             continue
         if token in project_tokens:
             continue
         tokens.append(token)
     return sorted(set(tokens))
-
-
-def _token_exists_in_text(token: str, text: str) -> bool:
-    if not token or not text:
-        return False
-    if token in text:
-        return True
-    words = re.findall(r"[a-z0-9]{3,}", text)
-    for word in words:
-        if SequenceMatcher(None, token, word).ratio() >= 0.86:
-            return True
-    return False
-
-
-def _row_matches_descriptor_tokens(row: dict, tokens: list) -> tuple:
-    """Return strict/all-match and loose/any-match flags for descriptor token filtering."""
-    if not tokens:
-        return True, True
-    haystack = f"{_normalize_text(row.get('keterangan', ''))} {_normalize_text(row.get('nama_projek', ''))}"
-    hits = [t for t in tokens if _token_exists_in_text(t, haystack)]
-    strict_match = len(hits) == len(tokens)
-    loose_match = len(hits) >= max(1, min(2, len(tokens)))
-    return strict_match, loose_match
 
 
 def _parse_date(date_str: str) -> datetime:
@@ -375,18 +346,18 @@ def _handle_project_query(query: str, norm_text: str, days: int, period_label: s
     descriptor_tokens = _extract_query_descriptor_tokens(query, project_name)
     filtered_rows = project_rows
     if descriptor_tokens:
-        strict_rows = []
-        loose_rows = []
+        scoped_rows = []
         for row in project_rows:
-            strict_match, loose_match = _row_matches_descriptor_tokens(row, descriptor_tokens)
-            if strict_match:
-                strict_rows.append(row)
-            elif loose_match:
-                loose_rows.append(row)
-        if strict_rows:
-            filtered_rows = strict_rows
-        elif loose_rows:
-            filtered_rows = loose_rows
+            haystack = f"{_normalize_text(row.get('keterangan', ''))} {_normalize_text(row.get('nama_projek', ''))}"
+            if all(token in haystack for token in descriptor_tokens):
+                scoped_rows.append(row)
+        if not scoped_rows:
+            for row in project_rows:
+                haystack = f"{_normalize_text(row.get('keterangan', ''))} {_normalize_text(row.get('nama_projek', ''))}"
+                if any(token in haystack for token in descriptor_tokens):
+                    scoped_rows.append(row)
+        if scoped_rows:
+            filtered_rows = scoped_rows
 
     income = sum(d.get("jumlah", 0) for d in filtered_rows if d.get("tipe") == "Pemasukan")
     expense = sum(d.get("jumlah", 0) for d in filtered_rows if d.get("tipe") == "Pengeluaran")
@@ -398,10 +369,8 @@ def _handle_project_query(query: str, norm_text: str, days: int, period_label: s
 
     lines = [f"Projek {project_name} ({period_label}){dompet_txt}"]
 
-    is_scoped_by_descriptor = bool(descriptor_tokens and filtered_rows is not project_rows)
-    if is_scoped_by_descriptor:
+    if descriptor_tokens and filtered_rows is not project_rows:
         lines.append(f"Filter deskripsi: {', '.join(descriptor_tokens)}")
-        lines.append(f"Match transaksi: {len(filtered_rows)} dari {len(project_rows)} transaksi projek")
 
     if wants_income and not wants_expense:
         lines.append(f"Pemasukan: {_format_idr(income)}")
@@ -413,12 +382,8 @@ def _handle_project_query(query: str, norm_text: str, days: int, period_label: s
     if wants_profit or (not wants_income and not wants_expense):
         lines.append(f"Laba/Rugi: {_format_idr(profit)} ({status})")
 
-    # Beri evidence list saat query difilter deskripsi agar jawaban lebih kredibel.
-    should_show_evidence = (is_scoped_by_descriptor and len(filtered_rows) > 1) or wants_detail
-    if should_show_evidence and filtered_rows:
-        sorted_rows = sorted(filtered_rows, key=lambda d: _parse_date(d.get("tanggal", "")), reverse=True)
-        show_limit = 5 if is_scoped_by_descriptor else 3
-        recents = sorted_rows[:show_limit]
+    if wants_detail and filtered_rows:
+        recents = _recent_transactions(filtered_rows, 3)
         if recents:
             title = "Transaksi yang dihitung:" if is_scoped_by_descriptor else "Transaksi terakhir:"
             lines.append(title)
