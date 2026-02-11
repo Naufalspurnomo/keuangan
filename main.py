@@ -41,6 +41,7 @@ from sheets_helper import (
     check_duplicate_transaction,
     # New Split Layout Functions
     append_project_transaction,
+    move_finish_marker_to_latest,
     append_operational_transaction,
     append_hutang_entry,
     update_hutang_status_by_no,
@@ -1710,6 +1711,7 @@ Balas 1 atau 2"""
             lock_note = None
             new_project_expense_note = None
             wallet_set_note = None
+            wallet_set_target_amount = None
             
             # --- VALIDATION: CHECK PROJECT EXISTENCE ---
             # Checks if project exists in Spreadsheet/Cache before proceeding
@@ -1903,12 +1905,16 @@ Balas 1 atau 2"""
                     ).replace(',', '.')
                     txs[:] = [tx_template]
                     pending['transactions'] = txs
+                    # Isolate wallet-set flow from debt/project side effects.
+                    debt_source = None
+                    wallet_set_target_amount = target_amount
 
                     sign = "+" if adj_delta > 0 else "-"
                     wallet_set_note = (
                         f"Mode set saldo: target Rp {target_amount:,}, "
                         f"saldo sebelumnya Rp {current_balance:,}, "
-                        f"penyesuaian {sign}Rp {abs(adj_delta):,}."
+                        f"penyesuaian {sign}Rp {abs(adj_delta):,}. "
+                        f"Rumus: {current_balance:,} {sign} {abs(adj_delta):,} = {target_amount:,}."
                     ).replace(',', '.')
                     skip_duplicate_check = True
 
@@ -2002,7 +2008,7 @@ Balas 1 atau 2"""
                             allow_finish=True,
                             allow_start=(not is_new_project_batch) or (idx in start_marker_indexes),
                         )
-                        append_project_transaction(
+                        save_result = append_project_transaction(
                             transaction={
                                 'jumlah': tx['jumlah'],
                                 'keterangan': tx['keterangan'],
@@ -2014,6 +2020,13 @@ Balas 1 atau 2"""
                             dompet_sheet=dompet,
                             project_name=pname
                         )
+                        if save_result.get('success') and '(finish)' in pname.lower():
+                            move_finish_marker_to_latest(
+                                dompet_sheet=dompet,
+                                project_name=pname,
+                                keep_row=save_result.get('row'),
+                                keep_tipe=tx.get('tipe', ''),
+                            )
                         if pname and pname.lower() not in ['saldo umum', 'operasional kantor', 'umum', 'unknown']:
                             set_project_lock(pname, dompet, actor=pending.get('sender_name', sender_name), reason='commit')
 
@@ -2057,6 +2070,30 @@ Balas 1 atau 2"""
                         response += f"\n {new_project_expense_note}"
                     if wallet_set_note:
                         response += f"\n {wallet_set_note}"
+                    if is_wallet_set_mode and wallet_set_target_amount is not None:
+                        verified_balance = None
+                        verified_ok = False
+                        for _ in range(4):
+                            try:
+                                verified = get_wallet_balances()
+                                verified_balance = int((verified.get(dompet) or {}).get('saldo', 0) or 0)
+                                if verified_balance == wallet_set_target_amount:
+                                    verified_ok = True
+                                    break
+                            except Exception as e:
+                                secure_log("WARNING", f"Wallet set verification failed for {dompet}: {type(e).__name__}: {e}")
+                            time.sleep(0.35)
+
+                        if verified_ok:
+                            response += (
+                                f"\n✅ Verifikasi: saldo {dompet} sekarang Rp {wallet_set_target_amount:,}."
+                            ).replace(',', '.')
+                        else:
+                            shown = verified_balance if verified_balance is not None else 0
+                            response += (
+                                f"\n⚠️ Verifikasi belum cocok. Target Rp {wallet_set_target_amount:,}, "
+                                f"terbaca Rp {shown:,}. Cek lagi /saldo 10-20 detik."
+                            ).replace(',', '.')
                     if debt_source and debt_source != dompet:
                         total_amount = sum(int(t.get('jumlah', 0) or 0) for t in txs)
                         response += f"\n💳 Utang dicatat: {debt_source} → {dompet} (Rp {total_amount:,})".replace(',', '.')

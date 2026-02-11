@@ -17,9 +17,13 @@ from services.state_manager import (
     get_original_message_id,
     get_last_tx_event
 )
-from utils.formatters import build_selection_prompt, format_success_reply_new
+from utils.formatters import (
+    build_selection_prompt,
+    format_success_reply_new,
+    format_success_reply_operational,
+)
 from utils.parsers import parse_revision_amount
-from config.wallets import get_company_name_from_sheet
+from config.wallets import DOMPET_SHORT_NAMES, get_company_name_from_sheet
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +37,35 @@ def _is_debt_item(item: dict) -> bool:
     return False
 
 
+def _is_operational_item(item: dict) -> bool:
+    nama_projek = (item.get('nama_projek') or '').strip().lower()
+    dompet = (item.get('dompet') or '').strip().lower()
+    return nama_projek == 'operasional kantor' or dompet == 'operasional kantor'
+
+
+def _extract_operational_source_wallet(keterangan: str) -> str:
+    """Extract full dompet name from operational keterangan tag [Sumber: X]."""
+    raw = (keterangan or '').strip()
+    if not raw:
+        return ""
+    match = re.search(r"\[Sumber:\s*([^\]]+)\]", raw, flags=re.IGNORECASE)
+    if not match:
+        return ""
+
+    source = (match.group(1) or '').strip()
+    if not source:
+        return ""
+
+    for full_name, short_name in DOMPET_SHORT_NAMES.items():
+        if source.lower() in {full_name.lower(), short_name.lower()}:
+            return full_name
+    return source
+
+
 def _build_revision_summary(items: list) -> str:
     if not items:
         return ""
-    dompet_sheet = items[0].get('dompet') or ""
-    company = get_company_name_from_sheet(dompet_sheet) if dompet_sheet else "UMUM"
+
     txs = []
     for item in items:
         txs.append({
@@ -46,6 +74,22 @@ def _build_revision_summary(items: list) -> str:
             'tipe': item.get('tipe', 'Pengeluaran') or 'Pengeluaran',
             'nama_projek': item.get('nama_projek', '') or ''
         })
+
+    if all(_is_operational_item(item) for item in items):
+        source_wallet = ""
+        for item in items:
+            source_wallet = _extract_operational_source_wallet(item.get('keterangan', ''))
+            if source_wallet:
+                break
+        return format_success_reply_operational(
+            txs,
+            source_wallet or "-",
+            category="",
+            mention="",
+        )
+
+    dompet_sheet = items[0].get('dompet') or ""
+    company = get_company_name_from_sheet(dompet_sheet) if dompet_sheet else "UMUM"
     return format_success_reply_new(txs, dompet_sheet or "-", company or "UMUM", "")
 
 def handle_revision_command(user_id: str, chat_id: str, text: str, 

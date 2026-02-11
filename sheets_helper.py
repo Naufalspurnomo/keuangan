@@ -907,6 +907,85 @@ def append_project_transaction(
         }
 
 
+def move_finish_marker_to_latest(
+    dompet_sheet: str,
+    project_name: str,
+    keep_row: Optional[int] = None,
+    keep_tipe: str = "",
+) -> int:
+    """
+    Ensure only the newest row keeps '(Finish)' marker for the same project.
+
+    When a new finish transaction is recorded, old rows with the same project base
+    that still have '(Finish)' are normalized back to plain project name.
+    """
+    if not dompet_sheet or not project_name:
+        return 0
+
+    if "(finish" not in str(project_name).lower():
+        return 0
+
+    target_key = _normalize_project_lookup_name(project_name)
+    if not target_key:
+        return 0
+
+    try:
+        sheet = get_dompet_sheet(dompet_sheet)
+        if not sheet:
+            return 0
+
+        keep_row_num = int(keep_row) if keep_row else None
+        keep_tipe_norm = str(keep_tipe or "").strip().lower()
+        keep_col = None
+        if keep_tipe_norm == "pemasukan":
+            keep_col = SPLIT_PEMASUKAN["PROJECT"]
+        elif keep_tipe_norm == "pengeluaran":
+            keep_col = SPLIT_PENGELUARAN["PROJECT"]
+
+        in_projects = sheet.col_values(SPLIT_PEMASUKAN["PROJECT"])
+        out_projects = sheet.col_values(SPLIT_PENGELUARAN["PROJECT"])
+        max_len = max(len(in_projects), len(out_projects))
+
+        updates = []
+        for row_idx in range(SPLIT_LAYOUT_DATA_START - 1, max_len):
+            row_number = row_idx + 1
+
+            for col_idx, col_values in (
+                (SPLIT_PEMASUKAN["PROJECT"], in_projects),
+                (SPLIT_PENGELUARAN["PROJECT"], out_projects),
+            ):
+                raw_name = col_values[row_idx] if row_idx < len(col_values) else ""
+                if not raw_name:
+                    continue
+                if "(finish" not in raw_name.lower():
+                    continue
+                if _normalize_project_lookup_name(raw_name) != target_key:
+                    continue
+
+                if keep_row_num and row_number == keep_row_num:
+                    if keep_col is None or keep_col == col_idx:
+                        continue
+
+                cleaned_name = re.sub(r"\s*\((start|finish)\)\s*$", "", raw_name, flags=re.IGNORECASE).strip()
+                if not cleaned_name or cleaned_name == raw_name:
+                    continue
+                updates.append(gspread.Cell(row_number, col_idx, cleaned_name))
+
+        if not updates:
+            return 0
+
+        sheet.update_cells(updates, value_input_option="USER_ENTERED")
+        secure_log(
+            "INFO",
+            f"Finish marker moved for '{project_name}' in {dompet_sheet}: cleared {len(updates)} old marker(s)",
+        )
+        return len(updates)
+
+    except Exception as e:
+        secure_log("WARNING", f"move_finish_marker_to_latest failed: {type(e).__name__}: {str(e)}")
+        return 0
+
+
 def append_operational_transaction(
     transaction: Dict,
     sender_name: str,

@@ -21,6 +21,7 @@ from services.state_manager import set_project_lock
 from sheets_helper import (
     append_operational_transaction,
     append_project_transaction,
+    move_finish_marker_to_latest,
     append_hutang_entry,
     update_hutang_status_by_no,
     settle_hutang,
@@ -264,7 +265,7 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
             allow_start=(not is_new_project_batch) or (idx in start_marker_indexes),
         )
 
-        append_project_transaction(
+        save_result = append_project_transaction(
             transaction={
                 'jumlah': tx['jumlah'],
                 'keterangan': tx['keterangan'],
@@ -276,6 +277,13 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
             dompet_sheet=dompet_sheet,
             project_name=p_name
         )
+        if save_result.get('success') and '(finish)' in p_name.lower():
+            move_finish_marker_to_latest(
+                dompet_sheet=dompet_sheet,
+                project_name=p_name,
+                keep_row=save_result.get('row'),
+                keep_tipe=tx.get('tipe', ''),
+            )
 
     # If transaction is funded by another dompet (utang), record source outflow
     if debt_source and debt_source != dompet_sheet:
