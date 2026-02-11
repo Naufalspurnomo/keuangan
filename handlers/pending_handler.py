@@ -353,8 +353,9 @@ def handle_pending_response(user_id: str, chat_id: str, text: str,
     event_id = pending_data.get('event_id') or pending_data.get('original_message_id')
 
     def _format_hutang_selection(candidates: list) -> str:
+        items = candidates or []
         lines = ["🤔 Ketemu beberapa hutang OPEN. Pilih yang mau dilunasi:"]
-        for idx, item in enumerate(candidates or [], start=1):
+        for idx, item in enumerate(items, start=1):
             amount = int(item.get('amount', 0) or 0)
             no = str(item.get('no', '-') or '-')
             borrower = str(item.get('yang_hutang', '-') or '-')
@@ -362,8 +363,12 @@ def handle_pending_response(user_id: str, chat_id: str, text: str,
             ket = str(item.get('keterangan', '-') or '-')
             lines.append(f"{idx}. #{no} {borrower} → {lender} Rp {amount:,} ({ket})")
         lines.append("")
-        lines.append(f"Balas angka 1-{len(candidates or [])} (langsung lunas).")
-        lines.append("Ketik /cancel untuk batal.")
+        if len(items) == 1:
+            lines.append("Balas Ya atau angka 1 untuk lunasi.")
+            lines.append("Balas Batal untuk cancel.")
+        else:
+            lines.append(f"Balas angka 1-{len(items)} (langsung lunas).")
+            lines.append("Ketik /cancel untuk batal.")
         return "\n".join(lines).replace(',', '.')
     
     # ==========================================
@@ -427,14 +432,30 @@ def handle_pending_response(user_id: str, chat_id: str, text: str,
                 'completed': True
             }
 
+        clean = re.sub(r"\s+", " ", text_lower.replace('.', '').replace(',', '').strip())
+        confirm_words = {'ya', 'iya', 'y', 'yes', 'ok', 'oke', 'lanjut', 'lunas', '1'}
+        cancel_words = {'batal', 'cancel', 'tidak', 'no', 'gak', 'enggak'}
+        if clean in cancel_words or any(w in clean for w in ['batal', 'cancel', 'tidak', 'no']):
+            clear_pending_confirmation(user_id, chat_id)
+            return {
+                'response': 'Pelunasan hutang dibatalkan.',
+                'completed': True
+            }
+
+        if len(candidates) == 1 and (clean in confirm_words or clean.startswith('ya ') or clean.startswith('iya ')):
+            choice = 1
+        else:
+            choice = None
+
         m = re.search(r"(?<!\d)(\d{1,2})(?!\d)", text_lower)
-        if not m:
+        if choice is None and not m:
             return {
                 'response': _format_hutang_selection(candidates),
                 'completed': False
             }
 
-        choice = int(m.group(1))
+        if choice is None:
+            choice = int(m.group(1))
         if choice < 1 or choice > len(candidates):
             return {
                 'response': f"Balas angka 1-{len(candidates)} atau /cancel.",

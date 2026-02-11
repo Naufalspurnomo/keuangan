@@ -573,10 +573,46 @@ def _format_hutang_paid_response(info: Dict) -> str:
     return "\n".join(lines).replace(',', '.')
 
 
-def _handle_auto_hutang_payment(text: str, user_id: str = "", chat_id: str = "") -> Optional[str]:
+def _extract_repayment_amount_from_transactions(transactions: list) -> int:
     """
-    Auto mark hutang as PAID based on natural language.
-    Returns response text if handled, otherwise None.
+    Pick the most likely repayment amount from extracted transactions.
+    Ignores transfer/admin fee lines and prefers the largest positive amount.
+    """
+    if not transactions:
+        return 0
+
+    positive_amounts = []
+    main_amounts = []
+    for tx in transactions:
+        try:
+            amount = int(tx.get('jumlah', 0) or 0)
+        except Exception:
+            amount = 0
+        if amount <= 0:
+            continue
+
+        positive_amounts.append(amount)
+        desc = str(tx.get('keterangan', '') or '').lower()
+        if re.search(r"\b(biaya transfer|fee transfer|fee admin|admin bank)\b", desc):
+            continue
+        main_amounts.append(amount)
+
+    if main_amounts:
+        return max(main_amounts)
+    if positive_amounts:
+        return max(positive_amounts)
+    return 0
+
+
+def _handle_auto_hutang_payment(
+    text: str,
+    user_id: str = "",
+    chat_id: str = "",
+    amount_hint: int = 0,
+) -> Optional[str]:
+    """
+    Match debt-payment intent from natural language and ask explicit confirmation
+    before settling (except explicit "no X" command).
     """
     if not _is_debt_payment_text(text):
         return None
@@ -593,7 +629,7 @@ def _handle_auto_hutang_payment(text: str, user_id: str = "", chat_id: str = "")
         invalidate_dashboard_cache()
         return _format_hutang_paid_response(info)
 
-    amount = parse_revision_amount(text) or 0
+    amount = parse_revision_amount(text) or int(amount_hint or 0)
     lender = _pick_dompet_by_prep(text, ["ke", "kepada", "kpd", "untuk"])
     borrower = _pick_dompet_by_prep(text, ["dari", "dr"])
 
@@ -603,6 +639,18 @@ def _handle_auto_hutang_payment(text: str, user_id: str = "", chat_id: str = "")
             "Jika hutang dompet, tulis: bayar hutang ke TX SBY 2jt / bayar hutang no 3.\n"
             "Jika transaksi project, tulis kata 'projek'."
         )
+
+    def _compact_candidates(items: list) -> list:
+        compact = []
+        for item in items:
+            compact.append({
+                'no': str(item.get('no', '') or '').strip(),
+                'yang_hutang': str(item.get('yang_hutang', '-') or '-'),
+                'yang_dihutangi': str(item.get('yang_dihutangi', '-') or '-'),
+                'amount': int(item.get('amount', 0) or 0),
+                'keterangan': str(item.get('keterangan', '-') or '-'),
+            })
+        return compact
 
     # Try strict match first (by pair + amount)
     candidates = []
@@ -618,9 +666,31 @@ def _handle_auto_hutang_payment(text: str, user_id: str = "", chat_id: str = "")
                 yang_dihutangi=lender or None,
                 amount=amount
             )
+        # Amount is known but no exact match for same pair.
+        if not candidates and (borrower or lender):
+            pair_candidates = find_open_hutang(
+                yang_hutang=borrower or None,
+                yang_dihutangi=lender or None,
+                amount=None
+            )
+            if pair_candidates:
+                lines = [
+                    "⚠️ Nominal pelunasan tidak cocok dengan hutang OPEN untuk pasangan dompet ini.",
+                    f"Nominal terdeteksi: Rp {amount:,}".replace(',', '.'),
+                    "",
+                    "Hutang OPEN yang tersedia:",
+                ]
+                for item in pair_candidates[:5]:
+                    lines.append(
+                        f"#{item['no']} {item.get('yang_hutang','-')} → {item.get('yang_dihutangi','-')} "
+                        f"Rp {item.get('amount',0):,} ({item.get('keterangan','-')})"
+                    )
+                lines.append("")
+                lines.append("Ketik: bayar hutang no <nomor> untuk memilih yang benar.")
+                return "\n".join(lines).replace(',', '.')
 
-    # Fallback: match by pair only
-    if not candidates:
+    # Fallback: match by pair only (only when amount is unknown)
+    if not candidates and amount <= 0:
         candidates = find_open_hutang(
             yang_hutang=borrower or None,
             yang_dihutangi=lender or None,
@@ -635,27 +705,14 @@ def _handle_auto_hutang_payment(text: str, user_id: str = "", chat_id: str = "")
 
     if len(candidates) > 1:
         if user_id and chat_id:
-            shown = candidates[:8]
-            compact_candidates = []
+            compact_candidates = _compact_candidates(candidates[:8])
             lines = ["🤔 Ketemu beberapa hutang OPEN. Pilih yang mau dilunasi:"]
-            for idx, item in enumerate(shown, start=1):
-                amount = int(item.get('amount', 0) or 0)
-                no = str(item.get('no', '') or '').strip()
-                borrower = str(item.get('yang_hutang', '-') or '-')
-                lender = str(item.get('yang_dihutangi', '-') or '-')
-                ket = str(item.get('keterangan', '-') or '-')
-                compact_candidates.append({
-                    'no': no,
-                    'yang_hutang': borrower,
-                    'yang_dihutangi': lender,
-                    'amount': amount,
-                    'keterangan': ket,
-                })
+            for idx, item in enumerate(compact_candidates, start=1):
                 lines.append(
-                    f"{idx}. #{no} {borrower} → {lender} Rp {amount:,} ({ket})"
+                    f"{idx}. #{item['no']} {item['yang_hutang']} → {item['yang_dihutangi']} Rp {item['amount']:,} ({item['keterangan']})"
                 )
             lines.append("")
-            lines.append(f"Balas angka 1-{len(compact_candidates)} (langsung lunas).")
+            lines.append(f"Balas angka 1-{len(compact_candidates)} untuk konfirmasi pelunasan.")
             lines.append("Ketik /cancel untuk batal.")
             set_pending_confirmation(
                 user_id=user_id,
@@ -676,12 +733,34 @@ def _handle_auto_hutang_payment(text: str, user_id: str = "", chat_id: str = "")
             )
         return "\n".join(lines).replace(',', '.')
 
-    chosen = candidates[0]
-    info = settle_hutang(int(chosen.get('no', 0)), sender_name="System", source="WhatsApp")
-    if not info:
-        return "❌ Gagal menandai hutang PAID."
-    invalidate_dashboard_cache()
-    return _format_hutang_paid_response(info)
+    # Single candidate: require explicit confirmation.
+    chosen = _compact_candidates([candidates[0]])[0]
+    if user_id and chat_id:
+        set_pending_confirmation(
+            user_id=user_id,
+            chat_id=chat_id,
+            data={
+                'type': 'hutang_payment_selection',
+                'candidates': [chosen],
+                'raw_text': text,
+            }
+        )
+        lines = [
+            "🤔 Konfirmasi pelunasan hutang ini?",
+            f"#{chosen['no']} {chosen['yang_hutang']} → {chosen['yang_dihutangi']}",
+            f"Rp {chosen['amount']:,} ({chosen['keterangan']})",
+            "",
+            "Balas Ya untuk lunasi. Batal untuk cancel.",
+            "Bisa juga balas angka 1.",
+        ]
+        if amount > 0 and amount != int(chosen['amount'] or 0):
+            lines.insert(3, f"Nominal terdeteksi: Rp {amount:,} (berbeda dari hutang).".replace(',', '.'))
+        return "\n".join(lines).replace(',', '.')
+
+    return (
+        "🤔 Ketemu 1 hutang OPEN. "
+        f"Lunasi dengan perintah: bayar hutang no {chosen['no']}"
+    )
 
 
 
@@ -2461,10 +2540,12 @@ Balas 1 atau 2"""
                     return jsonify({'status': 'replied'}), 200
                 if action == "PROCESS":
                     if intent == "RECORD_TRANSACTION":
-                        auto_hutang = _handle_auto_hutang_payment(text, sender_number, chat_jid)
-                        if auto_hutang:
-                            send_reply(auto_hutang)
-                            return jsonify({'status': 'auto_hutang_paid'}), 200
+                        # For image input, defer debt-payment matching until OCR amount is available.
+                        if input_type != 'image':
+                            auto_hutang = _handle_auto_hutang_payment(text, sender_number, chat_jid)
+                            if auto_hutang:
+                                send_reply(auto_hutang)
+                                return jsonify({'status': 'auto_hutang_paid'}), 200
                         # Send quick ack only when explicitly addressed or private chat
                         if (force_record or (not is_group) or is_explicit_bot_call(text)) and not processing_ack_sent:
                             send_reply("⏳ Memproses...")
@@ -3332,6 +3413,18 @@ Balas 1 atau 2"""
                     remove_visual_buffer_by_message(chat_jid, claimed_visual_source_id)
                 else:
                     clear_visual_buffer(sender_number, chat_jid)
+
+            # Debt-payment from image caption: validate using OCR-derived amount first.
+            if input_type == 'image':
+                auto_hutang = _handle_auto_hutang_payment(
+                    text,
+                    sender_number,
+                    chat_jid,
+                    amount_hint=_extract_repayment_amount_from_transactions(transactions),
+                )
+                if auto_hutang:
+                    send_reply(auto_hutang)
+                    return jsonify({'status': 'auto_hutang_paid_image'}), 200
             
             # Setup New Pending State
             _pending_transactions[sender_pkey] = {
