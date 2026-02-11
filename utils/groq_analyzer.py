@@ -574,6 +574,12 @@ REMEMBER:
     def _apply_safety_overrides(self, result: dict, text: str, context: dict,
                                  has_amount: bool, is_future: bool, is_human_cmd: bool) -> dict:
         """Apply rule-based overrides to prevent false positives."""
+        def _force_ignore(reason: str) -> None:
+            logger.info(reason)
+            result['should_respond'] = False
+            result['intent'] = 'IGNORE'
+            # Prevent stale scope from biasing downstream media fallback.
+            result['category_scope'] = 'UNKNOWN'
         
         # Rule 1: In Group + Ambient + No Amount = IGNORE
         is_ambient = context.get('is_ambient', False)
@@ -581,27 +587,19 @@ REMEMBER:
         
         if is_group and is_ambient and not has_amount:
             if result.get('intent') in ['RECORD_TRANSACTION', 'TRANSFER_FUNDS']:
-                logger.info(f"Safety override: Ambient talk without amount in group -> IGNORE")
-                result['should_respond'] = False
-                result['intent'] = 'IGNORE'
+                _force_ignore("Safety override: Ambient talk without amount in group -> IGNORE")
         
         # Rule 2: Future plan language = IGNORE
         if is_future and result.get('intent') == 'RECORD_TRANSACTION':
-            logger.info(f"Safety override: Future plan detected -> IGNORE")
-            result['should_respond'] = False
-            result['intent'] = 'IGNORE'
+            _force_ignore("Safety override: Future plan detected -> IGNORE")
         
         # Rule 3: Command to human = IGNORE
         if is_human_cmd and result.get('intent') == 'RECORD_TRANSACTION':
-            logger.info(f"Safety override: Command to human -> IGNORE")
-            result['should_respond'] = False
-            result['intent'] = 'IGNORE'
+            _force_ignore("Safety override: Command to human -> IGNORE")
         
         # Rule 4: Casual bot mention = IGNORE
         if is_casual_bot_mention(text):
-            logger.info(f"Safety override: Casual bot mention -> IGNORE")
-            result['should_respond'] = False
-            result['intent'] = 'IGNORE'
+            _force_ignore("Safety override: Casual bot mention -> IGNORE")
 
         return result
 

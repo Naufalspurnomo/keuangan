@@ -88,7 +88,20 @@ def extract_project_from_description(description: str) -> str:
 
 _EXPENSE_SALARY_TERMS = {"gaji", "gajian", "upah", "honor", "thr", "bonus"}
 _EXPENSE_LABOR_TERMS = {"tukang", "mandor", "kuli", "helper", "pekerja", "borongan"}
-_INCOME_HINT_TERMS = {"pemasukan", "terima", "diterima", "transfer masuk", "dp masuk", "refund", "cashback"}
+_INCOME_HINT_TERMS = {
+    "pemasukan",
+    "terima",
+    "diterima",
+    "transfer masuk",
+    "dp masuk",
+    "masuk dp",
+    "termin masuk",
+    "masuk termin",
+    "refund",
+    "cashback",
+    "pengembalian dana",
+    "dana kembali",
+}
 
 
 def _normalize_text_compare(text: str) -> str:
@@ -407,10 +420,42 @@ def _enforce_transaction_type_semantics(tx: Dict, clean_text: str) -> None:
     has_income_hint = any(term in ket for term in _INCOME_HINT_TERMS) or any(
         term in text_lower for term in _INCOME_HINT_TERMS
     )
+    has_incoming_cash_signal = bool(
+        re.search(
+            r"\b("
+            r"pemasukan|terima|diterima|refund|cashback|pengembalian dana|dana kembali|"
+            r"uang masuk|transfer masuk|"
+            r"masuk\s+(?:dp|down payment|termin|pelunasan)|"
+            r"(?:dp|down payment|termin|pelunasan)\s+masuk"
+            r")\b",
+            text_lower,
+        )
+    )
+    has_outgoing_cash_signal = bool(
+        re.search(
+            r"\b("
+            r"pengeluaran|transfer keluar|bayar|dibayar|kirim|biaya|admin|fee|"
+            r"topup dompet|isi dompet|transfer ke|"
+            r"bayar\s+(?:dp|down payment|termin|pelunasan)|"
+            r"(?:dp|down payment|termin|pelunasan)\s+(?:ke|buat|untuk)"
+            r")\b",
+            text_lower,
+        )
+    )
 
     if tipe == "Pemasukan" and (has_salary_signal or has_labor_fee_signal or has_fee_signal) and not has_income_hint:
         tx["tipe"] = "Pengeluaran"
         secure_log("INFO", f"Type corrected to Pengeluaran by semantic guard: '{ket[:60]}'")
+        return
+
+    # Handle common misclassification where incoming DP/refund is marked as Pengeluaran.
+    if (
+        tipe == "Pengeluaran"
+        and (has_income_hint or has_incoming_cash_signal)
+        and not (has_outgoing_cash_signal or has_salary_signal or has_labor_fee_signal or has_fee_signal)
+    ):
+        tx["tipe"] = "Pemasukan"
+        secure_log("INFO", f"Type corrected to Pemasukan by semantic guard: '{ket[:60]}'")
 
 
 def extract_transfer_fee(text: str) -> int:
@@ -1048,7 +1093,8 @@ def detect_wallet_from_text(text: str) -> Optional[str]:
     wallet_operations = [
         'tambah', 'tarik', 'isi', 'cek',
         'transfer', 'pindah', 'top', 'withdraw', 'deposit',
-        'saldo', 'wallet', 'dompet'
+        'saldo', 'wallet', 'dompet',
+        'utang', 'hutang', 'minjam', 'minjem', 'pinjam', 'pakai', 'pake', 'via'
     ]
     has_wallet_context = any(op in text_lower for op in wallet_operations)
 

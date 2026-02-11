@@ -82,26 +82,31 @@ def _extract_debt_source(text: str) -> Optional[str]:
     if not text:
         return None
     lower = text.lower()
-    if not re.search(r"\b(utang|hutang|minjem|minjam|pinjam)\b", lower):
+    normalized = re.sub(r"[^a-z0-9]+", " ", lower).strip()
+    debt_pattern = r"\b(utang|hutang|minjem|minjam|pinjam)\b"
+    if not re.search(debt_pattern, normalized):
         return None
 
     # Prefer explicit lender marker to avoid matching project/company words.
-    for prep in ['dari', 'dr', 'ke', 'kepada', 'kpd']:
-        m = re.search(rf"\b{prep}\b(.+)", lower)
+    prep_markers = ['dari', 'dr', 'ke', 'kepada', 'kpd', 'pakai', 'pake', 'via']
+    for source_text in (lower, normalized):
+        for prep in prep_markers:
+            m = re.search(rf"\b{prep}\b(.+)", source_text)
+            if m:
+                candidate = resolve_dompet_from_text(m.group(1))
+                if candidate:
+                    return candidate
+
+    # Fallback: parse only segment from debt keyword onward.
+    for source_text in (lower, normalized):
+        m = re.search(debt_pattern, source_text)
         if m:
-            candidate = resolve_dompet_from_text(m.group(1))
+            candidate = resolve_dompet_from_text(source_text[m.start():])
             if candidate:
                 return candidate
 
-    # Fallback: parse only segment from debt keyword onward.
-    m = re.search(r"\b(utang|hutang|minjem|minjam|pinjam)\b", lower)
-    if m:
-        candidate = resolve_dompet_from_text(lower[m.start():])
-        if candidate:
-            return candidate
-
     # Last resort full parse.
-    return resolve_dompet_from_text(lower)
+    return resolve_dompet_from_text(normalized) or resolve_dompet_from_text(lower)
 
 
 def _format_hutang_paid_response(info: dict) -> str:

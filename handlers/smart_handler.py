@@ -264,6 +264,14 @@ class SmartHandler:
             looks_like_query = ('?' in text_lower) or any(qw in text_lower for qw in question_words)
             is_debt_payment_text = _is_debt_payment_request(text)
             has_tx_signal = has_amount and (has_finance_keyword or has_project_word or has_kantor_word)
+            def _resolve_forced_scope(scope_hint: str) -> str:
+                if has_project_word and not has_kantor_word:
+                    return "PROJECT"
+                if has_kantor_word and not has_project_word:
+                    return "OPERATIONAL"
+                if scope_hint in {"PROJECT", "OPERATIONAL", "TRANSFER"}:
+                    return scope_hint
+                return "UNKNOWN"
 
             if is_debt_payment_text and not is_future and not looks_like_query:
                 secure_log(
@@ -280,14 +288,7 @@ class SmartHandler:
 
             # Text-only fallback: if signal is clearly transactional, don't drop it.
             if has_tx_signal and not is_future and not looks_like_query:
-                forced_scope = analysis.get('category_scope')
-                if not forced_scope or forced_scope == 'UNKNOWN':
-                    if has_kantor_word:
-                        forced_scope = "OPERATIONAL"
-                    elif has_project_word:
-                        forced_scope = "PROJECT"
-                    else:
-                        forced_scope = "UNKNOWN"
+                forced_scope = _resolve_forced_scope(analysis.get('category_scope'))
                 secure_log(
                     "INFO",
                     f"SmartHandler override: forcing PROCESS for strong text transaction signal "
@@ -303,14 +304,7 @@ class SmartHandler:
 
             # Media fallback: if media is attached and there are transactional hints, force processing
             if has_media and (has_amount or has_finance_keyword or has_project_word or has_kantor_word):
-                forced_scope = analysis.get('category_scope')
-                if not forced_scope or forced_scope == 'UNKNOWN':
-                    if has_kantor_word:
-                        forced_scope = "OPERATIONAL"
-                    elif has_project_word:
-                        forced_scope = "PROJECT"
-                    else:
-                        forced_scope = "UNKNOWN"
+                forced_scope = _resolve_forced_scope(analysis.get('category_scope'))
                 return {
                     "action": "PROCESS",
                     "intent": "RECORD_TRANSACTION",

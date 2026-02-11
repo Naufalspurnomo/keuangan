@@ -340,6 +340,10 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
         return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
     
     if category_scope == 'PROJECT':
+        if has_kantor_word and not has_project_word:
+            detected_keywords = [kw for kw in OPERATIONAL_KEYWORDS if kw in text_lower]
+            category = map_operational_category(detected_keywords[0]) if detected_keywords else 'Lain Lain'
+            return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
         # AI is confident this is project-related
         return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
 
@@ -416,7 +420,7 @@ def detect_transaction_context(text: str, transactions: list, category_scope: st
     from services.project_service import get_existing_projects
     
     # Get cache of existing projects for validation
-    existing_projects_cache = [p.lower() for p in get_existing_projects()]
+    existing_projects_cache = {p.lower() for p in get_existing_projects()}
     
     has_valid_project = False
     valid_project_name = None
@@ -1428,14 +1432,16 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 if not text:
                     return None
                 lower = text.lower()
-                if not re.search(r"\b(utang|hutang|minjem|minjam|pinjam)\b", lower):
+                normalized = re.sub(r"[^a-z0-9]+", " ", lower).strip()
+                debt_pattern = r"\b(utang|hutang|minjem|minjam|pinjam)\b"
+                if not re.search(debt_pattern, normalized):
                     return None
 
                 # If project context exists, this is a project expense funded by debt
                 # (e.g., "bayar fee sugeng, project vadim, utang CV HB")
                 # → NOT a debt repayment, so skip the payment-text guard.
                 has_project_context = bool(
-                    re.search(r"\b(projek|project|proyek|prj)\b", lower)
+                    re.search(r"\b(projek|project|proyek|prj)\b", normalized)
                 )
 
                 # If this looks like paying a debt (and NOT a project expense), skip
@@ -1445,26 +1451,34 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                     # "bayar fee sugeng ... utang CV HB" = project expense + borrowing
                     debt_payment_near = bool(re.search(
                         r"\b(bayar|lunas|lunasi|pelunasan|cicil)\s+(?:\w+\s+){0,2}(utang|hutang)\b",
-                        lower
+                        normalized
                     ))
-                    if debt_payment_near and not _pick_dompet_by_prep(lower, ["dari", "dr"]):
+                    borrower_hint = (
+                        _pick_dompet_by_prep(lower, ["dari", "dr", "pakai", "pake", "via"])
+                        or _pick_dompet_by_prep(normalized, ["dari", "dr", "pakai", "pake", "via"])
+                    )
+                    if debt_payment_near and not borrower_hint:
                         return None
 
                 # Prefer explicit lender markers to avoid clashing with project/company words
-                by_prep = _pick_dompet_by_prep(lower, ["dari", "dr", "ke", "kepada", "kpd"])
+                by_prep = (
+                    _pick_dompet_by_prep(lower, ["dari", "dr", "ke", "kepada", "kpd", "pakai", "pake", "via"])
+                    or _pick_dompet_by_prep(normalized, ["dari", "dr", "ke", "kepada", "kpd", "pakai", "pake", "via"])
+                )
                 if by_prep:
                     return by_prep
 
                 # Fallback: only parse the text tail that starts from debt keyword
-                m = re.search(r"\b(utang|hutang|minjem|minjam|pinjam)\b", lower)
-                if m:
-                    tail = lower[m.start():]
-                    from_tail = resolve_dompet_from_text(tail)
-                    if from_tail:
-                        return from_tail
+                for source_text in (lower, normalized):
+                    m = re.search(debt_pattern, source_text)
+                    if m:
+                        tail = source_text[m.start():]
+                        from_tail = resolve_dompet_from_text(tail)
+                        if from_tail:
+                            return from_tail
 
                 # Last resort: full text parse
-                return resolve_dompet_from_text(lower)
+                return resolve_dompet_from_text(normalized) or resolve_dompet_from_text(lower)
 
             def _send_and_track(response: str, event_id: str) -> None:
                 sent = send_reply(response)
@@ -1517,6 +1531,14 @@ Balas 1 atau 2"""
                 if bid:
                     store_pending_message_ref(bid, f"{pending.get('chat_jid', chat_jid)}:{pending.get('sender_number', sender_number)}")
                 return jsonify({'status': 'asking_scope'}), 200
+
+            # Guardrail: Operational flow must not carry OCR-extracted project names.
+            if context.get('mode') == 'OPERATIONAL':
+                pending['project_confirmed'] = False
+                pending['project_validated'] = False
+                for tx in txs:
+                    tx.pop('nama_projek', None)
+                    tx.pop('needs_project', None)
 
             # === JALUR 1: OPERATIONAL ===
             if context['mode'] == 'OPERATIONAL':
@@ -3363,7 +3385,10 @@ Balas 1 atau 2"""
                 send_reply(f"❗ Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
                 return jsonify({'status': 'asking_amount'}), 200
 
-            if all(t.get('nama_projek') and not t.get('needs_project') for t in transactions):
+            if (
+                layer_category_scope != 'OPERATIONAL'
+                and all(t.get('nama_projek') and not t.get('needs_project') for t in transactions)
+            ):
                 _pending_transactions[sender_pkey]['project_confirmed'] = True
             
             # Check for Needs Project (Manual override from AI)

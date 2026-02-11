@@ -79,6 +79,8 @@ DOMPET_ALIASES = {
     "tx-sby": "TX SBY(216)",
     "tx.sby": "TX SBY(216)",
     "tx sby 216": "TX SBY(216)",
+    "tx surabaya": "TX SBY(216)",
+    "dompet tx surabaya": "TX SBY(216)",
     
     # Rekening number
     "216": "TX SBY(216)",

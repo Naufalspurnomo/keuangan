@@ -14,6 +14,17 @@ from config.wallets import DOMPET_SHEETS
 from config.constants import SPLIT_LAYOUT_DATA_START
 import re
 
+
+def _normalize_project_name(name: str) -> str:
+    """Normalize project names for consistent cache matching."""
+    if not name:
+        return ""
+    cleaned = str(name).strip()
+    cleaned = re.sub(r'\s*\((Start|Finish)\)$', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned
+
+
 def get_existing_projects(force_refresh=False):
     """
     Ambil list projek unik dari 3 Sheet Dompet (Split Layout).
@@ -59,15 +70,18 @@ def get_existing_projects(force_refresh=False):
                     continue
 
             # Clean and Filter
-            clean_projects = set()
+            clean_projects_by_key = {}
             for v in all_projects:
-                v_clean = v.strip()
-                # Remove (Start) or (Finish) markers using regex
-                # Matches " (Start)" or " (Finish)" at end of string, case insensitive
-                v_clean = re.sub(r'\s*\((Start|Finish)\)$', '', v_clean, flags=re.IGNORECASE)
-                
-                if len(v_clean) > 2 and v_clean.lower() not in KNOWN_COMPANY_NAMES:
-                    clean_projects.add(v_clean)
+                v_clean = _normalize_project_name(v)
+                if not v_clean:
+                    continue
+
+                v_key = v_clean.lower()
+                if len(v_clean) > 2 and v_key not in KNOWN_COMPANY_NAMES:
+                    # Keep first-seen casing but deduplicate case-insensitively.
+                    clean_projects_by_key.setdefault(v_key, v_clean)
+
+            clean_projects = set(clean_projects_by_key.values())
             
             _project_cache['names'] = clean_projects
             _project_cache['last_updated'] = now
@@ -79,8 +93,19 @@ def get_existing_projects(force_refresh=False):
     return _project_cache['names']
 
 def add_new_project_to_cache(new_project_name):
-    if new_project_name:
-        _project_cache['names'].add(new_project_name)
+    normalized = _normalize_project_name(new_project_name)
+    if not normalized:
+        return
+
+    norm_key = normalized.lower()
+    if len(normalized) <= 2 or norm_key in KNOWN_COMPANY_NAMES:
+        return
+
+    for existing in _project_cache['names']:
+        if existing.lower() == norm_key:
+            return
+
+    _project_cache['names'].add(normalized)
 
 def calculate_similarity(a, b):
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
