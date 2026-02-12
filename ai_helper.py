@@ -1331,7 +1331,16 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
         # Run Regex Fallback for Wallet Detection
         # This covers cases where AI might miss the specific wallet name
         # or returns generic "UMUM" without detecting the dompet.
-        regex_wallet = detect_wallet_from_text(clean_text)
+        # IMPORTANT: For OCR messages, only scan user caption (not OCR body)
+        # to avoid false matches like "cv" in "PRISMA PRIMA UTAMA CV".
+        user_caption, ocr_body = split_ocr_user_text(clean_text)
+        regex_wallet = detect_wallet_from_text(user_caption) if user_caption else None
+        # If user caption didn't mention wallet, try OCR account number parsing
+        if not regex_wallet and ocr_body:
+            regex_wallet = extract_source_wallet_from_ocr(ocr_body)
+        # Fallback for non-OCR text messages (no separation needed)
+        if not regex_wallet and not ocr_body:
+            regex_wallet = detect_wallet_from_text(clean_text)
         explicit_project_hint = _extract_explicit_project_hint(clean_text)
 
         for t in transactions:
