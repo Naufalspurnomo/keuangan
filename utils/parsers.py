@@ -12,7 +12,13 @@ Contains:
 import re
 from datetime import datetime
 
-from config.constants import Timeouts, GROUP_TRIGGERS, OPERATIONAL_KEYWORDS
+from config.constants import (
+    Timeouts,
+    GROUP_TRIGGERS,
+    OPERATIONAL_KEYWORDS,
+    PROJECT_STOPWORDS,
+    KNOWN_COMPANY_NAMES,
+)
 
 ACTION_VERBS = [
     'beli', 'bayar', 'transfer', 'kirim', 'terima', 'dp',
@@ -368,71 +374,94 @@ def parse_revision_amount(text: str) -> int:
 
 def extract_project_name_from_text(text: str) -> str:
     """
-    Extract project name from text using multiple strategies.
-    
-    Examples:
-    - "DP projek Ririyan 20jt" → "Ririyan"
-    - "Material buat Wooftopia" → "Wooftopia"
-    - "untuk project Taman Indah" → "Taman Indah"
+    Extract project name from free text conservatively.
+    Prioritizes explicit project patterns and avoids noisy tails.
     """
     if not text:
+        return None
+
+    raw_text = str(text).strip()
+    if not raw_text:
         return None
 
     def _clean_project_name(raw_name: str) -> str:
         if not raw_name:
             return ""
-        name = raw_name.strip()
-        # Stop when debt/source phrases begin.
+        name = raw_name.split("\n", 1)[0]
+        name = re.split(r"[;|]", name, maxsplit=1)[0]
         name = re.split(
-            r"\b(?:utang|hutang|minjam|minjem|pinjam|dari|dr|pakai|via|dompet|wallet|rekening|rek)\b",
+            r"\b(?:keterangan|ket|desc|deskripsi|dompet|wallet|company|rekening|rek|"
+            r"utang|hutang|minjam|minjem|pinjam|dari|dr|pakai|via|rp|nominal|sebesar|senilai)\b",
             name,
             maxsplit=1,
             flags=re.IGNORECASE,
         )[0].strip()
-        # Trim any trailing amount fragments.
         name = re.sub(
             r"\b\d[\d\.,]*(?:\s*(?:rb|ribu|k|jt|juta))?\b.*$",
             "",
             name,
             flags=re.IGNORECASE,
-        ).strip()
-        return name
-        
-    # Strategy 1: After "projek/project/untuk/buat" + capitalized word
+        ).strip(" ,.:;-")
+        if not name:
+            return ""
+
+        parts = [p.strip(" ,.:;-") for p in name.split() if p.strip(" ,.:;-")]
+        if not parts:
+            return ""
+
+        leading_noise = set(PROJECT_STOPWORDS) | {"bon", "nota", "kwitansi", "struk", "invoice"}
+        while parts and parts[0].lower() in leading_noise:
+            parts.pop(0)
+        if not parts:
+            return ""
+
+        pruned = []
+        for token in parts:
+            token_lower = token.lower()
+            if pruned and (
+                token_lower in PROJECT_STOPWORDS
+                or token_lower in KNOWN_COMPANY_NAMES
+                or token_lower in {"tx", "cv", "holla", "hojja", "texturin"}
+            ):
+                break
+            pruned.append(token)
+            if len(pruned) >= 5:
+                break
+
+        candidate = " ".join(pruned).strip()
+        if len(candidate) < 3:
+            return ""
+
+        candidate_lower = candidate.lower()
+        if (
+            candidate_lower in PROJECT_STOPWORDS
+            or candidate_lower in KNOWN_COMPANY_NAMES
+            or candidate_lower in OPERATIONAL_KEYWORDS
+            or re.search(r"\b(operasional|operational|kantor)\b", candidate_lower)
+        ):
+            return ""
+
+        return candidate
+
     patterns = [
-        r'(?:projek|project)\s+([A-Z][a-zA-Z\s]+?)(?:\s+\d|\s*$|,)',
-        r'(?:untuk|buat)\s+(?:projek\s+)?([A-Z][a-zA-Z\s]+?)(?:\s+\d|\s*$|,)',
-        r'(?:dp|pelunasan)\s+(?:projek\s+)?([A-Z][a-zA-Z\s]+?)(?:\s+\d|\s*$|,)',
+        r"\b(?:nama\s+projek|nama\s+project|projek|project|proyek|prj)\b\s*[:\-]?\s*([^\n,;|]+)",
+        r"\b(?:untuk|buat)\s+(?:projek|project|proyek|prj)\b\s*[:\-]?\s*([^\n,;|]+)",
+        r"\b(?:dp|down\s*payment|termin|pelunasan)\s+(?:projek|project|proyek|prj)\b\s*[:\-]?\s*([^\n,;|]+)",
     ]
-    
+
     for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            project_name = match.group(1).strip()
-            # Clean up (remove trailing numbers, etc)
-            project_name = re.sub(r'\s+\d+.*$', '', project_name).strip()
-            project_name = _clean_project_name(project_name)
-            if len(project_name) >= 3:  # Min 3 chars
-                return project_name
-    
-    # Strategy 2: Any capitalized word (2+ words)
-    # Example: "Taman Indah Puncak"
-    capitalized_phrase = re.search(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b', text)
-    if capitalized_phrase:
-        project_name = _clean_project_name(capitalized_phrase.group(1).strip())
-        if len(project_name) >= 3:
+        match = re.search(pattern, raw_text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        project_name = _clean_project_name(match.group(1))
+        if project_name:
             return project_name
-    
-    # Strategy 3: Single capitalized word (not at sentence start)
-    words = text.split()
-    for i, word in enumerate(words):
-        # Skip first word usually (might be action like 'Beli')
-        if i > 0 and word[0].isupper() and len(word) >= 4:
-            # Check if it's not a common stopword or month
-            # (Basic heuristic, improved by list check later)
-            project_name = _clean_project_name(word)
-            if len(project_name) >= 3:
-                return project_name
+
+    explicit_tail = re.search(r"\b(?:projek|project|proyek|prj)\b\s+(.+)", raw_text, flags=re.IGNORECASE)
+    if explicit_tail:
+        project_name = _clean_project_name(explicit_tail.group(1))
+        if project_name:
+            return project_name
 
     return None
 

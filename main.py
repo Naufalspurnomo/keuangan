@@ -2694,6 +2694,28 @@ Balas 1 atau 2"""
                         # PRE-EMPTIVE CONFIRMATION FOR AMBIGUOUS SCOPE
                         # If AI is still unsure (AMBIGUOUS/UNKNOWN), ask user before extraction/saving
                         if layer_category_scope in ['UNKNOWN', 'AMBIGUOUS']:
+                            if input_type == 'image':
+                                caption_text = (text or "").strip()
+                                has_scope_hint = bool(
+                                    re.search(
+                                        r"\b(projek|project|proyek|prj|operasional|operational|kantor|ops)\b",
+                                        caption_text.lower(),
+                                    )
+                                )
+                                has_context_hint = (
+                                    has_scope_hint
+                                    or _has_wallet_context_hint(caption_text)
+                                    or has_amount_pattern(caption_text)
+                                )
+                                # Image-first flow: avoid noisy scope prompt when user has not
+                                # provided actionable caption yet. Keep image buffered and wait
+                                # for follow-up text (e.g. "2 project X dompet tx sby").
+                                if not has_context_hint:
+                                    secure_log(
+                                        "INFO",
+                                        "Buffered image with weak caption; waiting follow-up text before scope prompt",
+                                    )
+                                    return jsonify({'status': 'buffered_image_waiting_text'}), 200
                             if input_type == 'image' and not _claim_visual_source_once():
                                 return jsonify({'status': 'duplicate_visual_reference'}), 200
                             # Extract temporarily to show context

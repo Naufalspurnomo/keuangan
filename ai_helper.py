@@ -378,9 +378,27 @@ def _extract_explicit_project_hint(text: str) -> str:
     if not candidate:
         return ""
 
-    # Keep it concise and avoid over-capturing trailing clauses.
-    parts = candidate.split()
-    candidate = " ".join(parts[:4]).strip()
+    parts = [p.strip(" ,.:;-") for p in candidate.split() if p.strip(" ,.:;-")]
+    if not parts:
+        return ""
+
+    # Drop leading non-project tokens (material/action words, receipt words, etc.).
+    leading_noise = set(PROJECT_STOPWORDS) | {"bon", "nota", "kwitansi", "struk", "invoice"}
+    while parts and parts[0].lower() in leading_noise:
+        parts.pop(0)
+    if not parts:
+        return ""
+
+    # Stop at trailing narrative words once a core project token already exists.
+    pruned = []
+    for token in parts:
+        token_lower = token.lower()
+        if pruned and token_lower in PROJECT_STOPWORDS:
+            break
+        pruned.append(token)
+        if len(pruned) >= 4:
+            break
+    candidate = " ".join(pruned).strip()
     if len(candidate) < 3:
         return ""
 
@@ -1436,7 +1454,12 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                     and (similarity < 0.5 or not has_overlap)
                 ):
                     secure_log("WARNING", f"Keterangan mismatch ('{keterangan[:30]}...'), fallback to original text")
-                    sanitized["keterangan"] = (user_note or clean_text[:200])
+                    if user_note:
+                        sanitized["keterangan"] = user_note
+                    elif "Receipt/Struk content:" in clean_text:
+                        sanitized["keterangan"] = "Transfer"
+                    else:
+                        sanitized["keterangan"] = clean_text[:200]
 
             # 3d. Deterministic guardrail for wrong direction (Pemasukan/Pengeluaran).
             _enforce_transaction_type_semantics(sanitized, clean_text)
@@ -1584,6 +1607,15 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                     is_valid, _, sanitized_fee = validate_transaction_data(fee_tx)
                     if is_valid:
                         validated_transactions.append(sanitized_fee)
+
+            # OCR receipts should not keep duplicate tiny transfer entries
+            # alongside explicit "Biaya transfer" fee.
+            if "Receipt/Struk content:" in clean_text:
+                non_fee_txs = [t for t in validated_transactions if not _is_fee_tx(t)]
+                fee_txs = [t for t in validated_transactions if _is_fee_tx(t)]
+                if len(non_fee_txs) > 1:
+                    main_only = max(non_fee_txs, key=lambda t: int(t.get("jumlah", 0) or 0))
+                    validated_transactions = [main_only] + fee_txs
 
             # OCR clarity rule:
             # fee/admin transactions with amount <= 0 should not be reported.
