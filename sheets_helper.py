@@ -2010,7 +2010,12 @@ def get_wallet_balances() -> Dict:
     Real Balance = (Pemasukan in Dompet Sheet - Pengeluaran in Dompet Sheet)
                    - (Operational expenses where Sumber = this Dompet)
                    + (Hutang OPEN where this dompet is borrower)
-                   + (Hutang PAID where this dompet is lender)
+                   
+    Note:
+    - PAID settlements are already reflected by reverse transactions written by
+      settle_hutang() into dompet sheets (borrower outflow + lender inflow).
+    - Therefore PAID amounts are tracked for audit (`utang_paid_in`) but NOT
+      added again into `saldo` to avoid double counting.
     
     This reads directly from Split Layout sheets (CV HB, TX SBY, TX BALI)
     and the Operasional Ktr sheet for operational debits.
@@ -2040,7 +2045,7 @@ def get_wallet_balances() -> Dict:
                 'internal_balance': total_masuk - total_keluar,
                 'operational_debit': 0,  # Will be calculated next
                 'utang_open_in': 0,
-                'utang_paid_in': 0
+                'utang_paid_in': 0  # audit-only, excluded from saldo formula
             }
             
         except Exception as e:
@@ -2051,7 +2056,7 @@ def get_wallet_balances() -> Dict:
                 'internal_balance': 0,
                 'operational_debit': 0,
                 'utang_open_in': 0,
-                'utang_paid_in': 0
+                'utang_paid_in': 0  # audit-only, excluded from saldo formula
             }
     
     # 2. Parse Operasional Ktr sheet and debit from source wallets
@@ -2095,17 +2100,17 @@ def get_wallet_balances() -> Dict:
             if status == 'OPEN' and yang_hutang in balances:
                 balances[yang_hutang]['utang_open_in'] += amount
             if status == 'PAID' and yang_dihutangi in balances:
+                # Tracked for audit/debug visibility only.
                 balances[yang_dihutangi]['utang_paid_in'] += amount
     except Exception as e:
         secure_log("ERROR", f"Error parsing hutang sheet: {e}")
     
-    # 3. Calculate Final REAL Balance
+    # 4. Calculate Final REAL Balance
     for dompet in balances:
         balances[dompet]['saldo'] = (
             balances[dompet]['internal_balance']
             - balances[dompet]['operational_debit']
             + balances[dompet]['utang_open_in']
-            + balances[dompet]['utang_paid_in']
         )
         
     return balances
@@ -2311,16 +2316,28 @@ def get_dashboard_summary():
         # Calc Company Balances
         for c in company_summary:
             company_summary[c]['bal'] = company_summary[c]['inc'] - company_summary[c]['exp']
-            
-        # RE-CALCULATE Dompet Balances (Critical: Update balance after Operational Debits)
-        for d in dompet_summary:
-            dompet_summary[d]['bal'] = dompet_summary[d]['inc'] - dompet_summary[d]['exp']
+
+        # Force dompet summary to use the exact same real-balance engine as /saldo.
+        wallet_balances = get_wallet_balances()
+        for dompet in DOMPET_SHEETS:
+            info = wallet_balances.get(dompet, {})
+            if dompet not in dompet_summary:
+                dompet_summary[dompet] = {'inc': 0, 'exp': 0, 'bal': 0}
+            dompet_summary[dompet]['inc'] = int(info.get('pemasukan', 0) or 0)
+            dompet_summary[dompet]['exp'] = int(info.get('pengeluaran', 0) or 0) + int(info.get('operational_debit', 0) or 0)
+            dompet_summary[dompet]['bal'] = int(info.get('saldo', 0) or 0)
+            dompet_summary[dompet]['operational_debit'] = int(info.get('operational_debit', 0) or 0)
+            dompet_summary[dompet]['utang_open_in'] = int(info.get('utang_open_in', 0) or 0)
+            dompet_summary[dompet]['utang_paid_in'] = int(info.get('utang_paid_in', 0) or 0)
+
+        # Consolidated real cash balance from dompet real balances.
+        real_balance = sum(int(v.get('saldo', 0) or 0) for v in wallet_balances.values())
 
         # Update Cache
         _dashboard_cache = {
             'total_income': total_income,
             'total_expense': total_expense,
-            'balance': total_income - total_expense,
+            'balance': real_balance,
             'total_transactions': total_transactions,
             'company_count': len(company_summary),
             'dompet_summary': dompet_summary,

@@ -574,6 +574,29 @@ def _format_hutang_paid_response(info: Dict) -> str:
     return "\n".join(lines).replace(',', '.')
 
 
+def _build_saldo_message(balances: Dict[str, Dict]) -> str:
+    """Build wallet-balance message using real-balance components."""
+    msg = "💰 SALDO DOMPET REAL\n\n"
+    for dompet, info in balances.items():
+        masuk = int(info.get('pemasukan', 0) or 0)
+        keluar = int(info.get('pengeluaran', 0) or 0)
+        op = int(info.get('operational_debit', 0) or 0)
+        hutang_open = int(info.get('utang_open_in', 0) or 0)
+        hutang_paid = int(info.get('utang_paid_in', 0) or 0)
+        saldo = int(info.get('saldo', 0) or 0)
+
+        msg += f"📊 {dompet}\n"
+        msg += f"   Masuk: Rp {masuk:,}\n".replace(',', '.')
+        msg += f"   Keluar Internal: Rp {keluar:,}\n".replace(',', '.')
+        msg += f"   Potongan Operasional: Rp {op:,}\n".replace(',', '.')
+        msg += f"   Penyesuaian Hutang OPEN: Rp {hutang_open:,}\n".replace(',', '.')
+        if hutang_paid:
+            msg += f"   Hutang PAID (audit): Rp {hutang_paid:,}\n".replace(',', '.')
+        msg += f"   Saldo Real: Rp {saldo:,}\n\n".replace(',', '.')
+
+    return msg
+
+
 def _extract_repayment_amount_from_transactions(transactions: list) -> int:
     """
     Pick the most likely repayment amount from extracted transactions.
@@ -2385,12 +2408,7 @@ Balas 1 atau 2"""
             if is_command_match(text, Commands.SALDO, is_group):
                 try:
                     balances = get_wallet_balances()
-                    msg = "💰 SALDO DOMPET\n\n"
-                    for dompet, info in balances.items():
-                        msg += f"📊 {dompet}\n"
-                        msg += f"   Masuk: Rp {info['pemasukan']:,}\n".replace(',', '.')
-                        msg += f"   Keluar: Rp {info['pengeluaran']:,}\n".replace(',', '.')
-                        msg += f"   Saldo: Rp {info['saldo']:,}\n\n".replace(',', '.')
+                    msg = _build_saldo_message(balances)
                     send_reply(msg)
                     return jsonify({'status': 'command_saldo'}), 200
                 except Exception as e:
@@ -3221,13 +3239,8 @@ Balas 1 atau 2"""
         if is_command_match(text, Commands.SALDO, is_group):
             try:
                 balances = get_wallet_balances()
-                msg = "💰 *SALDO DOMPET*\n\n"
-                for dompet, info in balances.items():
-                    msg += f"📊 {dompet}\n"
-                    msg += f"   Masuk: Rp {info['pemasukan']:,}\n"
-                    msg += f"   Keluar: Rp {info['pengeluaran']:,}\n"
-                    msg += f"   Saldo: Rp {info['saldo']:,}\n\n"
-                send_reply(msg.replace(',', '.').replace('*', ''))
+                msg = _build_saldo_message(balances)
+                send_reply(msg.replace('*', ''))
                 return jsonify({'status': 'command_saldo'}), 200
             except Exception as e:
                 send_reply(f"❌ Error: {str(e)}")
@@ -3323,6 +3336,11 @@ Balas 1 atau 2"""
                     msg += f"📚 Total PAID: {paid_count} item (Rp {paid_total:,})\n"
                 else:
                     msg += "ℹ️ Belum ada data hutang antar dompet.\n"
+
+                balances = get_wallet_balances()
+                msg += "\nSaldo Dompet Real (snapshot):\n"
+                for dompet, info in balances.items():
+                    msg += f"- {dompet}: Rp {int(info.get('saldo', 0) or 0):,}\n"
 
                 msg += "\nCatatan: hutang antar dompet dipisah dari metrik profit.\n"
                 msg = msg.replace(',', '.')

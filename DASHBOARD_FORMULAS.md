@@ -185,7 +185,10 @@ Letakkan output di `J24` (akan mengisi `J24:N`):
 
 Tujuan:
 - Menampilkan saldo real 3 dompet sesuai logika bot:
-`Saldo Real = Internal Dompet - Debit Operasional + Hutang OPEN (borrower) + Hutang PAID (lender)`
+`Saldo Real = Internal Dompet - Debit Operasional + Hutang OPEN (borrower)`
+
+Catatan:
+- Status `PAID` sudah tercermin lewat transaksi pelunasan balik di dompet (`/lunas`), jadi jangan ditambah lagi agar tidak double count.
 
 ### 7.1 Layout tabel
 
@@ -208,8 +211,7 @@ masuk,SUMIFS(Data_Agregat!E:E,Data_Agregat!D:D,dompet,Data_Agregat!C:C,"Pemasuka
 keluar,SUMIFS(Data_Agregat!E:E,Data_Agregat!D:D,dompet,Data_Agregat!C:C,"Pengeluaran"),
 op,SUM(SUMIFS(Data_Agregat!E:E,Data_Agregat!D:D,"Operasional Kantor",Data_Agregat!C:C,{"Pengeluaran","Pengeluaran Operasional"},Data_Agregat!G:G,"*[Sumber: "&short&"]*")),
 hutang_open,SUMIFS(HUTANG!C:C,HUTANG!E:E,dompet,HUTANG!G:G,"OPEN"),
-hutang_paid,SUMIFS(HUTANG!C:C,HUTANG!F:F,dompet,HUTANG!G:G,"PAID"),
-masuk-keluar-op+hutang_open+hutang_paid
+masuk-keluar-op+hutang_open
 )
 ```
 

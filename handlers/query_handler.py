@@ -226,6 +226,9 @@ def _handle_wallet_query(dompet: str, norm_text: str, days: int, period_label: s
         op_debit = info.get("operational_debit", 0)
         if op_debit:
             lines.append(f"Potongan operasional: {_format_idr(op_debit)}")
+        hutang_open = info.get("utang_open_in", 0)
+        if hutang_open:
+            lines.append(f"Penyesuaian hutang OPEN (masuk): {_format_idr(hutang_open)}")
         return "\n".join(lines)
 
     data = get_all_data(days) if days is not None else get_all_data(None)

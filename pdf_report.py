@@ -110,6 +110,11 @@ COMPANY_COLOR = {
 OFFICE_SHEET_NAME = "Operasional Kantor"
 PELUNASAN_KEYWORDS = ["pelunasan", "lunas", "final payment", "penyelesaian", "closing"]
 PROJECT_EXCLUDE_NAMES = {"operasional", "operasional kantor", "saldo umum", "umum", "unknown", "(belum diisi)", "belum diisi"}
+_BANK_FEE_RE = re.compile(r"\b(biaya\s+transfer|fee\s+transfer|fee\s+admin|biaya\s+admin|admin\s+bank|charge)\b", re.IGNORECASE)
+_SALARY_FEE_RE = re.compile(
+    r"\b(gaji|upah|honor|borongan|lembur|mandor|tukang|kuli|fee)\b",
+    re.IGNORECASE,
+)
 
 
 # =============================================================================
@@ -390,7 +395,11 @@ def _is_expense(tx: Dict) -> bool:
 def _is_salary(tx: Dict) -> bool:
     cat = (tx.get("kategori") or "").lower()
     desc = (tx.get("keterangan") or "").lower()
-    return "gaji" in cat or "gaji" in desc
+    if "gaji" in cat:
+        return True
+    if _BANK_FEE_RE.search(desc):
+        return False
+    return bool(_SALARY_FEE_RE.search(desc))
 
 def _strip_project_markers(name: str) -> str:
     if not name:
@@ -553,6 +562,61 @@ def _project_metrics(project_txs: List[Dict]) -> Dict:
         "total_salary": total_salary, "profit": profit, "margin_pct": margin_pct,
     }
 
+
+def _project_profit_map(company_txs: List[Dict]) -> Dict[str, Dict]:
+    """Aggregate project income/expense/profit for one company scope."""
+    project_map: Dict[str, Dict] = {}
+    for tx in company_txs:
+        if _is_internal_transfer_tx(tx):
+            continue
+        proj_raw = (tx.get("nama_projek") or "").strip()
+        proj_key = _project_key(proj_raw)
+        if not proj_key or proj_key.lower() in PROJECT_EXCLUDE_NAMES:
+            continue
+        entry = project_map.setdefault(
+            proj_key,
+            {"name": _project_display_name(proj_key), "income": 0, "expense": 0, "profit": 0},
+        )
+        amt = int(tx.get("jumlah", 0) or 0)
+        if _is_income(tx):
+            entry["income"] += amt
+        else:
+            entry["expense"] += amt
+
+    for entry in project_map.values():
+        entry["profit"] = int(entry["income"] - entry["expense"])
+    return project_map
+
+
+def _rank_company_projects_last_year(all_txs: List[Dict], company: str, end_dt: datetime) -> Dict:
+    """
+    Pick best/worst project by profit in trailing 365 days for one company.
+    Returns {"best": {...}|None, "worst": {...}|None}.
+    """
+    start_dt = end_dt - timedelta(days=364)
+    scoped = []
+    for tx in all_txs:
+        tx_dt = tx.get("dt")
+        if not isinstance(tx_dt, datetime):
+            continue
+        if tx_dt < start_dt or tx_dt > end_dt:
+            continue
+        if _company_from_tx(tx) != company:
+            continue
+        scoped.append(tx)
+
+    project_map = _project_profit_map(scoped)
+    if not project_map:
+        return {"best": None, "worst": None}
+
+    entries = list(project_map.values())
+    best = max(entries, key=lambda x: int(x.get("profit", 0) or 0))
+    worst = min(entries, key=lambda x: int(x.get("profit", 0) or 0))
+    return {
+        "best": {"name": best.get("name", "-"), "profit": int(best.get("profit", 0) or 0)},
+        "worst": {"name": worst.get("name", "-"), "profit": int(worst.get("profit", 0) or 0)},
+    }
+
 def _build_context_monthly(year: int, month: int) -> Dict:
     start_dt, end_dt = _month_start_end(year, month)
     period_label = format_period_label(year, month)
@@ -612,11 +676,14 @@ def _build_context_monthly(year: int, month: int) -> Dict:
                 "timeline": timeline,
                 "max_expense": max_expense,
             })
-            
+        yearly_rank = _rank_company_projects_last_year(all_txs, comp, end_dt)
+             
         company_details[comp] = {
             "summary": comp_summary, "prev_summary": prev_comp_summary,
             "income_txs": income_txs, "expense_txs": expense_txs, "salary_txs": salary_txs,
             "finished_cards": finished_cards,
+            "year_best_project": yearly_rank.get("best"),
+            "year_worst_project": yearly_rank.get("worst"),
         }
         
     return {
@@ -634,6 +701,11 @@ def _build_context_range(start_dt: datetime, end_dt: datetime) -> Dict:
         raise PDFNoDataError(f"{start_dt.date()} - {end_dt.date()}")
     
     summary = _summarize_period(period_txs)
+    period_seconds = max(1, int((end_dt - start_dt).total_seconds()))
+    prev_end = start_dt - timedelta(seconds=1)
+    prev_start = prev_end - timedelta(seconds=period_seconds)
+    prev_txs = _filter_period(all_txs, prev_start, prev_end)
+
     company_txs_map = {comp: [] for comp in COMPANY_KEYS}
     for tx in period_txs:
         comp = _company_from_tx(tx)
@@ -652,11 +724,53 @@ def _build_context_range(start_dt: datetime, end_dt: datetime) -> Dict:
         
     finished_projects = _finished_projects_by_company(period_txs)
     period_label = f"{start_dt.strftime('%d %b %y')} - {end_dt.strftime('%d %b %y')}"
+
+    company_details = {}
+    for comp in COMPANY_KEYS:
+        comp_txs = company_txs_map[comp]
+        comp_summary = _summarize_company(comp_txs)
+        prev_comp_txs = [t for t in prev_txs if _company_from_tx(t) == comp]
+        prev_comp_summary = _summarize_company(prev_comp_txs)
+
+        income_txs = sorted([t for t in comp_txs if _is_income(t)], key=lambda x: int(x.get("jumlah", 0) or 0), reverse=True)
+        expense_txs = sorted([t for t in comp_txs if _is_expense(t) and not _is_salary(t)], key=lambda x: int(x.get("jumlah", 0) or 0), reverse=True)
+        salary_txs = sorted([t for t in comp_txs if _is_salary(t)], key=lambda x: int(x.get("jumlah", 0) or 0), reverse=True)
+
+        finished_proj_names = finished_projects.get(comp, [])
+        finished_cards = []
+        for proj_name in finished_proj_names:
+            proj_txs = [t for t in comp_txs if _project_key(t.get("nama_projek", "")) == proj_name]
+            if not proj_txs:
+                continue
+            metrics = _project_metrics(proj_txs)
+            dts = [t["dt"] for t in proj_txs if isinstance(t.get("dt"), datetime)]
+            timeline = {"start": min(dts) if dts else None, "finish": max(dts) if dts else None}
+            proj_expenses = [t for t in proj_txs if _is_expense(t) and not _is_salary(t)]
+            max_expense = max(proj_expenses, key=lambda x: int(x.get("jumlah", 0) or 0)) if proj_expenses else None
+            finished_cards.append({
+                "name": _project_display_name(proj_name),
+                "metrics": metrics,
+                "timeline": timeline,
+                "max_expense": max_expense,
+            })
+
+        yearly_rank = _rank_company_projects_last_year(all_txs, comp, end_dt)
+        company_details[comp] = {
+            "summary": comp_summary,
+            "prev_summary": prev_comp_summary,
+            "income_txs": income_txs,
+            "expense_txs": expense_txs,
+            "salary_txs": salary_txs,
+            "finished_cards": finished_cards,
+            "year_best_project": yearly_rank.get("best"),
+            "year_worst_project": yearly_rank.get("worst"),
+        }
     
     return {
         "mode": "range", "generated_on": format_generated_on(),
         "summary": summary, "income_share": income_share,
         "income_by_company": income_by_company, "finished_projects": finished_projects,
+        "company_details": company_details,
         "start_dt": start_dt, "end_dt": end_dt, "period_label": period_label,
     }
 
@@ -1065,9 +1179,13 @@ def _draw_company_header(c: canvas.Canvas, ui: UI, ctx: Dict, company: str, page
     # Company name - vertically centered, slightly smaller font
     center_y = page_h - header_h / 2 - 6
     _draw_text(c, ui.fonts["bold"], 28, THEME["white"], ui.margin, center_y, COMPANY_DISPLAY.get(company, company))
-    # Period on the right - also centered
-    month_part, year_part = ctx["period_label"].split()
-    _draw_text(c, ui.fonts["bold"], 22, THEME["white"], page_w - ui.margin, center_y + 2, f"{month_part} {year_part}", align="right")
+    # Period on the right - centered, supports both monthly and date range.
+    if ctx.get("mode") == "monthly":
+        month_part, year_part = ctx["period_label"].split()
+        period_text = f"{month_part} {year_part}"
+    else:
+        period_text = str(ctx.get("period_label") or "")
+    _draw_text(c, ui.fonts["bold"], 16 if ctx.get("mode") == "range" else 22, THEME["white"], page_w - ui.margin, center_y + 2, period_text, align="right")
 
 def _draw_tx_list_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: float, title: str, items: List[Dict], kind_color, max_items: Optional[int] = None, h: float = 200):
     """
@@ -1134,6 +1252,8 @@ def _draw_insight_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
     exp = company_details.get("expense_txs") or []
     sal = company_details.get("salary_txs") or []
     cards = company_details.get("finished_cards") or []
+    year_best = company_details.get("year_best_project")
+    year_worst = company_details.get("year_worst_project")
 
     # Helper to format line
     def fmt_line(label, val_txt, amt):
@@ -1152,7 +1272,10 @@ def _draw_insight_card(c: canvas.Canvas, ui: UI, x: float, y_top: float, w: floa
         lines.append("Fee terbesar: -")
         lines.append("Fee terkecil: -")
         
-    if cards:
+    if year_best and year_worst:
+        lines.append(f"Project terbaik 1 tahun: {year_best['name']} ({format_currency(int(year_best['profit']))})")
+        lines.append(f"Project terendah 1 tahun: {year_worst['name']} ({format_currency(int(year_worst['profit']))})")
+    elif cards:
         best = max(cards, key=lambda x: int(x["metrics"]["profit"]))
         worst = min(cards, key=lambda x: int(x["metrics"]["profit"]))
         lines.append(f"Project terbaik: {best['name']} ({format_currency(int(best['metrics']['profit']))})")
@@ -1374,7 +1497,7 @@ def draw_company_page(c: canvas.Canvas, ui: UI, ctx: Dict, company: str, page_h:
     _draw_tx_list_card(c, ui, content_x, y, col_w, "List Pemasukan", details["income_txs"], THEME["teal"], max_items=None, h=list_h)
     _draw_tx_list_card(c, ui, content_x + col_w + col_gap, y, col_w, "List Pengeluaran", details["expense_txs"], THEME["pink"], max_items=None, h=list_h)
     y -= (list_h + 20)
-    _draw_tx_list_card(c, ui, content_x, y, col_w, "List Gaji", details["salary_txs"], COMPANY_COLOR.get(company, THEME["teal"]), max_items=None, h=list_h)
+    _draw_tx_list_card(c, ui, content_x, y, col_w, "List Gaji/Fee", details["salary_txs"], COMPANY_COLOR.get(company, THEME["teal"]), max_items=None, h=list_h)
     _draw_insight_card(c, ui, content_x + col_w + col_gap, y, col_w, details, h=list_h)
     y -= (list_h + 28)
     _draw_text(c, ui.fonts["bold"], 16, THEME["text"], content_x, y, "Finished Projects")
@@ -1434,6 +1557,12 @@ def generate_pdf_report_v4_range(start_dt: datetime, end_dt: datetime, output_di
     logo_path = _get_logo_path()
     c = canvas.Canvas(output_path, pagesize=A4)
     draw_cover_periodical(c, ui, ctx, logo_path=logo_path)
+    c.showPage()
+    for comp in COMPANY_KEYS:
+        page_h = _estimate_company_page_height(ui, ctx["company_details"][comp], base_h=1700)
+        c.setPageSize((A4[0], page_h))
+        draw_company_page(c, ui, ctx, comp, page_h=page_h)
+        c.showPage()
     c.save()
     secure_log("INFO", f"PDF generated: {output_path}")
     return output_path
