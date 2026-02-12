@@ -28,7 +28,7 @@ load_dotenv()
 
 # ===================== GLOBAL IMPORTS =====================
 # AI & Data Processing
-from ai_helper import extract_financial_data, RateLimitException
+from ai_helper import extract_financial_data, RateLimitException, extract_source_wallet_from_ocr, split_ocr_user_text
 
 # Google Sheets Integration
 from sheets_helper import (
@@ -1652,8 +1652,14 @@ Balas 1 atau 2"""
                         (t.get('detected_dompet') for t in txs if t.get('detected_dompet')),
                         None,
                     )
+                    # OCR-aware wallet detection: parse account numbers from receipt
                     if not source_wallet:
-                        source_wallet = resolve_dompet_from_text(original_text)
+                        user_part, ocr_part = split_ocr_user_text(original_text)
+                        if ocr_part:
+                            source_wallet = extract_source_wallet_from_ocr(ocr_part)
+                        # Fallback: resolve from user caption only (not OCR body)
+                        if not source_wallet:
+                            source_wallet = resolve_dompet_from_text(user_part)
                     if source_wallet:
                         pending['selected_source_wallet'] = source_wallet
                 
@@ -1849,7 +1855,12 @@ Balas 1 atau 2"""
                 else:
                     dompet = get_dompet_for_company(detected_company)
             
-            explicit_dompet = resolve_dompet_from_text(original_text)
+            # OCR-aware: resolve dompet from user caption (not OCR body)
+            user_part, ocr_part = split_ocr_user_text(original_text)
+            explicit_dompet = resolve_dompet_from_text(user_part)
+            # If user caption didn't mention a wallet, try OCR account numbers
+            if not explicit_dompet and ocr_part:
+                explicit_dompet = extract_source_wallet_from_ocr(ocr_part)
             if explicit_dompet:
                 if has_debt_context and debt_source_hint and explicit_dompet == debt_source_hint:
                     secure_log(

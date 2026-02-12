@@ -1109,6 +1109,157 @@ def _extract_dompet_from_text(clean_text: str) -> str:
     return result if result else ""
 
 
+# ===================== OCR WALLET DETECTION =====================
+
+# Known wallet account prefixes → canonical dompet sheet name
+_WALLET_ACCOUNT_PREFIXES = {
+    "101": "CV HB(101)",
+    "216": "TX SBY(216)",
+    "087": "TX BALI(087)",
+}
+
+# Labels that indicate the SOURCE account (the account sending money)
+_SOURCE_ACCOUNT_LABELS = re.compile(
+    r"(?:from\s*account|source\s*(?:of\s*)?fund[s]?|dari\s*rekening|sumber\s*dana"
+    r"|rekening\s*sumber|no\.?\s*rekening\s*(?:pengirim|asal|sumber)"
+    r"|pengirim|sender\s*account|debit\s*account"
+    r"|rek(?:ening)?\.?\s*(?:pengirim|asal))",
+    re.IGNORECASE,
+)
+
+# Labels that indicate the DESTINATION account (should NOT be used as source)
+_DEST_ACCOUNT_LABELS = re.compile(
+    r"(?:to\s*account|beneficiary\s*account|tujuan|penerima"
+    r"|rekening\s*tujuan|destination|credit\s*account"
+    r"|rek(?:ening)?\.?\s*(?:tujuan|penerima))",
+    re.IGNORECASE,
+)
+
+# Pattern to extract account numbers (with optional masking: 087-1**-**20)
+_ACCOUNT_NUMBER_RE = re.compile(
+    r"(?:^|[:\s])\s*"
+    r"((?:101|216|087)"                # Known 3-digit prefix
+    r"[\s\-./]*"                        # separator
+    r"[\d*]{1,5}"                       # middle segment (may be masked)
+    r"[\s\-./]*"                        # separator
+    r"[\d*]{0,6})"                      # end segment (may be masked)
+    r"(?:\s|$|[,;)])",
+    re.IGNORECASE,
+)
+
+# Broader: any masked account pattern (e.g., "087-1**-**20")
+_MASKED_ACCOUNT_RE = re.compile(
+    r"\b((?:101|216|087)"
+    r"[\s\-./]+"
+    r"[\d*]+(?:[\s\-./]+[\d*]+)*)"
+    r"\b",
+)
+
+
+def extract_source_wallet_from_ocr(ocr_text: str) -> Optional[str]:
+    """
+    Extract source wallet from OCR receipt text by parsing account numbers.
+
+    Multi-layer strategy:
+    1. Find labeled source account fields (From Account, Source of Fund, etc.)
+       → extract 3-digit prefix → map to wallet
+    2. Scan for masked account patterns with known prefixes (087-1**-**20)
+       → exclude lines that are clearly destination accounts
+    3. Return None if no confident match (caller should ask user)
+    """
+    if not ocr_text:
+        return None
+
+    lines = ocr_text.splitlines()
+
+    # ── Layer 1: Labeled source account fields ──
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Skip lines that are clearly destination/beneficiary
+        if _DEST_ACCOUNT_LABELS.search(stripped):
+            continue
+
+        if _SOURCE_ACCOUNT_LABELS.search(stripped):
+            # Found a source account label – extract the prefix
+            wallet = _extract_wallet_prefix_from_line(stripped)
+            if wallet:
+                secure_log("INFO", f"OCR wallet detected via labeled field: {wallet}")
+                return wallet
+
+    # ── Layer 2: Scan masked account patterns (excluding destination lines) ──
+    source_candidates = []
+    dest_prefixes = set()
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        is_dest_line = bool(_DEST_ACCOUNT_LABELS.search(stripped))
+
+        for m in _MASKED_ACCOUNT_RE.finditer(stripped):
+            raw = m.group(1)
+            prefix = raw[:3]
+            if prefix in _WALLET_ACCOUNT_PREFIXES:
+                if is_dest_line:
+                    dest_prefixes.add(prefix)
+                else:
+                    source_candidates.append(prefix)
+
+    # Remove prefixes that also appear as destination
+    filtered = [p for p in source_candidates if p not in dest_prefixes]
+    if filtered:
+        wallet = _WALLET_ACCOUNT_PREFIXES.get(filtered[0])
+        if wallet:
+            secure_log("INFO", f"OCR wallet detected via account pattern: {wallet}")
+            return wallet
+
+    # If we only found destination accounts, don't guess
+    if source_candidates and not filtered:
+        return None
+
+    # ── Layer 3: Last resort – any known prefix in non-dest context ──
+    if source_candidates:
+        wallet = _WALLET_ACCOUNT_PREFIXES.get(source_candidates[0])
+        if wallet:
+            secure_log("INFO", f"OCR wallet detected (fallback): {wallet}")
+            return wallet
+
+    return None
+
+
+def _extract_wallet_prefix_from_line(line: str) -> Optional[str]:
+    """Extract wallet from a line known to contain a source account label."""
+    # Try structured extraction first
+    m = _ACCOUNT_NUMBER_RE.search(line)
+    if m:
+        raw = m.group(1).strip()
+        prefix = raw[:3]
+        return _WALLET_ACCOUNT_PREFIXES.get(prefix)
+
+    # Fallback: look for bare 3-digit prefix after the label
+    for prefix in _WALLET_ACCOUNT_PREFIXES:
+        if re.search(rf"\b{prefix}\b", line):
+            return _WALLET_ACCOUNT_PREFIXES[prefix]
+
+    return None
+
+
+def split_ocr_user_text(original_text: str) -> tuple:
+    """
+    Split combined text into (user_caption, ocr_body).
+    Returns (original_text, "") if no OCR marker found.
+    """
+    marker = "Receipt/Struk content:"
+    if marker in original_text:
+        parts = original_text.split(marker, 1)
+        return parts[0].strip(), parts[1].strip()
+    return original_text, ""
+
+
 def extract_from_text(text: str, sender_name: str) -> List[Dict]:
     try:
         clean_text = sanitize_input(text)
