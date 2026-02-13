@@ -423,6 +423,11 @@ def _is_internal_transfer_tx(tx: Dict) -> bool:
     Detect non-operational internal movements that should not affect
     company/project profitability in PDF analytics.
     """
+    # Office sheet rows are real operational expenses and must be counted
+    # in period summary. Do not treat them as internal transfers.
+    if (tx.get("company_sheet") or "").strip() == OFFICE_SHEET_NAME:
+        return False
+
     proj_raw = (tx.get("nama_projek") or "").strip()
     proj_base = _strip_project_markers(proj_raw).lower()
     if proj_base in PROJECT_EXCLUDE_NAMES:
@@ -630,12 +635,23 @@ def _build_context_monthly(year: int, month: int) -> Dict:
     prev_start, prev_end = _month_start_end(prev_year, prev_month)
     prev_txs = _filter_period(all_txs, prev_start, prev_end)
     prev_summary = _summarize_period(prev_txs)
-    
+
+    # Data snapshot as of period end, used for robust finished-project accumulation.
+    as_of_txs = [
+        t for t in all_txs
+        if isinstance(t.get("dt"), datetime) and t["dt"] <= end_dt
+    ]
+
     company_txs_map = {comp: [] for comp in COMPANY_KEYS}
+    company_txs_asof_map = {comp: [] for comp in COMPANY_KEYS}
     for tx in period_txs:
         comp = _company_from_tx(tx)
         if comp and comp in company_txs_map:
             company_txs_map[comp].append(tx)
+    for tx in as_of_txs:
+        comp = _company_from_tx(tx)
+        if comp and comp in company_txs_asof_map:
+            company_txs_asof_map[comp].append(tx)
             
     income_by_company = {}
     for comp in COMPANY_KEYS:
@@ -651,6 +667,7 @@ def _build_context_monthly(year: int, month: int) -> Dict:
     company_details = {}
     for comp in COMPANY_KEYS:
         comp_txs = company_txs_map[comp]
+        comp_txs_asof = company_txs_asof_map[comp]
         comp_summary = _summarize_company(comp_txs)
         prev_comp_txs = [t for t in prev_txs if _company_from_tx(t) == comp]
         prev_comp_summary = _summarize_company(prev_comp_txs)
@@ -662,7 +679,7 @@ def _build_context_monthly(year: int, month: int) -> Dict:
         finished_proj_names = finished_projects.get(comp, [])
         finished_cards = []
         for proj_name in finished_proj_names:
-            proj_txs = [t for t in comp_txs if _project_key(t.get("nama_projek", "")) == proj_name]
+            proj_txs = [t for t in comp_txs_asof if _project_key(t.get("nama_projek", "")) == proj_name]
             if not proj_txs:
                 continue
             metrics = _project_metrics(proj_txs)
@@ -706,11 +723,22 @@ def _build_context_range(start_dt: datetime, end_dt: datetime) -> Dict:
     prev_start = prev_end - timedelta(seconds=period_seconds)
     prev_txs = _filter_period(all_txs, prev_start, prev_end)
 
+    # Data snapshot as of report end date, used for robust finished-project accumulation.
+    as_of_txs = [
+        t for t in all_txs
+        if isinstance(t.get("dt"), datetime) and t["dt"] <= end_dt
+    ]
+
     company_txs_map = {comp: [] for comp in COMPANY_KEYS}
+    company_txs_asof_map = {comp: [] for comp in COMPANY_KEYS}
     for tx in period_txs:
         comp = _company_from_tx(tx)
         if comp and comp in company_txs_map:
             company_txs_map[comp].append(tx)
+    for tx in as_of_txs:
+        comp = _company_from_tx(tx)
+        if comp and comp in company_txs_asof_map:
+            company_txs_asof_map[comp].append(tx)
             
     income_by_company = {}
     for comp in COMPANY_KEYS:
@@ -728,6 +756,7 @@ def _build_context_range(start_dt: datetime, end_dt: datetime) -> Dict:
     company_details = {}
     for comp in COMPANY_KEYS:
         comp_txs = company_txs_map[comp]
+        comp_txs_asof = company_txs_asof_map[comp]
         comp_summary = _summarize_company(comp_txs)
         prev_comp_txs = [t for t in prev_txs if _company_from_tx(t) == comp]
         prev_comp_summary = _summarize_company(prev_comp_txs)
@@ -739,7 +768,7 @@ def _build_context_range(start_dt: datetime, end_dt: datetime) -> Dict:
         finished_proj_names = finished_projects.get(comp, [])
         finished_cards = []
         for proj_name in finished_proj_names:
-            proj_txs = [t for t in comp_txs if _project_key(t.get("nama_projek", "")) == proj_name]
+            proj_txs = [t for t in comp_txs_asof if _project_key(t.get("nama_projek", "")) == proj_name]
             if not proj_txs:
                 continue
             metrics = _project_metrics(proj_txs)
