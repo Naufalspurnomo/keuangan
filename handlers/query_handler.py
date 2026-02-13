@@ -541,21 +541,34 @@ def _handle_finished_projects_query(norm_text: str, days: int, period_label: str
     """Handle queries about finished projects."""
     data = get_all_data(days) if days is not None else get_all_data(None)
 
-    # Find all unique project names with (Finish) marker
-    finished_projects = {}
+    # Build project buckets by base name (without Start/Finish marker).
+    # A project is included only if at least one tx has Finish marker.
+    projects_by_base = {}
     for d in data:
         proj = d.get("nama_projek", "").strip()
         if not proj:
             continue
+        base = _normalize_project_label(proj)
+        if not base:
+            continue
+
+        bucket = projects_by_base.setdefault(
+            base,
+            {
+                "rows_all": [],
+                "rows_finish": [],
+                "display_name": "",
+            },
+        )
+        bucket["rows_all"].append(d)
+
         proj_lower = proj.lower()
         if "(finish)" in proj_lower or "finish" in proj_lower:
-            base = _normalize_project_label(proj)
-            if base not in finished_projects:
-                finished_projects[base] = {
-                    "name": proj,
-                    "rows": [],
-                }
-            finished_projects[base]["rows"].append(d)
+            bucket["rows_finish"].append(d)
+            # Keep latest finish label as display name when available.
+            bucket["display_name"] = proj
+
+    finished_projects = {b: info for b, info in projects_by_base.items() if info["rows_finish"]}
 
     if not finished_projects:
         return f"Tidak ada projek yang finish ({period_label})."
@@ -566,9 +579,9 @@ def _handle_finished_projects_query(norm_text: str, days: int, period_label: str
         f"📋 {len(finished_projects)} projek selesai",
     ]
 
-    for i, (_, info) in enumerate(sorted(finished_projects.items(), key=lambda x: -len(x[1]["rows"])), 1):
-        rows = info["rows"]
-        name = info["name"]
+    for i, (_, info) in enumerate(sorted(finished_projects.items(), key=lambda x: -len(x[1]["rows_all"])), 1):
+        rows = info["rows_all"]
+        name = info["display_name"] or (rows[-1].get("nama_projek", "") if rows else "Projek")
         income = sum(d.get("jumlah", 0) for d in rows if d.get("tipe") == "Pemasukan")
         expense = sum(d.get("jumlah", 0) for d in rows if d.get("tipe") == "Pengeluaran")
         profit = income - expense
