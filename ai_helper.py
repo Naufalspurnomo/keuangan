@@ -361,6 +361,13 @@ def _extract_explicit_project_hint(text: str) -> str:
 
     tail = m.group(1).split("\n", 1)[0]
     tail = re.split(r"[;|]", tail, maxsplit=1)[0]
+    # Stop when tail enters explicit wallet/company context.
+    tail = re.sub(
+        r"\b(?:tx\s*sby|tx\s*bali|cv\s*hb(?:\s*\(\d+\))?|texturin(?:\s*[- ]\s*(?:surabaya|bali))?)\b.*$",
+        "",
+        tail,
+        flags=re.IGNORECASE,
+    )
     tail = re.split(
         r"\b(?:utang|hutang|minjam|minjem|pinjam|dari|dr|pakai|via|dompet|wallet|rekening|rek|rp|sebesar|senilai)\b",
         tail,
@@ -391,9 +398,10 @@ def _extract_explicit_project_hint(text: str) -> str:
 
     # Stop at trailing narrative words once a core project token already exists.
     pruned = []
+    trailing_wallet_tokens = {"tx", "sby", "cv", "hb", "texturin", "surabaya"}
     for token in parts:
         token_lower = token.lower()
-        if pruned and token_lower in PROJECT_STOPWORDS:
+        if pruned and (token_lower in PROJECT_STOPWORDS or token_lower in trailing_wallet_tokens):
             break
         pruned.append(token)
         if len(pruned) >= 4:
@@ -430,10 +438,11 @@ def _enforce_transaction_type_semantics(tx: Dict, clean_text: str) -> None:
     # Exception: "biaya transfer"/"fee transfer"/"fee admin" are bank fees, already handled
     # as separate Pengeluaran transactions elsewhere.
     _bank_fee_pattern = re.compile(r"\bfee\s+(transfer|admin|bank)\b")
-    has_fee_signal = (
-        bool(re.search(r"\bfee\b", ket) or re.search(r"\bfee\b", text_lower))
-        and not _bank_fee_pattern.search(ket)
-    )
+    # IMPORTANT:
+    # OCR body often contains a generic "Fee" line from bank receipts.
+    # Do not let that global OCR token flip an incoming transaction into expense.
+    # Only treat fee as expense-signal when the fee word is in transaction description itself.
+    has_fee_signal = bool(re.search(r"\bfee\b", ket)) and not _bank_fee_pattern.search(ket)
 
     has_income_hint = any(term in ket for term in _INCOME_HINT_TERMS) or any(
         term in text_lower for term in _INCOME_HINT_TERMS
@@ -444,7 +453,8 @@ def _enforce_transaction_type_semantics(tx: Dict, clean_text: str) -> None:
             r"pemasukan|terima|diterima|refund|cashback|pengembalian dana|dana kembali|"
             r"uang masuk|transfer masuk|"
             r"masuk\s+(?:dp|down payment|termin|pelunasan)|"
-            r"(?:dp|down payment|termin|pelunasan)\s+masuk"
+            r"(?:dp|down payment|termin|pelunasan)\s+masuk|"
+            r"(?:pelunasan|termin|down payment|dp)\s+(?:projek|project|proyek|prj)"
             r")\b",
             text_lower,
         )
@@ -1360,6 +1370,11 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
         if not regex_wallet and not ocr_body:
             regex_wallet = detect_wallet_from_text(clean_text)
         explicit_project_hint = _extract_explicit_project_hint(clean_text)
+        text_without_amount_signal = (
+            not wallet_update
+            and not ocr_body
+            and not has_amount_pattern(user_caption or clean_text)
+        )
 
         for t in transactions:
             is_valid, error, sanitized = validate_transaction_data(t)
@@ -1463,6 +1478,14 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
 
             # 3d. Deterministic guardrail for wrong direction (Pemasukan/Pengeluaran).
             _enforce_transaction_type_semantics(sanitized, clean_text)
+
+            # Text-only safety:
+            # If user did not provide any numeric amount signal, never trust hallucinated amount.
+            # Force amount confirmation so follow-up image/nominal can upgrade it safely.
+            if text_without_amount_signal:
+                sanitized["jumlah"] = 0
+                sanitized["needs_amount"] = True
+                secure_log("INFO", "No amount signal in text-only input; marking needs_amount")
 
             # 4. DETERMINISTIC FALLBACK: Check if AI confused company with project
             # If nama_projek matches a known company name, re-extract from description

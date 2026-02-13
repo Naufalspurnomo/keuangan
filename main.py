@@ -2826,7 +2826,7 @@ Balas 1 atau 2"""
             
             # Check for standard commands
             if is_command_match(text, Commands.UNDO, is_group):
-                 revision_result = handle_undo_command(sender_number, chat_jid)
+                 revision_result = handle_undo_command(sender_number, chat_jid, quoted_msg_id)
             
             # Check for /revisi command or reply revision
             elif should_try_quoted_revision or is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):

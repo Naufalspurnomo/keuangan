@@ -306,31 +306,39 @@ Atau reply pesan ini dengan detail yang benar.'''
 
     return None
 
-def handle_undo_command(user_id: str, chat_id: str) -> dict:
+def handle_undo_command(user_id: str, chat_id: str, quoted_message_id: str = None) -> dict:
     """
     Delete the last transaction created by this user.
     """
     
-    # Get last bot report for this user/chat
-    last_msg_id = get_last_bot_report(chat_id)
-    
-    if not last_msg_id:
+    is_group = bool(chat_id and chat_id.endswith('@g.us'))
+    original_tx_id = ""
+
+    # Group safety: /undo should target explicit replied bot report.
+    if is_group:
+        if not quoted_message_id:
+            return {
+                'action': 'REPLY',
+                'response': '💡 Di grup, /undo wajib reply pesan "Transaksi Tercatat!" yang ingin dihapus.'
+            }
+        original_tx_id = get_original_message_id(quoted_message_id) or ""
+        if not original_tx_id:
+            # Fallback for rare cases where quoted ID is the event/message ID itself.
+            direct_items = find_all_transactions_by_message_id(quoted_message_id)
+            if direct_items:
+                original_tx_id = quoted_message_id
+    else:
+        # DM flow: prefer user-specific last tx, then last bot report fallback.
+        original_tx_id = get_last_tx_event(user_id, chat_id) or ""
+        if not original_tx_id:
+            last_msg_id = get_last_bot_report(chat_id)
+            if last_msg_id:
+                original_tx_id = get_original_message_id(last_msg_id) or ""
+
+    if not original_tx_id:
         return {
             'action': 'REPLY',
-            'response': '❌ Tidak ada transaksi terbaru untuk di-undo (Bot report not found).'
-        }
-    
-    # Get original transaction ID
-    original_tx_id = get_original_message_id(last_msg_id)
-    
-    if not original_tx_id:
-         # Try direct check if user replied to bot message even if not cached as 'last'
-         pass
-         
-    if not original_tx_id:
-        return {
-            'action': 'REPLY',
-            'response': '❌ Data transaksi tidak ditemukan.'
+            'response': '❌ Data transaksi tidak ditemukan. Reply pesan laporan bot yang benar.'
         }
     
     # Fetch transactions

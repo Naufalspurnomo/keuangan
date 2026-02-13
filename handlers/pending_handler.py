@@ -104,9 +104,10 @@ def _sanitize_project_candidate(raw_name: str) -> str:
         return ""
 
     pruned = []
+    trailing_wallet_tokens = {"tx", "sby", "cv", "hb", "texturin", "surabaya"}
     for token in parts:
         t = token.lower()
-        if pruned and t in PROJECT_STOPWORDS:
+        if pruned and (t in PROJECT_STOPWORDS or t in trailing_wallet_tokens):
             break
         pruned.append(token)
         if len(pruned) >= 4:

@@ -449,13 +449,6 @@ Solusi:
 - kirim ulang dengan format jelas (`150rb`, `1.2jt`, `150000`)
 - hindari campuran karakter non-angka
 
-### Kasus: Salah pilih mode project/operasional
-
-Solusi:
-
-- gunakan `/revisi operational` atau `/revisi project NamaProject`
-- jika masih pending, gunakan opsi switch mode dari menu
-
 ### Kasus: OCR tidak kebaca
 
 Solusi:

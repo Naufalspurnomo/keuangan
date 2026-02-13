@@ -855,6 +855,28 @@ def append_project_transaction(
             cols = SPLIT_PENGELUARAN
             no_col = cols['NO']
         
+        message_id = (transaction.get('message_id', '') or '').strip()
+
+        # Idempotency guard (multi-replica safe): skip duplicate message_id in the same block.
+        if message_id:
+            try:
+                existing_ids = [
+                    str(v).strip()
+                    for v in sheet.col_values(cols['MESSAGE_ID'])[SPLIT_LAYOUT_DATA_START - 1:]
+                    if str(v).strip()
+                ]
+                if message_id in existing_ids:
+                    secure_log("INFO", f"Project TX duplicate ignored: {dompet_sheet} {tipe} message_id={message_id}")
+                    return {
+                        'success': True,
+                        'duplicate': True,
+                        'dompet': dompet_sheet,
+                        'tipe': tipe,
+                        'jumlah': abs(int(transaction.get('jumlah', 0) or 0)),
+                    }
+            except Exception as dedupe_err:
+                secure_log("WARNING", f"Project TX dedupe check failed: {type(dedupe_err).__name__}: {str(dedupe_err)}")
+
         # Find next empty row and count for numbering
         next_row = _find_next_empty_row(sheet, no_col, SPLIT_LAYOUT_DATA_START)
         entry_count = _count_entries_in_block(sheet, no_col, SPLIT_LAYOUT_DATA_START)
@@ -865,8 +887,6 @@ def append_project_transaction(
         keterangan = sanitize_input(str(transaction.get('keterangan', '')))[:200]
         safe_sender = sanitize_input(sender_name)[:50]
         safe_project = sanitize_input(project_name)[:100]
-        message_id = transaction.get('message_id', '')
-        
         row_data = [
             entry_count + 1,                    # No
             now.strftime('%H:%M:%S'),           # Waktu
