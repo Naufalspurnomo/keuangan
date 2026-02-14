@@ -71,7 +71,6 @@ from services.state_manager import (
     # New Pending Confirmations
     get_pending_confirmation, set_pending_confirmation,
     has_pending_confirmation,
-    find_pending_confirmation_in_chat,
     store_user_message, get_user_last_message, clear_user_last_message,
     get_project_lock, set_project_lock
 )
@@ -124,7 +123,7 @@ from utils.wallet_updates import (
 # Configuration
 from config.constants import Commands, Timeouts, GROUP_TRIGGERS, SPREADSHEET_ID, OPERATIONAL_KEYWORDS, FAST_MODE
 from config.errors import UserErrors
-from config.allowlist import is_sender_allowed
+from config.allowlist import is_sender_allowed, is_session_delegate
 from config.wallets import (
     format_wallet_selection_prompt,
     get_wallet_selection_by_idx,
@@ -148,6 +147,7 @@ app = Flask(__name__)
 DEBUG = os.getenv('FLASK_DEBUG', '0') == '1'
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 IMAGE_GRACE_SECONDS = int(os.getenv('IMAGE_GRACE_SECONDS', '5'))
+OWNER_FAST_FOLLOW_SECONDS = int(os.getenv('OWNER_FAST_FOLLOW_SECONDS', '3'))
 GROUP_REPLY_HINT_COOLDOWN_SECONDS = int(os.getenv('GROUP_REPLY_HINT_COOLDOWN_SECONDS', '25'))
 GROUP_REPLY_HINT_CHAT_COOLDOWN_SECONDS = int(os.getenv('GROUP_REPLY_HINT_CHAT_COOLDOWN_SECONDS', '12'))
 _group_reply_hint_cache: Dict[str, datetime] = {}
@@ -1444,6 +1444,46 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 return fallback_user
             return user_part
 
+        def _is_delegate_actor() -> bool:
+            """Check whether current sender is configured as session delegate/admin."""
+            return is_session_delegate([sender_number, sender_jid])
+
+        def _extract_pending_owner_from_key(target_pkey: str) -> str:
+            """Extract owner user-id from pending key format '<chat_id>:<user_id>'."""
+            pkey_text = str(target_pkey or "").strip()
+            if not pkey_text:
+                return ""
+            if chat_jid and pkey_text.startswith(f"{chat_jid}:"):
+                return pkey_text.split(":", 1)[1]
+            if "@g.us:" in pkey_text:
+                return pkey_text.split(":", 1)[1]
+            return pkey_text
+
+        def _can_access_group_session(owner_user: str, via_reply: bool) -> bool:
+            """
+            Group rule:
+            - owner can always continue
+            - delegate can continue only when replying to bound prompt/visual
+            """
+            owner = str(owner_user or "").strip()
+            if not owner or owner == sender_number:
+                return True
+            if is_group and via_reply and _is_delegate_actor():
+                return True
+            return False
+
+        def _can_access_pending_key(target_pkey: str, via_reply: bool) -> bool:
+            return _can_access_group_session(
+                _extract_pending_owner_from_key(target_pkey),
+                via_reply=via_reply
+            )
+
+        def _session_access_denied_message() -> str:
+            return (
+                "⚠️ Sesi ini milik user lain. "
+                "Minta owner atau delegate (admin) reply ke prompt/struk yang benar."
+            )
+
         def _count_active_group_sessions(target_chat_id: str) -> int:
             """Count active pending transaction + confirmation sessions in a group chat."""
             if not target_chat_id:
@@ -1509,7 +1549,8 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             if missing_tx:
                 pending['pending_type'] = 'needs_amount'
                 item = missing_tx.get('keterangan', 'Transaksi')
-                send_reply(f"Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
+                sent = send_reply(f"Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
+                cache_prompt(pkey, pending, sent)
                 return jsonify({'status': 'asking_amount'}), 200
 
             def _assign_tx_ids(transactions: list, event_id: str) -> None:
@@ -2202,7 +2243,13 @@ Balas 1 atau 2"""
         
         # 2. Visual Buffer (store all images for "catat diatas" binding)
         if input_type == 'image' and not deferred:
-            recent_text_for_image = (get_user_last_message(sender_number, chat_jid, max_age_seconds=30) or "").strip()
+            recent_text_for_image = (
+                get_user_last_message(
+                    sender_number,
+                    chat_jid,
+                    max_age_seconds=max(1, OWNER_FAST_FOLLOW_SECONDS)
+                ) or ""
+            ).strip()
             if recent_text_for_image:
                 recent_lower = recent_text_for_image.lower()
                 if re.search(r"\b(operasional|kantor|operational|office|ops)\b", recent_lower):
@@ -2247,6 +2294,10 @@ Balas 1 atau 2"""
                         user_pending_data = _pending_transactions.get(user_pending_key)
                         if user_pending_data and not pending_is_expired(user_pending_data):
                             quoted_pending_ref = user_pending_key
+                if quoted_pending_ref and not _can_access_pending_key(
+                    quoted_pending_ref, via_reply=bool(quoted_msg_id)
+                ):
+                    quoted_pending_ref = ''
                 if not quoted_pending_ref:
                     if should_send_group_reply_hint(chat_jid, sender_number, "reply_required_for_answers"):
                         send_reply("⚠️ Untuk jawaban (angka/ya/nominal), wajib *reply* ke pesan bot yang ingin dijawab.")
@@ -2264,6 +2315,9 @@ Balas 1 atau 2"""
         if is_group and quoted_msg_id:
             quoted_pending_key = get_pending_key_from_message(quoted_msg_id) or ''
             if quoted_pending_key:
+                if not _can_access_pending_key(quoted_pending_key, via_reply=True):
+                    send_reply(_session_access_denied_message())
+                    return jsonify({'status': 'session_access_denied'}), 200
                 secure_log("DEBUG", f"Found pending ref: {quoted_msg_id[:20]}... -> {quoted_pending_key}")
             else:
                 secure_log("DEBUG", f"No pending ref for quoted_msg_id: {quoted_msg_id[:20]}...")
@@ -2280,35 +2334,18 @@ Balas 1 atau 2"""
             if pending_conf:
                 pending_conf_key = f"{chat_jid}:{sender_number}"
 
-        if not pending_conf and is_group and text and not quoted_msg_id:
-            # Allow other group members to answer if only one pending confirmation exists
-            t = text.strip().lower()
-            has_choice_token = bool(re.search(r"(?<!\d)[12](?![\d.,])", t))
-            is_quick_reply = (
-                bool(re.fullmatch(r"\d{1,2}", t)) or
-                has_choice_token or
-                t in ['ya', 'y', 'iya', 'ok', 'oke', 'yes', 'no', 'tidak', 'bukan',
-                      'simpan', 'batal', 'cancel', '/cancel']
-            )
-            if is_quick_reply:
-                conf_key, conf_data = find_pending_confirmation_in_chat(chat_jid)
-                if conf_data:
-                    # Safety: do not allow cross-user quick reply to execute destructive undo flow.
-                    own_conf_key = f"{chat_jid}:{sender_number}"
-                    if conf_key != own_conf_key and conf_data.get('type') == 'undo_confirmation':
-                        secure_log(
-                            "INFO",
-                            f"Skip cross-user undo confirmation in group for {sender_number} (owner={conf_key})"
-                        )
-                    else:
-                        pending_conf = conf_data
-                        pending_conf_key = conf_key
+        # Strict group mode: quick confirmations without reply are never auto-routed.
+        # This avoids accidental takeover when multiple users are active.
         if pending_conf:
             pending_conf_user = _get_pending_owner_user_from_key(
                 pending_conf_key,
                 chat_jid,
                 sender_number
             )
+            if is_group and pending_conf_user != sender_number:
+                if not (quoted_msg_id and _is_delegate_actor()):
+                    send_reply(_session_access_denied_message())
+                    return jsonify({'status': 'session_access_denied'}), 200
             if input_type == 'image' and not (text or '').strip():
                 secure_log(
                     "INFO",
@@ -2351,7 +2388,11 @@ Balas 1 atau 2"""
         pending_pkey = sender_pkey
         if is_group and quoted_msg_id:
             mapped = quoted_pending_key or get_pending_key_from_message(quoted_msg_id)
-            if mapped: pending_pkey = mapped
+            if mapped:
+                if not _can_access_pending_key(mapped, via_reply=True):
+                    send_reply(_session_access_denied_message())
+                    return jsonify({'status': 'session_access_denied'}), 200
+                pending_pkey = mapped
             
         pending_data = _pending_transactions.get(pending_pkey)
         if pending_data and pending_is_expired(pending_data):
@@ -2359,6 +2400,16 @@ Balas 1 atau 2"""
             pending_data = None
             
         has_pending = pending_data is not None
+        if has_pending and is_group:
+            pending_owner = str(
+                pending_data.get('sender_number')
+                or _extract_pending_owner_from_key(pending_pkey)
+                or ""
+            ).strip()
+            if pending_owner and pending_owner != sender_number:
+                if not (quoted_msg_id and _is_delegate_actor()):
+                    send_reply(_session_access_denied_message())
+                    return jsonify({'status': 'session_access_denied'}), 200
 
         # If /cancel is sent without any pending flow, clear visual buffer and stop.
         if is_command_match(text, Commands.CANCEL, is_group) and not has_pending and not pending_conf:
@@ -2366,24 +2417,15 @@ Balas 1 atau 2"""
             send_reply(UserErrors.CANCELLED)
             return jsonify({'status': 'cancelled_no_pending'}), 200
 
-        # If user replies with a selection number but no pending is found,
-        # try to resolve a single active pending in the same group chat.
+        # If user sends a bare selection number without pending context:
+        # - in group: require reply to avoid cross-session mistakes
+        # - in private: keep legacy fallback message
         if not has_pending:
             clean_sel = (text or "").strip()
             if clean_sel.isdigit() and len(clean_sel) <= 2:
                 if is_group and chat_jid:
-                    candidates = []
-                    for pkey, pval in _pending_transactions.items():
-                        if not isinstance(pkey, str):
-                            continue
-                        if pkey.startswith(chat_jid) and pval and not pending_is_expired(pval):
-                            candidates.append((pkey, pval))
-                    if len(candidates) == 1:
-                        pending_pkey, pending_data = candidates[0]
-                        has_pending = True
-                    else:
-                        send_reply("⚠️ Tidak ada pertanyaan aktif atau sesi sudah kedaluwarsa.\nBalas (reply) pesan bot yang sesuai atau kirim ulang transaksi.")
-                        return jsonify({'status': 'no_pending_selection'}), 200
+                    send_reply("Jawaban angka di grup wajib *reply* ke prompt bot yang sesuai.")
+                    return jsonify({'status': 'reply_required_for_selection'}), 200
                 else:
                     send_reply("⚠️ Tidak ada pertanyaan aktif atau sesi sudah kedaluwarsa.\nKirim ulang transaksi ya.")
                     return jsonify({'status': 'no_pending_selection'}), 200
@@ -2969,7 +3011,8 @@ Balas 1 atau 2"""
                                 continue
                         if has_any_positive_amount:
                             item = missing_tx.get('keterangan', 'Transaksi')
-                            send_reply(f"Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
+                            sent = send_reply(f"Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
+                            cache_prompt(pending_pkey, pending, sent)
                         else:
                             send_reply(
                                 "📷 OCR belum berhasil membaca nominal dari struk. "
@@ -3022,7 +3065,8 @@ Balas 1 atau 2"""
                         if not is_pending_interaction:
                             return jsonify({'status': 'ignored_pending_chatter'}), 200
 
-                    send_reply("❗ Nominalnya berapa? (contoh: 150rb)")
+                    sent = send_reply("❗ Nominalnya berapa? (contoh: 150rb)")
+                    cache_prompt(pending_pkey, pending, sent)
                     return jsonify({'status': 'asking_amount'}), 200
                 
                 for t in pending.get('transactions', []):
@@ -3558,6 +3602,7 @@ Balas 1 atau 2"""
             _pending_transactions[sender_pkey] = {
                 'transactions': transactions,
                 'sender_name': sender_name,
+                'sender_number': sender_number,
                 'source': source_label,
                 'created_at': datetime.now(),
                 'message_id': event_id,
@@ -3603,7 +3648,8 @@ Balas 1 atau 2"""
                         t['needs_amount'] = True
                 _pending_transactions[sender_pkey]['pending_type'] = 'needs_amount'
                 item = missing_tx.get('keterangan', 'Transaksi')
-                send_reply(f"❗ Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
+                sent = send_reply(f"❗ Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
+                cache_prompt(sender_pkey, _pending_transactions[sender_pkey], sent)
                 return jsonify({'status': 'asking_amount'}), 200
 
             if (

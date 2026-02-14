@@ -31,6 +31,7 @@ def parse_allowed_sender_ids(env_value: str | None) -> Set[str]:
 
 
 ALLOWED_SENDER_IDS = parse_allowed_sender_ids(os.getenv("ALLOWED_SENDER_IDS"))
+SESSION_DELEGATE_IDS = parse_allowed_sender_ids(os.getenv("SESSION_DELEGATE_IDS"))
 
 
 def _build_variants(identifier: str) -> Set[str]:
@@ -60,6 +61,26 @@ def is_sender_allowed(identifiers: Iterable[str | None]) -> bool:
             continue
         for variant in _build_variants(str(identifier)):
             if variant in ALLOWED_SENDER_IDS:
+                return True
+
+    return False
+
+
+def is_session_delegate(identifiers: Iterable[str | None]) -> bool:
+    """
+    Return True when any identifier is listed as a session delegate.
+
+    Delegates are allowed to continue another user's pending session in group
+    chats, but only when replying to the correct bot prompt/visual message.
+    """
+    if not SESSION_DELEGATE_IDS:
+        return False
+
+    for identifier in identifiers:
+        if not identifier:
+            continue
+        for variant in _build_variants(str(identifier)):
+            if variant in SESSION_DELEGATE_IDS:
                 return True
 
     return False
