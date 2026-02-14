@@ -304,8 +304,88 @@ def resolve_dompet_from_text(text: str) -> Optional[str]:
     return best_dompet
 
 
+def normalize_company_name(company_name: str) -> Optional[str]:
+    """
+    Normalize free-form company text to canonical company name.
+    Returns canonical label (e.g., HOLLA/HOJJA/TEXTURIN-Bali) or None.
+    """
+    if not company_name:
+        return None
+
+    clean = re.sub(r"[^a-z0-9\s\-]", " ", str(company_name).lower())
+    clean = re.sub(r"\s+", " ", clean).strip()
+    if not clean:
+        return None
+
+    # Direct canonical match first.
+    for companies in DOMPET_COMPANIES.values():
+        for canonical in companies:
+            if clean == canonical.lower():
+                return canonical
+
+    # Explicit HOLLA / HOJJA split (CV HB has 2 companies).
+    has_holla = bool(re.search(r"\b(?:holla|hollawall)\b", clean))
+    has_hojja = bool(re.search(r"\b(?:hojja|holja|holjawall)\b", clean))
+    if has_holla and has_hojja:
+        return None
+    if has_holla:
+        return "HOLLA"
+    if has_hojja:
+        return "HOJJA"
+
+    # Texturin families.
+    if re.search(r"\b(?:texturin|tx)\b", clean):
+        if re.search(r"\b(?:bali|087)\b", clean):
+            return "TEXTURIN-Bali"
+        if re.search(r"\b(?:sby|surabaya|216)\b", clean):
+            return "TEXTURIN-Surabaya"
+
+    # Generic CV HB mention is intentionally ambiguous for project routing.
+    if re.search(r"\bcv\s*hb\b", clean):
+        return "CV HB"
+
+    return None
+
+
+def resolve_company_from_text(text: str, dompet_hint: Optional[str] = None) -> Optional[str]:
+    """
+    Detect explicit company mention from user text.
+    Returns canonical company or None when ambiguous/not explicit.
+    """
+    if not text:
+        return None
+
+    clean = re.sub(r"[^a-z0-9\s\-]", " ", str(text).lower())
+    clean = re.sub(r"\s+", " ", clean).strip()
+    if not clean:
+        return None
+
+    mentions = set()
+
+    if re.search(r"\b(?:holla|hollawall)\b", clean):
+        mentions.add("HOLLA")
+    if re.search(r"\b(?:hojja|holja|holjawall)\b", clean):
+        mentions.add("HOJJA")
+    if re.search(r"\b(?:texturin[\s\-]*bali|tx\s*bali)\b", clean):
+        mentions.add("TEXTURIN-Bali")
+    if re.search(r"\b(?:texturin[\s\-]*(?:sby|surabaya)|tx\s*sby)\b", clean):
+        mentions.add("TEXTURIN-Surabaya")
+
+    if dompet_hint:
+        valid = set(DOMPET_COMPANIES.get(dompet_hint, []))
+        mentions = {m for m in mentions if m in valid}
+
+    if len(mentions) == 1:
+        return next(iter(mentions))
+    return None
+
+
 def get_dompet_for_company(company_name: str) -> str:
     """Get the dompet (wallet) sheet name for a given company."""
+    normalized = normalize_company_name(company_name)
+    if normalized:
+        company_name = normalized
+
     for dompet, companies in DOMPET_COMPANIES.items():
         if company_name in companies:
             return dompet

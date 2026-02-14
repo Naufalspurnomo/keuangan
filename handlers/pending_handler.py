@@ -38,7 +38,8 @@ from config.wallets import (
     apply_company_prefix,
     extract_company_prefix,
     strip_company_prefix,
-    resolve_dompet_from_text
+    resolve_dompet_from_text,
+    resolve_company_from_text,
 )
 
 
@@ -762,7 +763,29 @@ Atau ketik /cancel untuk batal total"""
 
             inline_dompet = resolve_dompet_from_text(text)
             if inline_dompet:
-                company = get_company_name_from_sheet(inline_dompet)
+                company = resolve_company_from_text(text, inline_dompet)
+                if not company and inline_dompet != "CV HB(101)":
+                    company = get_company_name_from_sheet(inline_dompet)
+
+                # CV HB has HOLLA/HOJJA split, so require explicit company.
+                if inline_dompet == "CV HB(101)" and not company:
+                    set_pending_confirmation(
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        data={
+                            'type': 'dompet_selection_project',
+                            'category_scope': 'PROJECT',
+                            'transactions': transactions,
+                            'original_message_id': original_msg_id,
+                            'event_id': event_id,
+                            'raw_text': merged_raw_text,
+                            'debt_source_dompet': debt_source
+                        }
+                    )
+                    return {
+                        'response': "CV HB terdeteksi. Pilih company dulu:\n1 HOLLA\n2 HOJJA\n(atau ketik HOJJA/HOLLA langsung).",
+                        'completed': False
+                    }
                 project_name = next((t.get('nama_projek') for t in transactions if t.get('nama_projek')), '') or ''
 
                 if project_name:
@@ -1033,7 +1056,14 @@ Atau ketik /cancel untuk batal total"""
             hinted_dompet = resolve_dompet_from_text(text_lower)
             if hinted_dompet:
                 dompet_sheet = hinted_dompet
-                company = get_company_name_from_sheet(hinted_dompet)
+                company = resolve_company_from_text(text_lower, hinted_dompet)
+                if not company and hinted_dompet != "CV HB(101)":
+                    company = get_company_name_from_sheet(hinted_dompet)
+                if hinted_dompet == "CV HB(101)" and not company:
+                    return {
+                        'response': "CV HB terdeteksi. Pilih company dulu:\n1 HOLLA\n2 HOJJA\n(atau ketik HOJJA/HOLLA langsung).",
+                        'completed': False
+                    }
 
         if not dompet_sheet:
             if text_lower in ['/cancel', 'batal']:

@@ -137,6 +137,8 @@ from config.wallets import (
     DOMPET_COMPANIES,
     get_company_name_from_sheet,
     resolve_dompet_from_text,
+    normalize_company_name,
+    resolve_company_from_text,
 )
 
 # Initialize Flask app
@@ -1831,9 +1833,16 @@ Balas 1 atau 2"""
             # 1. Resolve Company/Dompet
             detected_company = None
             for t in txs:
-                if t.get('company'): 
-                    detected_company = t['company']
+                raw_company = t.get('company')
+                if raw_company:
+                    detected_company = normalize_company_name(raw_company) or str(raw_company).strip()
                     break
+
+            # Prefer explicit company mention in user text (e.g., "hojja").
+            user_part, ocr_part = split_ocr_user_text(original_text)
+            explicit_company = resolve_company_from_text(user_part or original_text)
+            if explicit_company:
+                detected_company = explicit_company
             
             dompet = None
             detected_dompet = next((t.get('detected_dompet') for t in txs if t.get('detected_dompet')), None)
@@ -1847,7 +1856,11 @@ Balas 1 atau 2"""
                     dompet = detected_dompet
                     # Only override company if not already detected by AI
                     if not detected_company:
-                        detected_company = get_company_name_from_sheet(dompet)
+                        scoped_company = resolve_company_from_text(user_part or original_text, dompet)
+                        if scoped_company:
+                            detected_company = scoped_company
+                        elif dompet != "CV HB(101)":
+                            detected_company = get_company_name_from_sheet(dompet)
 
             if detected_company:
                 if detected_company == "UMUM":
@@ -1856,7 +1869,6 @@ Balas 1 atau 2"""
                     dompet = get_dompet_for_company(detected_company)
             
             # OCR-aware: resolve dompet from user caption (not OCR body)
-            user_part, ocr_part = split_ocr_user_text(original_text)
             explicit_dompet = resolve_dompet_from_text(user_part)
             # If user caption didn't mention a wallet, try OCR account numbers
             if not explicit_dompet and ocr_part:
@@ -1874,9 +1886,19 @@ Balas 1 atau 2"""
                     if detected_company:
                         valid_companies = DOMPET_COMPANIES.get(dompet, [])
                         if detected_company not in valid_companies:
-                            detected_company = get_company_name_from_sheet(dompet)
+                            scoped_company = resolve_company_from_text(user_part or original_text, dompet)
+                            if scoped_company:
+                                detected_company = scoped_company
+                            elif dompet != "CV HB(101)":
+                                detected_company = get_company_name_from_sheet(dompet)
+                            else:
+                                detected_company = None
                     else:
-                        detected_company = get_company_name_from_sheet(dompet)
+                        scoped_company = resolve_company_from_text(user_part or original_text, dompet)
+                        if scoped_company:
+                            detected_company = scoped_company
+                        elif dompet != "CV HB(101)":
+                            detected_company = get_company_name_from_sheet(dompet)
 
             # --- AUTO-RESOLVE COMPANY FROM PROJECT HISTORY (NEW) ---
             # If we know the project, but not the company, try to find where it was last used
