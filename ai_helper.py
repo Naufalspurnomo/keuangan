@@ -537,6 +537,15 @@ def _parse_money_token(token: str) -> int:
     if not token:
         return 0
     t = token.strip()
+    # OCR confusion normalizer: common glyph swaps in numeric fields.
+    # Example: "1.O8O.OOO,OO" -> "1.080.000,00"
+    t = (
+        t.replace("O", "0")
+         .replace("o", "0")
+         .replace("I", "1")
+         .replace("l", "1")
+         .replace("|", "1")
+    )
     t = re.sub(r"[^\d.,\s]", "", t)
     if not t:
         return 0
@@ -595,7 +604,9 @@ def _parse_money_token(token: str) -> int:
 
 
 _MONEY_TOKEN_RE = re.compile(
-    r"\b\d{1,3}(?:[.,\s]\d{3})+(?:[.,]\d{2})?\b|\b\d+[.,]\d{2}\b|\b\d{4,}\b"
+    r"\b[0-9OoIl]{1,3}(?:[.,\s][0-9OoIl]{3})+(?:[.,][0-9OoIl]{2})?\b|"
+    r"\b[0-9OoIl]+[.,][0-9OoIl]{2}\b|"
+    r"\b[0-9OoIl]{4,}\b"
 )
 _CURRENCY_RE = re.compile(r"\b(?:rp|idr)\b", re.IGNORECASE)
 _RP_IN_PARENS_RE = re.compile(r"\([^)]*rp[^)]*\)", re.IGNORECASE)

@@ -2813,9 +2813,12 @@ Balas 1 atau 2"""
             }
         )
         is_likely_amount_revision = (digit_count >= 2 and not is_quick_control_reply)
+        # Guardrail: explicit "catat" intent must stay on record flow,
+        # even when user replies and message contains revision-like keywords.
         should_try_quoted_revision = (
             bool(quoted_msg_id) and
             (not has_pending) and
+            (not force_record) and
             (has_revision_keyword or is_likely_amount_revision)
         )
 
@@ -2934,8 +2937,23 @@ Balas 1 atau 2"""
                     if missing_tx:
                         pending['pending_type'] = 'needs_amount'
                         state_manager_module.set_pending_transaction(pending_pkey, pending)
-                        item = missing_tx.get('keterangan', 'Transaksi')
-                        send_reply(f"Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
+                        has_any_positive_amount = False
+                        for t in merged_txs:
+                            try:
+                                if int(t.get('jumlah', 0) or 0) > 0:
+                                    has_any_positive_amount = True
+                                    break
+                            except Exception:
+                                continue
+                        if has_any_positive_amount:
+                            item = missing_tx.get('keterangan', 'Transaksi')
+                            send_reply(f"Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
+                        else:
+                            send_reply(
+                                "📷 OCR belum berhasil membaca nominal dari struk. "
+                                "Ketik nominal manual (contoh: 1080000/1.080.000) "
+                                "atau kirim ulang gambar yang lebih jelas (crop struk saja)."
+                            )
                         return jsonify({'status': 'asking_amount'}), 200
 
                     # Re-send updated prompt
