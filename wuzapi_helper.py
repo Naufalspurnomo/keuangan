@@ -29,7 +29,7 @@ def get_wuzapi_session():
         _wuzapi_session.headers.update({
             'token': WUZAPI_TOKEN,
             'x-api-key': WUZAPI_TOKEN,
-            'Authorization': f'Bearer {WUZAPI_TOKEN}',
+            'Authorization': WUZAPI_TOKEN,
             'Content-Type': 'application/json'
         })
     return _wuzapi_session
@@ -56,15 +56,23 @@ def _build_wuzapi_endpoints(base: str, path_suffix: str) -> list[str]:
         return []
 
     clean_suffix = path_suffix.lstrip("/")
-    candidates = [
+    base_candidates = [
         f"{base}/{clean_suffix}",
         f"{base}/api/{clean_suffix}",
     ]
+    candidates = list(base_candidates)
 
     # Some hosted proxies only forward query-token auth.
     if WUZAPI_TOKEN:
         token_q = quote_plus(WUZAPI_TOKEN)
-        candidates.extend([f"{url}?token={token_q}" for url in candidates])
+        candidates.extend([f"{url}?token={token_q}" for url in base_candidates])
+    if WUZAPI_INSTANCE_ID:
+        instance_q = quote_plus(WUZAPI_INSTANCE_ID)
+        candidates.extend([f"{url}?instanceId={instance_q}" for url in base_candidates])
+    if WUZAPI_TOKEN and WUZAPI_INSTANCE_ID:
+        token_q = quote_plus(WUZAPI_TOKEN)
+        instance_q = quote_plus(WUZAPI_INSTANCE_ID)
+        candidates.extend([f"{url}?token={token_q}&instanceId={instance_q}" for url in base_candidates])
 
     # De-duplicate while preserving order.
     return list(dict.fromkeys(candidates))
@@ -181,6 +189,38 @@ def _probe_wuzapi_session_state(session: requests.Session, base: str, reason: st
             continue
 
 
+def _attempt_wuzapi_session_connect(session: requests.Session, base: str, reason: str) -> bool:
+    """Try to reconnect/start session and report whether it looks connected."""
+    endpoints: list[str] = []
+    for suffix in ("session/connect", "session/start"):
+        endpoints.extend(_build_wuzapi_endpoints(base, suffix))
+    endpoints = list(dict.fromkeys(endpoints))
+
+    connected = False
+    for url in endpoints:
+        payloads = _build_instance_variants({})
+        for payload in payloads:
+            try:
+                resp = session.post(url, json=payload, timeout=12, allow_redirects=False)
+                loc = resp.headers.get("Location", "")
+                excerpt = _safe_response_excerpt(resp)
+                secure_log(
+                    "WARNING",
+                    f"WuzAPI auto-connect ({reason}) POST {url} -> {resp.status_code} "
+                    f"loc={loc} body={excerpt}"
+                )
+                if resp.status_code in (200, 201, 202):
+                    connected = True
+                    break
+            except Exception as e:
+                secure_log("DEBUG", f"WuzAPI auto-connect except {url}: {type(e).__name__}: {str(e)[:120]}")
+                continue
+        if connected:
+            break
+
+    return connected
+
+
 def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[Dict]:
     """Send WhatsApp message via WuzAPI.
     
@@ -237,47 +277,46 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
         for suffix in ("chat/send/text", "send/text", "message/send/text"):
             endpoints.extend(_build_wuzapi_endpoints(base, suffix))
 
-        last_err = ""
-        seen_not_started = False
-        for url in endpoints:
-            for payload in payload_variants:
-                try:
-                    resp = session.post(url, json=payload, timeout=15, allow_redirects=False)
-                    if resp.status_code in (200, 201, 202):
-                        secure_log("INFO", f"WuzAPI Send OK via {url.split('/')[-1]}")
-                        try:
-                            return resp.json()
-                        except Exception:
-                            return {"status": "ok", "status_code": resp.status_code}
+        def _send_once() -> tuple[Optional[Dict], str, bool]:
+            last_err_local = ""
+            seen_not_started_local = False
 
-                    if _is_wuzapi_not_started(resp):
-                        seen_not_started = True
-                    
-                    # Capture error details
-                    loc = resp.headers.get("Location", "")
-                    current_err = f"{resp.status_code} on {url} loc={loc}: {_safe_response_excerpt(resp)}"
-                    
-                    # Stop if auth error
-                    if resp.status_code in (401, 403):
-                        secure_log("ERROR", f"WuzAPI Auth Error: {current_err}")
-                        return None
-                    
-                    # 500 error is critical - usually DB lock
-                    if resp.status_code == 500:
-                        secure_log("ERROR", f"WuzAPI Server Error (500): {resp.text[:500]}")
-                        # Don't return None immediately, try other payloads just in case
-                        last_err = current_err
+            for url in endpoints:
+                for payload in payload_variants:
+                    try:
+                        resp = session.post(url, json=payload, timeout=15, allow_redirects=False)
+                        if resp.status_code in (200, 201, 202):
+                            secure_log("INFO", f"WuzAPI Send OK via {url.split('/')[-1]}")
+                            try:
+                                return resp.json(), "", False
+                            except Exception:
+                                return {"status": "ok", "status_code": resp.status_code}, "", False
+
+                        if _is_wuzapi_not_started(resp):
+                            seen_not_started_local = True
+
+                        loc = resp.headers.get("Location", "")
+                        current_err = f"{resp.status_code} on {url} loc={loc}: {_safe_response_excerpt(resp)}"
+
+                        if resp.status_code in (401, 403):
+                            secure_log("ERROR", f"WuzAPI Auth Error: {current_err}")
+                            return None, current_err, seen_not_started_local
+
+                        if resp.status_code == 500:
+                            secure_log("ERROR", f"WuzAPI Server Error (500): {resp.text[:500]}")
+                            last_err_local = current_err
+                            continue
+
+                        last_err_local = current_err
+                    except Exception as e:
+                        last_err_local = f"{type(e).__name__}: {str(e)[:200]}"
                         continue
-                        
-                    if resp.status_code == 404:
-                        last_err = current_err
-                        continue
-                    
-                    last_err = current_err
-                    
-                except Exception as e:
-                    last_err = f"{type(e).__name__}: {str(e)[:200]}"
-                    continue
+
+            return None, last_err_local, seen_not_started_local
+
+        result, last_err, seen_not_started = _send_once()
+        if result is not None:
+            return result
 
         if seen_not_started:
             secure_log(
@@ -286,6 +325,12 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
                 "Verify session status plus DOMAIN+TOKEN+INSTANCE_ID alignment."
             )
             _probe_wuzapi_session_state(session, base, reason="send_text_not_started")
+            if _attempt_wuzapi_session_connect(session, base, reason="send_text_not_started"):
+                result2, last_err2, _ = _send_once()
+                if result2 is not None:
+                    return result2
+                if last_err2:
+                    last_err = last_err2
         secure_log("ERROR", f"WuzAPI: All send endpoints failed: {last_err}")
         return None
         
@@ -473,33 +518,37 @@ def send_wuzapi_document(to: str, file_path: str, caption: str = None) -> Option
         for suffix in ("chat/send/media", "send/media", "message/send/media"):
             endpoints.extend(_build_wuzapi_endpoints(base, suffix))
 
-        last_err = ""
-        seen_not_started = False
-        for url in endpoints:
-            try:
-                # Need to increase timeout for media upload
-                for payload in payload_variants:
-                    resp = session.post(url, json=payload, timeout=60, allow_redirects=False)
-                    if resp.status_code in (200, 201, 202):
-                        secure_log("INFO", f"WuzAPI Media Sent via {url.split('/')[-1]}")
-                        try:
-                            return resp.json()
-                        except Exception:
-                            return {"status": "ok", "status_code": resp.status_code}
+        def _send_media_once() -> tuple[Optional[Dict], str, bool]:
+            last_err_local = ""
+            seen_not_started_local = False
+            for url in endpoints:
+                try:
+                    for payload in payload_variants:
+                        resp = session.post(url, json=payload, timeout=60, allow_redirects=False)
+                        if resp.status_code in (200, 201, 202):
+                            secure_log("INFO", f"WuzAPI Media Sent via {url.split('/')[-1]}")
+                            try:
+                                return resp.json(), "", False
+                            except Exception:
+                                return {"status": "ok", "status_code": resp.status_code}, "", False
 
-                    if _is_wuzapi_not_started(resp):
-                        seen_not_started = True
+                        if _is_wuzapi_not_started(resp):
+                            seen_not_started_local = True
 
-                    loc = resp.headers.get("Location", "")
-                    last_err = f"{resp.status_code} on {url} loc={loc}: {_safe_response_excerpt(resp)}"
-                    if resp.status_code == 413: # Payload too large
-                        secure_log("ERROR", "File too large for server config")
-                        break
+                        loc = resp.headers.get("Location", "")
+                        last_err_local = f"{resp.status_code} on {url} loc={loc}: {_safe_response_excerpt(resp)}"
+                        if resp.status_code == 413: # Payload too large
+                            secure_log("ERROR", "File too large for server config")
+                            break
+                except Exception as e:
+                    last_err_local = f"{type(e).__name__}: {str(e)[:200]}"
+                    continue
+            return None, last_err_local, seen_not_started_local
 
-            except Exception as e:
-                last_err = f"{type(e).__name__}: {str(e)[:200]}"
-                continue
-        
+        result, last_err, seen_not_started = _send_media_once()
+        if result is not None:
+            return result
+
         if seen_not_started:
             secure_log(
                 "ERROR",
@@ -507,6 +556,12 @@ def send_wuzapi_document(to: str, file_path: str, caption: str = None) -> Option
                 "Verify session status plus DOMAIN+TOKEN+INSTANCE_ID alignment."
             )
             _probe_wuzapi_session_state(session, base, reason="send_media_not_started")
+            if _attempt_wuzapi_session_connect(session, base, reason="send_media_not_started"):
+                result2, last_err2, _ = _send_media_once()
+                if result2 is not None:
+                    return result2
+                if last_err2:
+                    last_err = last_err2
         secure_log("ERROR", f"WuzAPI Media Send Failed: {last_err}")
         return None
 
