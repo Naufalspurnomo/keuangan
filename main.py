@@ -110,6 +110,7 @@ from utils.formatters import (
     format_success_reply, format_success_reply_new, format_success_reply_operational,
     format_draft_summary_operational, format_draft_summary_project,
     build_selection_prompt,
+    format_reply_message, append_active_transaction_notice,
     START_MESSAGE, HELP_MESSAGE,
     CATEGORIES_DISPLAY, SELECTION_DISPLAY,
 )
@@ -1059,7 +1060,8 @@ def webhook_telegram():
             return jsonify({'status': 'duplicate'}), 200
 
         def send_reply(body: str, mention: bool = True):
-            return send_telegram_reply(chat_id, body)
+            body_fmt = format_reply_message(body)
+            return send_telegram_reply(chat_id, body_fmt)
 
         return process_incoming_message(
             sender_number=sender_number,
@@ -1094,11 +1096,12 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         
         # --- Helper: Send Reply ---
         def send_reply(body: str, mention: bool = True):
+            body_norm = format_reply_message(body)
             if is_group and mention and sender_jid:
                 clean_jid = get_clean_jid(sender_jid)
-                body_fmt = format_mention_body(body, sender_name, sender_jid)
+                body_fmt = format_mention_body(body_norm, sender_name, sender_jid)
                 return send_wuzapi_reply(reply_to, body_fmt, clean_jid)
-            return send_wuzapi_reply(reply_to, body)
+            return send_wuzapi_reply(reply_to, body_norm)
 
         return process_incoming_message(
             sender_number=sender_number,
@@ -1143,6 +1146,10 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             if bid:
                 store_pending_message_ref(bid, pkey)
                 pending.setdefault('prompt_message_ids', []).append(str(bid))
+
+        def send_pending_reply(body: str, mention: bool = True):
+            """Send reply with active-transaction timeout hint."""
+            return send_reply(append_active_transaction_notice(body), mention=mention)
         
         def build_extraction_inputs(current_text: str, current_input_type: str,
                                     current_media_url: str, current_media_path: str):
@@ -1562,7 +1569,7 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             if missing_tx:
                 pending['pending_type'] = 'needs_amount'
                 item = missing_tx.get('keterangan', 'Transaksi')
-                sent = send_reply(f"Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
+                sent = send_pending_reply(f"Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
                 cache_prompt(pkey, pending, sent)
                 return jsonify({'status': 'asking_amount'}), 200
 
@@ -1766,7 +1773,7 @@ Balas 1 atau 2"""
                         source_wallet,
                         category,
                         "",
-                    ).replace('*', '')
+                    )
                     _send_and_track(response, event_id)
                     return jsonify({'status': 'saved_operational'}), 200
 
@@ -1840,7 +1847,7 @@ Balas 1 atau 2"""
                              f"✅ *Ya* — Lanjutkan\n"
                              f"❌ *Bukan* — Langsung ketik nama yang benar"
                          )
-                        send_reply(msg)
+                        send_pending_reply(msg)
                         return jsonify({'status': 'asking_project_confirm'}), 200
                     
                     elif res['status'] == 'NEW':
@@ -1862,7 +1869,7 @@ Balas 1 atau 2"""
                                 f"\u0033\ufe0f\u20e3 Batal\n\n"
                                 f"Atau ketik *nama lain* untuk ganti"
                             )
-                            send_reply(msg)
+                            send_pending_reply(msg)
                             return jsonify({'status': 'asking_new_project'}), 200
                         msg = (
                             f"\U0001F4C1 *PROJECT BARU*\n"
@@ -1874,7 +1881,7 @@ Balas 1 atau 2"""
                             f"Ketik nama lain untuk ganti\n\n"
                             f"Balas *Ya* atau ketik nama baru"
                         )
-                        send_reply(msg)
+                        send_pending_reply(msg)
                         return jsonify({'status': 'asking_new_project'}), 200
                     elif res['status'] in ['EXACT', 'AUTO_FIX']:
 
@@ -2173,7 +2180,7 @@ Balas 1 atau 2"""
 
                     invalidate_dashboard_cache()
                     _pending_transactions.pop(pkey, None)
-                    response = format_success_reply_new(txs, dompet, detected_company, "").replace('*', '')
+                    response = format_success_reply_new(txs, dompet, detected_company, "")
                     if lock_note:
                         response += f"\n {lock_note}"
                     if new_project_expense_note:
@@ -2239,9 +2246,9 @@ Balas 1 atau 2"""
             
             # 3. Ask Company if Unresolved
             pending['pending_type'] = 'selection'
-            reply = build_selection_prompt(txs).replace('*', '')
+            reply = build_selection_prompt(txs)
             if is_group: reply += "\n\n↩️ Reply angka 1-5"
-            sent = send_reply(reply)
+            sent = send_pending_reply(reply)
             cache_prompt(pkey, pending, sent)
             return jsonify({'status': 'asking_company'}), 200
 
@@ -2486,11 +2493,11 @@ Balas 1 atau 2"""
                 text = text[len('/catat'):].strip()
 
             if is_command_match(text, Commands.START, is_group):
-                send_reply(START_MESSAGE.replace('*', ''))
+                send_reply(START_MESSAGE)
                 return jsonify({'status': 'command_start'}), 200
             
             if is_command_match(text, Commands.HELP, is_group):
-                send_reply(HELP_MESSAGE.replace('*', ''))
+                send_reply(HELP_MESSAGE)
                 return jsonify({'status': 'command_help'}), 200
             
             if is_command_match(text, Commands.SALDO, is_group):
@@ -2526,7 +2533,7 @@ Balas 1 atau 2"""
                 try:
                     dashboard = get_dashboard_summary()
                     msg = format_dashboard_message(dashboard)
-                    send_reply(msg.replace('*', ''))
+                    send_reply(msg)
                     return jsonify({'status': 'command_status'}), 200
                 except Exception as e:
                     send_reply(f"❌ Error: {str(e)}")
@@ -2700,7 +2707,7 @@ Balas 1 atau 2"""
                             from handlers.query_handler import handle_query_command
                             query_text = smart_result.get('layer_response', text)
                             ans = handle_query_command(query_text, sender_number, chat_jid, raw_query=text)
-                            send_reply(ans.replace('*', ''))
+                            send_reply(ans)
                             return jsonify({'status': 'queried'}), 200
                         except Exception as e:
                             secure_log("ERROR", f"Query handler failed: {e}")
@@ -3024,10 +3031,10 @@ Balas 1 atau 2"""
                                 continue
                         if has_any_positive_amount:
                             item = missing_tx.get('keterangan', 'Transaksi')
-                            sent = send_reply(f"Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
+                            sent = send_pending_reply(f"Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
                             cache_prompt(pending_pkey, pending, sent)
                         else:
-                            send_reply(
+                            send_pending_reply(
                                 "📷 OCR belum berhasil membaca nominal dari struk. "
                                 "Ketik nominal manual (contoh: 1080000/1.080.000) "
                                 "atau kirim ulang gambar yang lebih jelas (crop struk saja)."
@@ -3037,7 +3044,7 @@ Balas 1 atau 2"""
                     # Re-send updated prompt
                     reply = build_selection_prompt(merged_txs)
                     if is_group: reply += "\n\n↩️ Reply angka 1-5"
-                    send_reply(reply)
+                    send_pending_reply(reply)
                     return jsonify({'status': 'merged'}), 200
                 
                 # If image provided no transaction data during pending state, IGNORE it.
@@ -3078,7 +3085,7 @@ Balas 1 atau 2"""
                         if not is_pending_interaction:
                             return jsonify({'status': 'ignored_pending_chatter'}), 200
 
-                    sent = send_reply("❗ Nominalnya berapa? (contoh: 150rb)")
+                    sent = send_pending_reply("❗ Nominalnya berapa? (contoh: 150rb)")
                     cache_prompt(pending_pkey, pending, sent)
                     return jsonify({'status': 'asking_amount'}), 200
                 
@@ -3102,7 +3109,7 @@ Balas 1 atau 2"""
                     needs_project = any(not t.get('nama_projek') or t.get('needs_project') for t in pending.get('transactions', []))
                     if needs_project:
                         pending['pending_type'] = 'needs_project'
-                        send_reply("Nama projeknya apa?")
+                        send_pending_reply("Nama projeknya apa?")
                         return jsonify({'status': 'switch_to_project'}), 200
                     return finalize_transaction_workflow(pending, pending_pkey)
                 try:
@@ -3131,7 +3138,7 @@ Balas 1 atau 2"""
                     pending['selected_source_wallet'] = opt['dompet']
                     return finalize_transaction_workflow(pending, pending_pkey)
 
-                send_reply("❌ Pilih angka 1-4 atau ketik dompet (contoh: TX BALI).")
+                send_pending_reply("❌ Pilih angka 1-4 atau ketik dompet (contoh: TX BALI).")
                 return jsonify({'status': 'invalid'}), 200
             
             # B. Project Confirmation (Existing - Ambiguous Name)
@@ -3143,7 +3150,7 @@ Balas 1 atau 2"""
                     final_proj = pending.get('suggested_project')
                     send_reply(f"✅ Oke, masuk ke **{final_proj}**.")
                 elif clean in ['tidak', 'no', 'bukan']:
-                    send_reply("Nama projeknya apa?")
+                    send_pending_reply("Nama projeknya apa?")
                     pending['pending_type'] = 'needs_project'
                     return jsonify({'status': 'asking'}), 200
                 else:
@@ -3183,7 +3190,7 @@ Balas 1 atau 2"""
                         pending['project_confirmed'] = False
                         pending.pop('new_project_first_expense', None)
                         prompt = format_wallet_selection_prompt()
-                        send_reply(f"🏢 Diganti ke Operasional Kantor\n\n{prompt}".replace('*', ''))
+                        send_reply(f"🏢 Diganti ke Operasional Kantor\n\n{prompt}")
                         return jsonify({'status': 'switch_to_operational'}), 200
                     if clean in ['3', 'batal', 'cancel', 'tidak', 'no']:
                         _pending_transactions.pop(pending_pkey, None)
@@ -3207,7 +3214,7 @@ Balas 1 atau 2"""
                     pending.pop('new_project_first_expense', None)
                     return finalize_transaction_workflow(pending, pending_pkey)
                 if clean.isdigit() and len(clean) <= 2 and clean not in ['1']:
-                    send_reply("Balas 'Ya' untuk membuat project baru, atau ketik nama project yang benar.")
+                    send_pending_reply("Balas 'Ya' untuk membuat project baru, atau ketik nama project yang benar.")
                     return jsonify({'status': 'invalid'}), 200
 
                 if clean in ['1', 'ya', 'y', 'ok', 'siap', 'buat', 'lanjut']:
@@ -3219,7 +3226,7 @@ Balas 1 atau 2"""
                     return finalize_transaction_workflow(pending, pending_pkey)
                     
                 elif clean in ['tidak', 'no', 'ganti', 'bukan', 'salah']:
-                    send_reply("Nama projeknya apa?")
+                    send_pending_reply("Nama projeknya apa?")
                     pending['pending_type'] = 'needs_project' 
                     return jsonify({'status': 'asking'}), 200
                 else:
@@ -3252,7 +3259,7 @@ Balas 1 atau 2"""
                         return finalize_transaction_workflow(pending, pending_pkey)
                     pending['pending_type'] = 'confirmation_project'
                     pending['suggested_project'] = res['final_name']
-                    send_reply(f"???? Maksudnya **{res['final_name']}**?\n??? Ya / ??? Bukan")
+                    send_pending_reply(f"???? Maksudnya **{res['final_name']}**?\n??? Ya / ??? Bukan")
                     return jsonify({'status': 'confirm'}), 200
                 
                 if res['status'] == 'NEW':
@@ -3260,7 +3267,7 @@ Balas 1 atau 2"""
                         t['nama_projek'] = res['final_name']
                     pending['pending_type'] = 'confirmation_new_project'
                     pending['new_project_name'] = res['original']
-                    send_reply(f"???? Project **{res['original']}** belum ada.\n\nBuat Project Baru?\n??? Ya / ??? Ganti Nama (Langsung Ketik Nama Baru)")
+                    send_pending_reply(f"???? Project **{res['original']}** belum ada.\n\nBuat Project Baru?\n??? Ya / ??? Ganti Nama (Langsung Ketik Nama Baru)")
                     return jsonify({'status': 'asking_new_project'}), 200
                 
                 final = res['final_name']
@@ -3279,7 +3286,7 @@ Balas 1 atau 2"""
                     pending['operational_category'] = pending.get('operational_category', 'Lain Lain')
                     pending['project_confirmed'] = False
                     prompt = format_wallet_selection_prompt()
-                    send_reply(f"🏢 Diganti ke Operasional Kantor\n\n{prompt}".replace('*', ''))
+                    send_reply(f"🏢 Diganti ke Operasional Kantor\n\n{prompt}")
                     return jsonify({'status': 'switch_to_operational'}), 200
                 valid, sel, err = parse_selection(text)
                 if not valid:
@@ -3359,18 +3366,18 @@ Balas 1 atau 2"""
         # 7. COMMANDS (PRIORITY - Execute BEFORE layer processing)
         # This ensures /start, /help, etc. work properly instead of triggering layers
         if is_command_match(text, Commands.START, is_group):
-            send_reply(START_MESSAGE.replace('*', ''))
+            send_reply(START_MESSAGE)
             return jsonify({'status': 'command_start'}), 200
         
         if is_command_match(text, Commands.HELP, is_group):
-            send_reply(HELP_MESSAGE.replace('*', ''))
+            send_reply(HELP_MESSAGE)
             return jsonify({'status': 'command_help'}), 200
         
         if is_command_match(text, Commands.SALDO, is_group):
             try:
                 balances = get_wallet_balances()
                 msg = _build_saldo_message(balances)
-                send_reply(msg.replace('*', ''))
+                send_reply(msg)
                 return jsonify({'status': 'command_saldo'}), 200
             except Exception as e:
                 send_reply(f"❌ Error: {str(e)}")
@@ -3399,7 +3406,7 @@ Balas 1 atau 2"""
             try:
                 dashboard = get_dashboard_summary()
                 msg = format_dashboard_message(dashboard)
-                send_reply(msg.replace('*', ''))
+                send_reply(msg)
                 return jsonify({'status': 'command_status'}), 200
             except Exception as e:
                 send_reply(f"❌ Error: {str(e)}")
@@ -3661,7 +3668,7 @@ Balas 1 atau 2"""
                         t['needs_amount'] = True
                 _pending_transactions[sender_pkey]['pending_type'] = 'needs_amount'
                 item = missing_tx.get('keterangan', 'Transaksi')
-                sent = send_reply(f"❗ Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
+                sent = send_pending_reply(f"❗ Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
                 cache_prompt(sender_pkey, _pending_transactions[sender_pkey], sent)
                 return jsonify({'status': 'asking_amount'}), 200
 
@@ -3697,7 +3704,7 @@ Balas 1 atau 2"""
                 ctx = detect_transaction_context(text, transactions, layer_category_scope)
                 if ctx['mode'] == 'PROJECT':
                     _pending_transactions[sender_pkey]['pending_type'] = 'needs_project'
-                    send_reply("❓ Nama projeknya apa?")
+                    send_pending_reply("❓ Nama projeknya apa?")
                     return jsonify({'status': 'asking_project'}), 200
 
             # Intercept Smart Project Check

@@ -6,9 +6,12 @@ Contains:
 - format_success_reply_new: New format with dompet info
 - format_mention: Format mention prefix for groups
 - build_selection_prompt: Build company selection prompt
+- format_reply_message: Normalize outgoing bot message style
+- append_active_transaction_notice: Add active-transaction timeout note
 - START_MESSAGE, HELP_MESSAGE: Welcome and help messages
 """
 
+import re
 from datetime import datetime
 from security import ALLOWED_CATEGORIES, now_wib
 from sheets_helper import check_budget_alert, normalize_project_display_name
@@ -28,6 +31,7 @@ SELECTION_DISPLAY = """  📁 CV HB (101):
 
 # Group chat triggers
 GROUP_TRIGGERS = ["+catat", "+bot", "+input", "/catat"]
+ACTIVE_TRANSACTION_TIMEOUT_NOTE = "⏳ *Batas transaksi aktif: 15 menit.*"
 
 START_MESSAGE = f"""BOT Keuangan
 
@@ -106,6 +110,66 @@ Catatan akurasi:
 - Operasional: tulis kata `kantor`
 - Project baru ditandai `(Start)`, pelunasan bisa ditandai `(Finish)`
 """
+
+
+def _is_already_bold(line: str) -> bool:
+    stripped = (line or "").strip()
+    return len(stripped) >= 2 and stripped.startswith("*") and stripped.endswith("*")
+
+
+def _is_title_candidate(line: str) -> bool:
+    stripped = (line or "").strip()
+    if not stripped:
+        return False
+    if _is_already_bold(stripped):
+        return False
+    if stripped.startswith(("@", "-", "•", "`", ">", "|")):
+        return False
+    if re.match(r"^\d+[\.\)]\s+", stripped):
+        return False
+    if "http://" in stripped or "https://" in stripped:
+        return False
+    if stripped.count("*") >= 2 or stripped.count("`") >= 2:
+        return False
+    if len(stripped) > 90:
+        return False
+    return True
+
+
+def ensure_bold_title(body: str) -> str:
+    """Ensure first non-empty line (title) is bolded once."""
+    if not isinstance(body, str):
+        return body
+
+    lines = body.splitlines()
+    for idx, line in enumerate(lines):
+        if not line.strip():
+            continue
+        if _is_title_candidate(line):
+            leading = len(line) - len(line.lstrip())
+            trailing = len(line) - len(line.rstrip())
+            core = line.strip()
+            lines[idx] = f"{' ' * leading}*{core}*{' ' * trailing}"
+        break
+    return "\n".join(lines)
+
+
+def append_active_transaction_notice(body: str) -> str:
+    """Append active transaction timeout note if not already present."""
+    text = (body or "").strip()
+    if not text:
+        return text
+    if re.search(r"15\s*menit", text, flags=re.IGNORECASE):
+        return text
+    return f"{text}\n\n{ACTIVE_TRANSACTION_TIMEOUT_NOTE}"
+
+
+def format_reply_message(body: str, active_transaction: bool = False) -> str:
+    """Normalize outgoing bot message style."""
+    formatted = ensure_bold_title(body or "")
+    if active_transaction:
+        formatted = append_active_transaction_notice(formatted)
+    return formatted
 
 
 def format_mention(sender_name: str, is_group: bool = False) -> str:
@@ -324,7 +388,7 @@ def format_draft_summary_operational(transactions: list, dompet_sheet: str, cate
         "3️⃣ Ubah kategori",
         "4️⃣ Batal"
     ]
-    return "\n".join(lines)
+    return append_active_transaction_notice("\n".join(lines))
 
 
 def format_draft_summary_project(transactions: list, dompet_sheet: str, company: str, mention: str = "",
@@ -359,7 +423,7 @@ def format_draft_summary_project(transactions: list, dompet_sheet: str, company:
         "3️⃣ Ubah projek",
         "4️⃣ Batal"
     ])
-    return "\n".join(lines)
+    return append_active_transaction_notice("\n".join(lines))
 
 
 # For testing
