@@ -60,36 +60,6 @@ def _build_wuzapi_endpoints(base: str, path_suffix: str) -> list[str]:
     return list(dict.fromkeys(candidates))
 
 
-def _build_instance_variants(base_payload: Dict[str, Any]) -> list[Dict[str, Any]]:
-    """Build payload variants for providers with different instance key conventions."""
-    variants = [dict(base_payload)]
-
-    instance_values = [WUZAPI_INSTANCE]
-    if WUZAPI_INSTANCE_ID:
-        instance_values.append(WUZAPI_INSTANCE_ID)
-
-    for instance_val in instance_values:
-        if not instance_val:
-            continue
-        variants.append({**base_payload, "Instance": instance_val})
-        variants.append({**base_payload, "instance": instance_val})
-
-    # Some providers bind token to instance, so payload must not include instance key.
-    variants.append(dict(base_payload))
-
-    # De-duplicate dicts while preserving order.
-    deduped = []
-    seen = set()
-    import json
-    for item in variants:
-        key = json.dumps(item, sort_keys=True, default=str)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(item)
-    return deduped
-
-
 def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[Dict]:
     """Send WhatsApp message via WuzAPI.
     
