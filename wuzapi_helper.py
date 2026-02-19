@@ -8,6 +8,7 @@ from security import secure_log, sanitize_input
 WUZAPI_DOMAIN = os.getenv('WUZAPI_DOMAIN')  # e.g. https://wuzapi-x.sumopod.my.id
 WUZAPI_TOKEN = os.getenv('WUZAPI_TOKEN')    # e.g. keuanganpakevan
 WUZAPI_INSTANCE = os.getenv('WUZAPI_INSTANCE', 'Keuangan') 
+WUZAPI_INSTANCE_ID = os.getenv('WUZAPI_INSTANCE_ID', '').strip()
 
 # Global session
 _wuzapi_session = None
@@ -87,26 +88,28 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
         session = get_wuzapi_session()
 
         # Build payload variants (different WuzAPI builds use different field names)
-        # Inclusion of "Instance" is required by some Sumopod setups
         payload_variants = []
         
         if is_group:
-            base_payload = {"JID": to, "Body": body, "Instance": WUZAPI_INSTANCE}
+            base_payload = {"JID": to, "Body": body}
             if mention_jid:
                 base_payload["MentionedJID"] = [mention_jid]
-            
-            payload_variants.append(base_payload)
-            payload_variants.append({**base_payload, "Message": body})
+
+            payload_variants.extend(_build_instance_variants(base_payload))
+            payload_variants.extend(_build_instance_variants({**base_payload, "Message": body}))
             # Variant: use JID as 'Phone' (some versions)
-            payload_variants.append({**base_payload, "Phone": to})
+            payload_variants.extend(_build_instance_variants({**base_payload, "Phone": to}))
         else:
             # Handle LID and Phone
             phone_clean = phone.split(":")[0] if ":" in phone else phone
-            
-            payload_variants.append({"Phone": phone_clean, "Body": body, "Instance": WUZAPI_INSTANCE})
-            payload_variants.append({"Phone": phone_clean, "Message": body, "Instance": WUZAPI_INSTANCE})
+
+            payload_variants.extend(_build_instance_variants({"Phone": phone_clean, "Body": body}))
+            payload_variants.extend(_build_instance_variants({"Phone": phone_clean, "Message": body}))
             # Variant: use JID format
-            payload_variants.append({"JID": to if "@" in to else f"{phone_clean}@s.whatsapp.net", "Body": body, "Instance": WUZAPI_INSTANCE})
+            payload_variants.extend(_build_instance_variants({
+                "JID": to if "@" in to else f"{phone_clean}@s.whatsapp.net",
+                "Body": body,
+            }))
 
         # Endpoints to try (Simplified to most likely ones based on Swagger)
         endpoints = []
@@ -311,22 +314,23 @@ def send_wuzapi_document(to: str, file_path: str, caption: str = None) -> Option
         filename = os.path.basename(file_path)
 
         # Payload construction
-        payload = {
-            "Instance": WUZAPI_INSTANCE,
+        payload_base = {
             "Caption": caption or filename,
             "Media": b64_data,
             "FileName": filename
         }
         
         if is_group:
-            payload["JID"] = to
+            payload_base["JID"] = to
         else:
             # Handle both Phone and JID formats for private
             if "@" in to:
-                payload["JID"] = to
-                payload["Phone"] = to.split("@")[0]
+                payload_base["JID"] = to
+                payload_base["Phone"] = to.split("@")[0]
             else:
-                payload["Phone"] = to
+                payload_base["Phone"] = to
+
+        payload_variants = _build_instance_variants(payload_base)
 
         # Endpoints to try
         endpoints = []
@@ -337,15 +341,16 @@ def send_wuzapi_document(to: str, file_path: str, caption: str = None) -> Option
         for url in endpoints:
             try:
                 # Need to increase timeout for media upload
-                resp = session.post(url, json=payload, timeout=60)
-                if resp.status_code in (200, 201):
-                    secure_log("INFO", f"WuzAPI Media Sent via {url.split('/')[-1]}")
-                    return resp.json()
-                
-                last_err = f"{resp.status_code} on {url}: {resp.text[:200]}"
-                if resp.status_code == 413: # Payload too large
-                    secure_log("ERROR", "File too large for server config")
-                    break
+                for payload in payload_variants:
+                    resp = session.post(url, json=payload, timeout=60)
+                    if resp.status_code in (200, 201):
+                        secure_log("INFO", f"WuzAPI Media Sent via {url.split('/')[-1]}")
+                        return resp.json()
+
+                    last_err = f"{resp.status_code} on {url}: {resp.text[:200]}"
+                    if resp.status_code == 413: # Payload too large
+                        secure_log("ERROR", "File too large for server config")
+                        break
 
             except Exception as e:
                 last_err = f"{type(e).__name__}: {str(e)[:200]}"
