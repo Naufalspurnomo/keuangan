@@ -820,7 +820,14 @@ def webhook_wuzapi():
             
         # 2. Extract Event Info
         event = event_data.get('event', {})
+        if not isinstance(event, dict):
+            secure_log("INFO", f"Webhook: Ignored malformed event type={type(event).__name__}")
+            return jsonify({'status': 'ignored_malformed_event'}), 200
+
         info = event.get('Info', event)
+        if not isinstance(info, dict):
+            secure_log("INFO", f"Webhook: Ignored malformed info type={type(info).__name__}")
+            return jsonify({'status': 'ignored_malformed_info'}), 200
         event_type = event_data.get('type', '')
         
         # FILTER: Ignore non-message events
@@ -841,6 +848,12 @@ def webhook_wuzapi():
         sender_jid = info.get('Sender', '')
         sender_number = sender_alt.split('@')[0].split(':')[0] if '@' in sender_alt else \
                        (sender_jid.split('@')[0].split(':')[0] if '@' in sender_jid else '')
+
+        # Newer WuzAPI event variants may only include user JID in Info.ID.
+        if not sender_number:
+            info_id = str(info.get('ID', '') or '')
+            if '@' in info_id:
+                sender_number = info_id.split('@')[0].split(':')[0]
                        
         if not sender_number: 
             secure_log("WARNING", f"Webhook: No sender number found in {info}")

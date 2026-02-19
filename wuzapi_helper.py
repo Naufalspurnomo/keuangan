@@ -44,6 +44,21 @@ def _is_group_jid(to: str) -> bool:
     return isinstance(to, str) and ("@g.us" in to)
 
 
+def _build_wuzapi_endpoints(base: str, path_suffix: str) -> list[str]:
+    """Build endpoint candidates for hosted/self-hosted WuzAPI variants."""
+    if not base:
+        return []
+
+    clean_suffix = path_suffix.lstrip("/")
+    candidates = [
+        f"{base}/{clean_suffix}",
+        f"{base}/api/{clean_suffix}",
+    ]
+
+    # De-duplicate while preserving order.
+    return list(dict.fromkeys(candidates))
+
+
 def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[Dict]:
     """Send WhatsApp message via WuzAPI.
     
@@ -94,11 +109,9 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
             payload_variants.append({"JID": to if "@" in to else f"{phone_clean}@s.whatsapp.net", "Body": body, "Instance": WUZAPI_INSTANCE})
 
         # Endpoints to try (Simplified to most likely ones based on Swagger)
-        endpoints = [
-            f"{base}/chat/send/text",
-            f"{base}/send/text",
-            f"{base}/message/send/text",
-        ]
+        endpoints = []
+        for suffix in ("chat/send/text", "send/text", "message/send/text"):
+            endpoints.extend(_build_wuzapi_endpoints(base, suffix))
 
         last_err = ""
         for url in endpoints:
@@ -316,11 +329,9 @@ def send_wuzapi_document(to: str, file_path: str, caption: str = None) -> Option
                 payload["Phone"] = to
 
         # Endpoints to try
-        endpoints = [
-            f"{base}/chat/send/media",
-            f"{base}/send/media",
-            f"{base}/message/send/media"
-        ]
+        endpoints = []
+        for suffix in ("chat/send/media", "send/media", "message/send/media"):
+            endpoints.extend(_build_wuzapi_endpoints(base, suffix))
 
         last_err = ""
         for url in endpoints:
