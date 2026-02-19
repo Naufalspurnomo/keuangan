@@ -105,6 +105,24 @@ def _build_instance_variants(payload: Dict[str, Any]) -> list[Dict[str, Any]]:
     return deduped
 
 
+def _is_wuzapi_not_started(resp: requests.Response) -> bool:
+    """Detect WuzAPI instance-not-started responses, including redirect chains."""
+    try:
+        body = (resp.text or "")[:500].lower()
+    except Exception:
+        body = ""
+
+    location = (resp.headers.get("Location") or "").lower()
+    if "errors/not-started" in body or "errors/not-started" in location:
+        return True
+
+    for h in (resp.history or []):
+        h_loc = (h.headers.get("Location") or "").lower()
+        if "errors/not-started" in h_loc:
+            return True
+    return False
+
+
 def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[Dict]:
     """Send WhatsApp message via WuzAPI.
     
@@ -169,6 +187,15 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
                     if resp.status_code in (200, 201):
                         secure_log("INFO", f"WuzAPI Send OK via {url.split('/')[-1]}")
                         return resp.json()
+
+                    if _is_wuzapi_not_started(resp):
+                        secure_log(
+                            "ERROR",
+                            "WuzAPI instance not started/connected. "
+                            "Open WuzAPI dashboard and start session (scan QR), "
+                            "then verify DOMAIN+TOKEN point to the same active instance."
+                        )
+                        return None
                     
                     # Capture error details
                     current_err = f"{resp.status_code} on {url}: {resp.text[:200]}"
@@ -391,6 +418,15 @@ def send_wuzapi_document(to: str, file_path: str, caption: str = None) -> Option
                     if resp.status_code in (200, 201):
                         secure_log("INFO", f"WuzAPI Media Sent via {url.split('/')[-1]}")
                         return resp.json()
+
+                    if _is_wuzapi_not_started(resp):
+                        secure_log(
+                            "ERROR",
+                            "WuzAPI instance not started/connected for media send. "
+                            "Open WuzAPI dashboard and start session (scan QR), "
+                            "then verify DOMAIN+TOKEN point to the same active instance."
+                        )
+                        return None
 
                     last_err = f"{resp.status_code} on {url}: {resp.text[:200]}"
                     if resp.status_code == 413: # Payload too large
