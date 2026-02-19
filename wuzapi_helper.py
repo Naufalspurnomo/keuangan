@@ -5,8 +5,8 @@ from typing import Dict, Optional, Tuple, Any
 from security import secure_log, sanitize_input
 
 # Environment Variables
-WUZAPI_DOMAIN = os.getenv('WUZAPI_DOMAIN')  # e.g. https://wuzapi-x.sumopod.my.id
-WUZAPI_TOKEN = os.getenv('WUZAPI_TOKEN')    # e.g. keuanganpakevan
+WUZAPI_DOMAIN = (os.getenv('WUZAPI_DOMAIN') or '').strip()  # e.g. https://wuzapi-x.sumopod.my.id
+WUZAPI_TOKEN = (os.getenv('WUZAPI_TOKEN') or '').strip()    # e.g. keuanganpakevan
 WUZAPI_INSTANCE = os.getenv('WUZAPI_INSTANCE', 'Keuangan') 
 WUZAPI_INSTANCE_ID = os.getenv('WUZAPI_INSTANCE_ID', '').strip()
 
@@ -25,6 +25,8 @@ def get_wuzapi_session():
         _wuzapi_session.mount("https://", adapter)
         _wuzapi_session.headers.update({
             'token': WUZAPI_TOKEN,
+            'Token': WUZAPI_TOKEN,
+            'Authorization': f'Bearer {WUZAPI_TOKEN}',
             'Content-Type': 'application/json'
         })
     return _wuzapi_session
@@ -180,6 +182,7 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
             endpoints.extend(_build_wuzapi_endpoints(base, suffix))
 
         last_err = ""
+        seen_not_started = False
         for url in endpoints:
             for payload in payload_variants:
                 try:
@@ -189,13 +192,7 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
                         return resp.json()
 
                     if _is_wuzapi_not_started(resp):
-                        secure_log(
-                            "ERROR",
-                            "WuzAPI instance not started/connected. "
-                            "Open WuzAPI dashboard and start session (scan QR), "
-                            "then verify DOMAIN+TOKEN point to the same active instance."
-                        )
-                        return None
+                        seen_not_started = True
                     
                     # Capture error details
                     current_err = f"{resp.status_code} on {url}: {resp.text[:200]}"
@@ -222,6 +219,12 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
                     last_err = f"{type(e).__name__}: {str(e)[:200]}"
                     continue
 
+        if seen_not_started:
+            secure_log(
+                "ERROR",
+                "WuzAPI returned not-started state on at least one endpoint. "
+                "Verify session status plus DOMAIN+TOKEN+INSTANCE_ID alignment."
+            )
         secure_log("ERROR", f"WuzAPI: All send endpoints failed: {last_err}")
         return None
         
@@ -410,6 +413,7 @@ def send_wuzapi_document(to: str, file_path: str, caption: str = None) -> Option
             endpoints.extend(_build_wuzapi_endpoints(base, suffix))
 
         last_err = ""
+        seen_not_started = False
         for url in endpoints:
             try:
                 # Need to increase timeout for media upload
@@ -420,13 +424,7 @@ def send_wuzapi_document(to: str, file_path: str, caption: str = None) -> Option
                         return resp.json()
 
                     if _is_wuzapi_not_started(resp):
-                        secure_log(
-                            "ERROR",
-                            "WuzAPI instance not started/connected for media send. "
-                            "Open WuzAPI dashboard and start session (scan QR), "
-                            "then verify DOMAIN+TOKEN point to the same active instance."
-                        )
-                        return None
+                        seen_not_started = True
 
                     last_err = f"{resp.status_code} on {url}: {resp.text[:200]}"
                     if resp.status_code == 413: # Payload too large
@@ -437,6 +435,12 @@ def send_wuzapi_document(to: str, file_path: str, caption: str = None) -> Option
                 last_err = f"{type(e).__name__}: {str(e)[:200]}"
                 continue
         
+        if seen_not_started:
+            secure_log(
+                "ERROR",
+                "WuzAPI returned not-started state on media endpoint attempts. "
+                "Verify session status plus DOMAIN+TOKEN+INSTANCE_ID alignment."
+            )
         secure_log("ERROR", f"WuzAPI Media Send Failed: {last_err}")
         return None
 
