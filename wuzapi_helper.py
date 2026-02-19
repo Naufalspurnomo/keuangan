@@ -60,6 +60,37 @@ def _build_wuzapi_endpoints(base: str, path_suffix: str) -> list[str]:
     return list(dict.fromkeys(candidates))
 
 
+def _build_instance_variants(payload: Dict[str, Any]) -> list[Dict[str, Any]]:
+    """Build payload variants for WuzAPI deployments with different instance fields."""
+    variants: list[Dict[str, Any]] = [dict(payload)]
+
+    # Some deployments require/accept an explicit instance name or id in payload.
+    if WUZAPI_INSTANCE:
+        variants.extend([
+            {**payload, "Instance": WUZAPI_INSTANCE},
+            {**payload, "instance": WUZAPI_INSTANCE},
+            {**payload, "Account": WUZAPI_INSTANCE},
+        ])
+
+    if WUZAPI_INSTANCE_ID:
+        variants.extend([
+            {**payload, "InstanceID": WUZAPI_INSTANCE_ID},
+            {**payload, "instanceId": WUZAPI_INSTANCE_ID},
+            {**payload, "AccountID": WUZAPI_INSTANCE_ID},
+        ])
+
+    # De-duplicate while preserving order to avoid repeated requests.
+    deduped: list[Dict[str, Any]] = []
+    seen = set()
+    for item in variants:
+        marker = tuple(sorted(item.items()))
+        if marker not in seen:
+            deduped.append(item)
+            seen.add(marker)
+
+    return deduped
+
+
 def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[Dict]:
     """Send WhatsApp message via WuzAPI.
     
