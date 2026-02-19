@@ -79,11 +79,25 @@ def _build_instance_variants(payload: Dict[str, Any]) -> list[Dict[str, Any]]:
             {**payload, "AccountID": WUZAPI_INSTANCE_ID},
         ])
 
+    def _freeze_for_hash(value: Any) -> Any:
+        """Convert nested dict/list/set into hashable structure for dedup markers."""
+        if isinstance(value, dict):
+            return tuple(sorted((k, _freeze_for_hash(v)) for k, v in value.items()))
+        if isinstance(value, (list, tuple)):
+            return tuple(_freeze_for_hash(v) for v in value)
+        if isinstance(value, set):
+            return tuple(sorted(_freeze_for_hash(v) for v in value))
+        try:
+            hash(value)
+            return value
+        except TypeError:
+            return repr(value)
+
     # De-duplicate while preserving order to avoid repeated requests.
     deduped: list[Dict[str, Any]] = []
     seen = set()
     for item in variants:
-        marker = tuple(sorted(item.items()))
+        marker = _freeze_for_hash(item)
         if marker not in seen:
             deduped.append(item)
             seen.add(marker)
