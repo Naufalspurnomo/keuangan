@@ -51,6 +51,9 @@ OCR_DEBUG = os.getenv('OCR_DEBUG', '0').lower() in ('1', 'true', 'yes')
 OCR_DEBUG_MAX = int(os.getenv('OCR_DEBUG_MAX', '3'))
 # OCR small amount threshold (default 5k IDR)
 OCR_SMALL_AMOUNT = int(os.getenv('OCR_SMALL_AMOUNT', '5000'))
+OCR_ENABLE_STATEMENT_AUTOPILOT = os.getenv('OCR_ENABLE_STATEMENT_AUTOPILOT', 'true').lower() in ('1', 'true', 'yes')
+OCR_STATEMENT_MIN_ROWS = max(1, int(os.getenv('OCR_STATEMENT_MIN_ROWS', '2')))
+OCR_STATEMENT_MIN_CONFIDENCE = float(os.getenv('OCR_STATEMENT_MIN_CONFIDENCE', '0.72'))
 
 def extract_project_from_description(description: str) -> str:
     """
@@ -526,6 +529,75 @@ def extract_transfer_fee(text: str) -> int:
     return 0
 
 
+def _is_reasonable_transfer_fee(
+    fee: int,
+    main_amount: int = 0,
+    total_amount: int = 0,
+    fee_keyword_found: bool = False,
+) -> bool:
+    """
+    Conservative transfer-fee sanity guard.
+    Blocks obvious OCR mistakes such as fee == main amount.
+    """
+    try:
+        fee_i = int(fee or 0)
+    except Exception:
+        return False
+    if fee_i <= 0:
+        return False
+    if fee_i < 100:
+        return False
+    if fee_i > 100000:
+        return False
+
+    try:
+        main_i = int(main_amount or 0)
+    except Exception:
+        main_i = 0
+    try:
+        total_i = int(total_amount or 0)
+    except Exception:
+        total_i = 0
+
+    if main_i > 0 and fee_i >= main_i:
+        return False
+    if total_i > 0 and fee_i >= total_i:
+        return False
+
+    # Common realistic bank transfer admin fees.
+    common_fee_values = {
+        500, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 5000, 6500, 7500, 10000
+    }
+    if fee_i in common_fee_values:
+        return True
+
+    if fee_i <= 10000:
+        return True
+
+    # Looser acceptance only when explicit fee signal exists.
+    if fee_keyword_found:
+        if main_i > 0 and fee_i <= max(25000, int(main_i * 0.05)):
+            return True
+        if main_i == 0 and fee_i <= 25000:
+            return True
+
+    return False
+
+
+def _sanitize_transfer_fee(
+    fee: int,
+    main_amount: int = 0,
+    total_amount: int = 0,
+    fee_keyword_found: bool = False,
+) -> int:
+    return int(fee or 0) if _is_reasonable_transfer_fee(
+        fee,
+        main_amount=main_amount,
+        total_amount=total_amount,
+        fee_keyword_found=fee_keyword_found,
+    ) else 0
+
+
 def _parse_money_token(token: str) -> int:
     """
     Parse a money token with mixed separators.
@@ -623,6 +695,12 @@ _ACCOUNT_HINT_RE = re.compile(
     r"kode|id\s*transaksi|no\.?\s*(?:rek|rekening|ref|transaksi))\b",
     re.IGNORECASE
 )
+_NOISE_NUMERIC_LABEL_RE = re.compile(
+    r"\b(kurs(?:\s*valas)?|exchange\s*rate|"
+    r"no\.?\s*(?:referensi|reference|rek(?:ening)?)|reference\s*number|account\s*number|"
+    r"rrn|stan|auth|approval|tanggal|date|jam|time)\b",
+    re.IGNORECASE
+)
 
 _FEE_KEYWORDS = ["fee", "biaya", "admin", "charge"]
 _TOTAL_PHRASES = [
@@ -653,6 +731,49 @@ _LABEL_AMOUNT_RE = re.compile(
     r")\s*[:\-]?\s*(?:rp|idr)?\s*(?P<amount>\d[\d\.,\s]+)",
     re.IGNORECASE
 )
+_STATEMENT_DATE_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b")
+_STATEMENT_REF_RE = re.compile(r"\b\d{10,20}\b")
+_STATEMENT_STATUS_RE = re.compile(r"\b(?:berhasil|success(?:ful)?)\b", re.IGNORECASE)
+_STATEMENT_AMOUNT_RE = re.compile(
+    r"\b(?:rp|idr)\s*([0-9OoIl][0-9OoIl\.,\s]{1,})",
+    re.IGNORECASE
+)
+_STATEMENT_FEE_HINT_RE = re.compile(r"\b(?:fee|biaya|admin|charge)\b", re.IGNORECASE)
+_STATEMENT_HEADER_HINTS = (
+    "transfer dana",
+    "jenis transfer",
+    "dari rekening",
+    "ke rekening",
+    "jumlah",
+    "biaya",
+    "kurs",
+    "status",
+    "alasan",
+    "referensi",
+)
+
+
+def detect_ocr_document_mode(ocr_text: str) -> str:
+    """
+    Classify OCR text into:
+    - STATEMENT_TABLE: tabular transfer history / multi-row
+    - SINGLE_RECEIPT: one transfer receipt
+    - UNKNOWN
+    """
+    if not ocr_text:
+        return "UNKNOWN"
+    lower = ocr_text.lower()
+    header_hits = sum(1 for h in _STATEMENT_HEADER_HINTS if h in lower)
+    date_hits = len(_STATEMENT_DATE_RE.findall(ocr_text))
+    ref_hits = len(_STATEMENT_REF_RE.findall(ocr_text))
+    status_hits = len(_STATEMENT_STATUS_RE.findall(ocr_text))
+    amount_hits = len(_STATEMENT_AMOUNT_RE.findall(ocr_text))
+
+    if header_hits >= 3 and amount_hits >= 2 and (date_hits >= 2 or ref_hits >= 2 or status_hits >= 2):
+        return "STATEMENT_TABLE"
+    if detect_bank_receipt(ocr_text):
+        return "SINGLE_RECEIPT"
+    return "UNKNOWN"
 
 
 def preprocess_ocr(text: str) -> str:
@@ -737,6 +858,269 @@ def detect_bank_receipt(text: str) -> bool:
     if _CURRENCY_RE.search(lower) and _MONEY_TOKEN_RE.search(lower):
         score += 1
     return score >= 2
+
+
+def _extract_statement_row_blocks(ocr_text: str) -> List[str]:
+    """
+    Split OCR text into statement-like row blocks.
+    Works best for table receipts where each row starts with a date.
+    """
+    if not ocr_text:
+        return []
+
+    lines = []
+    for raw in ocr_text.splitlines():
+        line = re.sub(r"\s+", " ", raw).strip()
+        if not line:
+            continue
+        lines.append(line)
+
+    blocks: List[str] = []
+    current: List[str] = []
+    in_row = False
+
+    for line in lines:
+        has_row_start = bool(_STATEMENT_DATE_RE.search(line))
+        if has_row_start:
+            if current:
+                block_text = " | ".join(current).strip(" |")
+                if block_text:
+                    blocks.append(block_text)
+            current = [line]
+            in_row = True
+            continue
+
+        if not in_row:
+            continue
+
+        current.append(line)
+        joined = " ".join(current)
+        if _STATEMENT_REF_RE.search(joined) and _STATEMENT_STATUS_RE.search(joined):
+            block_text = " | ".join(current).strip(" |")
+            if block_text:
+                blocks.append(block_text)
+            current = []
+            in_row = False
+
+    if current:
+        block_text = " | ".join(current).strip(" |")
+        if block_text:
+            blocks.append(block_text)
+
+    # Fallback split when OCR collapses lines into paragraphs.
+    if not blocks:
+        chunks = re.split(r"(?=\b\d{1,2}/\d{1,2}/\d{2,4}\b)", ocr_text)
+        for c in chunks:
+            cc = re.sub(r"\s+", " ", c).strip()
+            if not cc:
+                continue
+            if _STATEMENT_AMOUNT_RE.search(cc) and (_STATEMENT_STATUS_RE.search(cc) or _STATEMENT_REF_RE.search(cc)):
+                blocks.append(cc)
+
+    return blocks
+
+
+def _parse_statement_date(block: str) -> str:
+    m = _STATEMENT_DATE_RE.search(block or "")
+    if not m:
+        return datetime.now().strftime("%Y-%m-%d")
+    try:
+        day = int(m.group(1))
+        month = int(m.group(2))
+        year = int(m.group(3))
+        if year < 100:
+            year += 2000
+        return datetime(year, month, day).strftime("%Y-%m-%d")
+    except Exception:
+        return datetime.now().strftime("%Y-%m-%d")
+
+
+def _extract_statement_row(block: str) -> Optional[Dict]:
+    if not block:
+        return None
+
+    amount_matches = []
+    for m in _STATEMENT_AMOUNT_RE.finditer(block):
+        raw = m.group(1)
+        val = _parse_money_token(raw)
+        if val <= 0 or val > OCR_MAX_AMOUNT:
+            continue
+        amount_matches.append((m.start(), val))
+    if not amount_matches:
+        return None
+
+    fee_idx = None
+    fee_amount = 0
+    for idx, (pos, val) in enumerate(amount_matches):
+        window = block[max(0, pos - 32):pos].lower()
+        if _STATEMENT_FEE_HINT_RE.search(window):
+            fee_idx = idx
+            if val <= 100000:
+                fee_amount = val
+            break
+
+    main_candidates = [v for idx, (_p, v) in enumerate(amount_matches) if idx != fee_idx]
+    if not main_candidates:
+        return None
+    main_amount = max(main_candidates)
+    if main_amount < 100:
+        return None
+
+    fee_amount = _sanitize_transfer_fee(
+        fee_amount,
+        main_amount=main_amount,
+        total_amount=main_amount + fee_amount if fee_amount > 0 else 0,
+        fee_keyword_found=(fee_idx is not None),
+    )
+
+    refs = _STATEMENT_REF_RE.findall(block)
+    ref = refs[-1] if refs else ""
+    status_ok = bool(_STATEMENT_STATUS_RE.search(block))
+
+    beneficiary = ""
+    m_benef = re.search(
+        r"/\s*([A-Z][A-Z\s]{2,})\s*(?:\(|rp|idr|$)",
+        block,
+        flags=re.IGNORECASE,
+    )
+    if m_benef:
+        beneficiary = re.sub(r"\s+", " ", m_benef.group(1)).strip()
+
+    confidence = 0.35
+    confidence += 0.25 if main_amount >= 100 else 0.0
+    confidence += 0.15 if status_ok else 0.0
+    confidence += 0.15 if ref else 0.0
+    confidence += 0.10 if _STATEMENT_DATE_RE.search(block) else 0.0
+    confidence += 0.10 if amount_matches else 0.0
+    if fee_idx is not None and fee_amount <= 100000:
+        confidence += 0.10
+    confidence = max(0.0, min(0.99, confidence))
+
+    return {
+        "tanggal": _parse_statement_date(block),
+        "main_amount": int(main_amount),
+        "fee_amount": int(fee_amount),
+        "reference": ref,
+        "status_ok": status_ok,
+        "beneficiary": beneficiary,
+        "confidence": confidence,
+    }
+
+
+def _infer_project_from_caption(caption: str) -> tuple:
+    clean_caption = sanitize_input(caption or "").strip()
+    if not clean_caption:
+        return "", True
+
+    explicit = _extract_explicit_project_hint(clean_caption)
+    if explicit and is_semantically_valid_project_name(explicit):
+        return explicit[:100], False
+
+    inferred = extract_project_from_description(clean_caption)
+    if inferred and is_semantically_valid_project_name(inferred):
+        return inferred[:100], False
+
+    return "", True
+
+
+def _build_statement_transactions(ocr_text: str, caption: str = "") -> List[Dict]:
+    """
+    Deterministic parser for multi-row transfer statement screenshots.
+    Returns [] when confidence is low so caller can fallback to existing AI flow.
+    """
+    blocks = _extract_statement_row_blocks(ocr_text)
+    if not blocks:
+        return []
+
+    parsed_rows = []
+    for block in blocks:
+        row = _extract_statement_row(block)
+        if not row:
+            continue
+        if row.get("confidence", 0.0) < OCR_STATEMENT_MIN_CONFIDENCE:
+            continue
+        parsed_rows.append(row)
+
+    if len(parsed_rows) < OCR_STATEMENT_MIN_ROWS:
+        return []
+
+    clean_caption = sanitize_input(caption or "").strip()
+    caption_generic = is_generic_caption(clean_caption)
+    project_name, needs_project = _infer_project_from_caption(clean_caption)
+    detected_dompet = detect_wallet_from_text(clean_caption) if clean_caption else None
+    if not detected_dompet:
+        detected_dompet = extract_source_wallet_from_ocr(ocr_text)
+
+    transactions: List[Dict] = []
+    seen_keys = set()
+    for idx, row in enumerate(parsed_rows, start=1):
+        ref = row.get("reference", "")
+        ref_tail = ref[-6:] if ref else ""
+        beneficiary = row.get("beneficiary", "")
+
+        if clean_caption and not caption_generic:
+            if len(parsed_rows) == 1:
+                main_desc = clean_caption
+            else:
+                suffix = f" Ref {ref_tail}" if ref_tail else f" Baris {idx}"
+                main_desc = f"{clean_caption}{suffix}"
+        else:
+            who = beneficiary if beneficiary else "transfer"
+            suffix = f" Ref {ref_tail}" if ref_tail else ""
+            main_desc = f"Transfer {who}{suffix}".strip()
+
+        base_tx = {
+            "tanggal": row.get("tanggal"),
+            "kategori": "Lain-lain",
+            "keterangan": main_desc[:200],
+            "jumlah": int(row.get("main_amount", 0) or 0),
+            "tipe": "Pengeluaran",
+            "nama_projek": project_name if not needs_project else "",
+            "company": None,
+        }
+        is_valid, _err, sanitized = validate_transaction_data(base_tx)
+        if not is_valid:
+            continue
+        if needs_project:
+            sanitized["needs_project"] = True
+            sanitized["nama_projek"] = ""
+        if detected_dompet:
+            sanitized["detected_dompet"] = detected_dompet
+        sanitized["_ocr_mode"] = "STATEMENT_TABLE"
+        sanitized["_ocr_confidence"] = round(float(row.get("confidence", 0.0)), 2)
+
+        main_key = (sanitized.get("tanggal"), sanitized.get("jumlah"), sanitized.get("keterangan"), "main")
+        if main_key not in seen_keys:
+            seen_keys.add(main_key)
+            transactions.append(sanitized)
+
+        fee_amount = int(row.get("fee_amount", 0) or 0)
+        if fee_amount > 0:
+            fee_desc = f"Biaya transfer Ref {ref_tail}" if ref_tail else "Biaya transfer"
+            fee_tx = {
+                "tanggal": row.get("tanggal"),
+                "kategori": "Lain-lain",
+                "keterangan": fee_desc[:200],
+                "jumlah": fee_amount,
+                "tipe": "Pengeluaran",
+                "nama_projek": project_name if not needs_project else "",
+                "company": None,
+            }
+            ok_fee, _err_fee, san_fee = validate_transaction_data(fee_tx)
+            if ok_fee:
+                if needs_project:
+                    san_fee["needs_project"] = True
+                    san_fee["nama_projek"] = ""
+                if detected_dompet:
+                    san_fee["detected_dompet"] = detected_dompet
+                san_fee["_ocr_mode"] = "STATEMENT_TABLE"
+                san_fee["_ocr_confidence"] = round(float(row.get("confidence", 0.0)), 2)
+                fee_key = (san_fee.get("tanggal"), san_fee.get("jumlah"), san_fee.get("keterangan"), "fee")
+                if fee_key not in seen_keys:
+                    seen_keys.add(fee_key)
+                    transactions.append(san_fee)
+
+    return transactions
 
 
 def _is_date_like_line(lower: str) -> bool:
@@ -877,6 +1261,18 @@ def _extract_amounts_core(text: str, strict: bool) -> dict:
         if not has_amount:
             continue
 
+        # Guardrail: skip numeric-only lines that are likely metadata, not money.
+        if _NOISE_NUMERIC_LABEL_RE.search(lower):
+            has_money_label = (
+                any(k in lower for k in _FEE_KEYWORDS)
+                or any(k in lower for k in _BASE_KEYWORDS)
+                or any(p in lower for p in _TOTAL_PHRASES)
+                or "total" in lower
+                or "jumlah pembayaran" in lower
+            )
+            if not has_money_label:
+                continue
+
         has_currency = _line_has_currency(line)
         labeled = _extract_labeled_amounts(line)
         if labeled:
@@ -971,6 +1367,7 @@ def validate_amounts(result: dict) -> dict:
     fee = int(result.get("fee", 0) or 0)
     total = int(result.get("total", 0) or 0)
     total_keyword_found = bool(result.get("total_keyword_found"))
+    fee_keyword_found = bool(result.get("fee_keyword_found"))
 
     fee_limit = 100000
 
@@ -992,6 +1389,12 @@ def validate_amounts(result: dict) -> dict:
     elif base and not total:
         total = base + fee if fee > 0 else base
 
+    fee = _sanitize_transfer_fee(
+        fee,
+        main_amount=base,
+        total_amount=total,
+        fee_keyword_found=fee_keyword_found,
+    )
     if fee > fee_limit:
         fee = 0
     if total > OCR_MAX_AMOUNT:
@@ -1563,13 +1966,11 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
 
             lower_clean_text = (clean_text or "").lower()
             fee_keyword_found = bool(receipt_amounts.get("fee_keyword_found"))
-            transfer_fee = receipt_amounts.get("fee", 0) or extract_transfer_fee(clean_text)
+            transfer_fee = int(receipt_amounts.get("fee", 0) or extract_transfer_fee(clean_text) or 0)
             if ocr_text == "" and _is_labor_fee_narrative(lower_clean_text):
                 transfer_fee = 0
                 fee_keyword_found = False
                 secure_log("INFO", "Labor fee narrative detected; skip transfer-fee augmentation")
-            if fee_keyword_found and transfer_fee <= 0:
-                secure_log("INFO", "Fee keyword found but amount missing; fee ignored")
 
             # Identify fee transaction (if any)
             def _is_fee_tx(tx: dict) -> bool:
@@ -1613,6 +2014,22 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                 if int(main_tx.get("jumlah", 0) or 0) > OCR_MAX_AMOUNT:
                     main_tx["jumlah"] = 0
                     main_tx["needs_amount"] = True
+
+            main_amount_now = int((main_tx or {}).get("jumlah", 0) or 0)
+            sanitized_fee = _sanitize_transfer_fee(
+                transfer_fee,
+                main_amount=main_amount_now,
+                total_amount=total_amt,
+                fee_keyword_found=fee_keyword_found,
+            )
+            if transfer_fee > 0 and sanitized_fee <= 0:
+                secure_log(
+                    "INFO",
+                    f"Dropped unrealistic transfer fee candidate: fee={transfer_fee} main={main_amount_now} total={total_amt}",
+                )
+            transfer_fee = sanitized_fee
+            if fee_keyword_found and transfer_fee <= 0:
+                secure_log("INFO", "Fee keyword found but amount invalid/missing; fee ignored")
 
             # Remove fee transaction if amount not detected
             if fee_tx and transfer_fee <= 0:
@@ -2160,6 +2577,9 @@ CRITICAL LOGIC RULES:
 
 5. **OCR/RECEIPT PARSING - CRITICAL:**
    - When input contains "Receipt/Struk content:", this is OCR output from a bank transfer screenshot
+   - OCR Document Mode hint may be present:
+     - "STATEMENT_TABLE" = multi-row transfer history/table
+     - "SINGLE_RECEIPT" = one transfer receipt
    - ONLY extract amounts that have "IDR", "Rp", "Amount:", "Fee:", "Jumlah:" prefix
    - ❌ NEVER extract year numbers (2024, 2025, 2026) as amounts - these are dates!
    - ❌ NEVER extract account numbers as amounts
@@ -2168,7 +2588,8 @@ CRITICAL LOGIC RULES:
    - ✅ "Amount: IDR 200,000.00" -> jumlah: 200000
    - ✅ "Fee: IDR 2,500.00" -> separate transaction with jumlah: 2500 (only if >= Rp 100)
    - If "Remarks:" field exists, use it for project name extraction
-   - Create maximum 2 transactions from receipt: main transfer + fee (if any)
+   - If mode is SINGLE_RECEIPT: usually 1 main transfer + optional fee
+   - If mode is STATEMENT_TABLE: extract one transaction per table row (plus row fee when explicit)
 
 6. COMPANY EXTRACTION (If not User explicitly mentions company):
    - IF user mentions "Dompet Evan" AND NOT "Saldo Umum" context: Output "company": "KANTOR" (Default).
@@ -2401,7 +2822,17 @@ def extract_from_image(image_paths: Union[str, List[str]], sender_name: str, cap
         if not looks_like_receipt_text(ocr_text) and not (clean_caption and not caption_is_generic):
             raise ValueError("Gambar tidak terdeteksi sebagai struk")
 
-        full_text = f"Receipt/Struk content:\n{ocr_text}"
+        doc_mode = detect_ocr_document_mode(ocr_text)
+        secure_log("INFO", f"OCR document mode detected: {doc_mode}")
+
+        if OCR_ENABLE_STATEMENT_AUTOPILOT and doc_mode == "STATEMENT_TABLE":
+            statement_txs = _build_statement_transactions(ocr_text, clean_caption)
+            if statement_txs:
+                secure_log("INFO", f"Statement autopilot extracted {len(statement_txs)} transactions")
+                return statement_txs
+            secure_log("INFO", "Statement autopilot could not extract confidently; fallback to AI text extraction")
+
+        full_text = f"Receipt/Struk content:\n[DocumentMode: {doc_mode}]\n{ocr_text}"
         if caption:
             # Sanitize caption too
             clean_caption = sanitize_input(caption)

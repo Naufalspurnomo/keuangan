@@ -23,7 +23,7 @@ from utils.formatters import (
     format_success_reply_operational,
 )
 from utils.parsers import parse_revision_amount
-from config.wallets import DOMPET_SHORT_NAMES, get_company_name_from_sheet
+from config.wallets import DOMPET_SHORT_NAMES, get_company_name_from_sheet, extract_company_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,24 @@ def _extract_operational_source_wallet(keterangan: str) -> str:
     return source
 
 
+def _resolve_revision_company(items: list, dompet_sheet: str) -> str:
+    """Resolve company label for revision summary, including CV HB prefix split."""
+    default_company = get_company_name_from_sheet(dompet_sheet) if dompet_sheet else "UMUM"
+    if dompet_sheet != "CV HB(101)":
+        return default_company or "UMUM"
+
+    prefix_counts = {}
+    for item in items:
+        prefix = extract_company_prefix(item.get('nama_projek') or "")
+        if prefix in {"HOLLA", "HOJJA"}:
+            prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
+
+    if not prefix_counts:
+        return default_company or "UMUM"
+
+    return max(prefix_counts.items(), key=lambda kv: kv[1])[0]
+
+
 def _build_revision_summary(items: list) -> str:
     if not items:
         return ""
@@ -89,7 +107,7 @@ def _build_revision_summary(items: list) -> str:
         )
 
     dompet_sheet = items[0].get('dompet') or ""
-    company = get_company_name_from_sheet(dompet_sheet) if dompet_sheet else "UMUM"
+    company = _resolve_revision_company(items, dompet_sheet)
     return format_success_reply_new(txs, dompet_sheet or "-", company or "UMUM", "")
 
 def handle_revision_command(user_id: str, chat_id: str, text: str, 
@@ -431,4 +449,3 @@ def process_undo_deletion(items: list, event_id: Optional[str] = None) -> dict:
             'response': f'⚠️ {deleted_count}/{target_count} transaksi dihapus. Ada yang gagal.',
             'completed': True
         }
-
