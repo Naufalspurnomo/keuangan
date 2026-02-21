@@ -16,10 +16,11 @@ import os
 import re
 import json
 import tempfile
+import threading
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
-from typing import List, Dict, Optional, Union
+from typing import Any, Callable, List, Dict, Optional, Union
 
 
 # Load environment variables
@@ -1516,12 +1517,158 @@ def extract_receipt_amounts(ocr_text: str) -> dict:
 
 
 # Groq Configuration
-GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+GROQ_API_KEY = (os.getenv('GROQ_API_KEY') or '').strip()
+GROQ_API_KEY_SECONDARY = (os.getenv('GROQ_API_KEY_SECONDARY') or '').strip()
+GROQ_API_KEYS = (os.getenv('GROQ_API_KEYS') or '').strip()
 
-# Initialize Groq client
-# Initialize Groq client
+# Initialize Groq client(s)
 from groq import Groq, RateLimitError
-groq_client = Groq(api_key=GROQ_API_KEY)
+
+
+def _build_groq_api_keys() -> List[str]:
+    """Build ordered unique API key list from env."""
+    keys: List[str] = []
+
+    if GROQ_API_KEYS:
+        keys.extend([k.strip() for k in GROQ_API_KEYS.split(',') if k.strip()])
+
+    # Preserve compatibility with previous single-key setup.
+    if GROQ_API_KEY:
+        keys.append(GROQ_API_KEY)
+    if GROQ_API_KEY_SECONDARY:
+        keys.append(GROQ_API_KEY_SECONDARY)
+
+    unique: List[str] = []
+    seen = set()
+    for key in keys:
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(key)
+    return unique
+
+
+def _is_rate_limit_error(err: Exception) -> bool:
+    if isinstance(err, RateLimitError):
+        return True
+    err_str = str(err).lower()
+    return (
+        "429" in err_str
+        or "too many requests" in err_str
+        or "rate limit" in err_str
+        or "rate_limit" in err_str
+    )
+
+
+def _masked_key(api_key: str) -> str:
+    """Return short key fingerprint for logs without exposing secret."""
+    if not api_key:
+        return "unset"
+    if len(api_key) < 8:
+        return "****"
+    return f"{api_key[:4]}...{api_key[-4:]}"
+
+
+class _GroqCompletionsProxy:
+    def __init__(self, router: "RotatingGroqClient"):
+        self._router = router
+
+    def create(self, *args, **kwargs):
+        return self._router._call_with_fallback(
+            operation_name="chat.completions.create",
+            caller=lambda client: client.chat.completions.create(*args, **kwargs),
+        )
+
+
+class _GroqChatProxy:
+    def __init__(self, router: "RotatingGroqClient"):
+        self.completions = _GroqCompletionsProxy(router)
+
+
+class _GroqTranscriptionsProxy:
+    def __init__(self, router: "RotatingGroqClient"):
+        self._router = router
+
+    def create(self, *args, **kwargs):
+        return self._router._call_with_fallback(
+            operation_name="audio.transcriptions.create",
+            caller=lambda client: client.audio.transcriptions.create(*args, **kwargs),
+        )
+
+
+class _GroqAudioProxy:
+    def __init__(self, router: "RotatingGroqClient"):
+        self.transcriptions = _GroqTranscriptionsProxy(router)
+
+
+class RotatingGroqClient:
+    """
+    Groq client wrapper with automatic key fallback on rate-limit errors.
+    Keeps backward compatibility with existing usage:
+    - groq_client.chat.completions.create(...)
+    - groq_client.audio.transcriptions.create(...)
+    """
+
+    def __init__(self, api_keys: List[str]):
+        if not api_keys:
+            raise ValueError("GROQ API key is missing. Set GROQ_API_KEY in environment.")
+
+        self._api_keys = api_keys
+        self._clients = [Groq(api_key=key) for key in api_keys]
+        self._active_index = 0
+        self._lock = threading.Lock()
+
+        self.chat = _GroqChatProxy(self)
+        self.audio = _GroqAudioProxy(self)
+
+        secure_log("INFO", f"Groq initialized with {len(self._clients)} API key(s)")
+
+    def _get_active_index(self) -> int:
+        with self._lock:
+            return self._active_index
+
+    def _set_active_index(self, idx: int) -> None:
+        with self._lock:
+            self._active_index = idx
+
+    def _rotation_order(self) -> List[int]:
+        start = self._get_active_index()
+        return [(start + offset) % len(self._clients) for offset in range(len(self._clients))]
+
+    def _call_with_fallback(self, operation_name: str, caller: Callable[[Groq], Any]):
+        last_rate_limit_error: Optional[Exception] = None
+        initial_index = self._get_active_index()
+
+        for idx in self._rotation_order():
+            client = self._clients[idx]
+            try:
+                result = caller(client)
+                self._set_active_index(idx)
+                if idx != initial_index:
+                    secure_log(
+                        "INFO",
+                        f"Groq fallback switched active key for {operation_name} -> {_masked_key(self._api_keys[idx])}",
+                    )
+                return result
+            except Exception as exc:
+                if not _is_rate_limit_error(exc):
+                    raise
+                last_rate_limit_error = exc
+                secure_log(
+                    "WARNING",
+                    f"Groq rate limit on {operation_name} with key {_masked_key(self._api_keys[idx])}",
+                )
+
+        if last_rate_limit_error:
+            raise last_rate_limit_error
+        raise RuntimeError("No Groq client available.")
+
+    def __getattr__(self, attr: str):
+        """Fallback passthrough for APIs not explicitly wrapped."""
+        return getattr(self._clients[self._get_active_index()], attr)
+
+
+groq_client = RotatingGroqClient(_build_groq_api_keys())
 
 class RateLimitException(Exception):
     """Custom exception when AI rate limit is reached."""
@@ -1538,7 +1685,9 @@ def call_groq_api(messages, **kwargs):
             messages=messages,
             **kwargs
         )
-    except RateLimitError as e:
+    except Exception as e:
+        if not _is_rate_limit_error(e):
+            raise
         secure_log("WARNING", f"Groq Rate Limit Hit: {str(e)}")
         import re
         wait_time = "beberapa saat"
