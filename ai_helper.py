@@ -52,8 +52,9 @@ OCR_DEBUG_MAX = int(os.getenv('OCR_DEBUG_MAX', '3'))
 # OCR small amount threshold (default 5k IDR)
 OCR_SMALL_AMOUNT = int(os.getenv('OCR_SMALL_AMOUNT', '5000'))
 OCR_ENABLE_STATEMENT_AUTOPILOT = os.getenv('OCR_ENABLE_STATEMENT_AUTOPILOT', 'true').lower() in ('1', 'true', 'yes')
-OCR_STATEMENT_MIN_ROWS = max(1, int(os.getenv('OCR_STATEMENT_MIN_ROWS', '2')))
-OCR_STATEMENT_MIN_CONFIDENCE = float(os.getenv('OCR_STATEMENT_MIN_CONFIDENCE', '0.72'))
+# Statement mode can be a single visible row (cropped screenshot) or many rows.
+OCR_STATEMENT_MIN_ROWS = max(1, int(os.getenv('OCR_STATEMENT_MIN_ROWS', '1')))
+OCR_STATEMENT_MIN_CONFIDENCE = float(os.getenv('OCR_STATEMENT_MIN_CONFIDENCE', '0.65'))
 
 def extract_project_from_description(description: str) -> str:
     """
@@ -763,6 +764,10 @@ def detect_ocr_document_mode(ocr_text: str) -> str:
     if not ocr_text:
         return "UNKNOWN"
     lower = ocr_text.lower()
+    if "documenttype: statement_table" in lower or "document type: statement_table" in lower:
+        return "STATEMENT_TABLE"
+    if "documenttype: single_receipt" in lower or "document type: single_receipt" in lower:
+        return "SINGLE_RECEIPT"
     header_hits = sum(1 for h in _STATEMENT_HEADER_HINTS if h in lower)
     date_hits = len(_STATEMENT_DATE_RE.findall(ocr_text))
     ref_hits = len(_STATEMENT_REF_RE.findall(ocr_text))
@@ -882,12 +887,26 @@ def _extract_statement_row_blocks(ocr_text: str) -> List[str]:
     for line in lines:
         has_row_start = bool(_STATEMENT_DATE_RE.search(line))
         if has_row_start:
-            if current:
+            if not in_row:
+                current = [line]
+                in_row = True
+                continue
+
+            # Important: statement rows often contain two date columns
+            # (Tanggal Input + Tanggal Transfer). Do not split too early.
+            joined_current = " ".join(current)
+            row_ready = bool(
+                _STATEMENT_AMOUNT_RE.search(joined_current)
+                or _STATEMENT_REF_RE.search(joined_current)
+                or _STATEMENT_STATUS_RE.search(joined_current)
+            )
+            if row_ready:
                 block_text = " | ".join(current).strip(" |")
                 if block_text:
                     blocks.append(block_text)
-            current = [line]
-            in_row = True
+                current = [line]
+            else:
+                current.append(line)
             continue
 
         if not in_row:
@@ -917,7 +936,15 @@ def _extract_statement_row_blocks(ocr_text: str) -> List[str]:
             if _STATEMENT_AMOUNT_RE.search(cc) and (_STATEMENT_STATUS_RE.search(cc) or _STATEMENT_REF_RE.search(cc)):
                 blocks.append(cc)
 
-    return blocks
+    deduped_blocks = []
+    seen_blocks = set()
+    for b in blocks:
+        key = re.sub(r"\s+", " ", b).strip().lower()
+        if key in seen_blocks:
+            continue
+        seen_blocks.add(key)
+        deduped_blocks.append(b)
+    return deduped_blocks
 
 
 def _parse_statement_date(block: str) -> str:
@@ -966,6 +993,11 @@ def _extract_statement_row(block: str) -> Optional[Dict]:
     if main_amount < 100:
         return None
 
+    if fee_idx is None and len(amount_matches) >= 2:
+        secondary = [v for _p, v in amount_matches if 0 < v < main_amount and v <= 10000]
+        if secondary:
+            fee_amount = min(secondary)
+
     fee_amount = _sanitize_transfer_fee(
         fee_amount,
         main_amount=main_amount,
@@ -1004,6 +1036,7 @@ def _extract_statement_row(block: str) -> Optional[Dict]:
         "status_ok": status_ok,
         "beneficiary": beneficiary,
         "confidence": confidence,
+        "raw_block": block[:400],
     }
 
 
@@ -1023,6 +1056,53 @@ def _infer_project_from_caption(caption: str) -> tuple:
     return "", True
 
 
+def _extract_expected_item_count(caption: str) -> int:
+    text = sanitize_input(caption or "").lower()
+    if not text:
+        return 0
+    patterns = [
+        r"\bada\s+(\d{1,2})\s*(?:item|transaksi|trx)\b",
+        r"\b(\d{1,2})\s*(?:item|transaksi|trx)\b",
+    ]
+    for p in patterns:
+        m = re.search(p, text)
+        if m:
+            try:
+                n = int(m.group(1))
+                if 1 <= n <= 20:
+                    return n
+            except Exception:
+                pass
+    return 0
+
+
+def _dedupe_parsed_statement_rows(rows: List[Dict]) -> List[Dict]:
+    if not rows:
+        return []
+    unique = []
+    seen = set()
+    for row in rows:
+        tanggal = str(row.get("tanggal") or "")
+        main_amt = int(row.get("main_amount", 0) or 0)
+        fee_amt = int(row.get("fee_amount", 0) or 0)
+        ref = str(row.get("reference") or "").strip()
+        ben = re.sub(r"\s+", " ", str(row.get("beneficiary") or "").lower()).strip()
+        raw = re.sub(r"\s+", " ", str(row.get("raw_block") or "").lower()).strip()
+        raw = _STATEMENT_DATE_RE.sub(" ", raw)
+        raw = _TIME_PATTERN.sub(" ", raw)
+        raw = re.sub(r"\s+", " ", raw).strip()[:120]
+
+        if ref:
+            key = ("ref", tanggal, main_amt, fee_amt, ref)
+        else:
+            key = ("weak", tanggal, main_amt, fee_amt, ben, raw)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(row)
+    return unique
+
+
 def _build_statement_transactions(ocr_text: str, caption: str = "") -> List[Dict]:
     """
     Deterministic parser for multi-row transfer statement screenshots.
@@ -1033,13 +1113,26 @@ def _build_statement_transactions(ocr_text: str, caption: str = "") -> List[Dict
         return []
 
     parsed_rows = []
+    low_conf_rows = []
     for block in blocks:
         row = _extract_statement_row(block)
         if not row:
             continue
         if row.get("confidence", 0.0) < OCR_STATEMENT_MIN_CONFIDENCE:
+            low_conf_rows.append(row)
             continue
         parsed_rows.append(row)
+    parsed_rows = _dedupe_parsed_statement_rows(parsed_rows)
+
+    expected_count = _extract_expected_item_count(caption)
+    if expected_count > 0 and len(parsed_rows) < expected_count and low_conf_rows:
+        for row in sorted(low_conf_rows, key=lambda r: float(r.get("confidence", 0.0)), reverse=True):
+            candidate = _dedupe_parsed_statement_rows(parsed_rows + [row])
+            if len(candidate) == len(parsed_rows):
+                continue
+            parsed_rows = candidate
+            if len(parsed_rows) >= expected_count:
+                break
 
     if len(parsed_rows) < OCR_STATEMENT_MIN_ROWS:
         return []
@@ -2283,6 +2376,21 @@ CRITICAL RULES FOR AMOUNT EXTRACTION:
    h) Status: Success/Berhasil
 
 OUTPUT FORMAT (Structured):
+DocumentType: SINGLE_RECEIPT or STATEMENT_TABLE
+
+If DocumentType is STATEMENT_TABLE:
+Row 1 | Date Input: [...] | Date Transfer: [...] | Amount: IDR [...] | Fee: IDR [...] | Status: [...] | Ref: [...]
+Row 2 | Date Input: [...] | Date Transfer: [...] | Amount: IDR [...] | Fee: IDR [...] | Status: [...] | Ref: [...]
+Row N | ...
+
+Rules for STATEMENT_TABLE:
+- DO NOT summarize into one row.
+- Capture all visible rows in the table.
+- Amount must come from Jumlah/Amount column.
+- Fee must come from Biaya/Fee/Admin column.
+- Never use Kurs Valas, account numbers, dates, or reference numbers as amount/fee.
+
+If DocumentType is SINGLE_RECEIPT:
 Amount: IDR [main amount]
 Fee: IDR [fee amount]
 Beneficiary: [name]
