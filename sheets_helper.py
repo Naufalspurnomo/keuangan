@@ -784,6 +784,24 @@ def cancel_hutang_by_event_id(event_id: str) -> int:
         return 0
 
 
+def _ensure_rows_available(sheet, target_row: int, buffer: int = 100) -> None:
+    """Ensure the sheet has enough rows for the target row.
+    
+    If target_row exceeds the current grid row count, automatically
+    adds rows so the write won't fail with 'exceeds grid limits'.
+    
+    Args:
+        sheet: gspread Worksheet
+        target_row: 1-based row index we need to write to
+        buffer: Extra rows to add beyond target (avoids frequent expansions)
+    """
+    current_row_count = sheet.row_count
+    if target_row > current_row_count:
+        rows_to_add = (target_row - current_row_count) + buffer
+        sheet.add_rows(rows_to_add)
+        secure_log("INFO", f"Auto-expanded sheet '{sheet.title}': added {rows_to_add} rows (was {current_row_count}, now {current_row_count + rows_to_add})")
+
+
 def _find_next_empty_row(sheet, check_column: int, start_row: int = 9) -> int:
     """Find the next empty row in a specific column.
     
@@ -901,6 +919,9 @@ def append_project_transaction(
         
         # Write to correct column range
         start_col = cols['NO']
+        
+        # Auto-expand sheet if target row exceeds grid limits
+        _ensure_rows_available(sheet, next_row)
         
         # Batch update for efficiency
         cell_list = []

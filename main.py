@@ -2115,6 +2115,7 @@ Balas 1 atau 2"""
                     start_marker_indexes = (
                         select_start_marker_indexes(txs) if is_new_project_batch else set()
                     )
+                    failed_saves = []
                     for idx, tx in enumerate(txs):
                         pname = tx.get('nama_projek') or 'Umum'
                         pname = apply_company_prefix(pname, dompet, detected_company)
@@ -2137,6 +2138,12 @@ Balas 1 atau 2"""
                             dompet_sheet=dompet,
                             project_name=pname
                         )
+                        if not save_result.get('success'):
+                            failed_saves.append({
+                                'tx': tx,
+                                'error': save_result.get('error', 'Unknown error'),
+                                'pname': pname
+                            })
                         if save_result.get('success') and '(finish)' in pname.lower():
                             move_finish_marker_to_latest(
                                 dompet_sheet=dompet,
@@ -2146,6 +2153,21 @@ Balas 1 atau 2"""
                             )
                         if pname and pname.lower() not in ['saldo umum', 'operasional kantor', 'umum', 'unknown']:
                             set_project_lock(pname, dompet, actor=pending.get('sender_name', sender_name), reason='commit')
+
+                    # If any saves failed, notify user and abort success flow
+                    if failed_saves:
+                        _pending_transactions.pop(pkey, None)
+                        fail_count = len(failed_saves)
+                        total_count = len(txs)
+                        error_msg = failed_saves[0].get('error', '')
+                        response = (
+                            f"❌ Gagal menyimpan {fail_count}/{total_count} transaksi ke spreadsheet!\n"
+                            f"📋 Dompet: {dompet}\n"
+                            f"⚠️ Error: {error_msg[:150]}\n\n"
+                            f"Coba kirim ulang transaksi."
+                        )
+                        _send_and_track(response, event_id)
+                        return jsonify({'status': 'sheet_write_failed', 'failed': fail_count}), 200
 
                     # If funded by another dompet (utang), record lender outflow only
                     if debt_source and debt_source != dompet:

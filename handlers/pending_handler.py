@@ -433,6 +433,17 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
             dompet_sheet=dompet_sheet,
             project_name=p_name
         )
+        if not save_result.get('success'):
+            error_msg = save_result.get('error', 'Unknown error')
+            return {
+                'response': (
+                    f"❌ Gagal menyimpan transaksi ke spreadsheet!\n"
+                    f"📋 Dompet: {dompet_sheet}\n"
+                    f"⚠️ Error: {error_msg[:150]}\n\n"
+                    f"Coba kirim ulang transaksi. Jika masih gagal, hubungi admin."
+                ),
+                'completed': False
+            }
         if save_result.get('success') and '(finish)' in p_name.lower():
             move_finish_marker_to_latest(
                 dompet_sheet=dompet_sheet,
