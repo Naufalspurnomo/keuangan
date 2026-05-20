@@ -1008,6 +1008,216 @@ def _fallback_ai(query: str, days: int) -> str:
 
 # ===================== MAIN ENTRY POINT =====================
 
+def _safe_compute_project_stats(days_window: int = 90) -> dict:
+    """
+    Compute baseline statistics across all projects for comparison.
+    Returns empty dict on any failure (insights are best-effort).
+    """
+    try:
+        summary = get_summary(days_window) or {}
+        by_projek = summary.get("by_projek", {}) or {}
+        if not by_projek:
+            return {}
+        margins = []
+        for info in by_projek.values():
+            inc = int(info.get("pemasukan", 0) or 0)
+            exp = int(info.get("pengeluaran", 0) or 0)
+            if inc > 0:
+                margins.append(((inc - exp) / inc) * 100)
+        if not margins:
+            return {}
+        return {
+            "avg_margin_pct": sum(margins) / len(margins),
+            "project_count": len(margins),
+        }
+    except Exception as e:
+        logger.debug(f"_safe_compute_project_stats failed: {e}")
+        return {}
+
+
+def _project_insight_lines(query: str, response: str) -> list:
+    """Insight lines for project queries (margin, activity, top category)."""
+    lines = []
+    try:
+        m = re.search(r"📊 Projek (.+?) \(", response)
+        if not m:
+            return []
+        project_name = PROJECT_PHASE_RE.sub("", m.group(1).strip()).strip()
+        target_base = _normalize_project_label(project_name)
+        if not target_base:
+            return []
+
+        days, _ = _extract_days(_normalize_text(query))
+        data = get_all_data(days) if days is not None else get_all_data(None)
+        rows = []
+        for d in data or []:
+            row_base = _normalize_project_label(d.get("nama_projek", ""))
+            if not row_base:
+                continue
+            if row_base == target_base or target_base in row_base or row_base in target_base:
+                rows.append(d)
+        if not rows:
+            return []
+
+        income = sum(int(d.get("jumlah", 0) or 0) for d in rows if d.get("tipe") == "Pemasukan")
+        expense = sum(int(d.get("jumlah", 0) or 0) for d in rows if d.get("tipe") == "Pengeluaran")
+        tx_count = len(rows)
+
+        # Insight 1: Margin vs avg
+        if income > 0:
+            margin_pct = ((income - expense) / income) * 100
+            stats = _safe_compute_project_stats(90)
+            avg = stats.get("avg_margin_pct")
+            if avg is not None and stats.get("project_count", 0) >= 2 and abs(margin_pct - avg) >= 5:
+                if margin_pct > avg:
+                    lines.append(f"💡 Margin {margin_pct:.0f}% — di atas rata-rata project ({avg:.0f}%)")
+                else:
+                    lines.append(f"⚠️ Margin {margin_pct:.0f}% — di bawah rata-rata project ({avg:.0f}%)")
+
+        # Insight 2: Activity pace
+        try:
+            dates = sorted({d.get("tanggal", "") for d in rows if d.get("tanggal")})
+            if len(dates) >= 2:
+                first = _parse_date(dates[0])
+                last = _parse_date(dates[-1])
+                span_days = max(1, (last - first).days + 1)
+                if span_days >= 3 and tx_count >= 3:
+                    pace = tx_count / span_days
+                    if pace >= 1.0:
+                        lines.append(f"⚡ Aktivitas: {tx_count} transaksi dalam {span_days} hari (~{pace:.1f}/hari)")
+        except Exception:
+            pass
+
+        # Insight 3: Top expense category
+        try:
+            expenses = [d for d in rows if d.get("tipe") == "Pengeluaran"]
+            if expenses and expense > 0:
+                cat_totals = Counter()
+                for d in expenses:
+                    cat = (d.get("kategori") or "Lain-lain").strip() or "Lain-lain"
+                    cat_totals[cat] += int(d.get("jumlah", 0) or 0)
+                top = cat_totals.most_common(1)[0] if cat_totals else None
+                if top and top[1] > 0:
+                    pct = (top[1] / expense) * 100
+                    if pct >= 30:
+                        lines.append(f"🔍 Biaya terbesar: {top[0]} {pct:.0f}% ({_format_idr(top[1])})")
+        except Exception:
+            pass
+
+    except Exception as e:
+        logger.debug(f"_project_insight_lines failed: {e}")
+        return []
+    return lines
+
+
+def _wallet_insight_lines(query: str, response: str) -> list:
+    """Insight lines for wallet queries (cross-dompet share comparison)."""
+    lines = []
+    try:
+        norm_q = _normalize_text(query)
+        dompet_target = resolve_dompet_from_text(norm_q)
+        if not dompet_target:
+            return []
+
+        from sheets_helper import DOMPET_SHEETS as _SHEETS
+        days, _ = _extract_days(norm_q)
+        days_for_compare = days if days is not None else 30
+        data = get_all_data(days_for_compare) or []
+
+        per_dompet_expense = Counter()
+        for d in data:
+            sheet = d.get("company_sheet", "")
+            if sheet in _SHEETS and d.get("tipe") == "Pengeluaran":
+                per_dompet_expense[sheet] += int(d.get("jumlah", 0) or 0)
+
+        if len(per_dompet_expense) < 2:
+            return []
+
+        target_exp = per_dompet_expense.get(dompet_target, 0)
+        total_exp = sum(per_dompet_expense.values())
+        if total_exp <= 0 or target_exp <= 0:
+            return []
+
+        share_pct = (target_exp / total_exp) * 100
+        ranked = sorted(per_dompet_expense.items(), key=lambda x: -x[1])
+        rank = next((i + 1 for i, (k, _) in enumerate(ranked) if k == dompet_target), None)
+        if rank and len(ranked) >= 2:
+            if rank == 1:
+                lines.append(f"💡 Pengeluaran terbesar antar dompet ({share_pct:.0f}% dari total)")
+            elif rank == len(ranked):
+                lines.append(f"💡 Pengeluaran paling rendah antar dompet ({share_pct:.0f}% dari total)")
+            else:
+                lines.append(f"💡 Share pengeluaran: {share_pct:.0f}% dari total")
+    except Exception as e:
+        logger.debug(f"_wallet_insight_lines failed: {e}")
+        return []
+    return lines
+
+
+def _drill_down_suggestions(query: str, response: str) -> list:
+    """Drill-down hints based on response type."""
+    suggestions = []
+    try:
+        norm = _normalize_text(query)
+        wants_detail = _wants_detail(norm)
+
+        if "📊 Projek " in response and not wants_detail:
+            m = re.search(r"📊 Projek (.+?) \(", response)
+            if m:
+                pname = PROJECT_PHASE_RE.sub("", m.group(1).strip()).strip()
+                pname_clean = PROJECT_PREFIX_RE.sub("", pname).strip()
+                if pname_clean and len(pname_clean) <= 40:
+                    suggestions.append(f"/tanya rincian {pname_clean}")
+
+        dompet_target = resolve_dompet_from_text(_normalize_text(query))
+        if dompet_target and "Saldo" in response and "perbandingan" not in norm:
+            suggestions.append("/tanya perbandingan dompet 30 hari")
+
+        if not dompet_target and "📊 Projek " not in response:
+            if "ranking" not in norm and "paling" not in norm:
+                suggestions.append("/tanya projek paling untung bulan ini")
+    except Exception as e:
+        logger.debug(f"_drill_down_suggestions failed: {e}")
+        return []
+    return suggestions[:2]
+
+
+def _enhance_query_response(query: str, response: str) -> str:
+    """
+    Wrap base response with contextual insights and drill-down hints.
+    Fail-silent: returns original response on any error.
+    """
+    if not response or not isinstance(response, str):
+        return response
+    if len(response) < 50:
+        return response
+    if response.startswith("Pertanyaan tidak valid") or "belum ditemukan" in response[:80]:
+        return response
+
+    extra_lines = []
+    try:
+        if "📊 Projek " in response:
+            extra_lines.extend(_project_insight_lines(query, response))
+        else:
+            extra_lines.extend(_wallet_insight_lines(query, response))
+    except Exception as e:
+        logger.debug(f"insight generation failed: {e}")
+
+    try:
+        suggestions = _drill_down_suggestions(query, response)
+        if suggestions:
+            extra_lines.append("")
+            extra_lines.append("💬 Coba juga:")
+            for s in suggestions:
+                extra_lines.append(f"   {s}")
+    except Exception as e:
+        logger.debug(f"drill-down generation failed: {e}")
+
+    if not extra_lines:
+        return response
+    return response.rstrip() + "\n\n" + "\n".join(extra_lines)
+
+
 def handle_query_command(query: str, user_id: str, chat_id: str, raw_query: str = None) -> str:
     try:
         clean_query = sanitize_input(query)
@@ -1053,61 +1263,68 @@ def handle_query_command(query: str, user_id: str, chat_id: str, raw_query: str 
 
         # ============ ROUTING (priority order) ============
 
+        # Wrap each return through _enhance_query_response so insights apply uniformly.
+        def _wrap(r: str) -> str:
+            try:
+                return _enhance_query_response(detect_query, r)
+            except Exception:
+                return r
+
         # 1. Finished projects
         if wants_finished:
-            return _handle_finished_projects_query(norm, days, period_label)
+            return _wrap(_handle_finished_projects_query(norm, days, period_label))
 
         # 2. Project list
         if wants_project_list:
-            return _handle_project_list_query(norm, days, period_label)
+            return _wrap(_handle_project_list_query(norm, days, period_label))
 
         # 3. Ranking (projek paling untung, dompet paling aktif)
         if wants_ranking:
-            return _handle_ranking_query(norm, days, period_label)
+            return _wrap(_handle_ranking_query(norm, days, period_label))
 
         # 4. Min/max (transaksi terbesar/terkecil)
         if wants_minmax:
-            return _handle_minmax_query(norm, days, period_label)
+            return _wrap(_handle_minmax_query(norm, days, period_label))
 
         # 5. Cross-dompet comparison
         if wants_comparison:
-            return _handle_cross_dompet_query(norm, days, period_label)
+            return _wrap(_handle_cross_dompet_query(norm, days, period_label))
 
         # 6. Project-specific query
         if wants_project and has_project_keyword:
-            return _handle_project_query(detect_query, norm, days, period_label)
+            return _wrap(_handle_project_query(detect_query, norm, days, period_label))
 
         # 7. Hutang/debt
         if wants_hutang:
-            return _handle_hutang_query(norm, days, period_label, dompet)
+            return _wrap(_handle_hutang_query(norm, days, period_label, dompet))
 
         # 8. Wallet/dompet query
         if dompet:
-            return _handle_wallet_query(dompet, norm, days, period_label, detect_query)
+            return _wrap(_handle_wallet_query(dompet, norm, days, period_label, detect_query))
 
         # 9. Operational
         if wants_operational:
-            return _handle_operational_query(norm, days, period_label)
+            return _wrap(_handle_operational_query(norm, days, period_label))
 
         # 10. Category-specific (gaji, bahan, transport)
         if wants_category:
-            return _handle_category_query(norm, days, period_label)
+            return _wrap(_handle_category_query(norm, days, period_label))
 
         # 11. Project without explicit keyword (detected by name)
         if wants_project:
-            return _handle_project_query(detect_query, norm, days, period_label)
+            return _wrap(_handle_project_query(detect_query, norm, days, period_label))
 
         # 12. Check if this looks like a person/descriptor search
         desc_tokens = _extract_query_descriptor_tokens(detect_query)
         if desc_tokens:
-            return _handle_person_query(detect_query, norm, days, period_label)
+            return _wrap(_handle_person_query(detect_query, norm, days, period_label))
 
         # 13. General summary
         result = _handle_general_query(norm, days, period_label, detect_query)
 
         # 14. If general query returns very little info, try AI fallback
         if result and len(result) > 30:
-            return result
+            return _wrap(result)
 
         return _fallback_ai(detect_query, days)
 
