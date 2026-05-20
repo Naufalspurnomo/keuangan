@@ -1889,6 +1889,7 @@ Balas 1 atau 2"""
 
                         # Auto update to canonical name
                         t['nama_projek'] = res['final_name']
+                        pending['project_confirmed'] = True
                 
                 # Mark as validated once all checks pass (no NEW/AMBIGUOUS trigger)
                 pending['project_validated'] = True
