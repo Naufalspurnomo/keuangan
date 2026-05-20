@@ -47,6 +47,10 @@ from config.wallets import resolve_dompet_from_text
 
 # OCR sanity limit (default 10B IDR) to avoid parsing long IDs as amounts
 OCR_MAX_AMOUNT = int(os.getenv('OCR_MAX_AMOUNT', '10000000000'))
+# OCR receipt sanity: amount > this triggers strict cross-validation against OCR text
+# Default 500M IDR — typical single receipts well below this; account numbers misread
+# as amount usually exceed this threshold.
+OCR_RECEIPT_REASONABLE = int(os.getenv('OCR_RECEIPT_REASONABLE', '500000000'))
 # OCR debug logging (set OCR_DEBUG=1)
 OCR_DEBUG = os.getenv('OCR_DEBUG', '0').lower() in ('1', 'true', 'yes')
 OCR_DEBUG_MAX = int(os.getenv('OCR_DEBUG_MAX', '3'))
@@ -1502,6 +1506,53 @@ def validate_amounts(result: dict) -> dict:
     return result
 
 
+def _collect_currency_amounts_from_ocr(ocr_text: str) -> set:
+    """
+    Extract ALL amounts that have explicit currency prefix (Rp/IDR) from OCR text.
+    Used for cross-validation: any amount NOT in this set is suspect.
+    
+    Returns a set of integer amounts. Empty set means no currency-prefixed amounts found.
+    """
+    if not ocr_text:
+        return set()
+    
+    found = set()
+    # Pattern: Rp/IDR followed by number (with optional thousand separators and decimals)
+    # Examples: "Rp 636,100.00", "IDR 2,500", "Rp 99.000.000", "Rp636100"
+    pattern = re.compile(
+        r"\b(?:Rp\.?|IDR)\s*([0-9][0-9.,\s]*[0-9]|[0-9])",
+        re.IGNORECASE
+    )
+    for match in pattern.finditer(ocr_text):
+        raw = match.group(1).strip()
+        try:
+            val = _parse_money_token(raw)
+            if val > 0 and val <= OCR_MAX_AMOUNT:
+                found.add(val)
+        except Exception:
+            continue
+    return found
+
+
+def _amount_matches_ocr(amount: int, ocr_currency_amounts: set, tolerance_pct: float = 0.01) -> bool:
+    """
+    Check if amount matches any currency-prefixed amount from OCR text.
+    Allows small tolerance for rounding (default 1%).
+    """
+    if not ocr_currency_amounts or amount <= 0:
+        return False
+    
+    if amount in ocr_currency_amounts:
+        return True
+    
+    # Tolerance check (rounding/parsing edge cases)
+    tolerance = max(1, int(amount * tolerance_pct))
+    for ocr_amt in ocr_currency_amounts:
+        if abs(amount - ocr_amt) <= tolerance:
+            return True
+    return False
+
+
 def extract_receipt_amounts(ocr_text: str) -> dict:
     """
     Extract base/fee/total amounts from OCR text using keyword context.
@@ -2248,11 +2299,50 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
             # Adjust main amount based on OCR base/total
             base_amt = receipt_amounts.get("base", 0)
             total_amt = receipt_amounts.get("total", 0)
+            
+            # CROSS-VALIDATION: collect all currency-prefixed amounts from OCR text
+            # for sanity-checking amounts returned by Groq Vision.
+            ocr_currency_amounts = _collect_currency_amounts_from_ocr(ocr_text) if ocr_text else set()
+            
             if main_tx:
+                vision_amount = int(main_tx.get("jumlah", 0) or 0)
+                
+                # Layer 1: Prefer regex-parsed base/total when available (more reliable for receipts)
                 if base_amt > 0:
                     main_tx["jumlah"] = base_amt
                 elif total_amt > 0 and transfer_fee > 0 and total_amt > transfer_fee:
                     main_tx["jumlah"] = max(total_amt - transfer_fee, main_tx.get("jumlah", 0))
+                
+                # Layer 2: Cross-validation against OCR currency-prefixed amounts.
+                # If OCR found amounts with Rp/IDR prefix, the main amount MUST match one of them.
+                # This catches Vision misreads (account numbers, ref numbers) as amounts.
+                final_amount = int(main_tx.get("jumlah", 0) or 0)
+                if (
+                    final_amount > 0
+                    and ocr_currency_amounts
+                    and not _amount_matches_ocr(final_amount, ocr_currency_amounts)
+                ):
+                    # Suspicious: amount doesn't appear with Rp/IDR prefix in OCR text.
+                    # Pick the largest OCR amount as the most likely main amount.
+                    # Exclude amounts that match the detected fee (those are fees, not main).
+                    candidates = [a for a in ocr_currency_amounts if a != transfer_fee]
+                    if not candidates:
+                        candidates = list(ocr_currency_amounts)
+                    largest_ocr = max(candidates) if candidates else 0
+                    
+                    secure_log(
+                        "WARNING",
+                        f"OCR cross-validation MISMATCH: vision={final_amount:,} not in OCR currency amounts {sorted(ocr_currency_amounts)}. "
+                        f"Falling back to largest OCR amount: {largest_ocr:,}"
+                    )
+                    if largest_ocr > 0 and largest_ocr <= OCR_MAX_AMOUNT:
+                        main_tx["jumlah"] = largest_ocr
+                    elif final_amount > OCR_RECEIPT_REASONABLE:
+                        # No reliable fallback AND amount is suspiciously high → flag for manual entry
+                        main_tx["jumlah"] = 0
+                        main_tx["needs_amount"] = True
+                        secure_log("ERROR", "OCR cross-validation: no valid currency amount found, marking for manual entry")
+                
                 if int(main_tx.get("jumlah", 0) or 0) > OCR_MAX_AMOUNT:
                     main_tx["jumlah"] = 0
                     main_tx["needs_amount"] = True
@@ -2344,13 +2434,40 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                         kept.append(fee_tx)
                     validated_transactions = kept
 
-            # Final OCR sanity check for extreme amounts
+            # Final OCR sanity check: cross-validate ALL non-fee amounts against OCR currency amounts
             if "Receipt/Struk content:" in clean_text:
                 for t in validated_transactions:
                     amt = int(t.get("jumlah", 0) or 0)
                     if amt > OCR_MAX_AMOUNT:
                         t["jumlah"] = 0
                         t["needs_amount"] = True
+                        continue
+                    # Defense in depth: if OCR has currency amounts and this non-fee amount
+                    # doesn't match any of them, reject (likely Vision misread).
+                    if (
+                        amt > 0
+                        and not _is_fee_tx(t)
+                        and ocr_currency_amounts
+                        and not _amount_matches_ocr(amt, ocr_currency_amounts)
+                    ):
+                        # Try one more rescue: pick largest non-fee OCR amount
+                        candidates = [a for a in ocr_currency_amounts if a != transfer_fee]
+                        if not candidates:
+                            candidates = list(ocr_currency_amounts)
+                        rescue = max(candidates) if candidates else 0
+                        if rescue > 0 and rescue <= OCR_MAX_AMOUNT:
+                            secure_log(
+                                "WARNING",
+                                f"OCR final sanity RESCUE: amount {amt:,} not in OCR set, replacing with {rescue:,}"
+                            )
+                            t["jumlah"] = rescue
+                        else:
+                            secure_log(
+                                "ERROR",
+                                f"OCR final sanity REJECT: amount {amt:,} not in OCR currency set, marking needs_amount"
+                            )
+                            t["jumlah"] = 0
+                            t["needs_amount"] = True
 
         # Text-only safety: remove duplicate artifacts from generic fallback lines.
         if validated_transactions and "Receipt/Struk content:" not in clean_text:
