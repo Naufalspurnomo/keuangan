@@ -653,6 +653,8 @@ def _handle_auto_hutang_payment(
         info = settle_hutang(int(m_no.group(1)), sender_name="System", source="WhatsApp")
         if not info:
             return "❌ No hutang tidak ditemukan."
+        if info.get('error'):
+            return f"❌ Pelunasan hutang #{info.get('no', '?')} gagal.\n⚠️ {info['error']}"
         invalidate_dashboard_cache()
         return _format_hutang_paid_response(info)
 
@@ -2543,6 +2545,9 @@ Balas 1 atau 2"""
                     if not info:
                         send_reply("No hutang tidak ditemukan.")
                         return jsonify({'status': 'command_lunas_not_found'}), 200
+                    if info.get('error'):
+                        send_reply(f"❌ Pelunasan hutang #{no} gagal.\n⚠️ {info['error']}")
+                        return jsonify({'status': 'command_lunas_failed'}), 200
                     invalidate_dashboard_cache()
                     send_reply(_format_hutang_paid_response(info))
                     return jsonify({'status': 'command_lunas'}), 200
@@ -3416,6 +3421,9 @@ Balas 1 atau 2"""
                 if not info:
                     send_reply("No hutang tidak ditemukan.")
                     return jsonify({'status': 'command_lunas_not_found'}), 200
+                if info.get('error'):
+                    send_reply(f"❌ Pelunasan hutang #{no} gagal.\n⚠️ {info['error']}")
+                    return jsonify({'status': 'command_lunas_failed'}), 200
                 invalidate_dashboard_cache()
                 send_reply(_format_hutang_paid_response(info))
                 return jsonify({'status': 'command_lunas'}), 200

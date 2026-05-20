@@ -582,8 +582,9 @@ def settle_hutang(no: int, sender_name: str = "System", source: str = "WhatsApp"
     if keterangan:
         borrower_desc += f" ({keterangan[:80]})"
 
+    borrower_ok = False
     try:
-        append_project_transaction(
+        result = append_project_transaction(
             transaction={
                 'jumlah': amount,
                 'keterangan': borrower_desc,
@@ -595,7 +596,11 @@ def settle_hutang(no: int, sender_name: str = "System", source: str = "WhatsApp"
             dompet_sheet=borrower,
             project_name="Saldo Umum"
         )
-        secure_log("INFO", f"settle_hutang #{no}: Borrower {borrower} Pengeluaran Rp{amount:,}")
+        borrower_ok = result.get('success', False)
+        if borrower_ok:
+            secure_log("INFO", f"settle_hutang #{no}: Borrower {borrower} Pengeluaran Rp{amount:,}")
+        else:
+            secure_log("ERROR", f"settle_hutang #{no}: Borrower TX failed: {result.get('error')}")
     except Exception as e:
         secure_log("ERROR", f"settle_hutang #{no}: Borrower TX failed: {e}")
 
@@ -605,8 +610,9 @@ def settle_hutang(no: int, sender_name: str = "System", source: str = "WhatsApp"
     if keterangan:
         lender_desc += f" ({keterangan[:80]})"
 
+    lender_ok = False
     try:
-        append_project_transaction(
+        result = append_project_transaction(
             transaction={
                 'jumlah': amount,
                 'keterangan': lender_desc,
@@ -618,9 +624,24 @@ def settle_hutang(no: int, sender_name: str = "System", source: str = "WhatsApp"
             dompet_sheet=lender,
             project_name="Saldo Umum"
         )
-        secure_log("INFO", f"settle_hutang #{no}: Lender {lender} Pemasukan Rp{amount:,}")
+        lender_ok = result.get('success', False)
+        if lender_ok:
+            secure_log("INFO", f"settle_hutang #{no}: Lender {lender} Pemasukan Rp{amount:,}")
+        else:
+            secure_log("ERROR", f"settle_hutang #{no}: Lender TX failed: {result.get('error')}")
     except Exception as e:
         secure_log("ERROR", f"settle_hutang #{no}: Lender TX failed: {e}")
+
+    # 4. Rollback: if either reverse TX failed, revert hutang status back to OPEN
+    if not borrower_ok or not lender_ok:
+        secure_log("WARNING", f"settle_hutang #{no}: Partial failure (borrower={borrower_ok}, lender={lender_ok}). Reverting to OPEN.")
+        try:
+            update_hutang_status_by_no(no, "OPEN")
+        except Exception as revert_err:
+            secure_log("ERROR", f"settle_hutang #{no}: Revert to OPEN also failed: {revert_err}")
+        info['settled'] = False
+        info['error'] = 'Gagal mencatat transaksi pelunasan ke spreadsheet. Status hutang dikembalikan ke OPEN.'
+        return info
 
     info['settled'] = True
     return info

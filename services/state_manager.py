@@ -610,14 +610,24 @@ def _save_state():
                 "processed_messages": processed_dump,
                 "project_registry": _project_registry,
                 "audit_log": _audit_log,
-                "bot_interactions": {k: {**v, 'timestamp': v['timestamp'].isoformat()} for k, v in _bot_interactions.items()},
+                "bot_interactions": {
+                    k: {**v, 'timestamp': v['timestamp'].isoformat() if isinstance(v.get('timestamp'), datetime) else str(v.get('timestamp', ''))}
+                    for k, v in _bot_interactions.items() if isinstance(v, dict)
+                },
                 "visual_buffer": {k: [
                     {**item, 'created_at': item['created_at'].isoformat() if isinstance(item.get('created_at'), datetime) else item.get('created_at')} 
                     for item in v
                 ] for k, v in _visual_buffer.items()},
                 "last_bot_reports": _last_bot_reports,
                 "last_tx_events": _last_tx_events,
-                "pending_confirmations": {k: {**v, 'timestamp': v['timestamp'].isoformat(), 'expires_at': v['expires_at'].isoformat()} for k, v in PENDING_CONFIRMATIONS.items()}
+                "pending_confirmations": {
+                    k: {
+                        **v,
+                        'timestamp': v['timestamp'].isoformat() if isinstance(v.get('timestamp'), datetime) else str(v.get('timestamp', '')),
+                        'expires_at': v['expires_at'].isoformat() if isinstance(v.get('expires_at'), datetime) else str(v.get('expires_at', ''))
+                    }
+                    for k, v in PENDING_CONFIRMATIONS.items() if isinstance(v, dict)
+                }
             }
             
             # Ensure directory exists

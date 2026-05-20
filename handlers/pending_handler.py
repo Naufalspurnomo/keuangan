@@ -653,6 +653,12 @@ def handle_pending_response(user_id: str, chat_id: str, text: str,
                 'response': f"❌ Hutang #{no_raw} tidak ditemukan atau sudah lunas.",
                 'completed': True
             }
+        if info.get('error'):
+            clear_pending_confirmation(user_id, chat_id)
+            return {
+                'response': f"❌ Pelunasan hutang #{no_raw} gagal.\n⚠️ {info['error']}",
+                'completed': True
+            }
 
         invalidate_dashboard_cache()
         clear_pending_confirmation(user_id, chat_id)
