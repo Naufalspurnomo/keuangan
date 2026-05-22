@@ -2053,12 +2053,17 @@ Balas 1 atau 2"""
                         return jsonify({'status': 'dupe_warning'}), 200
 
                 # Project lock check (consistency across dompet)
+                # IMPORTANT:
+                # If user explicitly mentions company/dompet in current message,
+                # don't silently override in FAST_MODE. Prefer current explicit intent
+                # and force confirmation flow on mismatch.
                 p_name_check = t0.get('nama_projek', '')
                 if p_name_check and p_name_check.lower() not in ['saldo umum', 'operasional kantor', 'umum', 'unknown']:
                     locked_dompet = get_project_lock(p_name_check)
                     if locked_dompet and locked_dompet != dompet:
                         locked_company = get_company_name_from_sheet(locked_dompet)
-                        if FAST_MODE:
+                        user_explicit_wallet_intent = bool(explicit_dompet or explicit_company)
+                        if FAST_MODE and not user_explicit_wallet_intent:
                             dompet = locked_dompet
                             detected_company = locked_company
                             lock_note = f"Dompet disesuaikan ke {locked_dompet} (sesuai riwayat project)."

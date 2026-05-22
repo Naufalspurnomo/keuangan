@@ -918,12 +918,49 @@ def _normalize_project_key(name: str) -> str:
 
 
 def get_project_lock(project_name: str) -> Optional[str]:
-    """Get locked dompet for a project. If missing, try resolve from sheets."""
+    """Get locked dompet for a project.
+
+    Guardrail:
+    - If registry has a lock but the project no longer exists in that dompet
+      (or resolves elsewhere), invalidate stale lock first.
+    - If missing, lazily resolve from sheets.
+    """
     key = _normalize_project_key(project_name)
     if not key:
         return None
     if key in _project_registry:
-        return _project_registry.get(key)
+        locked_dompet = _project_registry.get(key)
+        # Validate persisted lock against current spreadsheet state to avoid
+        # stale/misassigned dompet forcing future transactions.
+        try:
+            from sheets_helper import find_company_for_project_exact
+            found_dompet, _ = find_company_for_project_exact(project_name)
+            if found_dompet and found_dompet == locked_dompet:
+                return locked_dompet
+            if found_dompet and found_dompet != locked_dompet:
+                _project_registry[key] = found_dompet
+                _save_state()
+                add_audit_event({
+                    "type": "project_lock_auto_correct",
+                    "project": key,
+                    "from": locked_dompet,
+                    "to": found_dompet,
+                    "reason": "sheet_exact_match"
+                })
+                return found_dompet
+            # No exact project found anywhere -> clear stale lock.
+            _project_registry.pop(key, None)
+            _save_state()
+            add_audit_event({
+                "type": "project_lock_auto_clear",
+                "project": key,
+                "from": locked_dompet,
+                "to": None,
+                "reason": "sheet_no_exact_match"
+            })
+        except Exception:
+            # Fallback to persisted lock when validation lookup fails.
+            return locked_dompet
     # Lazy resolve from sheets if exists
     try:
         from sheets_helper import find_company_for_project_exact
