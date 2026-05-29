@@ -89,7 +89,7 @@ DOMPET_ALIASES = {
     "no 216": "TX SBY(216)",
     
     # Texturin variants
-    "texturin": "TX SBY(216)",  # Default to SBY when ambiguous
+    "texturin": "TX SBY(216)",  # Legacy alias; resolver treats bare Texturin as ambiguous
     "texturin sby": "TX SBY(216)",
     "texturin surabaya": "TX SBY(216)",
     "dompet texturin": "TX SBY(216)",
@@ -105,7 +105,7 @@ DOMPET_ALIASES = {
     "dompet sby": "TX SBY(216)",
     
     # Casual mentions
-    "tx": "TX SBY(216)",  # When only "tx" mentioned, default to SBY (more common)
+    "tx": "TX SBY(216)",  # Legacy alias; resolver treats bare TX as ambiguous
     "dompet tx": "TX SBY(216)",
     
     # With spaces/typos
@@ -267,8 +267,25 @@ def resolve_dompet_from_text(text: str) -> Optional[str]:
         if m:
             return prefix_map.get(m.group(1))
 
+    # These aliases identify a family/brand, not a unique wallet.
+    # Do not silently default them to TX SBY; require a location/account
+    # qualifier such as "tx sby", "texturin bali", "216", or "087".
+    ambiguous_dompet_aliases = {
+        "tx",
+        "dompet tx",
+        "texturin",
+        "dompet texturin",
+        "projek texturin",
+        "texturein",
+        "textureen",
+        "sb",
+        "bl",
+    }
+
     candidates = []
     for alias, dompet in DOMPET_ALIASES.items():
+        if alias in ambiguous_dompet_aliases:
+            continue
         if alias in clean:
             if any(token in alias for token in ("rek", "rekening", "no ") ) and not has_dompet_context:
                 continue
