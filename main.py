@@ -124,7 +124,7 @@ from utils.wallet_updates import (
 # Configuration
 from config.constants import Commands, Timeouts, GROUP_TRIGGERS, SPREADSHEET_ID, OPERATIONAL_KEYWORDS, FAST_MODE
 from config.errors import UserErrors
-from config.allowlist import is_sender_allowed, is_session_delegate
+from config.allowlist import is_sender_allowed
 from config.wallets import (
     format_wallet_selection_prompt,
     get_wallet_selection_by_idx,
@@ -1466,10 +1466,6 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 return fallback_user
             return user_part
 
-        def _is_delegate_actor() -> bool:
-            """Check whether current sender is configured as session delegate/admin."""
-            return is_session_delegate([sender_number, sender_jid])
-
         def _extract_pending_owner_from_key(target_pkey: str) -> str:
             """Extract owner user-id from pending key format '<chat_id>:<user_id>'."""
             pkey_text = str(target_pkey or "").strip()
@@ -1485,12 +1481,18 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             """
             Group rule:
             - owner can always continue
-            - delegate can continue only when replying to bound prompt/visual
+            - any allowed group participant can continue ONLY by replying to a
+              bot prompt that is already bound to that pending session.
+
+            This keeps free-form/bare answers safe in busy groups while allowing
+            real delegation (user B answers a prompt created by user A).
+            SESSION_DELEGATE_IDS remains useful for future privileged actions,
+            but transaction prompt replies are intentionally collaborative.
             """
             owner = str(owner_user or "").strip()
             if not owner or owner == sender_number:
                 return True
-            if is_group and via_reply and _is_delegate_actor():
+            if is_group and via_reply:
                 return True
             return False
 
@@ -1503,7 +1505,7 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
         def _session_access_denied_message() -> str:
             return (
                 "⚠️ Sesi ini milik user lain. "
-                "Minta owner atau delegate (admin) reply ke prompt/struk yang benar."
+                "Reply ke prompt bot yang benar untuk membantu menjawab sesi user lain."
             )
 
         def _count_active_group_sessions(target_chat_id: str) -> int:
@@ -1905,8 +1907,20 @@ Balas 1 atau 2"""
             # Prefer explicit company mention in user text (e.g., "hojja").
             user_part, ocr_part = split_ocr_user_text(original_text)
             explicit_company = resolve_company_from_text(user_part or original_text)
+            selected_option = pending.get('selected_option') or {}
+            selected_company = selected_option.get('company')
             if explicit_company:
                 detected_company = explicit_company
+            elif detected_company and detected_company != "UMUM" and not selected_company:
+                # AI/model output may guess a company for project transactions.
+                # If the user did not explicitly mention it and it was not selected
+                # through the 1-5 prompt, keep it unresolved so we ask instead
+                # of silently defaulting (e.g. bare project text -> TX SBY).
+                secure_log(
+                    "WARNING",
+                    f"Company '{detected_company}' was not explicitly mentioned; asking user to choose",
+                )
+                detected_company = None
             
             dompet = None
             detected_dompet = next((t.get('detected_dompet') for t in txs if t.get('detected_dompet')), None)
@@ -1981,6 +1995,27 @@ Balas 1 atau 2"""
                                 "INFO",
                                 f"Auto-resolved dompet for project '{p_name_check}' to {found_dompet}; company remains ambiguous"
                             )
+
+            needs_company_selection = (
+                context.get('mode') == 'PROJECT'
+                and pending.get('is_new_project')
+                and not pending.get('selected_option')
+                and not explicit_company
+                and not explicit_dompet
+            )
+            if needs_company_selection:
+                pending['pending_type'] = 'selection'
+                reply = (
+                    "📁 *PROJECT BARU*\n"
+                    "Project baru belum punya company/dompet yang jelas.\n\n"
+                    "Pilih company untuk project ini supaya tidak otomatis masuk ke TX SBY.\n\n"
+                    f"{build_selection_prompt(txs)}"
+                )
+                if is_group:
+                    reply += "\n\n↩️ Reply angka 1-5"
+                sent = send_pending_reply(reply)
+                cache_prompt(pkey, pending, sent)
+                return jsonify({'status': 'asking_company_for_new_project'}), 200
 
             # 2. Save if Resolved
             if detected_company and dompet:
@@ -2392,10 +2427,12 @@ Balas 1 atau 2"""
                 chat_jid,
                 sender_number
             )
-            if is_group and pending_conf_user != sender_number:
-                if not (quoted_msg_id and _is_delegate_actor()):
-                    send_reply(_session_access_denied_message())
-                    return jsonify({'status': 'session_access_denied'}), 200
+            if is_group and not _can_access_group_session(
+                pending_conf_user,
+                via_reply=bool(quoted_msg_id and pending_conf_key == quoted_pending_key),
+            ):
+                send_reply(_session_access_denied_message())
+                return jsonify({'status': 'session_access_denied'}), 200
             if input_type == 'image' and not (text or '').strip():
                 secure_log(
                     "INFO",
@@ -2436,6 +2473,7 @@ Balas 1 atau 2"""
         # 3. Check Pending (Standard/Legacy)
         sender_pkey = pending_key(sender_number, chat_jid)
         pending_pkey = sender_pkey
+        pending_routed_by_prompt = False
         if is_group and quoted_msg_id:
             mapped = quoted_pending_key or get_pending_key_from_message(quoted_msg_id)
             if mapped:
@@ -2443,6 +2481,7 @@ Balas 1 atau 2"""
                     send_reply(_session_access_denied_message())
                     return jsonify({'status': 'session_access_denied'}), 200
                 pending_pkey = mapped
+                pending_routed_by_prompt = True
             
         pending_data = _pending_transactions.get(pending_pkey)
         if pending_data and pending_is_expired(pending_data):
@@ -2457,7 +2496,7 @@ Balas 1 atau 2"""
                 or ""
             ).strip()
             if pending_owner and pending_owner != sender_number:
-                if not (quoted_msg_id and _is_delegate_actor()):
+                if not _can_access_group_session(pending_owner, via_reply=pending_routed_by_prompt):
                     send_reply(_session_access_denied_message())
                     return jsonify({'status': 'session_access_denied'}), 200
 
