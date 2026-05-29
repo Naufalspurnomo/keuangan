@@ -15,6 +15,9 @@ CRITICAL: This module protects against malicious input attempts.
 import re
 import time
 import hashlib
+import logging
+import os
+import sys
 from typing import Optional, Tuple, Dict, List
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -31,6 +34,41 @@ def now_wib() -> datetime:
 def today_wib_str() -> str:
     """Get today's date in WIB as YYYY-MM-DD string."""
     return now_wib().strftime('%Y-%m-%d')
+
+
+_LOG_LEVELS = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "WARN": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
+_LOGGING_CONFIGURED = False
+
+
+def _resolve_log_level(level: str) -> int:
+    """Resolve a text log level into a logging module level."""
+    return _LOG_LEVELS.get(str(level or "").upper(), logging.INFO)
+
+
+def _get_app_logger() -> logging.Logger:
+    """Return the app logger, configuring stdout logging once if needed."""
+    global _LOGGING_CONFIGURED
+
+    logger = logging.getLogger("keuangan")
+    if not _LOGGING_CONFIGURED:
+        configured_level = _resolve_log_level(os.getenv("LOG_LEVEL", "INFO"))
+        if not logging.getLogger().handlers:
+            logging.basicConfig(
+                level=configured_level,
+                format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+                stream=sys.stdout,
+            )
+        logger.setLevel(configured_level)
+        _LOGGING_CONFIGURED = True
+    return logger
 
 
 
@@ -162,6 +200,7 @@ _AMOUNT_SIGNAL_RE = re.compile(
 # ===================== SENSITIVE DATA PATTERNS =====================
 
 SENSITIVE_PATTERNS = [
+    (r"\b([a-zA-Z0-9_]*(?:api[_-]?key|token|secret|password|credential)[a-zA-Z0-9_]*)\s*[:=]\s*['\"]?[^'\"\s,;}]+['\"]?", r"\1=[HIDDEN]"),
     (r"gsk_[a-zA-Z0-9]{20,}", "[GROQ_KEY_HIDDEN]"),
 
     (r"\d{9,}:[a-zA-Z0-9_-]{35}", "[TELEGRAM_TOKEN_HIDDEN]"),
@@ -530,29 +569,25 @@ def secure_log(level: str, message: str, **kwargs) -> None:
         **kwargs: Additional context
     """
     try:
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        masked_message = mask_sensitive_data(message)
+        masked_message = mask_sensitive_data(str(message))
         
-        # Mask any additional kwargs
-        masked_kwargs = {
-            k: mask_sensitive_data(str(v)) 
+        # Mask additional context as full key=value pairs so secret-like keys
+        # such as token=... or API_KEY=... are hidden too.
+        context_parts = [
+            mask_sensitive_data(f"{k}={v}")
             for k, v in kwargs.items()
-        }
+        ]
+        context = ' '.join(context_parts)
         
-        context = ' '.join(f"{k}={v}" for k, v in masked_kwargs.items())
-        
-        log_line = f"[{timestamp}] [{level}] {masked_message} {context}".strip()
-        
-        # Handle Windows console encoding issues
+        log_message = f"{masked_message} {context}".strip()
+        _get_app_logger().log(_resolve_log_level(level), log_message)
+    except Exception as exc:
+        # Logging must never break transaction handling, but failures should still
+        # leave a minimal trace in container stderr.
         try:
-            print(log_line)
-        except UnicodeEncodeError:
-            # Replace problematic characters with ASCII equivalents
-            safe_line = log_line.encode('ascii', errors='replace').decode('ascii')
-            print(safe_line)
-    except Exception:
-        # Silently fail - don't let logging break the application
-        pass
+            sys.stderr.write(f"secure_log failed: {type(exc).__name__}\n")
+        except Exception:
+            pass
 
 
 # ===================== DECORATORS =====================

@@ -10,14 +10,12 @@ Features:
 """
 
 import os
-import traceback
-import requests
 import re
 import threading
 import time
 import uuid
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
@@ -32,7 +30,7 @@ from ai_helper import extract_financial_data, RateLimitException, extract_source
 
 # Google Sheets Integration
 from sheets_helper import (
-    append_transactions, append_transaction, 
+    append_transactions, append_transaction,
     format_dashboard_message, get_dashboard_summary,
     get_wallet_balances,
     invalidate_dashboard_cache,
@@ -54,11 +52,27 @@ from sheets_helper import (
 )
 
 # Services
+from handlers.telegram_webhook import handle_telegram_webhook
+from handlers.wuzapi_webhook import handle_wuzapi_webhook
 from services.retry_service import process_retry_queue
 from services.project_service import resolve_project_name, add_new_project_to_cache
+from services.group_reply_hints import should_send_group_reply_hint
+from services.hutang_flow import (
+    build_saldo_message as _build_saldo_message,
+    extract_repayment_amount_from_transactions as _extract_repayment_amount_from_transactions,
+    format_hutang_paid_response as _format_hutang_paid_response,
+    handle_auto_hutang_payment as _handle_auto_hutang_payment,
+    is_debt_payment_text as _is_debt_payment_text,
+    pick_dompet_by_prep as _pick_dompet_by_prep,
+)
+from services.transaction_queue import (
+    first_missing_amount_tx as _first_missing_amount_tx,
+    merge_transaction_queue as _merge_transaction_queue,
+)
+from services.transaction_context import detect_transaction_context
 from services.state_manager import (
     pending_key, pending_is_expired,
-    is_message_duplicate, clear_message_duplicate, store_bot_message_ref,
+    clear_message_duplicate, store_bot_message_ref,
     store_pending_message_ref,
     get_pending_key_from_message,
     store_visual_buffer, get_visual_buffer,
@@ -82,8 +96,7 @@ USE_LAYERS = True # Enable SmartHandler logic by default
 # Utilities
 from wuzapi_helper import (
     send_wuzapi_reply, format_mention_body,
-    get_clean_jid, download_wuzapi_media,
-    download_wuzapi_image, send_wuzapi_document
+    get_clean_jid, send_wuzapi_document
 )
 from security import (
     sanitize_input, detect_prompt_injection,
@@ -124,7 +137,6 @@ from utils.wallet_updates import (
 # Configuration
 from config.constants import Commands, Timeouts, GROUP_TRIGGERS, SPREADSHEET_ID, OPERATIONAL_KEYWORDS, FAST_MODE
 from config.errors import UserErrors
-from config.allowlist import is_sender_allowed
 from config.wallets import (
     format_wallet_selection_prompt,
     get_wallet_selection_by_idx,
@@ -133,7 +145,6 @@ from config.wallets import (
     apply_company_prefix,
     extract_company_prefix,
     strip_company_prefix,
-    DOMPET_ALIASES,
     DOMPET_COMPANIES,
     get_company_name_from_sheet,
     resolve_dompet_from_text,
@@ -146,52 +157,8 @@ app = Flask(__name__)
 
 # Configuration Flags
 DEBUG = os.getenv('FLASK_DEBUG', '0') == '1'
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 IMAGE_GRACE_SECONDS = int(os.getenv('IMAGE_GRACE_SECONDS', '5'))
 OWNER_FAST_FOLLOW_SECONDS = int(os.getenv('OWNER_FAST_FOLLOW_SECONDS', '3'))
-GROUP_REPLY_HINT_COOLDOWN_SECONDS = int(os.getenv('GROUP_REPLY_HINT_COOLDOWN_SECONDS', '25'))
-GROUP_REPLY_HINT_CHAT_COOLDOWN_SECONDS = int(os.getenv('GROUP_REPLY_HINT_CHAT_COOLDOWN_SECONDS', '12'))
-_group_reply_hint_cache: Dict[str, datetime] = {}
-_group_reply_hint_lock = threading.Lock()
-
-
-def should_send_group_reply_hint(chat_jid: str, sender_number: str, hint_type: str) -> bool:
-    """
-    Throttle repetitive group guidance messages per user/chat/hint type.
-    Returns True when hint should be sent, False when it should be suppressed.
-    """
-    if not chat_jid or not sender_number:
-        return True
-
-    now = datetime.now()
-    key_user = f"{chat_jid}:{sender_number}:{hint_type}"
-    key_chat = f"{chat_jid}:*:{hint_type}"
-    ttl_user = max(1, GROUP_REPLY_HINT_COOLDOWN_SECONDS)
-    ttl_chat = max(1, GROUP_REPLY_HINT_CHAT_COOLDOWN_SECONDS)
-    ttl = max(ttl_user, ttl_chat)
-
-    with _group_reply_hint_lock:
-        # Lightweight cleanup to keep cache bounded in long-running process
-        stale_keys = [
-            k for k, ts in _group_reply_hint_cache.items()
-            if not isinstance(ts, datetime) or (now - ts).total_seconds() > (ttl * 8)
-        ]
-        for k in stale_keys:
-            _group_reply_hint_cache.pop(k, None)
-
-        # Chat-level throttle first: avoid spam burst in busy groups.
-        last_sent_chat = _group_reply_hint_cache.get(key_chat)
-        if last_sent_chat and (now - last_sent_chat).total_seconds() < ttl_chat:
-            return False
-
-        # User-level throttle: avoid repeating hint to the same user.
-        last_sent_user = _group_reply_hint_cache.get(key_user)
-        if last_sent_user and (now - last_sent_user).total_seconds() < ttl_user:
-            return False
-
-        _group_reply_hint_cache[key_chat] = now
-        _group_reply_hint_cache[key_user] = now
-        return True
 MAX_WEBHOOK_BYTES = int(os.getenv('MAX_WEBHOOK_BYTES', str(25 * 1024 * 1024)))
 app.config['MAX_CONTENT_LENGTH'] = MAX_WEBHOOK_BYTES
 app.config['MAX_FORM_MEMORY_SIZE'] = MAX_WEBHOOK_BYTES
@@ -202,102 +169,6 @@ def handle_request_entity_too_large(_err):
     secure_log("WARNING", f"Webhook payload too large (>{MAX_WEBHOOK_BYTES} bytes)")
     # Return 200 to prevent provider retry storm for oversized payloads.
     return jsonify({'status': 'payload_too_large'}), 200
-
-# ===================== NETWORK HELPERS =====================
-
-_TELEGRAM_API_URL = None
-_telegram_session = None
-
-def get_telegram_session():
-    """Get or create requests Session with connection pooling."""
-    global _telegram_session
-    if _telegram_session is None:
-        from requests.adapters import HTTPAdapter
-        from urllib3.util.retry import Retry
-        
-        _telegram_session = requests.Session()
-        retry_strategy = Retry(
-            total=3, backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
-        )
-        adapter = HTTPAdapter(pool_connections=10, pool_maxsize=10, max_retries=retry_strategy)
-        _telegram_session.mount("https://", adapter)
-        _telegram_session.mount("http://", adapter)
-        
-    return _telegram_session
-
-def get_telegram_api_url():
-    """Get Telegram API URL."""
-    global _TELEGRAM_API_URL
-    if _TELEGRAM_API_URL is None and TELEGRAM_BOT_TOKEN:
-        _TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
-    return _TELEGRAM_API_URL
-
-def send_telegram_reply(chat_id: int, message: str, parse_mode: str = 'Markdown'):
-    """Send Telegram reply securely."""
-    try:
-        api_url = get_telegram_api_url()
-        if not api_url: return None
-        
-        session = get_telegram_session()
-        response = session.post(
-            f"{api_url}/sendMessage",
-            json={'chat_id': chat_id, 'text': message, 'parse_mode': parse_mode},
-            timeout=10
-        )
-        return response.json()
-    except Exception as e:
-        secure_log("ERROR", f"Telegram send failed: {type(e).__name__}")
-        return None
-
-
-def get_telegram_file_url(file_id: str) -> Optional[str]:
-    """Resolve a Telegram file_id to a downloadable URL."""
-    try:
-        api_url = get_telegram_api_url()
-        if not api_url or not file_id:
-            return None
-
-        session = get_telegram_session()
-        response = session.get(
-            f"{api_url}/getFile",
-            params={'file_id': file_id},
-            timeout=10
-        )
-        if response.status_code != 200:
-            secure_log("ERROR", f"Telegram getFile failed: {response.status_code}")
-            return None
-
-        payload = response.json()
-        file_path = payload.get('result', {}).get('file_path')
-        if not file_path:
-            return None
-
-        return f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
-    except Exception as e:
-        secure_log("ERROR", f"Telegram getFile exception: {type(e).__name__}: {e}")
-        return None
-
-
-def send_telegram_document(chat_id: int, file_path: str, caption: str = None) -> Optional[Dict]:
-    """Send a document to Telegram."""
-    try:
-        api_url = get_telegram_api_url()
-        if not api_url or not file_path:
-            return None
-
-        session = get_telegram_session()
-        with open(file_path, "rb") as f:
-            response = session.post(
-                f"{api_url}/sendDocument",
-                data={'chat_id': chat_id, 'caption': caption or ''},
-                files={'document': f},
-                timeout=30
-            )
-        return response.json()
-    except Exception as e:
-        secure_log("ERROR", f"Telegram sendDocument failed: {type(e).__name__}: {e}")
-        return None
 
 # Import legacy pending dict (now managed via state_manager proxy)
 from services import state_manager as _state
@@ -315,484 +186,6 @@ smart_handler = SmartHandler(state_manager_module)
 from utils.amounts import has_amount_pattern
 
 
-def detect_transaction_context(text: str, transactions: list, category_scope: str = 'UNKNOWN') -> dict:
-    """
-    Detects context: PROJECT vs OPERATIONAL.
-    
-    Improvements:
-    - Uses category_scope from AI layer when available
-    - Checks for amount patterns in text
-    - Better keyword matching with word boundaries
-    
-    Rules:
-    1. If AI says OPERATIONAL -> OPERATIONAL (Priority 1 - Trust AI)
-    2. Has valid Project Name? -> PROJECT (Priority 2)
-    3. Has Operational Keywords + No valid Project? -> OPERATIONAL (Priority 3)
-    4. Else -> Default to PROJECT
-    """
-    text_lower = (text or '').lower()
-    has_project_word = bool(re.search(r"\b(projek|project|proyek|prj)\b", text_lower))
-    has_kantor_word = bool(re.search(r"\b(kantor|office|operasional|operational|ops)\b", text_lower))
-    
-    # Trust AI's category_scope if available (but allow explicit project override)
-    if category_scope == 'OPERATIONAL' and has_project_word:
-        return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
-    if category_scope == 'OPERATIONAL':
-        # Detect which operational category
-        detected_keywords = [kw for kw in OPERATIONAL_KEYWORDS if kw in text_lower]
-        category = map_operational_category(detected_keywords[0]) if detected_keywords else 'Lain Lain'
-        return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
-    
-    if category_scope == 'PROJECT':
-        if has_kantor_word and not has_project_word:
-            detected_keywords = [kw for kw in OPERATIONAL_KEYWORDS if kw in text_lower]
-            category = map_operational_category(detected_keywords[0]) if detected_keywords else 'Lain Lain'
-            return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
-        # AI is confident this is project-related
-        return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
-
-    if category_scope == 'TRANSFER':
-        # Wallet balance updates are recorded to dompet with "Saldo Umum".
-        return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
-    
-    if category_scope == 'AMBIGUOUS':
-        # Deterministic override: explicit scope words should beat AI ambiguity.
-        if has_project_word and not has_kantor_word:
-            return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
-        if has_kantor_word and not has_project_word:
-            detected_keywords = [kw for kw in OPERATIONAL_KEYWORDS if kw in text_lower]
-            category = map_operational_category(detected_keywords[0]) if detected_keywords else 'Lain Lain'
-            return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
-        return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
-
-    # Pre-compute operational keywords for quick routing
-    detected_keywords = []
-    for kw in OPERATIONAL_KEYWORDS:
-        # Use word boundary matching for better accuracy
-        if re.search(r'\b' + re.escape(kw) + r'\b', text_lower):
-            detected_keywords.append(kw)
-
-    # Mixed explicit keywords need confirmation
-    if has_project_word and has_kantor_word:
-        return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
-
-    # Explicit project keyword should win
-    if has_project_word:
-        return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
-
-    # Otherwise, kantor/operasional wins
-    if has_kantor_word:
-        category = map_operational_category(detected_keywords[0]) if detected_keywords else 'Lain Lain'
-        return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
-    
-    # Fallback: Rule-based detection (when AI uncertain or not used)
-    
-    # Check Keywords with better matching (already computed above)
-    
-    # Ambiguous keyword detection (e.g., gaji/fee/cicilan)
-    try:
-        from utils.context_detector import AMBIGUOUS_KEYWORDS as _AMBIGUOUS
-        ambiguous_keywords = set(_AMBIGUOUS.keys())
-    except Exception:
-        ambiguous_keywords = set()
-    matched_ambiguous = [
-        k for k in ambiguous_keywords
-        if re.search(r'\b' + re.escape(k) + r'\b', text_lower)
-    ]
-    has_ambiguous_keyword = bool(matched_ambiguous)
-    generic_ambiguous = {'bayar'}
-    has_generic_ambiguous_only = bool(matched_ambiguous) and all(
-        k in generic_ambiguous for k in matched_ambiguous
-    )
-
-    # Role-based bias (office vs field roles)
-    office_roles = set()
-    field_roles = set()
-    try:
-        from utils.context_detector import OFFICE_ROLES as _OFFICE, FIELD_ROLES as _FIELD
-        office_roles = set(_OFFICE)
-        field_roles = set(_FIELD)
-    except Exception:
-        office_roles = set()
-        field_roles = set()
-
-    has_office_role = any(re.search(r'\b' + re.escape(r) + r'\b', text_lower) for r in office_roles)
-    has_field_role = any(re.search(r'\b' + re.escape(r) + r'\b', text_lower) for r in field_roles)
-    
-    # Check Project Name Validity
-    from config.constants import PROJECT_STOPWORDS
-    from services.project_service import get_existing_projects
-    
-    # Get cache of existing projects for validation
-    existing_projects_cache = {p.lower() for p in get_existing_projects()}
-    
-    has_valid_project = False
-    valid_project_name = None
-    
-    for t in transactions:
-        nama_projek = t.get('nama_projek', '')
-        if nama_projek and len(nama_projek) > 2:
-            clean_name = nama_projek.lower().strip()
-
-            # 1. DATABASE CHECK: Is this a known project?
-            # If yes, this is definitely a PROJECT transaction (Override everything)
-            if clean_name in existing_projects_cache:
-                return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False, 'project_name': nama_projek}
-
-            # Build comprehensive generic names list
-            generic_names = {'umum', 'kantor', 'ops', 'operasional', 'admin', 'gaji', 'finance'}
-            generic_names.update(OPERATIONAL_KEYWORDS)
-            generic_names.update(PROJECT_STOPWORDS)
-            
-            # Check if name is exactly a generic word
-            if clean_name not in generic_names:
-                # Also check if it's ONLY an operational keyword
-                is_just_keyword = (clean_name in PROJECT_STOPWORDS or clean_name in OPERATIONAL_KEYWORDS)
-                
-                if not is_just_keyword:
-                    has_valid_project = True
-                    valid_project_name = nama_projek
-                    break
-    
-    # Decision Tree
-    detected_ambiguous = [kw for kw in detected_keywords if kw in ambiguous_keywords]
-    all_ambiguous = bool(detected_keywords) and len(detected_ambiguous) == len(detected_keywords)
-    
-    # Explicit bias: "kantor" or "project" keywords should win
-    if has_project_word and not has_kantor_word:
-        return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
-    if has_office_role and not has_project_word:
-        category = map_operational_category(detected_keywords[0]) if detected_keywords else 'Lain Lain'
-        return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
-    if has_field_role and not has_kantor_word:
-        return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
-
-    # Priority 1: Keywords found AND NO valid project
-    if detected_keywords and not has_valid_project:
-        # If all keywords are ambiguous, ask user
-        if all_ambiguous or (has_ambiguous_keyword and not has_generic_ambiguous_only):
-            return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
-        category = map_operational_category(detected_keywords[0])
-        return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
-
-    # Priority 2: Has valid project name -> PROJECT
-    if has_valid_project:
-        return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False, 'project_name': valid_project_name}
-    
-    # Priority 3: Has keywords (but maybe ambiguous)
-    if detected_keywords:
-        if all_ambiguous or (has_ambiguous_keyword and not has_generic_ambiguous_only):
-            return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
-        category = map_operational_category(detected_keywords[0])
-        return {'mode': 'OPERATIONAL', 'category': category, 'needs_wallet': True}
-    
-    # If ambiguous keyword exists without project context, ask user
-    if has_ambiguous_keyword and not has_valid_project:
-        return {'mode': 'AMBIGUOUS', 'category': None, 'needs_wallet': True}
-
-    # Default: PROJECT mode (standard flow asks for company)
-    return {'mode': 'PROJECT', 'category': None, 'needs_wallet': False}
-
-
-def map_operational_category(keyword: str) -> str:
-    """
-    Maps keywords to standard Operational Categories.
-    Expanded keyword matching.
-    """
-    k = keyword.lower()
-    
-    # Payroll
-    if k in ['gaji', 'salary', 'upah', 'honor', 'thr', 'bonus', 'upah karyawan']:
-        return 'Gaji'
-    
-    # Utilities
-    if k in ['listrik', 'pln', 'air', 'pdam', 'wifi', 'internet', 'listrikair', 'speedy', 'indihome']:
-        return 'ListrikAir'
-    
-    # Consumables
-    if k in ['konsumsi', 'makan', 'snack', 'minum', 'jamu', 'kopi']:
-        return 'Konsumsi'
-    
-    # Equipment
-    if k in ['peralatan', 'atk', 'alat', 'perlengkapan', 'alat tulis', 'perlengkapan kantor']:
-        return 'Peralatan'
-    
-    return 'Lain Lain'
-
-
-DEBT_PAYMENT_KEYWORDS = [
-    "bayar", "lunas", "lunasi", "pelunasan", "cicil", "cicilan", "angsuran"
-]
-
-def _is_debt_payment_text(text: str) -> bool:
-    lower = (text or "").lower()
-    if not re.search(r"\b(utang|hutang)\b", lower):
-        return False
-    return any(re.search(rf"\b{re.escape(k)}\b", lower) for k in DEBT_PAYMENT_KEYWORDS)
-
-
-def _extract_dompet_mentions(text: str) -> List[str]:
-    lower = (text or "").lower()
-    aliases = sorted(DOMPET_ALIASES.items(), key=lambda x: -len(x[0]))
-    seen = set()
-    dompets: List[str] = []
-    for alias, dompet in aliases:
-        if alias and alias in lower:
-            if dompet not in seen:
-                seen.add(dompet)
-                dompets.append(dompet)
-    return dompets
-
-
-def _pick_dompet_by_prep(text: str, preps: List[str]) -> Optional[str]:
-    lower = (text or "").lower()
-    aliases = sorted(DOMPET_ALIASES.items(), key=lambda x: -len(x[0]))
-    for prep in preps:
-        for alias, dompet in aliases:
-            pattern = rf"\b{re.escape(prep)}\b[^a-z0-9]{{0,10}}(?:dompet|rekening|rek|wallet)?\s*{re.escape(alias)}\b"
-            if re.search(pattern, lower):
-                return dompet
-    return None
-
-
-def _format_hutang_paid_response(info: Dict) -> str:
-    """Format response for a settled hutang with balance details."""
-    amount = int(info.get('amount', 0) or 0)
-    borrower = info.get('yang_hutang', '-')
-    lender = info.get('yang_dihutangi', '-')
-    ket = info.get('keterangan', '-')
-
-    lines = [
-        f"✅ Hutang #{info['no']} ditandai PAID.",
-        f"📝 {ket}",
-        f"💰 {borrower} → {lender}",
-        f"💵 Rp {amount:,}",
-    ]
-    if info.get('settled'):
-        lines.append("")
-        lines.append(f"📊 Saldo diperbarui:")
-        lines.append(f"   💸 {borrower}: Pengeluaran Rp {amount:,}")
-        lines.append(f"   💰 {lender}: Pemasukan Rp {amount:,}")
-
-    return "\n".join(lines).replace(',', '.')
-
-
-def _build_saldo_message(balances: Dict[str, Dict]) -> str:
-    """Build wallet-balance message using real-balance components."""
-    msg = "💰 SALDO DOMPET REAL\n\n"
-    for dompet, info in balances.items():
-        masuk = int(info.get('pemasukan', 0) or 0)
-        keluar = int(info.get('pengeluaran', 0) or 0)
-        op = int(info.get('operational_debit', 0) or 0)
-        hutang_open = int(info.get('utang_open_in', 0) or 0)
-        hutang_paid = int(info.get('utang_paid_in', 0) or 0)
-        saldo = int(info.get('saldo', 0) or 0)
-
-        msg += f"📊 {dompet}\n"
-        msg += f"   Masuk: Rp {masuk:,}\n".replace(',', '.')
-        msg += f"   Keluar Internal: Rp {keluar:,}\n".replace(',', '.')
-        msg += f"   Potongan Operasional: Rp {op:,}\n".replace(',', '.')
-        msg += f"   Penyesuaian Hutang OPEN: Rp {hutang_open:,}\n".replace(',', '.')
-        if hutang_paid:
-            msg += f"   Hutang PAID (audit): Rp {hutang_paid:,}\n".replace(',', '.')
-        msg += f"   Saldo Real: Rp {saldo:,}\n\n".replace(',', '.')
-
-    return msg
-
-
-def _extract_repayment_amount_from_transactions(transactions: list) -> int:
-    """
-    Pick the most likely repayment amount from extracted transactions.
-    Ignores transfer/admin fee lines and prefers the largest positive amount.
-    """
-    if not transactions:
-        return 0
-
-    positive_amounts = []
-    main_amounts = []
-    for tx in transactions:
-        try:
-            amount = int(tx.get('jumlah', 0) or 0)
-        except Exception:
-            amount = 0
-        if amount <= 0:
-            continue
-
-        positive_amounts.append(amount)
-        desc = str(tx.get('keterangan', '') or '').lower()
-        if re.search(r"\b(biaya transfer|fee transfer|fee admin|admin bank)\b", desc):
-            continue
-        main_amounts.append(amount)
-
-    if main_amounts:
-        return max(main_amounts)
-    if positive_amounts:
-        return max(positive_amounts)
-    return 0
-
-
-def _handle_auto_hutang_payment(
-    text: str,
-    user_id: str = "",
-    chat_id: str = "",
-    amount_hint: int = 0,
-) -> Optional[str]:
-    """
-    Match debt-payment intent from natural language and ask explicit confirmation
-    before settling (except explicit "no X" command).
-    """
-    if not _is_debt_payment_text(text):
-        return None
-
-    lower = (text or "").lower()
-    if re.search(r"\b(projek|project|proyek|prj)\b", lower):
-        return None
-    # Allow direct "no 3" or "nomor 3"
-    m_no = re.search(r"\b(?:no|nomor)\.?\s*(\d+)\b", lower)
-    if m_no:
-        info = settle_hutang(int(m_no.group(1)), sender_name="System", source="WhatsApp")
-        if not info:
-            return "❌ No hutang tidak ditemukan."
-        if info.get('error'):
-            return f"❌ Pelunasan hutang #{info.get('no', '?')} gagal.\n⚠️ {info['error']}"
-        invalidate_dashboard_cache()
-        return _format_hutang_paid_response(info)
-
-    amount = parse_revision_amount(text) or int(amount_hint or 0)
-    lender = _pick_dompet_by_prep(text, ["ke", "kepada", "kpd", "untuk"])
-    borrower = _pick_dompet_by_prep(text, ["dari", "dr"])
-
-    if not lender and not borrower:
-        return (
-            "🤔 Ini pelunasan hutang dompet atau transaksi project?\n"
-            "Jika hutang dompet, tulis: bayar hutang ke TX SBY 2jt / bayar hutang no 3.\n"
-            "Jika transaksi project, tulis kata 'projek'."
-        )
-
-    def _compact_candidates(items: list) -> list:
-        compact = []
-        for item in items:
-            compact.append({
-                'no': str(item.get('no', '') or '').strip(),
-                'yang_hutang': str(item.get('yang_hutang', '-') or '-'),
-                'yang_dihutangi': str(item.get('yang_dihutangi', '-') or '-'),
-                'amount': int(item.get('amount', 0) or 0),
-                'keterangan': str(item.get('keterangan', '-') or '-'),
-            })
-        return compact
-
-    # Try strict match first (by pair + amount)
-    candidates = []
-    if amount > 0:
-        candidates = find_open_hutang(
-            yang_hutang=borrower,
-            yang_dihutangi=lender,
-            amount=amount
-        )
-        if not candidates:
-            candidates = find_open_hutang(
-                yang_hutang=borrower or None,
-                yang_dihutangi=lender or None,
-                amount=amount
-            )
-        # Amount is known but no exact match for same pair.
-        if not candidates and (borrower or lender):
-            pair_candidates = find_open_hutang(
-                yang_hutang=borrower or None,
-                yang_dihutangi=lender or None,
-                amount=None
-            )
-            if pair_candidates:
-                lines = [
-                    "⚠️ Nominal pelunasan tidak cocok dengan hutang OPEN untuk pasangan dompet ini.",
-                    f"Nominal terdeteksi: Rp {amount:,}".replace(',', '.'),
-                    "",
-                    "Hutang OPEN yang tersedia:",
-                ]
-                for item in pair_candidates[:5]:
-                    lines.append(
-                        f"#{item['no']} {item.get('yang_hutang','-')} → {item.get('yang_dihutangi','-')} "
-                        f"Rp {item.get('amount',0):,} ({item.get('keterangan','-')})"
-                    )
-                lines.append("")
-                lines.append("Ketik: bayar hutang no <nomor> untuk memilih yang benar.")
-                return "\n".join(lines).replace(',', '.')
-
-    # Fallback: match by pair only (only when amount is unknown)
-    if not candidates and amount <= 0:
-        candidates = find_open_hutang(
-            yang_hutang=borrower or None,
-            yang_dihutangi=lender or None,
-            amount=None
-        )
-
-    if not candidates and amount > 0:
-        candidates = find_open_hutang(amount=amount)
-
-    if not candidates:
-        return "❌ Tidak ada hutang OPEN yang cocok. Tulis contoh: bayar hutang ke TX SBY 2jt."
-
-    if len(candidates) > 1:
-        if user_id and chat_id:
-            compact_candidates = _compact_candidates(candidates[:8])
-            lines = ["🤔 Ketemu beberapa hutang OPEN. Pilih yang mau dilunasi:"]
-            for idx, item in enumerate(compact_candidates, start=1):
-                lines.append(
-                    f"{idx}. #{item['no']} {item['yang_hutang']} → {item['yang_dihutangi']} Rp {item['amount']:,} ({item['keterangan']})"
-                )
-            lines.append("")
-            lines.append(f"Balas angka 1-{len(compact_candidates)} untuk konfirmasi pelunasan.")
-            lines.append("Ketik /cancel untuk batal.")
-            set_pending_confirmation(
-                user_id=user_id,
-                chat_id=chat_id,
-                data={
-                    'type': 'hutang_payment_selection',
-                    'candidates': compact_candidates,
-                    'raw_text': text,
-                }
-            )
-            return "\n".join(lines).replace(',', '.')
-
-        lines = ["🤔 Ada beberapa hutang OPEN. Balas dengan format: `bayar hutang no 3`."]
-        for item in candidates[:5]:
-            lines.append(
-                f"#{item['no']} {item.get('yang_hutang','-')} → {item.get('yang_dihutangi','-')} "
-                f"Rp {item.get('amount',0):,} ({item.get('keterangan','-')})"
-            )
-        return "\n".join(lines).replace(',', '.')
-
-    # Single candidate: require explicit confirmation.
-    chosen = _compact_candidates([candidates[0]])[0]
-    if user_id and chat_id:
-        set_pending_confirmation(
-            user_id=user_id,
-            chat_id=chat_id,
-            data={
-                'type': 'hutang_payment_selection',
-                'candidates': [chosen],
-                'raw_text': text,
-            }
-        )
-        lines = [
-            "🤔 Konfirmasi pelunasan hutang ini?",
-            f"#{chosen['no']} {chosen['yang_hutang']} → {chosen['yang_dihutangi']}",
-            f"Rp {chosen['amount']:,} ({chosen['keterangan']})",
-            "",
-            "Balas Ya untuk lunasi. Batal untuk cancel.",
-            "Bisa juga balas angka 1.",
-        ]
-        if amount > 0 and amount != int(chosen['amount'] or 0):
-            lines.insert(3, f"Nominal terdeteksi: Rp {amount:,} (berbeda dari hutang).".replace(',', '.'))
-        return "\n".join(lines).replace(',', '.')
-
-    return (
-        "🤔 Ketemu 1 hutang OPEN. "
-        f"Lunasi dengan perintah: bayar hutang no {chosen['no']}"
-    )
-
-
-
 # ===================== HEALTH CHECK ENDPOINT =====================
 
 @app.route('/health', methods=['GET'])
@@ -805,289 +198,17 @@ def health_check():
 
 @app.route('/webhook_wuzapi', methods=['POST'])
 def webhook_wuzapi():
-    try:
-        import json
-        
-        # 1. Parse Data
-        try:
-            json_data_raw = request.form.get('jsonData')
-        except RequestEntityTooLarge:
-            secure_log("WARNING", f"Webhook payload too large while reading form (>{MAX_WEBHOOK_BYTES} bytes)")
-            return jsonify({'status': 'payload_too_large'}), 200
-        if not json_data_raw: return jsonify({'status': 'no_data'}), 200
-        
-        try:
-            event_data = json.loads(json_data_raw)
-        except json.JSONDecodeError:
-            return jsonify({'status': 'parse_error'}), 200
-            
-        # 2. Extract Event Info
-        event = event_data.get('event', {})
-        if not isinstance(event, dict):
-            secure_log("INFO", f"Webhook: Ignored malformed event type={type(event).__name__}")
-            return jsonify({'status': 'ignored_malformed_event'}), 200
-
-        info = event.get('Info', event)
-        if not isinstance(info, dict):
-            secure_log("INFO", f"Webhook: Ignored malformed info type={type(info).__name__}")
-            return jsonify({'status': 'ignored_malformed_info'}), 200
-        event_type = event_data.get('type', '')
-        
-        # FILTER: Ignore non-message events
-        ignored_types = ['Connected', 'ReadReceipt', 'Receipt', 'Typing', 'TypingStarted', 
-                        'TypingStopped', 'Presence', 'PresenceUpdate', 'ChatState',
-                        'Composing', 'Paused']
-        
-        # Also ignore if event_type is empty (often happens during typing/sync)
-        if not event_type or event_type in ignored_types:
-            return jsonify({'status': 'ignored_event'}), 200
-        
-        # FILTER: Ignore own messages
-        if info.get('IsFromMe', False):
-            return jsonify({'status': 'own_message'}), 200
-            
-        # 3. Resolve Sender
-        sender_alt = info.get('SenderAlt', '')
-        sender_jid = info.get('Sender', '')
-        sender_number = sender_alt.split('@')[0].split(':')[0] if '@' in sender_alt else \
-                       (sender_jid.split('@')[0].split(':')[0] if '@' in sender_jid else '')
-
-        # Newer WuzAPI event variants may only include user JID in Info.ID.
-        if not sender_number:
-            info_id = str(info.get('ID', '') or '')
-            if '@' in info_id:
-                sender_number = info_id.split('@')[0].split(':')[0]
-                       
-        if not sender_number: 
-            secure_log("WARNING", f"Webhook: No sender number found in {info}")
-            return jsonify({'status': 'no_sender'}), 200
-        
-        # 4. Access Control
-        chat_jid = info.get('Chat', '')
-        is_group = '@g.us' in chat_jid
-        if not is_sender_allowed([sender_number]):
-            secure_log("WARNING", f"Webhook: Access denied for {sender_number}")
-            reply_target = chat_jid if (is_group and chat_jid) else sender_number
-            send_wuzapi_reply(reply_target, "❌ Akses Ditolak. Hubungi Admin.")
-            return jsonify({'status': 'forbidden'}), 200
-
-        # 5. Extract Content
-        message_obj = event.get('Message', {})
-        text = ''
-        input_type = 'text'
-        media_url = None
-        local_media_path = None
-        quoted_msg_id = ''
-        
-        # FILTER: Only process actual messages (text or media)
-        msg_type = info.get('Type', '')
-        if not msg_type:
-            secure_log("INFO", f"Webhook: Missing message type (info.Type empty). Info keys: {list(info.keys())}")
-        if msg_type not in ['text', 'media', 'image']:
-            secure_log("INFO", f"Webhook: Ignored message type '{msg_type}'")
-            return jsonify({'status': f'ignored_type_{msg_type}'}), 200
-        
-        # Text extraction logic
-        # DEBUG: Log message structure for reply debugging
-        if msg_type == 'text':
-            msg_keys = list(message_obj.keys()) if isinstance(message_obj, dict) else []
-            secure_log("DEBUG", f"Webhook: text msg_keys={msg_keys}")
-            if message_obj.get('extendedTextMessage'):
-                ext_keys = list(message_obj['extendedTextMessage'].keys())
-                secure_log("DEBUG", f"Webhook: extendedTextMessage keys={ext_keys}")
-
-        if msg_type == 'text':
-            text = message_obj.get('conversation') or \
-                   message_obj.get('extendedTextMessage', {}).get('text', '')
-        elif msg_type in ['media', 'image']:
-            text = message_obj.get('imageMessage', {}).get('caption', '')
-            input_type = 'image'
-            if event_data.get('base64'):
-                media_url = f"data:image/jpeg;base64,{event_data['base64']}"
-            elif info.get('ID'):
-                # Fallback: try download via WuzAPI
-                try:
-                    local_media_path = download_wuzapi_image(info.get('ID'), chat_jid)
-                except Exception:
-                    local_media_path = None
-
-            # Some WuzAPI events declare image type but provide neither base64 nor downloadable media.
-            # Avoid passing empty media source to OCR pipeline.
-            if not media_url and not local_media_path:
-                if (text or '').strip():
-                    secure_log("WARNING", "Webhook image payload missing media; fallback to caption-only text extraction")
-                    input_type = 'text'
-                else:
-                    secure_log("WARNING", "Webhook image payload missing media and caption; skipping message")
-                    return jsonify({'status': 'image_missing_media'}), 200
-
-            secure_log(
-                "INFO",
-                f"Webhook: Image message received (caption_len={len(text or '')}, "
-                f"base64={'yes' if event_data.get('base64') else 'no'}, "
-                f"download={'yes' if local_media_path else 'no'})"
-            )
-
-        # Ignore empty text payloads (avoid typing/presence noise)
-        if msg_type == 'text' and not (text or '').strip():
-            secure_log("INFO", f"Webhook: Empty text ignored from {sender_number}")
-            return jsonify({'status': 'empty_text'}), 200
-
-        # LOG THE INCOMING MESSAGE
-        secure_log("INFO", f"Webhook: Msg from {sender_number} (Group: {is_group}): {text[:50]}...")
-
-        # Quoted info - check multiple possible locations in WuzAPI payload
-        ctx_info = None
-        # Priority 1: extendedTextMessage (reply to text/media)
-        if message_obj.get('extendedTextMessage', {}).get('contextInfo'):
-            ctx_info = message_obj['extendedTextMessage']['contextInfo']
-        # Priority 2: plain text reply metadata (some WuzAPI builds)
-        elif message_obj.get('messageContextInfo'):
-            ctx_info = message_obj['messageContextInfo']
-        # Priority 3: imageMessage (reply with image)
-        elif message_obj.get('imageMessage', {}).get('contextInfo'):
-            ctx_info = message_obj['imageMessage']['contextInfo']
-        # Priority 4: direct contextInfo on message
-        elif message_obj.get('contextInfo'):
-            ctx_info = message_obj['contextInfo']
-        # Priority 5: Check in event.Info (some WuzAPI versions)
-        elif info.get('ContextInfo'):
-            ctx_info = info['ContextInfo']
-        # Priority 6: Check event root level
-        elif event_data.get('event', {}).get('ContextInfo'):
-            ctx_info = event_data['event']['ContextInfo']
-        
-        if ctx_info:
-            quoted_msg_id = (
-                ctx_info.get('stanzaId')
-                or ctx_info.get('StanzaId')
-                or ctx_info.get('stanzaID')
-                or ctx_info.get('quotedMessageID')
-                or ctx_info.get('quotedMessageId')
-                or ''
-            )
-            if quoted_msg_id:
-                secure_log("INFO", f"Webhook: Quoted message detected: {quoted_msg_id[:20]}...")
-            else:
-                # Debug: log what keys are in contextInfo
-                secure_log("DEBUG", f"Webhook: contextInfo found but no stanzaId. Keys: {list(ctx_info.keys())}")
-
-        # 6. Deduplication (allow upgrade for richer payloads)
-        message_id = info.get('ID', '')
-        dedup_score = 0
-        if text and text.strip():
-            dedup_score += min(len(text.strip()), 200)
-        if input_type == 'image':
-            if local_media_path or media_url or event_data.get('base64'):
-                dedup_score += 1000
-        if is_message_duplicate(message_id, score=dedup_score, allow_upgrade=True):
-            secure_log("INFO", f"Webhook: Duplicate message {message_id} ignored")
-            return jsonify({'status': 'duplicate'}), 200
-
-        # 7. Process
-        return process_wuzapi_message(
-            sender_number, info.get('PushName', 'User'), text,
-            input_type, media_url, local_media_path, quoted_msg_id, message_id,
-            is_group, chat_jid, sender_alt
-        )
-
-    except Exception as e:
-        secure_log("ERROR", f"Webhook Error: {traceback.format_exc()}")
-        return jsonify({'status': 'error'}), 500
+    return handle_wuzapi_webhook(request, process_wuzapi_message, MAX_WEBHOOK_BYTES)
 
 
 # ===================== TELEGRAM HANDLER =====================
 
 @app.route('/telegram', methods=['POST'])
 def webhook_telegram():
-    try:
-        update = request.get_json(silent=True) or {}
-        message = update.get('message') or update.get('edited_message')
-        if not message:
-            return jsonify({'status': 'no_message'}), 200
-
-        sender = message.get('from', {})
-        if sender.get('is_bot'):
-            return jsonify({'status': 'own_message'}), 200
-
-        chat = message.get('chat', {})
-        chat_id = chat.get('id')
-        if chat_id is None:
-            return jsonify({'status': 'no_chat'}), 200
-
-        chat_type = chat.get('type', 'private')
-        is_group = chat_type in ('group', 'supergroup')
-
-        sender_id = sender.get('id')
-        sender_name = " ".join(filter(None, [sender.get('first_name'), sender.get('last_name')])).strip()
-        if not sender_name:
-            sender_name = sender.get('username', 'User')
-        sender_number = str(sender_id) if sender_id is not None else sender.get('username', '')
-        sender_username = sender.get('username')
-
-        if not is_sender_allowed([sender_number, sender_username, sender_name]):
-            secure_log("WARNING", f"Telegram: Access denied for {sender_number}")
-            send_telegram_reply(chat_id, "❌ Akses Ditolak. Hubungi Admin.")
-            return jsonify({'status': 'forbidden'}), 200
-
-        text = message.get('text') or ''
-        input_type = 'text'
-        media_url = None
-
-        if message.get('photo'):
-            photo = message['photo'][-1]
-            file_id = photo.get('file_id')
-            media_url = get_telegram_file_url(file_id)
-            input_type = 'image'
-            if not text:
-                text = message.get('caption', '') or ''
-
-        quoted_msg_id = None
-        quoted_message_text = None
-        reply_msg = message.get('reply_to_message')
-        if reply_msg:
-            reply_message_id = reply_msg.get('message_id')
-            if reply_message_id is not None:
-                quoted_msg_id = f"tg:{chat_id}:{reply_message_id}"
-            quoted_message_text = reply_msg.get('text') or reply_msg.get('caption')
-
-        message_id = message.get('message_id')
-        if message_id is not None:
-            message_key = f"tg:{chat_id}:{message_id}"
-        else:
-            message_key = f"tg:{chat_id}:{update.get('update_id', '')}"
-
-        if is_message_duplicate(message_key):
-            secure_log("INFO", f"Telegram: Duplicate message {message_key} ignored")
-            return jsonify({'status': 'duplicate'}), 200
-
-        def send_reply(body: str, mention: bool = True):
-            body_fmt = format_reply_message(body)
-            return send_telegram_reply(chat_id, body_fmt)
-
-        return process_incoming_message(
-            sender_number=sender_number,
-            sender_name=sender_name,
-            text=text,
-            input_type=input_type,
-            media_url=media_url,
-            quoted_msg_id=quoted_msg_id,
-            message_id=message_key,
-            is_group=is_group,
-            chat_jid=str(chat_id),
-            sender_jid=None,
-            quoted_message_text=quoted_message_text,
-            send_reply=send_reply,
-            send_document=send_telegram_document,
-            source_label='Telegram',
-            reply_to=chat_id,
-        )
-    except Exception as e:
-        secure_log("ERROR", f"Telegram Webhook Error: {traceback.format_exc()}")
-        return jsonify({'status': 'error'}), 500
+    return handle_telegram_webhook(request, process_incoming_message)
 
 
-def process_wuzapi_message(sender_number: str, sender_name: str, text: str, 
+def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                            input_type: str = 'text', media_url: str = None,
                            local_media_path: str = None,
                            quoted_msg_id: str = None, message_id: str = None,
@@ -1095,7 +216,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                            sender_jid: str = None, quoted_message_text: str = None):
     try:
         reply_to = chat_jid if (is_group and chat_jid) else sender_number
-        
+
         # --- Helper: Send Reply ---
         def send_reply(body: str, mention: bool = True):
             body_norm = format_reply_message(body)
@@ -1128,7 +249,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
         return jsonify({'status': 'error'}), 500
 
 
-def process_incoming_message(sender_number: str, sender_name: str, text: str, 
+def process_incoming_message(sender_number: str, sender_name: str, text: str,
                              input_type: str = 'text', media_url: str = None,
                              local_media_path: str = None,
                              quoted_msg_id: str = None, message_id: str = None,
@@ -1152,7 +273,7 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
         def send_pending_reply(body: str, mention: bool = True):
             """Send reply with active-transaction timeout hint."""
             return send_reply(append_active_transaction_notice(body), mention=mention)
-        
+
         def build_extraction_inputs(current_text: str, current_input_type: str,
                                     current_media_url: str, current_media_path: str):
             """Prepare input_data/media list/caption for extract_financial_data."""
@@ -1169,140 +290,8 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 return extract_financial_data(input_data, in_type, sender, media_list, caption)
             except RateLimitException as e:
                 wait = getattr(e, "wait_time", "beberapa saat")
-                send_reply(f"⚠️ AI sedang sibuk (limit). Coba lagi dalam {wait}.")
+                send_reply(f"ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â AI sedang sibuk (limit). Coba lagi dalam {wait}.")
                 return None
-
-        def _normalize_amount(value) -> int:
-            """Best-effort parse amount to non-negative integer."""
-            try:
-                if value is None:
-                    return 0
-                if isinstance(value, bool):
-                    return int(value)
-                if isinstance(value, int):
-                    return abs(value)
-                if isinstance(value, float):
-                    return abs(int(value))
-                raw = str(value).strip()
-                if not raw:
-                    return 0
-                parsed = parse_revision_amount(raw)
-                if parsed > 0:
-                    return parsed
-                raw = raw.replace("rp", "").replace("Rp", "").replace("RP", "")
-                digits = re.sub(r"[^0-9]", "", raw)
-                return int(digits) if digits else 0
-            except Exception:
-                return 0
-
-        def _normalize_key_text(value) -> str:
-            text_value = sanitize_input(str(value or "")).lower().strip()
-            return re.sub(r"\s+", " ", text_value)
-
-        def _normalize_transaction(tx: dict) -> Optional[dict]:
-            if not isinstance(tx, dict):
-                return None
-
-            normalized = dict(tx)
-            normalized["jumlah"] = _normalize_amount(normalized.get("jumlah", 0))
-
-            ket = sanitize_input(str(normalized.get("keterangan", "") or "")).strip()
-            normalized["keterangan"] = ket[:200] if ket else "Transaksi"
-
-            tipe = normalized.get("tipe", "Pengeluaran")
-            if tipe not in ("Pemasukan", "Pengeluaran"):
-                tipe = "Pengeluaran"
-            normalized["tipe"] = tipe
-
-            if normalized["jumlah"] <= 0:
-                normalized["needs_amount"] = True
-            else:
-                normalized.pop("needs_amount", None)
-            return normalized
-
-        def _tx_content_key(tx: dict) -> Tuple[str, str, str, str]:
-            project = strip_company_prefix(str(tx.get("nama_projek", "") or ""))
-            return (
-                _normalize_key_text(tx.get("tipe", "Pengeluaran")),
-                _normalize_key_text(tx.get("keterangan", "")),
-                _normalize_key_text(project),
-                _normalize_key_text(tx.get("kategori", "")),
-            )
-
-        def _tx_identity_key(tx: dict) -> Tuple[str, str, str, str, int]:
-            content = _tx_content_key(tx)
-            amount = int(tx.get("jumlah", 0) or 0)
-            return (content[0], content[1], content[2], content[3], amount)
-
-        def _merge_transaction_queue(existing: list, incoming: list) -> Tuple[list, dict]:
-            """
-            Merge queue safely:
-            - normalize every tx
-            - drop exact duplicates
-            - prefer valid amount (>0) over zero for the same content
-            """
-            merged: List[dict] = []
-            identity_index: Dict[Tuple[str, str, str, str, int], int] = {}
-            content_index: Dict[Tuple[str, str, str, str], int] = {}
-            meta = {"added": 0, "duplicates": 0, "upgraded": 0}
-
-            def _upsert(raw_tx, is_incoming: bool) -> None:
-                tx = _normalize_transaction(raw_tx)
-                if not tx:
-                    if is_incoming:
-                        meta["duplicates"] += 1
-                    return
-
-                identity = _tx_identity_key(tx)
-                if identity in identity_index:
-                    if is_incoming:
-                        meta["duplicates"] += 1
-                    return
-
-                content = _tx_content_key(tx)
-                prev_idx = content_index.get(content)
-                if prev_idx is not None:
-                    prev_tx = merged[prev_idx]
-                    prev_amt = int(prev_tx.get("jumlah", 0) or 0)
-                    new_amt = int(tx.get("jumlah", 0) or 0)
-
-                    if prev_amt <= 0 < new_amt:
-                        prev_identity = _tx_identity_key(prev_tx)
-                        merged[prev_idx] = tx
-                        identity_index.pop(prev_identity, None)
-                        identity_index[identity] = prev_idx
-                        if is_incoming:
-                            meta["upgraded"] += 1
-                        return
-
-                    if new_amt <= 0 < prev_amt:
-                        if is_incoming:
-                            meta["duplicates"] += 1
-                        return
-
-                insert_idx = len(merged)
-                merged.append(tx)
-                identity_index[identity] = insert_idx
-                content_index.setdefault(content, insert_idx)
-                if is_incoming:
-                    meta["added"] += 1
-
-            for old_tx in existing or []:
-                _upsert(old_tx, is_incoming=False)
-            for new_tx in incoming or []:
-                _upsert(new_tx, is_incoming=True)
-
-            return merged, meta
-
-        def _first_missing_amount_tx(transactions: list) -> Optional[dict]:
-            for tx in transactions or []:
-                try:
-                    amount = int(tx.get("jumlah", 0) or 0)
-                except Exception:
-                    amount = 0
-                if tx.get("needs_amount") or amount <= 0:
-                    return tx
-            return None
 
         def is_explicit_bot_call(msg: str) -> bool:
             if not msg:
@@ -1399,7 +388,7 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             if claimed_visual_source_id == visual_source_id:
                 return True
             if not mark_visual_message_consumed(chat_jid, visual_source_id):
-                send_reply("ℹ️ Struk ini sudah diproses. Gunakan /revisi atau /undo jika perlu koreksi.")
+                send_reply("ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Struk ini sudah diproses. Gunakan /revisi atau /undo jika perlu koreksi.")
                 return False
             claimed_visual_source_id = visual_source_id
             return True
@@ -1504,7 +493,7 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
 
         def _session_access_denied_message() -> str:
             return (
-                "⚠️ Sesi ini milik user lain. "
+                "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Sesi ini milik user lain. "
                 "Reply ke prompt bot yang benar untuk membantu menjawab sesi user lain."
             )
 
@@ -1609,7 +598,7 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
 
                 # If project context exists, this is a project expense funded by debt
                 # (e.g., "bayar fee sugeng, project vadim, utang CV HB")
-                # → NOT a debt repayment, so skip the payment-text guard.
+                # ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ NOT a debt repayment, so skip the payment-text guard.
                 has_project_context = bool(
                     re.search(r"\b(projek|project|proyek|prj)\b", normalized)
                 )
@@ -1658,7 +647,7 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                     store_last_bot_report(chat_jid, bid)
                 # Fallback: track last event per user/chat even if bot msg ID missing
                 store_last_tx_event(sender_number, chat_jid, event_id)
-            
+
             # ROUTING CHECK
             original_text = pending.get('original_text', '')
             category_scope = pending.get('category_scope', 'UNKNOWN')  # From AI layer
@@ -1666,10 +655,10 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             has_debt_context = bool(
                 re.search(r"\b(utang|hutang|minjem|minjam|pinjam)\b", (original_text or "").lower())
             )
-            
+
             # If already routed/flagged, respect it
             if pending.get('is_operational'):
-                context = {'mode': 'OPERATIONAL', 'needs_wallet': True, 
+                context = {'mode': 'OPERATIONAL', 'needs_wallet': True,
                            'category': pending.get('operational_category', 'Lain Lain')}
             else:
                 # Pass category_scope from AI layer for smarter routing
@@ -1687,12 +676,12 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                         'original_message_id': pending.get('message_id')
                     }
                 )
-                response = """🤔 Ini untuk Operational Kantor atau Project?
+                response = """ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Ini untuk Operational Kantor atau Project?
 
-1️⃣ Operational Kantor
+1ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚Â£ Operational Kantor
    (Gaji staff, listrik, wifi, ATK, dll)
 
-2️⃣ Project
+2ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚Â£ Project
    (Material, upah tukang, transport ke site)
 
 Balas 1 atau 2"""
@@ -1729,25 +718,25 @@ Balas 1 atau 2"""
                             source_wallet = resolve_dompet_from_text(user_part)
                     if source_wallet:
                         pending['selected_source_wallet'] = source_wallet
-                
+
                 # Step 1: Ask Wallet if missing
                 if not source_wallet:
                     pending['pending_type'] = 'select_source_wallet'
                     pending['is_operational'] = True
                     pending['operational_category'] = context['category']
-                    
+
                     prompt = format_wallet_selection_prompt()
                     total = sum(t.get('jumlah', 0) for t in txs)
                     item = txs[0].get('keterangan', 'Biaya')
-                    
-                    msg = (f"🏢 *Deteksi: Operasional Kantor*\n"
-                           f"📝 {item} (Rp {total:,})\n\n"
+
+                    msg = (f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¢ *Deteksi: Operasional Kantor*\n"
+                           f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€šÃ‚Â {item} (Rp {total:,})\n\n"
                            f"{prompt}").replace(',', '.')
-                           
+
                     sent = send_reply(msg)
                     cache_prompt(pkey, pending, sent)
                     return jsonify({'status': 'asking_wallet'}), 200
-                
+
                 # Step 2: Save to Operational Sheet (fast mode auto-commit)
                 if FAST_MODE:
                     event_id = pending.get('event_id') or pending.get('message_id')
@@ -1781,7 +770,7 @@ Balas 1 atau 2"""
                     _send_and_track(response, event_id)
                     return jsonify({'status': 'saved_operational'}), 200
 
-                # Strict mode: Draft → Confirm → Commit
+                # Strict mode: Draft ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Confirm ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Commit
                 set_pending_confirmation(
                     user_id=sender_number,
                     chat_id=chat_jid,
@@ -1808,7 +797,7 @@ Balas 1 atau 2"""
             new_project_expense_note = None
             wallet_set_note = None
             wallet_set_target_amount = None
-            
+
             # --- VALIDATION: CHECK PROJECT EXISTENCE ---
             # Checks if project exists in Spreadsheet/Cache before proceeding
             if not pending.get('project_validated'):
@@ -1817,7 +806,7 @@ Balas 1 atau 2"""
                     # Skip validation for "Saldo Umum", empty, or "Umum"
                     if not p_name_raw or p_name_raw.lower() in ['saldo umum', 'umum', 'unknown']:
                         continue
-                    
+
                     # Resolve Name
                     lookup_name = strip_company_prefix(p_name_raw)
                     res = resolve_project_name(lookup_name)
@@ -1844,16 +833,16 @@ Balas 1 atau 2"""
                         pending['pending_type'] = 'confirmation_project'
                         pending['suggested_project'] = res.get('final_name') or res.get('original') or lookup_name
                         msg = (
-                             f"🤔 *KONFIRMASI PROJECT*\n"
-                             f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                             f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â *KONFIRMASI PROJECT*\n"
+                             f"ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚Â\n\n"
                              f"Maksudnya *{pending['suggested_project']}*?\n\n"
-                             f"━━━━━━━━━━━━━━━━━━━━━\n"
-                             f"✅ *Ya* — Lanjutkan\n"
-                             f"❌ *Bukan* — Langsung ketik nama yang benar"
+                             f"ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚Â\n"
+                             f"ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ *Ya* ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Lanjutkan\n"
+                             f"ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ *Bukan* ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Langsung ketik nama yang benar"
                          )
                         send_pending_reply(msg)
                         return jsonify({'status': 'asking_project_confirm'}), 200
-                    
+
                     elif res['status'] == 'NEW':
                         has_income = any(t.get('tipe') == 'Pemasukan' for t in txs)
                         pending['pending_type'] = 'confirmation_new_project'
@@ -1892,7 +881,7 @@ Balas 1 atau 2"""
                         # Auto update to canonical name
                         t['nama_projek'] = res['final_name']
                         pending['project_confirmed'] = True
-                
+
                 # Mark as validated once all checks pass (no NEW/AMBIGUOUS trigger)
                 pending['project_validated'] = True
 
@@ -1921,7 +910,7 @@ Balas 1 atau 2"""
                     f"Company '{detected_company}' was not explicitly mentioned; asking user to choose",
                 )
                 detected_company = None
-            
+
             dompet = None
             detected_dompet = next((t.get('detected_dompet') for t in txs if t.get('detected_dompet')), None)
             if detected_dompet:
@@ -1945,7 +934,7 @@ Balas 1 atau 2"""
                     dompet = pending.get('override_dompet')
                 else:
                     dompet = get_dompet_for_company(detected_company)
-            
+
             # OCR-aware: resolve dompet from user caption (not OCR body)
             explicit_dompet = resolve_dompet_from_text(user_part)
             # If user caption didn't mention a wallet, try OCR account numbers
@@ -2006,13 +995,13 @@ Balas 1 atau 2"""
             if needs_company_selection:
                 pending['pending_type'] = 'selection'
                 reply = (
-                    "📁 *PROJECT BARU*\n"
+                    "ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€šÃ‚Â *PROJECT BARU*\n"
                     "Project baru belum punya company/dompet yang jelas.\n\n"
                     "Pilih company untuk project ini supaya tidak otomatis masuk ke TX SBY.\n\n"
                     f"{build_selection_prompt(txs)}"
                 )
                 if is_group:
-                    reply += "\n\n↩️ Reply angka 1-5"
+                    reply += "\n\nÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Ãƒâ€šÃ‚Â©ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Reply angka 1-5"
                 sent = send_pending_reply(reply)
                 cache_prompt(pkey, pending, sent)
                 return jsonify({'status': 'asking_company_for_new_project'}), 200
@@ -2028,7 +1017,7 @@ Balas 1 atau 2"""
                 if is_wallet_set_mode:
                     target_amount = pick_wallet_target_amount(txs)
                     if target_amount <= 0:
-                        send_reply("❗ Nominal target saldo belum terbaca. Contoh: update saldo dompet TX SBY 10jt")
+                        send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Nominal target saldo belum terbaca. Contoh: update saldo dompet TX SBY 10jt")
                         return jsonify({'status': 'wallet_set_missing_amount'}), 200
 
                     balances = get_wallet_balances()
@@ -2039,7 +1028,7 @@ Balas 1 atau 2"""
                     if int(adjustment.get('amount', 0) or 0) <= 0:
                         _pending_transactions.pop(pkey, None)
                         response = (
-                            f"ℹ️ Saldo {dompet} sudah sesuai target (Rp {target_amount:,}). "
+                            f"ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Saldo {dompet} sudah sesuai target (Rp {target_amount:,}). "
                             "Tidak ada transaksi penyesuaian."
                         ).replace(',', '.')
                         _send_and_track(response, pending.get('event_id') or pending.get('message_id'))
@@ -2125,17 +1114,17 @@ Balas 1 atau 2"""
                                 }
                             )
                             msg = (
-                                f"⚠️ *KONFIRMASI DOMPET*\n"
-                                f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                                f"📁 Project: *{p_name_check}*\n"
-                                f"📌 Terdaftar di: *{locked_dompet}*\n"
-                                f"🔄 Input baru: *{dompet}*\n\n"
-                                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                                f"ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â *KONFIRMASI DOMPET*\n"
+                                f"ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚Â\n\n"
+                                f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€šÃ‚Â Project: *{p_name_check}*\n"
+                                f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€¦Ã¢â‚¬â„¢ Terdaftar di: *{locked_dompet}*\n"
+                                f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ Input baru: *{dompet}*\n\n"
+                                f"ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚Â\n"
                                 f"*Pilih tindakan:*\n\n"
-                                f"1️⃣  Gunakan dompet terdaftar ({locked_dompet})\n"
-                                f"2️⃣  Pindahkan project ke ({dompet})\n"
-                                f"3️⃣  Batal\n\n"
-                                f"↩️ _Balas dengan angka 1, 2, atau 3_"
+                                f"1ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚Â£  Gunakan dompet terdaftar ({locked_dompet})\n"
+                                f"2ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚Â£  Pindahkan project ke ({dompet})\n"
+                                f"3ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚Â£  Batal\n\n"
+                                f"ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Ãƒâ€šÃ‚Â©ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â _Balas dengan angka 1, 2, atau 3_"
                             )
                             send_reply(msg)
                             return jsonify({'status': 'project_lock_mismatch'}), 200
@@ -2204,9 +1193,9 @@ Balas 1 atau 2"""
                         total_count = len(txs)
                         error_msg = failed_saves[0].get('error', '')
                         response = (
-                            f"❌ Gagal menyimpan {fail_count}/{total_count} transaksi ke spreadsheet!\n"
-                            f"📋 Dompet: {dompet}\n"
-                            f"⚠️ Error: {error_msg[:150]}\n\n"
+                            f"ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Gagal menyimpan {fail_count}/{total_count} transaksi ke spreadsheet!\n"
+                            f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ Dompet: {dompet}\n"
+                            f"ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Error: {error_msg[:150]}\n\n"
                             f"Coba kirim ulang transaksi."
                         )
                         _send_and_track(response, event_id)
@@ -2268,17 +1257,17 @@ Balas 1 atau 2"""
 
                         if verified_ok:
                             response += (
-                                f"\n✅ Verifikasi: saldo {dompet} sekarang Rp {wallet_set_target_amount:,}."
+                                f"\nÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ Verifikasi: saldo {dompet} sekarang Rp {wallet_set_target_amount:,}."
                             ).replace(',', '.')
                         else:
                             shown = verified_balance if verified_balance is not None else 0
                             response += (
-                                f"\n⚠️ Verifikasi belum cocok. Target Rp {wallet_set_target_amount:,}, "
+                                f"\nÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Verifikasi belum cocok. Target Rp {wallet_set_target_amount:,}, "
                                 f"terbaca Rp {shown:,}. Cek lagi /saldo 10-20 detik."
                             ).replace(',', '.')
                     if debt_source and debt_source != dompet:
                         total_amount = sum(int(t.get('jumlah', 0) or 0) for t in txs)
-                        response += f"\n💳 Utang dicatat: {debt_source} → {dompet} (Rp {total_amount:,})".replace(',', '.')
+                        response += f"\nÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢Ãƒâ€šÃ‚Â³ Utang dicatat: {debt_source} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {dompet} (Rp {total_amount:,})".replace(',', '.')
                     _send_and_track(response, event_id)
                     return jsonify({'status': 'saved_project'}), 200
 
@@ -2308,24 +1297,24 @@ Balas 1 atau 2"""
                     draft_msg += f"\n{wallet_set_note}"
                 send_reply(draft_msg)
                 return jsonify({'status': 'draft_project'}), 200
-            
+
             # 3. Ask Company if Unresolved
             pending['pending_type'] = 'selection'
             reply = build_selection_prompt(txs)
-            if is_group: reply += "\n\n↩️ Reply angka 1-5"
+            if is_group: reply += "\n\nÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Ãƒâ€šÃ‚Â©ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Reply angka 1-5"
             sent = send_pending_reply(reply)
             cache_prompt(pkey, pending, sent)
             return jsonify({'status': 'asking_company'}), 200
 
         # --- FLOW CONTROL ---
-        
+
         # 1. Rate Limit
         allowed, wait = rate_limit_check(sender_number)
         if not allowed: return jsonify({'status': 'rate_limit'}), 200
 
         recent_text_for_image = ""
         recent_scope_hint = None
-        
+
         # 2. Visual Buffer (store all images for "catat diatas" binding)
         if input_type == 'image' and not deferred:
             recent_text_for_image = (
@@ -2352,14 +1341,14 @@ Balas 1 atau 2"""
                 sender_number, chat_jid, media_url, message_id,
                 caption=text, media_path=local_media_path, context=visual_context
             )
-        
+
         has_visual = has_visual_buffer(sender_number, chat_jid)
-        
+
         # If user says "catat diatas" but no buffered image, ask to reply/attach
         if input_type == 'text':
             ref_phrase = re.search(r'\b(catat\s+(di\s+)?(atas|tadi|sebelumnya)|catat\s+itu)\b', (text or '').lower())
             if ref_phrase and not has_visual and not quoted_msg_id:
-                send_reply("❗ Belum ada gambar/struk sebelumnya. Tolong reply struknya atau kirim ulang.")
+                send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Belum ada gambar/struk sebelumnya. Tolong reply struknya atau kirim ulang.")
                 return jsonify({'status': 'missing_reference'}), 200
 
         # Strict group mode: answer-like texts must reply to a mapped bot prompt.
@@ -2385,7 +1374,7 @@ Balas 1 atau 2"""
                     quoted_pending_ref = ''
                 if not quoted_pending_ref:
                     if should_send_group_reply_hint(chat_jid, sender_number, "reply_required_for_answers"):
-                        send_reply("⚠️ Untuk jawaban (angka/ya/nominal), wajib *reply* ke pesan bot yang ingin dijawab.")
+                        send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Untuk jawaban (angka/ya/nominal), wajib *reply* ke pesan bot yang ingin dijawab.")
                     return jsonify({'status': 'reply_required_for_answers'}), 200
 
         # ========================================
@@ -2447,7 +1436,7 @@ Balas 1 atau 2"""
                 pending_data=pending_conf,
                 sender_name=sender_name
             )
-            
+
             if result:
                 if result.get('response'):
                     sent = send_reply(result['response'])
@@ -2462,7 +1451,7 @@ Balas 1 atau 2"""
                             store_bot_message_ref(bid, result.get('bot_ref_event_id'))
                             store_last_bot_report(chat_jid, bid)
                         store_last_tx_event(pending_conf_user, chat_jid, result.get('bot_ref_event_id'))
-                
+
                 if result.get('completed'):
                     # Flow finished (saved or cancelled)
                     return jsonify({'status': 'handled_confirmation'}), 200
@@ -2482,12 +1471,12 @@ Balas 1 atau 2"""
                     return jsonify({'status': 'session_access_denied'}), 200
                 pending_pkey = mapped
                 pending_routed_by_prompt = True
-            
+
         pending_data = _pending_transactions.get(pending_pkey)
         if pending_data and pending_is_expired(pending_data):
             _pending_transactions.pop(pending_pkey, None)
             pending_data = None
-            
+
         has_pending = pending_data is not None
         if has_pending and is_group:
             pending_owner = str(
@@ -2516,7 +1505,7 @@ Balas 1 atau 2"""
                     send_reply("Jawaban angka di grup wajib *reply* ke prompt bot yang sesuai.")
                     return jsonify({'status': 'reply_required_for_selection'}), 200
                 else:
-                    send_reply("⚠️ Tidak ada pertanyaan aktif atau sesi sudah kedaluwarsa.\nKirim ulang transaksi ya.")
+                    send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Tidak ada pertanyaan aktif atau sesi sudah kedaluwarsa.\nKirim ulang transaksi ya.")
                     return jsonify({'status': 'no_pending_selection'}), 200
 
         # Group noise gate (pre-AI): avoid processing random media/chatter
@@ -2547,13 +1536,13 @@ Balas 1 atau 2"""
                 return jsonify({'status': 'ignored_group'}), 200
             if cleaned:
                 text = cleaned
-        
+
         # 4. Filter AI Trigger
         if explicit_catat:
             text = re.sub(r'^\s*\+?catat\b', '', raw_text, flags=re.IGNORECASE).strip()
         text = sanitize_input(text or '')
         force_record = explicit_catat
-        
+
         # ========== PRIORITY: COMMANDS FIRST (before layer processing) ==========
         if text.strip().startswith('/'):
             # /catat -> force transaction, strip command
@@ -2564,11 +1553,11 @@ Balas 1 atau 2"""
             if is_command_match(text, Commands.START, is_group):
                 send_reply(START_MESSAGE)
                 return jsonify({'status': 'command_start'}), 200
-            
+
             if is_command_match(text, Commands.HELP, is_group):
                 send_reply(HELP_MESSAGE)
                 return jsonify({'status': 'command_help'}), 200
-            
+
             if is_command_match(text, Commands.SALDO, is_group):
                 try:
                     balances = get_wallet_balances()
@@ -2576,7 +1565,7 @@ Balas 1 atau 2"""
                     send_reply(msg)
                     return jsonify({'status': 'command_saldo'}), 200
                 except Exception as e:
-                    send_reply(f"❌ Error: {str(e)}")
+                    send_reply(f"ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Error: {str(e)}")
                     return jsonify({'status': 'error'}), 200
 
             if is_prefix_match(text, Commands.LUNAS_PREFIXES, is_group):
@@ -2591,7 +1580,7 @@ Balas 1 atau 2"""
                         send_reply("No hutang tidak ditemukan.")
                         return jsonify({'status': 'command_lunas_not_found'}), 200
                     if info.get('error'):
-                        send_reply(f"❌ Pelunasan hutang #{no} gagal.\n⚠️ {info['error']}")
+                        send_reply(f"ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Pelunasan hutang #{no} gagal.\nÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â {info['error']}")
                         return jsonify({'status': 'command_lunas_failed'}), 200
                     invalidate_dashboard_cache()
                     send_reply(_format_hutang_paid_response(info))
@@ -2608,40 +1597,40 @@ Balas 1 atau 2"""
                     send_reply(msg)
                     return jsonify({'status': 'command_status'}), 200
                 except Exception as e:
-                    send_reply(f"❌ Error: {str(e)}")
+                    send_reply(f"ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Error: {str(e)}")
                     return jsonify({'status': 'error'}), 200
-    
+
     # ========================================
     # NEW: /tanya Command - AI Query dengan Real Data
     # ========================================
             if text.startswith('/tanya '):
                 query = text.replace('/tanya ', '').strip()
-                
+
                 if not query:
-                    send_reply("💡 Contoh: /tanya cek keuangan hari ini")
+                    send_reply("ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢Ãƒâ€šÃ‚Â¡ Contoh: /tanya cek keuangan hari ini")
                     return jsonify({'status': 'command_tanya_empty'}), 200
-                
+
                 try:
                     from handlers.query_handler import handle_query_command
-                    
+
                     # Send "analyzing" message first
-                    send_reply("🤔 Menganalisis data...")
-                    
+                    send_reply("ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Menganalisis data...")
+
                     # Get answer with real data
                     answer = handle_query_command(query, sender_number, chat_jid)
-                    
+
                     # Send answer
                     response = answer
                     send_reply(response)
-                    
+
                     return jsonify({'status': 'command_tanya_success'}), 200
-                    
+
                 except Exception as e:
                     # secure_assert logger is not defined in this scope locally, using secure_log if available or just print
-                    secure_log("ERROR", f"/tanya command failed: {e}") 
-                    send_reply(f"❌ Maaf, terjadi kesalahan saat menganalisis data.")
+                    secure_log("ERROR", f"/tanya command failed: {e}")
+                    send_reply(f"ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Maaf, terjadi kesalahan saat menganalisis data.")
                     return jsonify({'status': 'command_tanya_error'}), 200
-        
+
         # Initialize category scope and intent variables (prevent UnboundLocalError)
         layer_category_scope = 'UNKNOWN'
         intent = 'UNKNOWN'
@@ -2650,10 +1639,10 @@ Balas 1 atau 2"""
         transfer_dompet = None
         smart_result = {}
         processing_ack_sent = False
-        
+
         if has_pending:
             # Bypass AI if pending active to reach state machine below
-            pass 
+            pass
         else:
             # ==== Context Enhancement: Combine with last message if applicable ====
             last_message = get_user_last_message(sender_number, chat_jid, max_age_seconds=60)
@@ -2744,20 +1733,20 @@ Balas 1 atau 2"""
                         quoted_message_text=quoted_message_text,
                         has_visual=has_visual
                     )
-                    
+
                     action = smart_result.get('action', 'IGNORE')
                     resp = smart_result.get('response') # For REPLY
                     intent = smart_result.get('intent', 'UNKNOWN')
-                    
+
                     # Store extra data
                     layer_category_scope = smart_result.get('category_scope', 'UNKNOWN')
                     if intent == "RECORD_TRANSACTION":
                          # In case smart_handler cleaned the text (e.g. from extracted data)
                          if smart_result.get('normalized_text'):
                              text = smart_result.get('normalized_text')
- 
+
                 if action == "IGNORE": return jsonify({'status': 'ignored'}), 200
-                if action == "REPLY": 
+                if action == "REPLY":
                     send_reply(resp)
                     return jsonify({'status': 'replied'}), 200
                 if action == "PROCESS":
@@ -2770,11 +1759,11 @@ Balas 1 atau 2"""
                                 return jsonify({'status': 'auto_hutang_paid'}), 200
                         # Send quick ack only when explicitly addressed or private chat
                         if (force_record or (not is_group) or is_explicit_bot_call(text)) and not processing_ack_sent:
-                            send_reply("⏳ Memproses...")
+                            send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â³ Memproses...")
                             processing_ack_sent = True
 
                     if intent == "QUERY_STATUS":
-                        send_reply("🤔 Menganalisis...")
+                        send_reply("ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Menganalisis...")
                         try:
                             from handlers.query_handler import handle_query_command
                             query_text = smart_result.get('layer_response', text)
@@ -2783,11 +1772,11 @@ Balas 1 atau 2"""
                             return jsonify({'status': 'queried'}), 200
                         except Exception as e:
                             secure_log("ERROR", f"Query handler failed: {e}")
-                    
+
                     # ========================================
                     # STEP 2: HANDLE SPECIAL INTENTS
                     # ========================================
-                    
+
                     if intent == "TRANSFER_FUNDS":
                         # Force logic for Transfer/Saldo logic
                         if smart_result.get('layer_response'):
@@ -2830,7 +1819,7 @@ Balas 1 atau 2"""
                                 "INFO",
                                 f"Applied recent text scope hint for image: {layer_category_scope}"
                             )
-                        
+
                         # Deterministic override: explicit scope words should beat AI ambiguity.
                         if layer_category_scope in ['UNKNOWN', 'AMBIGUOUS']:
                             text_scope_lower = (text or "").lower()
@@ -2881,7 +1870,7 @@ Balas 1 atau 2"""
                             temp_txs = safe_extract(
                                 inp, input_type, sender_name, media_list, caption
                             )
-                            
+
                             if temp_txs is None:
                                 if input_type == 'image':
                                     _release_visual_source_claim()
@@ -2899,21 +1888,21 @@ Balas 1 atau 2"""
                                         'event_id': event_id
                                     }
                                 )
-                                response = """🤔 Ini untuk Operational Kantor atau Project?
- 
- 1️⃣ Operational Kantor
+                                response = """ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€šÃ‚Â¤ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Ini untuk Operational Kantor atau Project?
+
+ 1ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚Â£ Operational Kantor
     (Gaji staff, listrik, wifi, ATK, dll)
- 
- 2️⃣ Project  
+
+ 2ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â¢Ãƒâ€ Ã¢â‚¬â„¢Ãƒâ€šÃ‚Â£ Project
     (Material, upah tukang, transport ke site)
- 
+
  Balas 1 atau 2"""
                                 sent = send_reply(response)
                                 bid = extract_bot_msg_id(sent)
                                 if bid:
                                     store_pending_message_ref(bid, f"{chat_jid}:{sender_number}")
                                 return jsonify({'status': 'asking_scope'}), 200
-            
+
             # Check visual link
             if input_type == 'text':
                 visual_item = quoted_visual_item if quoted_msg_id else None
@@ -2921,7 +1910,7 @@ Balas 1 atau 2"""
                     visual_item = get_visual_buffer_by_message(chat_jid, quoted_msg_id)
                 if quoted_msg_id and not visual_item and _should_bind_visual_text(text):
                     if is_visual_message_consumed(chat_jid, quoted_msg_id):
-                        send_reply("ℹ️ Struk ini sudah diproses. Gunakan /revisi atau /undo jika perlu koreksi.")
+                        send_reply("ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Struk ini sudah diproses. Gunakan /revisi atau /undo jika perlu koreksi.")
                         return jsonify({'status': 'duplicate_visual_reference'}), 200
 
                 if not visual_item:
@@ -2936,7 +1925,7 @@ Balas 1 atau 2"""
                 if visual_item and _should_bind_visual_text(text):
                     candidate_id = str(visual_item.get('message_id') or "")
                     if candidate_id and is_visual_message_consumed(chat_jid, candidate_id):
-                        send_reply("ℹ️ Struk ini sudah diproses. Gunakan /revisi atau /undo jika perlu koreksi.")
+                        send_reply("ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Struk ini sudah diproses. Gunakan /revisi atau /undo jika perlu koreksi.")
                         return jsonify({'status': 'duplicate_visual_reference'}), 200
 
                     media_url = visual_item.get('media_url')
@@ -2980,27 +1969,27 @@ Balas 1 atau 2"""
 
         if should_try_quoted_revision or is_command_match(text, Commands.UNDO, is_group) or is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):
             from handlers.revision_handler import handle_revision_command, handle_undo_command
-            
+
             revision_result = None
-            
+
             # Check for standard commands
             if is_command_match(text, Commands.UNDO, is_group):
                  revision_result = handle_undo_command(sender_number, chat_jid, quoted_msg_id)
-            
+
             # Check for /revisi command or reply revision
             elif should_try_quoted_revision or is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):
                  revision_result = handle_revision_command(sender_number, chat_jid, text, quoted_msg_id)
- 
+
             if revision_result:
                 if revision_result.get('action') == 'REPLY':
                     send_reply(revision_result.get('response'))
                     return jsonify({'status': 'handled_revision'}), 200
- 
+
         # 6. PENDING STATE MACHINE
         if has_pending:
             pending = pending_data
             ptype = pending.get('pending_type')
-            
+
             # NEW: Merge concurrent transactions (e.g. multiple images)
             # If user sends another image/transaction while one is pending, ADD to it.
             # Keep text-merge strict so short replies like "3" are not treated as new transactions.
@@ -3031,9 +2020,9 @@ Balas 1 atau 2"""
             # Guard stale pending entries (e.g., confirmation state missing after restart/replica drift).
             if ptype is None and is_quick_control_reply:
                 _pending_transactions.pop(pending_pkey, None)
-                send_reply("⚠️ Tidak ada pertanyaan aktif untuk balasan itu. Balas ke prompt bot terbaru atau kirim ulang transaksi.")
+                send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Tidak ada pertanyaan aktif untuk balasan itu. Balas ke prompt bot terbaru atau kirim ulang transaksi.")
                 return jsonify({'status': 'stale_pending'}), 200
-            
+
             if (
                 input_type == 'image'
                 or (
@@ -3057,7 +2046,7 @@ Balas 1 atau 2"""
                 new_txs = safe_extract(
                     inp, input_type, sender_name, media_list, caption
                 )
-                
+
                 if new_txs is None:
                     if input_type == 'image':
                         _release_visual_source_claim()
@@ -3107,7 +2096,7 @@ Balas 1 atau 2"""
                             cache_prompt(pending_pkey, pending, sent)
                         else:
                             send_pending_reply(
-                                "📷 OCR belum berhasil membaca nominal dari struk. "
+                                "ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€šÃ‚Â· OCR belum berhasil membaca nominal dari struk. "
                                 "Ketik nominal manual (contoh: 1080000/1.080.000) "
                                 "atau kirim ulang gambar yang lebih jelas (crop struk saja)."
                             )
@@ -3115,10 +2104,10 @@ Balas 1 atau 2"""
 
                     # Re-send updated prompt
                     reply = build_selection_prompt(merged_txs)
-                    if is_group: reply += "\n\n↩️ Reply angka 1-5"
+                    if is_group: reply += "\n\nÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â Ãƒâ€šÃ‚Â©ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Reply angka 1-5"
                     send_pending_reply(reply)
                     return jsonify({'status': 'merged'}), 200
-                
+
                 # If image provided no transaction data during pending state, IGNORE it.
                 # Don't let it fall through to 'selection' validation which would error.
                 if input_type == 'image':
@@ -3131,7 +2120,7 @@ Balas 1 atau 2"""
                 clear_visual_buffer(sender_number, chat_jid)
                 send_reply(UserErrors.CANCELLED)
                 return jsonify({'status': 'cancelled'}), 200
-            
+
             # Z. Needs Amount
             if ptype == 'needs_amount':
                 try:
@@ -3157,18 +2146,18 @@ Balas 1 atau 2"""
                         if not is_pending_interaction:
                             return jsonify({'status': 'ignored_pending_chatter'}), 200
 
-                    sent = send_pending_reply("❗ Nominalnya berapa? (contoh: 150rb)")
+                    sent = send_pending_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Nominalnya berapa? (contoh: 150rb)")
                     cache_prompt(pending_pkey, pending, sent)
                     return jsonify({'status': 'asking_amount'}), 200
-                
+
                 for t in pending.get('transactions', []):
                     if t.get('needs_amount') or int(t.get('jumlah', 0) or 0) <= 0:
                         t['jumlah'] = int(amt)
                         t.pop('needs_amount', None)
-                
+
                 pending.pop('pending_type', None)
                 return finalize_transaction_workflow(pending, pending_pkey)
-                
+
             # A. Select Source Wallet (Operational)
             if ptype == 'select_source_wallet':
                 clean = text.strip().lower()
@@ -3190,7 +2179,7 @@ Balas 1 atau 2"""
                     opt = get_wallet_selection_by_idx(sel)
                     if not opt:
                         raise ValueError()
-                except:
+                except (TypeError, ValueError):
                     opt = None
 
                 # Text alias reply (e.g., "tx bali", "tx sby", "cv hb", "087")
@@ -3210,17 +2199,17 @@ Balas 1 atau 2"""
                     pending['selected_source_wallet'] = opt['dompet']
                     return finalize_transaction_workflow(pending, pending_pkey)
 
-                send_pending_reply("❌ Pilih angka 1-4 atau ketik dompet (contoh: TX BALI).")
+                send_pending_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Pilih angka 1-4 atau ketik dompet (contoh: TX BALI).")
                 return jsonify({'status': 'invalid'}), 200
-            
+
             # B. Project Confirmation (Existing - Ambiguous Name)
             if ptype == 'confirmation_project':
                 clean = text.lower().strip()
                 final_proj = ""
-                
+
                 if clean in ['ya', 'y', 'ok', 'siap']:
                     final_proj = pending.get('suggested_project')
-                    send_reply(f"✅ Oke, masuk ke **{final_proj}**.")
+                    send_reply(f"ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ Oke, masuk ke **{final_proj}**.")
                 elif clean in ['tidak', 'no', 'bukan']:
                     send_pending_reply("Nama projeknya apa?")
                     pending['pending_type'] = 'needs_project'
@@ -3229,16 +2218,16 @@ Balas 1 atau 2"""
                     # Direct correction
                     final_proj = sanitize_input(text.strip())
                     if len(final_proj) < 3:
-                        send_reply("⚠️ Nama terlalu pendek.")
+                        send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Nama terlalu pendek.")
                         return jsonify({'status': 'invalid'}), 200
                     add_new_project_to_cache(final_proj)
-                    send_reply(f"👌 Project baru: **{final_proj}**")
-                
+                    send_reply(f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“Ãƒâ€¦Ã¢â‚¬â„¢ Project baru: **{final_proj}**")
+
                 # Update transactions
                 for t in pending['transactions']:
                     t['nama_projek'] = final_proj
                     t.pop('needs_project', None)
-                
+
                 # Set confirmed to true so we don't ask again
                 pending['project_confirmed'] = True
                 pending['project_validated'] = True
@@ -3262,16 +2251,16 @@ Balas 1 atau 2"""
                         pending['project_confirmed'] = False
                         pending.pop('new_project_first_expense', None)
                         prompt = format_wallet_selection_prompt()
-                        send_reply(f"🏢 Diganti ke Operasional Kantor\n\n{prompt}")
+                        send_reply(f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¢ Diganti ke Operasional Kantor\n\n{prompt}")
                         return jsonify({'status': 'switch_to_operational'}), 200
                     if clean in ['3', 'batal', 'cancel', 'tidak', 'no']:
                         _pending_transactions.pop(pending_pkey, None)
-                        send_reply("❌ Dibatalkan.")
+                        send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Dibatalkan.")
                         return jsonify({'status': 'cancelled'}), 200
                     # Treat input as new project name
                     final_proj = sanitize_input(text.strip())
                     if len(final_proj) < 3:
-                        send_reply("⚠️ Nama terlalu pendek.")
+                        send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Nama terlalu pendek.")
                         return jsonify({'status': 'invalid'}), 200
                     res_check = resolve_project_name(strip_company_prefix(final_proj))
                     if res_check.get('final_name'):
@@ -3296,10 +2285,10 @@ Balas 1 atau 2"""
                     pending['project_validated'] = True
                     # Delayed cache update until save success
                     return finalize_transaction_workflow(pending, pending_pkey)
-                    
+
                 elif clean in ['tidak', 'no', 'ganti', 'bukan', 'salah']:
                     send_pending_reply("Nama projeknya apa?")
-                    pending['pending_type'] = 'needs_project' 
+                    pending['pending_type'] = 'needs_project'
                     return jsonify({'status': 'asking'}), 200
                 else:
                     # Treat input as the CORRECT name (and implicitly NEW if not resolved previously)
@@ -3308,18 +2297,18 @@ Balas 1 atau 2"""
                     res_check = resolve_project_name(strip_company_prefix(final_proj))
                     if res_check['status'] == 'NEW':
                          pending['is_new_project'] = True
-                    
-                    send_reply(f"👌 Update ke: **{final_proj}**")
+
+                    send_reply(f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“Ãƒâ€¦Ã¢â‚¬â„¢ Update ke: **{final_proj}**")
                     for t in pending['transactions']: t['nama_projek'] = final_proj
                     pending['project_confirmed'] = True
                     pending['project_validated'] = True
                     return finalize_transaction_workflow(pending, pending_pkey)
-                
+
             # C. Needs Project
             if ptype == 'needs_project':
                 proj = sanitize_input(text.strip())
                 res = resolve_project_name(strip_company_prefix(proj))
-                
+
                 if res['status'] == 'AMBIGUOUS':
                     unique_candidate = int(res.get('match_count', 2) or 2) == 1
                     if FAST_MODE and unique_candidate and res.get('final_name'):
@@ -3333,7 +2322,7 @@ Balas 1 atau 2"""
                     pending['suggested_project'] = res['final_name']
                     send_pending_reply(f"???? Maksudnya **{res['final_name']}**?\n??? Ya / ??? Bukan")
                     return jsonify({'status': 'confirm'}), 200
-                
+
                 if res['status'] == 'NEW':
                     for t in pending['transactions']:
                         t['nama_projek'] = res['final_name']
@@ -3341,14 +2330,14 @@ Balas 1 atau 2"""
                     pending['new_project_name'] = res['original']
                     send_pending_reply(f"???? Project **{res['original']}** belum ada.\n\nBuat Project Baru?\n??? Ya / ??? Ganti Nama (Langsung Ketik Nama Baru)")
                     return jsonify({'status': 'asking_new_project'}), 200
-                
+
                 final = res['final_name']
                 for t in pending['transactions']: t['nama_projek'] = final
                 # Set confirmed to true
                 pending['project_confirmed'] = True
                 pending['project_validated'] = True
                 return finalize_transaction_workflow(pending, pending_pkey)
-                
+
             # D. Company Selection
             if ptype == 'selection':
                 clean = text.strip().lower()
@@ -3358,41 +2347,41 @@ Balas 1 atau 2"""
                     pending['operational_category'] = pending.get('operational_category', 'Lain Lain')
                     pending['project_confirmed'] = False
                     prompt = format_wallet_selection_prompt()
-                    send_reply(f"🏢 Diganti ke Operasional Kantor\n\n{prompt}")
+                    send_reply(f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â¢ Diganti ke Operasional Kantor\n\n{prompt}")
                     return jsonify({'status': 'switch_to_operational'}), 200
                 valid, sel, err = parse_selection(text)
                 if not valid:
-                    send_reply(f"❌ {err}")
+                    send_reply(f"ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ {err}")
                     return jsonify({'status': 'invalid'}), 200
-                
+
                 opt = get_selection_by_idx(sel)
                 if not opt:
-                    send_reply("❌ Pilihan tidak valid (System Error).")
+                    send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Pilihan tidak valid (System Error).")
                     return jsonify({'status': 'error_opt'}), 200
-                    
+
                 pending['selected_option'] = opt
                 for t in pending['transactions']: t['company'] = opt['company']
-                
+
                 return finalize_transaction_workflow(pending, pending_pkey)
-            
+
             # E. Duplicate Confirm
             if ptype == 'confirmation_dupe':
                 if text.lower().strip() == 'y':
                     opt = pending.get('selected_option')
                     if not opt:
                          _pending_transactions.pop(pending_pkey, None)
-                         send_reply("❌ Error state. Transaksi dibatalkan.")
+                         send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Error state. Transaksi dibatalkan.")
                          return jsonify({'status': 'error_state'}), 200
 
                     # Manual save
-                    res = append_transactions(pending['transactions'], pending['sender_name'], 
+                    res = append_transactions(pending['transactions'], pending['sender_name'],
                                             pending['source'], opt['dompet'], opt['company'])
                     if res['success']:
                         _pending_transactions.pop(pending_pkey, None)
-                        send_reply("✅ Disimpan (Duplikat).")
+                        send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ Disimpan (Duplikat).")
                     return jsonify({'status': 'saved_dupe'}), 200
                     _pending_transactions.pop(pending_pkey, None)
-                    send_reply("❌ Dibatalkan.")
+                    send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Dibatalkan.")
                     return jsonify({'status': 'cancelled'}), 200
 
             # F. OCR Amount Confirmation (image safety)
@@ -3408,7 +2397,7 @@ Balas 1 atau 2"""
                     except Exception:
                         amt = 0
                     if not amt or int(amt) <= 0:
-                        send_reply("⚠️ Nominal tidak valid. Balas *OK* atau ketik nominal yang benar (contoh: 202500).")
+                        send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Nominal tidak valid. Balas *OK* atau ketik nominal yang benar (contoh: 202500).")
                         return jsonify({'status': 'invalid_amount'}), 200
                     for t in pending.get('transactions', []):
                         t['jumlah'] = int(amt)
@@ -3421,18 +2410,18 @@ Balas 1 atau 2"""
             if ptype == 'undo_confirmation':
                 if text.lower().strip() in ['1', 'ya', 'yes', 'hapus']:
                     from handlers.revision_handler import process_undo_deletion
-                    
+
                     result = process_undo_deletion(
                         pending.get('transactions', []),
                         pending.get('original_message_id')
                     )
-                    
+
                     _pending_transactions.pop(pending_pkey, None)
                     send_reply(result.get('response'))
                     return jsonify({'status': 'undo_completed'}), 200
                 else:
                     _pending_transactions.pop(pending_pkey, None)
-                    send_reply("❌ Batal hapus.")
+                    send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Batal hapus.")
                     return jsonify({'status': 'undo_cancelled'}), 200
 
         # 7. COMMANDS (PRIORITY - Execute BEFORE layer processing)
@@ -3440,11 +2429,11 @@ Balas 1 atau 2"""
         if is_command_match(text, Commands.START, is_group):
             send_reply(START_MESSAGE)
             return jsonify({'status': 'command_start'}), 200
-        
+
         if is_command_match(text, Commands.HELP, is_group):
             send_reply(HELP_MESSAGE)
             return jsonify({'status': 'command_help'}), 200
-        
+
         if is_command_match(text, Commands.SALDO, is_group):
             try:
                 balances = get_wallet_balances()
@@ -3452,9 +2441,9 @@ Balas 1 atau 2"""
                 send_reply(msg)
                 return jsonify({'status': 'command_saldo'}), 200
             except Exception as e:
-                send_reply(f"❌ Error: {str(e)}")
+                send_reply(f"ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Error: {str(e)}")
                 return jsonify({'status': 'error'}), 200
-        
+
         if is_prefix_match(text, Commands.LUNAS_PREFIXES, is_group):
             try:
                 match = re.search(r"\b(\d+)\b", text)
@@ -3467,7 +2456,7 @@ Balas 1 atau 2"""
                     send_reply("No hutang tidak ditemukan.")
                     return jsonify({'status': 'command_lunas_not_found'}), 200
                 if info.get('error'):
-                    send_reply(f"❌ Pelunasan hutang #{no} gagal.\n⚠️ {info['error']}")
+                    send_reply(f"ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Pelunasan hutang #{no} gagal.\nÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â {info['error']}")
                     return jsonify({'status': 'command_lunas_failed'}), 200
                 invalidate_dashboard_cache()
                 send_reply(_format_hutang_paid_response(info))
@@ -3484,34 +2473,34 @@ Balas 1 atau 2"""
                 send_reply(msg)
                 return jsonify({'status': 'command_status'}), 200
             except Exception as e:
-                send_reply(f"❌ Error: {str(e)}")
+                send_reply(f"ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Error: {str(e)}")
                 return jsonify({'status': 'error'}), 200
-    
+
         if is_command_match(text, Commands.LIST, is_group):
             try:
                 data = get_all_data(days=7)
                 if not data:
-                    send_reply("📭 Belum ada transaksi 7 hari terakhir.")
+                    send_reply("ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€šÃ‚Â­ Belum ada transaksi 7 hari terakhir.")
                 else:
                     data.sort(key=lambda x: x.get('tanggal', ''), reverse=True)
-                    msg = "📜 *Riwayat Transaksi (7 Hari)*\n\n"
+                    msg = "ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€¦Ã¢â‚¬Å“ *Riwayat Transaksi (7 Hari)*\n\n"
                     # Limit to 15
                     for tx in data[:15]:
                         try:
                             t_amt = tx.get('jumlah', 0) or 0
                             amt = int(t_amt)
                         except: amt = 0
-                        
-                        icon = "🔴" if str(tx.get('tipe', 'Pengeluaran')) == 'Pengeluaran' else "🟢"
+
+                        icon = "ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚Â´" if str(tx.get('tipe', 'Pengeluaran')) == 'Pengeluaran' else "ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€¦Ã‚Â¸Ãƒâ€šÃ‚Â¢"
                         src = tx.get('nama_projek') or tx.get('company_sheet') or "?"
                         msg += f"{icon} {tx['tanggal']} - Rp {amt:,}\n"
                         msg += f"   _{tx['keterangan']}_ [{src}]\n"
-                    
+
                     msg = msg.replace(',', '.')
                     send_reply(msg)
                 return jsonify({'status': 'command_list'}), 200
             except Exception as e:
-                send_reply(f"❌ Error: {str(e)}")
+                send_reply(f"ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Error: {str(e)}")
                 return jsonify({'status': 'error'}), 200
         if is_command_match(text, Commands.LAPORAN, is_group) or is_command_match(text, Commands.LAPORAN_30, is_group):
             try:
@@ -3535,19 +2524,19 @@ Balas 1 atau 2"""
 
                 title = f"LAPORAN {'BULANAN (30 HARI)' if days == 30 else 'MINGGUAN (7 HARI)'}"
                 msg = f"{title}\n{'=' * len(title)}\n\n"
-                msg += f"💰 Pemasukan: Rp {income:,}\n"
-                msg += f"💸 Pengeluaran: Rp {expense:,}\n"
-                msg += f"📈 Profit: Rp {profit:,}\n"
-                msg += f"📝 Total Tx: {len(data)}\n"
+                msg += f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢Ãƒâ€šÃ‚Â° Pemasukan: Rp {income:,}\n"
+                msg += f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢Ãƒâ€šÃ‚Â¸ Pengeluaran: Rp {expense:,}\n"
+                msg += f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€¹Ã¢â‚¬Â  Profit: Rp {profit:,}\n"
+                msg += f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€šÃ‚Â Total Tx: {len(data)}\n"
 
                 msg += "\nStatus Hutang Antar Dompet:\n"
                 if has_hutang_data:
-                    msg += f"🟡 OPEN saat ini: {open_count} item (Rp {open_total:,})\n"
-                    msg += f"🆕 Dibuat {days} hari: {created_count} item (Rp {created_total:,})\n"
-                    msg += f"✅ Lunas {days} hari: {paid_period_count} item (Rp {paid_period_total:,})\n"
-                    msg += f"📚 Total PAID: {paid_count} item (Rp {paid_total:,})\n"
+                    msg += f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€¦Ã‚Â¸Ãƒâ€šÃ‚Â¡ OPEN saat ini: {open_count} item (Rp {open_total:,})\n"
+                    msg += f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢ Dibuat {days} hari: {created_count} item (Rp {created_total:,})\n"
+                    msg += f"ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ Lunas {days} hari: {paid_period_count} item (Rp {paid_period_total:,})\n"
+                    msg += f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€¦Ã‚Â¡ Total PAID: {paid_count} item (Rp {paid_total:,})\n"
                 else:
-                    msg += "ℹ️ Belum ada data hutang antar dompet.\n"
+                    msg += "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¹ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â Belum ada data hutang antar dompet.\n"
 
                 balances = get_wallet_balances()
                 msg += "\nSaldo Dompet Real (snapshot):\n"
@@ -3559,31 +2548,31 @@ Balas 1 atau 2"""
                 send_reply(msg)
                 return jsonify({'status': 'command_laporan'}), 200
             except Exception as e:
-                send_reply(f"❌ Error: {str(e)}")
+                send_reply(f"ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Error: {str(e)}")
                 return jsonify({'status': 'error'}), 200
 
         if is_command_match(text, Commands.LINK, is_group):
             url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
-            send_reply(f"🔗 *Google Sheets Link:*\n{url}")
+            send_reply(f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â *Google Sheets Link:*\n{url}")
             return jsonify({'status': 'command_link'}), 200
-            
+
         if is_prefix_match(text, Commands.EXPORT_PDF_PREFIXES, is_group) or is_command_match(text, Commands.EXPORT_PDF_PREFIXES, is_group):
              try:
                  parts = text.strip().split(' ', 1)
                  arg = parts[1] if len(parts) > 1 else now_wib().strftime("%Y-%m")
-                 
-                 send_reply(f"⏳ Proses Membuat PDF {arg}...")
+
+                 send_reply(f"ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â³ Proses Membuat PDF {arg}...")
                  from pdf_report import generate_pdf_from_input
                  fpath = generate_pdf_from_input(arg)
-                 
+
                  if fpath and os.path.exists(fpath):
                      if send_document:
                          send_document(reply_to, fpath, caption=f"Laporan {arg}")
                      else:
                          fname = os.path.basename(fpath)
-                         send_reply(f"✅ PDF berhasil dibuat: {fname}\nDi channel ini belum bisa kirim PDF. Silakan ambil dari server.")
+                         send_reply(f"ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ PDF berhasil dibuat: {fname}\nDi channel ini belum bisa kirim PDF. Silakan ambil dari server.")
                  else:
-                     send_reply("❌ Gagal membuat PDF (Data kosong/Format salah).")
+                     send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Gagal membuat PDF (Data kosong/Format salah).")
                  return jsonify({'status': 'command_pdf'}), 200
              except PDFNoDataError as nde:
                  period = getattr(nde, "period", arg or "periode tersebut")
@@ -3605,9 +2594,9 @@ Balas 1 atau 2"""
                  if "tahun tidak valid" in msg or "bulan tidak valid" in msg or "format tidak" in msg:
                      send_reply(UserErrors.PDF_FORMAT_ERROR)
                      return jsonify({'status': 'error_pdf'}), 200
-                 send_reply("❌ Gagal export PDF. Coba lagi beberapa saat.")
+                 send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Gagal export PDF. Coba lagi beberapa saat.")
                  return jsonify({'status': 'error'}), 200
- 
+
         # Group image grace period: give users time to type after sending image
         if (
             input_type == 'image'
@@ -3637,14 +2626,14 @@ Balas 1 atau 2"""
                     secure_log("WARNING", "Image input without media payload; fallback to text-only extraction")
                     input_type = 'text'
                 else:
-                    send_reply("❗ Gambar tidak bisa diunduh. Tolong kirim ulang struk atau tambahkan caption transaksi.")
+                    send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Gambar tidak bisa diunduh. Tolong kirim ulang struk atau tambahkan caption transaksi.")
                     return jsonify({'status': 'image_missing_media'}), 200
 
             if input_type == 'image' and not _claim_visual_source_once():
                 return jsonify({'status': 'duplicate_visual_reference'}), 200
             if not processing_ack_sent:
-                send_reply("🔍 Scan...")
-            
+                send_reply("ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚Â Scan...")
+
             inp, media_list, caption = build_extraction_inputs(
                 text, input_type, media_url, local_media_path
             )
@@ -3665,15 +2654,15 @@ Balas 1 atau 2"""
                         f"duplicates={extracted_meta.get('duplicates', 0)}"
                     )
                 )
-            
+
             if not transactions:
                 if input_type == 'image':
                     _release_visual_source_claim()
                 if message_id:
                     clear_message_duplicate(message_id)
-                if input_type == 'image': send_reply("❓ Tidak terbaca.")
+                if input_type == 'image': send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Tidak terbaca.")
                 return jsonify({'status': 'no_tx'}), 200
-            
+
             # Clear visual buffer on successful extraction to avoid double-binding
             if input_type == 'image':
                 if claimed_visual_source_id:
@@ -3692,7 +2681,7 @@ Balas 1 atau 2"""
                 if auto_hutang:
                     send_reply(auto_hutang)
                     return jsonify({'status': 'auto_hutang_paid_image'}), 200
-            
+
             # Setup New Pending State
             _pending_transactions[sender_pkey] = {
                 'transactions': transactions,
@@ -3729,7 +2718,7 @@ Balas 1 atau 2"""
                     _pending_transactions[sender_pkey]['pending_type'] = 'confirm_amount'
                     item = t0.get('keterangan', 'Transaksi')
                     amt_text = f"{amt0:,}".replace(',', '.')
-                    send_reply(f"📷 OCR terdeteksi: {item} (Rp {amt_text}).\nBalas *OK* jika benar, atau ketik nominal yang benar.")
+                    send_reply(f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€šÃ‚Â· OCR terdeteksi: {item} (Rp {amt_text}).\nBalas *OK* jika benar, atau ketik nominal yang benar.")
                     return jsonify({'status': 'confirm_amount'}), 200
 
             # If amount missing/zero, ask user before proceeding
@@ -3743,7 +2732,7 @@ Balas 1 atau 2"""
                         t['needs_amount'] = True
                 _pending_transactions[sender_pkey]['pending_type'] = 'needs_amount'
                 item = missing_tx.get('keterangan', 'Transaksi')
-                sent = send_pending_reply(f"❗ Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
+                sent = send_pending_reply(f"ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Nominal untuk \"{item}\" berapa? (contoh: 150rb)")
                 cache_prompt(sender_pkey, _pending_transactions[sender_pkey], sent)
                 return jsonify({'status': 'asking_amount'}), 200
 
@@ -3752,7 +2741,7 @@ Balas 1 atau 2"""
                 and all(t.get('nama_projek') and not t.get('needs_project') for t in transactions)
             ):
                 _pending_transactions[sender_pkey]['project_confirmed'] = True
-            
+
             # Check for Needs Project (Manual override from AI)
             if layer_category_scope == 'TRANSFER':
                 text_lower = (text or "").lower()
@@ -3773,20 +2762,20 @@ Balas 1 atau 2"""
                     t['nama_projek'] = 'Saldo Umum'
                     t['company'] = 'UMUM'
                     t['needs_project'] = False
-            
+
             elif any(t.get('needs_project') for t in transactions):
                 # Only if NOT operational
                 ctx = detect_transaction_context(text, transactions, layer_category_scope)
                 if ctx['mode'] == 'PROJECT':
                     _pending_transactions[sender_pkey]['pending_type'] = 'needs_project'
-                    send_pending_reply("❓ Nama projeknya apa?")
+                    send_pending_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Nama projeknya apa?")
                     return jsonify({'status': 'asking_project'}), 200
 
             # Intercept Smart Project Check
             # ... (Existing logic for ambiguous project check) ...
-            
+
             return finalize_transaction_workflow(_pending_transactions[sender_pkey], sender_pkey)
-            
+
         except ValueError as e:
             msg = str(e)
             secure_log("WARNING", f"AI Proc ValueError: {msg}")
@@ -3796,13 +2785,13 @@ Balas 1 atau 2"""
                 clear_message_duplicate(message_id)
             if input_type == 'image':
                 if "Tidak ada teks ditemukan" in msg:
-                    send_reply("❓ Tidak terbaca.")
+                    send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Tidak terbaca.")
                 elif "tidak terdeteksi sebagai struk" in msg:
-                    send_reply("❗ Gambar tidak terdeteksi sebagai struk. Tolong kirim struk yang jelas atau tambahkan keterangan transaksi.")
+                    send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Gambar tidak terdeteksi sebagai struk. Tolong kirim struk yang jelas atau tambahkan keterangan transaksi.")
                 else:
-                    send_reply("❌ Error sistem.")
+                    send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Error sistem.")
             else:
-                send_reply("❌ Error sistem.")
+                send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Error sistem.")
             return jsonify({'status': 'error'}), 200
         except Exception as e:
             secure_log("ERROR", f"AI Proc Error: {e}")
@@ -3810,7 +2799,7 @@ Balas 1 atau 2"""
                 _release_visual_source_claim()
             if message_id:
                 clear_message_duplicate(message_id)
-            send_reply("❌ Error sistem.")
+            send_reply("ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Error sistem.")
             return jsonify({'status': 'error'}), 200
 
     except Exception as e:
@@ -3821,7 +2810,7 @@ def run_retry_service():
     """Background loop to process retry queue."""
     import time
     from sheets_helper import append_transaction
-    
+
     def retry_handler(transaction, metadata):
         try:
             res = append_transaction(

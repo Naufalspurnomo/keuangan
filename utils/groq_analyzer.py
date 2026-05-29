@@ -12,7 +12,7 @@ import logging
 import re
 from config.constants import Timeouts, OPERATIONAL_KEYWORDS
 from config.wallets import resolve_dompet_from_text
-from utils.context_detector import ContextDetector
+from utils.transaction_scope_detector import ContextDetector
 from utils.amounts import has_amount_pattern
 
 logger = logging.getLogger(__name__)

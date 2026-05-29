@@ -1,13 +1,14 @@
 import json
 import os
 import time
+import hashlib
 import gspread
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 from typing import List, Dict, Optional
 from config.constants import COL_NAMA_PROJEK
-from security import now_wib
+from security import now_wib, secure_log
 
 
 # Cache sederhana agar tidak boros kuota Google API
@@ -53,6 +54,9 @@ def get_existing_projects(force_refresh=False):
     
 # ===================== STATE PERSISTENCE (HIDDEN SHEET) =====================
 STATE_SHEET_NAME = "_BOT_STATE"
+STATE_CHUNK_MARKER = "__BOT_STATE_CHUNKED_V1__"
+STATE_CELL_LIMIT = 45000
+STATE_MAX_CLOUD_CHARS = 900000
 
 def get_or_create_state_sheet():
     """
@@ -64,31 +68,96 @@ def get_or_create_state_sheet():
         try:
             # Coba ambil sheetnya
             worksheet = sh.worksheet(STATE_SHEET_NAME)
-        except:
+        except gspread.WorksheetNotFound:
             # Jika error (tidak ketemu), buat baru
             worksheet = sh.add_worksheet(title=STATE_SHEET_NAME, rows=10, cols=2)
             # Sembunyikan sheet agar rapi
             worksheet.hide()
-            print(f"[INFO] Created hidden state sheet: {STATE_SHEET_NAME}")
+            secure_log("INFO", f"Created hidden state sheet: {STATE_SHEET_NAME}")
             
         return worksheet
     except Exception as e:
-        print(f"[ERROR] Failed to get state sheet: {e}")
+        secure_log("ERROR", f"Failed to get state sheet: {type(e).__name__}: {e}")
         return None
+
+
+def _ensure_state_sheet_size(ws, required_rows: int, required_cols: int = 2) -> None:
+    """Ensure the hidden state sheet can hold metadata and chunks."""
+    try:
+        if ws.row_count < required_rows:
+            ws.add_rows(required_rows - ws.row_count)
+        if ws.col_count < required_cols:
+            ws.add_cols(required_cols - ws.col_count)
+    except Exception as e:
+        secure_log("WARNING", f"Could not expand state sheet: {type(e).__name__}: {e}")
+
+
+def _write_chunked_state(ws, json_state_string: str) -> None:
+    chunks = [
+        json_state_string[i:i + STATE_CELL_LIMIT]
+        for i in range(0, len(json_state_string), STATE_CELL_LIMIT)
+    ]
+    checksum = hashlib.sha256(json_state_string.encode("utf-8")).hexdigest()
+    required_rows = max(3 + len(chunks), 10)
+    _ensure_state_sheet_size(ws, required_rows, 2)
+
+    previous_count = 0
+    try:
+        previous_count_raw = ws.cell(2, 1).value
+        previous_count = int(previous_count_raw or 0)
+    except (TypeError, ValueError, AttributeError):
+        previous_count = 0
+
+    now_text = str(datetime.now())
+    ws.update_cell(1, 1, STATE_CHUNK_MARKER)
+    ws.update_cell(1, 2, now_text)
+    ws.update_cell(2, 1, str(len(chunks)))
+    ws.update_cell(2, 2, checksum)
+
+    for idx, chunk in enumerate(chunks, start=3):
+        ws.update_cell(idx, 1, chunk)
+
+    # Clear stale chunks from a previous larger state.
+    for row in range(3 + len(chunks), 3 + previous_count):
+        ws.update_cell(row, 1, "")
+
+
+def _read_chunked_state(ws) -> Optional[str]:
+    try:
+        chunk_count = int(ws.cell(2, 1).value or 0)
+    except (TypeError, ValueError, AttributeError):
+        secure_log("ERROR", "Chunked cloud state has invalid chunk count")
+        return None
+
+    if chunk_count <= 0:
+        secure_log("ERROR", "Chunked cloud state is empty")
+        return None
+
+    expected_checksum = ws.cell(2, 2).value or ""
+    rows = ws.get(f"A3:A{chunk_count + 2}")
+    chunks = []
+    for row in rows:
+        chunks.append(row[0] if row else "")
+
+    json_state_string = "".join(chunks)
+    actual_checksum = hashlib.sha256(json_state_string.encode("utf-8")).hexdigest()
+    if expected_checksum and actual_checksum != expected_checksum:
+        secure_log("ERROR", "Chunked cloud state checksum mismatch")
+        return None
+    if json_state_string.startswith("{"):
+        return json_state_string
+    secure_log("ERROR", "Chunked cloud state does not look like JSON")
+    return None
 
 def save_state_to_cloud(json_state_string):
     """
-    Simpan JSON string ke Cell A1 di sheet tersembunyi.
-    Google Sheets cell limit is ~50,000 characters.
+    Simpan JSON string ke sheet tersembunyi.
+    Small state remains backward-compatible in A1; larger state is chunked.
     """
-    import json
-    
-    MAX_STATE_SIZE = 48000  # Leave buffer below 50K limit
-    
     try:
-        # Check if state is too large
-        if len(json_state_string) > MAX_STATE_SIZE:
-            print(f"[WARNING] State too large ({len(json_state_string)} chars), cleaning up...")
+        # Only prune as a last resort; normal large state is stored in chunks.
+        if len(json_state_string) > STATE_MAX_CLOUD_CHARS:
+            secure_log("WARNING", f"State very large ({len(json_state_string)} chars), cleaning before cloud save")
             
             # Parse and cleanup state
             try:
@@ -160,8 +229,8 @@ def save_state_to_cloud(json_state_string):
 
                 json_state_string = json.dumps(state, default=str, separators=(",", ":"))
 
-                # Aggressive fallback when still above Google cell limit
-                if len(json_state_string) > 49500:
+                # Aggressive fallback when still above the cloud backup cap.
+                if len(json_state_string) > STATE_MAX_CLOUD_CHARS:
                     state["processed_messages"] = {}
                     state["bot_message_refs"] = {}
                     state["pending_message_refs"] = {}
@@ -172,37 +241,42 @@ def save_state_to_cloud(json_state_string):
                     state["pending_confirmations"] = {}
                     state["combined_messages"] = {}
                     json_state_string = json.dumps(state, default=str, separators=(",", ":"))
-                print(f"[INFO] State cleaned to {len(json_state_string)} chars")
+                secure_log("INFO", f"State cleaned to {len(json_state_string)} chars")
                 
             except json.JSONDecodeError:
-                print(f"[ERROR] Could not parse state for cleanup")
+                secure_log("ERROR", "Could not parse state for cleanup")
                 return  # Don't save corrupted state
         
         # Final check
-        if len(json_state_string) > 49500:
-            print(f"[ERROR] State still too large after cleanup ({len(json_state_string)} chars), skipping cloud save")
+        if len(json_state_string) > STATE_MAX_CLOUD_CHARS:
+            secure_log("ERROR", f"State still too large after cleanup ({len(json_state_string)} chars), skipping cloud save")
             return
         
         ws = get_or_create_state_sheet()
         if ws:
-            ws.update_cell(1, 1, json_state_string)
-            ws.update_cell(1, 2, str(datetime.now()))
+            if len(json_state_string) <= STATE_CELL_LIMIT:
+                ws.update_cell(1, 1, json_state_string)
+                ws.update_cell(1, 2, str(datetime.now()))
+            else:
+                _write_chunked_state(ws, json_state_string)
     except Exception as e:
-        print(f"[ERROR] Failed to save state to cloud: {e}")
+        secure_log("ERROR", f"Failed to save state to cloud: {type(e).__name__}: {e}")
 
 def load_state_from_cloud():
     """
-    Ambil JSON string dari Cell A1.
+    Ambil JSON string dari state sheet, mendukung format A1 lama dan chunked.
     """
     try:
         ws = get_or_create_state_sheet()
         if ws:
             # Ambil data dari A1
             val = ws.cell(1, 1).value
+            if val == STATE_CHUNK_MARKER:
+                return _read_chunked_state(ws)
             if val and val.startswith("{"):
                 return val
     except Exception as e:
-        print(f"[ERROR] Failed to load state from cloud: {e}")
+        secure_log("ERROR", f"Failed to load state from cloud: {type(e).__name__}: {e}")
     return None
 
 # Load environment variables
@@ -1488,15 +1562,15 @@ def _safe_get(lst, idx, default=''):
     try:
         if 0 <= idx < len(lst):
             return lst[idx]
-    except:
-        pass
+    except (TypeError, IndexError):
+        return default
     return default
 
 def _parse_amount(amt_str):
     """Parse amount safely."""
     try:
         return int(float(str(amt_str).replace(',', '').replace('Rp', '').replace('.', '').strip() or 0))
-    except:
+    except (TypeError, ValueError):
         return 0
 
 
@@ -1580,7 +1654,8 @@ def get_all_data(days: int = 30) -> List[Dict]:
                         'sheet_name': OPERASIONAL_SHEET_NAME,
                         'sheet_row': idx
                     })
-                except:
+                except (IndexError, TypeError, ValueError) as e:
+                    secure_log("DEBUG", "Skipping invalid Operasional row", row=idx, error_type=type(e).__name__)
                     continue
         except Exception as e:
             secure_log("WARNING", f"Error reading Operasional: {e}")
@@ -1632,7 +1707,8 @@ def get_all_data(days: int = 30) -> List[Dict]:
                                     'sheet_name': dompet,
                                     'sheet_row': idx
                                 })
-                    except: pass
+                    except (IndexError, TypeError, ValueError) as e:
+                        secure_log("DEBUG", "Skipping invalid project income row", dompet=dompet, row=idx, error_type=type(e).__name__)
                     
                     # --- B. CHECK PENGELUARAN RIGHT BLOCK ---
                     # Columns J-R (Indices 9-17)
@@ -1650,7 +1726,8 @@ def get_all_data(days: int = 30) -> List[Dict]:
                                 try:
                                     row_date = datetime.strptime(date_str, fmt)
                                     break
-                                except: continue
+                                except ValueError:
+                                    continue
                                 
                             if row_date and (not cutoff_date or row_date >= cutoff_date):
                                 amount = int(float(str(amt_str).replace(',', '').replace('Rp', '').replace('.', '').strip() or 0))
@@ -1666,7 +1743,8 @@ def get_all_data(days: int = 30) -> List[Dict]:
                                     'sheet_name': dompet,
                                     'sheet_row': idx
                                 })
-                    except: pass
+                    except (IndexError, TypeError, ValueError) as e:
+                        secure_log("DEBUG", "Skipping invalid project expense row", dompet=dompet, row=idx, error_type=type(e).__name__)
                         
             except Exception as e:
                 secure_log("WARNING", f"Could not read dompet {dompet}: {type(e).__name__}")
@@ -2370,7 +2448,8 @@ def get_dashboard_summary():
                                     dompet_summary[dompet]['exp'] += amount # Add to expense tracking for that wallet
                                     # Note: Balances are calculated in next step
                                     break
-                    except:
+                    except (KeyError, TypeError, ValueError) as e:
+                        secure_log("DEBUG", "Skipping invalid operational dashboard row", error_type=type(e).__name__)
                         continue
         except Exception as e:
             secure_log("WARNING", f"Dashboard operational calc failed: {e}")

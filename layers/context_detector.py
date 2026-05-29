@@ -15,6 +15,7 @@ Part of Context-Aware Intent Classification
 
 import re
 import logging
+import threading
 from typing import Dict, Optional
 from datetime import datetime
 
@@ -75,6 +76,7 @@ COMMAND_PATTERN = re.compile(r'^/')                 # "/saldo", "/laporan"
 # Track last interaction per user per chat
 # Format: {"chat:user": datetime}
 _last_interactions: Dict[str, datetime] = {}
+_last_interactions_lock = threading.Lock()
 
 
 def _interaction_key(user_id: str, chat_id: str) -> str:
@@ -87,20 +89,22 @@ def _interaction_key(user_id: str, chat_id: str) -> str:
 def record_interaction(user_id: str, chat_id: str = None) -> None:
     """Record that user interacted with bot."""
     key = _interaction_key(user_id, chat_id)
-    _last_interactions[key] = datetime.now()
-    
-    # Cleanup old entries (keep max 1000)
-    if len(_last_interactions) > 1000:
-        # Remove oldest 500
-        keys = list(_last_interactions.keys())[:500]
-        for k in keys:
-            _last_interactions.pop(k, None)
+    with _last_interactions_lock:
+        _last_interactions[key] = datetime.now()
+
+        # Cleanup old entries (keep max 1000)
+        if len(_last_interactions) > 1000:
+            # Remove oldest 500
+            keys = list(_last_interactions.keys())[:500]
+            for k in keys:
+                _last_interactions.pop(k, None)
 
 
 def get_last_interaction(user_id: str, chat_id: str = None) -> Optional[datetime]:
     """Get last interaction time for user."""
     key = _interaction_key(user_id, chat_id)
-    return _last_interactions.get(key)
+    with _last_interactions_lock:
+        return _last_interactions.get(key)
 
 
 # ===================== CONTEXT ANALYSIS =====================

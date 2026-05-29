@@ -21,7 +21,7 @@ from utils.groq_analyzer import (
     is_casual_bot_mention
 )
 from utils.semantic_matcher import find_matching_item, extract_revision_entities
-from layers.context_detector import get_full_context, record_interaction
+from layers.addressing_context import get_full_context, record_interaction
 from security import secure_log
 from ai_helper import groq_client, is_generic_caption
 from config.wallets import resolve_dompet_from_text

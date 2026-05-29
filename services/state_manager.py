@@ -16,8 +16,11 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional, Any, Tuple
 import json
 import os
+import shutil
 from sheets_helper import save_state_to_cloud, load_state_from_cloud
 from config.constants import Timeouts
+from security import secure_log
+from services.state_store import external_state_required, get_configured_state_store
 
 # Use centralized timeouts
 PENDING_TTL_SECONDS = Timeouts.PENDING_TRANSACTION
@@ -31,6 +34,11 @@ VISUAL_CONSUMED_TTL_SECONDS = 6 * 60 * 60
 # Thread lock for dedup operations
 _dedup_lock = threading.Lock()
 _visual_lock = threading.Lock()
+_pending_lock = threading.Lock()
+_refs_lock = threading.Lock()
+_registry_lock = threading.Lock()
+_confirmation_lock = threading.Lock()
+_user_message_lock = threading.Lock()
 
 # ===================== VISUAL BUFFER (Grand Design Layer 2) =====================
 # Stores unprocessed photos for linking with later text commands
@@ -273,16 +281,20 @@ def find_pending_by_bot_msg(chat_jid: str, bot_msg_id: str) -> tuple:
     """
     if not bot_msg_id:
         return None, None
-    
-    # Search all pending transactions for this chat
-    for pkey, pending in list(_pending_transactions.items()):
-        if not isinstance(pkey, str):
-            _pending_transactions.pop(pkey, None)
-            continue
-        # Match by chat_jid prefix and bot_msg_id
-        if pkey.startswith(chat_jid) or pkey == chat_jid:
-            if pending.get("bot_msg_id") == bot_msg_id:
-                if not pending_is_expired(pending):
+
+    chat_key = str(chat_jid or "")
+    with _pending_lock:
+        # Search all pending transactions for this chat
+        for pkey, pending in list(_pending_transactions.items()):
+            if not isinstance(pkey, str):
+                _pending_transactions.pop(pkey, None)
+                continue
+            # Match by chat_jid prefix and bot_msg_id
+            if pkey.startswith(chat_key) or pkey == chat_key:
+                if pending.get("bot_msg_id") == bot_msg_id:
+                    if pending_is_expired(pending):
+                        _pending_transactions.pop(pkey, None)
+                        continue
                     return pkey, pending
     
     return None, None
@@ -312,11 +324,12 @@ def get_pending_transactions(pkey: str) -> Optional[Dict]:
     """Get pending transaction data for a key, checking expiry."""
     if not isinstance(pkey, str) or not pkey.strip():
         return None
-    pending = _pending_transactions.get(pkey)
-    if pending and pending_is_expired(pending):
-        _pending_transactions.pop(pkey, None)
-        return None
-    return pending
+    with _pending_lock:
+        pending = _pending_transactions.get(pkey)
+        if pending and pending_is_expired(pending):
+            _pending_transactions.pop(pkey, None)
+            return None
+        return pending
 
 
 def set_pending_transaction(pkey: str, data: Dict) -> None:
@@ -326,14 +339,16 @@ def set_pending_transaction(pkey: str, data: Dict) -> None:
     key = pkey.strip()
     if not key:
         return
-    _pending_transactions[key] = data
+    with _pending_lock:
+        _pending_transactions[key] = data
 
 
 def clear_pending_transaction(pkey: str) -> None:
     """Clear pending transaction for a key."""
     if not isinstance(pkey, str) or not pkey.strip():
         return
-    _pending_transactions.pop(pkey, None)
+    with _pending_lock:
+        _pending_transactions.pop(pkey, None)
 
 
 def has_pending_transaction(pkey: str) -> bool:
@@ -350,13 +365,14 @@ def store_pending_message_ref(bot_msg_id: str, pending_key_ref: str) -> None:
     pref = str(pending_key_ref or "").strip()
     if not bid or not pref:
         return
-    _pending_message_refs[bid] = pref
+    with _pending_lock:
+        _pending_message_refs[bid] = pref
 
-    # Keep cache bounded to avoid unbounded growth.
-    if len(_pending_message_refs) > MAX_BOT_REFS:
-        keys_to_remove = list(_pending_message_refs.keys())[:500]
-        for key in keys_to_remove:
-            _pending_message_refs.pop(key, None)
+        # Keep cache bounded to avoid unbounded growth.
+        if len(_pending_message_refs) > MAX_BOT_REFS:
+            keys_to_remove = list(_pending_message_refs.keys())[:500]
+            for key in keys_to_remove:
+                _pending_message_refs.pop(key, None)
 
 
 def get_pending_key_from_message(bot_msg_id: str) -> str:
@@ -365,17 +381,18 @@ def get_pending_key_from_message(bot_msg_id: str) -> str:
     if not bid:
         return ""
 
-    # Fast path: exact key.
-    pending_ref = _pending_message_refs.get(bid)
-    if pending_ref:
-        return str(pending_ref)
-
-    # Fallback for providers that change casing or whitespace around IDs.
-    alt = bid.lower()
-    if alt != bid:
-        pending_ref = _pending_message_refs.get(alt)
+    with _pending_lock:
+        # Fast path: exact key.
+        pending_ref = _pending_message_refs.get(bid)
         if pending_ref:
             return str(pending_ref)
+
+        # Fallback for providers that change casing or whitespace around IDs.
+        alt = bid.lower()
+        if alt != bid:
+            pending_ref = _pending_message_refs.get(alt)
+            if pending_ref:
+                return str(pending_ref)
     return ""
 
 
@@ -384,7 +401,8 @@ def clear_pending_message_ref(bot_msg_id: str) -> None:
     bid = str(bot_msg_id or "").strip()
     if not bid:
         return
-    _pending_message_refs.pop(bid, None)
+    with _pending_lock:
+        _pending_message_refs.pop(bid, None)
 
 
 # ===================== MESSAGE DEDUP =====================
@@ -419,6 +437,7 @@ def is_message_duplicate(message_id: str, score: int = 0, allow_upgrade: bool = 
     global _last_state_save
     
     now = datetime.now()
+    should_save = False
     with _dedup_lock:
         # Cleanup old entries (older than TTL)
         expired_keys = []
@@ -436,17 +455,22 @@ def is_message_duplicate(message_id: str, score: int = 0, allow_upgrade: bool = 
                 _processed_messages[message_id] = {"ts": now, "score": int(score or 0)}
                 if _last_state_save is None or (now - _last_state_save).total_seconds() > 30:
                     _last_state_save = now
-                    _save_state()
-                return False
-            return True
-        
-        # Mark as processed
-        _processed_messages[message_id] = {"ts": now, "score": int(score or 0)}
-        # Persist occasionally to survive restarts (idempotency)
-        if _last_state_save is None or (now - _last_state_save).total_seconds() > 30:
-            _last_state_save = now
-            _save_state()
-        return False
+                    should_save = True
+                duplicate = False
+            else:
+                duplicate = True
+        else:
+            # Mark as processed
+            _processed_messages[message_id] = {"ts": now, "score": int(score or 0)}
+            # Persist occasionally to survive restarts (idempotency)
+            if _last_state_save is None or (now - _last_state_save).total_seconds() > 30:
+                _last_state_save = now
+                should_save = True
+            duplicate = False
+
+    if should_save:
+        _save_state()
+    return duplicate
 
 
 def clear_message_duplicate(message_id: str) -> None:
@@ -468,19 +492,21 @@ _bot_message_refs: Dict[str, str] = {}
 
 def store_bot_message_ref(bot_msg_id: str, original_tx_msg_id: str) -> None:
     """Store reference from bot's confirmation message to original transaction message ID."""
-    _bot_message_refs[str(bot_msg_id)] = str(original_tx_msg_id)
-    
-    # Limit cache size to prevent memory issues
-    if len(_bot_message_refs) > MAX_BOT_REFS:
-        # Remove oldest entries (first 500)
-        keys_to_remove = list(_bot_message_refs.keys())[:500]
-        for key in keys_to_remove:
-            _bot_message_refs.pop(key, None)
+    with _refs_lock:
+        _bot_message_refs[str(bot_msg_id)] = str(original_tx_msg_id)
+
+        # Limit cache size to prevent memory issues
+        if len(_bot_message_refs) > MAX_BOT_REFS:
+            # Remove oldest entries (first 500)
+            keys_to_remove = list(_bot_message_refs.keys())[:500]
+            for key in keys_to_remove:
+                _bot_message_refs.pop(key, None)
 
 
 def get_original_message_id(bot_msg_id: str) -> str:
     """Get original transaction message ID from bot's confirmation message ID."""
-    return _bot_message_refs.get(str(bot_msg_id), '')
+    with _refs_lock:
+        return _bot_message_refs.get(str(bot_msg_id), '')
 
 
 # Track last bot report per chat
@@ -494,13 +520,15 @@ def store_last_bot_report(chat_id: str, bot_msg_id: str) -> None:
     """Track the most recent bot report ID for a chat."""
     if not chat_id or not bot_msg_id:
         return
-    _last_bot_reports[str(chat_id)] = str(bot_msg_id)
+    with _refs_lock:
+        _last_bot_reports[str(chat_id)] = str(bot_msg_id)
     _save_state()
 
 
 def get_last_bot_report(chat_id: str) -> Optional[str]:
     """Get the most recent bot report ID for a chat."""
-    return _last_bot_reports.get(str(chat_id))
+    with _refs_lock:
+        return _last_bot_reports.get(str(chat_id))
 
 
 def _last_tx_key(user_id: str, chat_id: str) -> str:
@@ -512,7 +540,8 @@ def store_last_tx_event(user_id: str, chat_id: str, event_id: str) -> None:
     if not user_id or not event_id:
         return
     key = _last_tx_key(user_id, chat_id)
-    _last_tx_events[str(key)] = str(event_id)
+    with _refs_lock:
+        _last_tx_events[str(key)] = str(event_id)
     _save_state()
 
 
@@ -521,7 +550,8 @@ def get_last_tx_event(user_id: str, chat_id: str) -> Optional[str]:
     if not user_id:
         return None
     key = _last_tx_key(user_id, chat_id)
-    return _last_tx_events.get(str(key))
+    with _refs_lock:
+        return _last_tx_events.get(str(key))
 
 
 # ===================== CONVERSATION TRACKING =====================
@@ -537,17 +567,18 @@ def record_bot_interaction(user_id: str, chat_id: str, interaction_type: str = '
         return
     
     key = f"{chat_id}:{user_id}" if chat_id else user_id
-    
-    _bot_interactions[key] = {
-        'timestamp': datetime.now(),
-        'type': interaction_type
-    }
-    
-    # Cleanup old entries (limit 1000)
-    if len(_bot_interactions) > 1000:
-        keys = list(_bot_interactions.keys())[:200]
-        for k in keys:
-             _bot_interactions.pop(k, None)
+
+    with _refs_lock:
+        _bot_interactions[key] = {
+            'timestamp': datetime.now(),
+            'type': interaction_type
+        }
+
+        # Cleanup old entries (limit 1000)
+        if len(_bot_interactions) > 1000:
+            keys = list(_bot_interactions.keys())[:200]
+            for k in keys:
+                _bot_interactions.pop(k, None)
              
     _save_state()
 
@@ -558,27 +589,51 @@ def get_last_bot_interaction(user_id: str, chat_id: str) -> Optional[Dict]:
         return None
         
     key = f"{chat_id}:{user_id}" if chat_id else user_id
-    return _bot_interactions.get(key)
+    with _refs_lock:
+        return _bot_interactions.get(key)
 
 
 # ===================== STATS =====================
 
 def get_state_stats() -> Dict[str, Any]:
     """Get statistics about current state (for debugging)."""
+    with _pending_lock:
+        pending_count = len(_pending_transactions)
+        pending_message_refs_count = len(_pending_message_refs)
+    with _dedup_lock:
+        processed_count = len(_processed_messages)
+    with _refs_lock:
+        bot_refs_count = len(_bot_message_refs)
     return {
-        'pending_count': len(_pending_transactions),
-        'processed_count': len(_processed_messages),
-        'bot_refs_count': len(_bot_message_refs),
-        'pending_message_refs_count': len(_pending_message_refs),
+        'pending_count': pending_count,
+        'processed_count': processed_count,
+        'bot_refs_count': bot_refs_count,
+        'pending_message_refs_count': pending_message_refs_count,
     }
 
 
 # ===================== PERSISTENCE =====================
-import json
-import os
-
 PERSISTENCE_FILE = "data/user_state.json"
+PERSISTENCE_BACKUP_FILE = f"{PERSISTENCE_FILE}.bak"
+CLOUD_STATE_MAX_CHARS = 500000
 _state_lock = threading.Lock()
+_cloud_save_lock = threading.Lock()
+_cloud_save_latest: Optional[str] = None
+_cloud_save_thread_running = False
+
+_STATE_SECTION_TYPES = {
+    "pending_transactions": dict,
+    "bot_message_refs": dict,
+    "pending_message_refs": dict,
+    "processed_messages": dict,
+    "project_registry": dict,
+    "audit_log": list,
+    "bot_interactions": dict,
+    "visual_buffer": dict,
+    "last_bot_reports": dict,
+    "last_tx_events": dict,
+    "pending_confirmations": dict,
+}
 
 def _sanitize_keys(obj):
     """Ensure all dict keys are JSON-serializable strings."""
@@ -588,13 +643,165 @@ def _sanitize_keys(obj):
         return [_sanitize_keys(v) for v in obj]
     return obj
 
+
+def _validate_state_payload(payload: Any, source_label: str) -> Optional[Dict[str, Any]]:
+    """Validate and sanitize top-level persisted state sections."""
+    if not isinstance(payload, dict):
+        secure_log("ERROR", "Persisted state is not a JSON object", source=source_label, actual_type=type(payload).__name__)
+        return None
+
+    sanitized = {}
+    for key, value in payload.items():
+        expected_type = _STATE_SECTION_TYPES.get(key)
+        if expected_type is None:
+            # Keep unknown sections for forward compatibility, but only when
+            # they are ordinary JSON containers/scalars.
+            sanitized[key] = value
+            continue
+        if not isinstance(value, expected_type):
+            secure_log(
+                "WARNING",
+                "Skipping invalid persisted state section",
+                source=source_label,
+                section=key,
+                actual_type=type(value).__name__,
+                expected_type=expected_type.__name__,
+            )
+            continue
+        sanitized[key] = value
+    return sanitized
+
+
+def _load_state_file(path: str, source_label: str) -> Optional[Dict[str, Any]]:
+    """Load one JSON state file and return validated payload or None."""
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            raw_data = json.load(f)
+        loaded = _validate_state_payload(raw_data, source_label)
+        if loaded is not None:
+            secure_log("INFO", f"State loaded from {source_label}.")
+        return loaded
+    except (OSError, json.JSONDecodeError) as e:
+        secure_log("ERROR", f"Failed to load {source_label} state: {type(e).__name__}: {e}")
+        return None
+
+
+def _write_state_file_atomic(path: str, contents: str) -> None:
+    """Write state with same-directory atomic replace and previous-file backup."""
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    temp_path = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+    backup_path = f"{path}.bak"
+
+    try:
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            f.write(contents)
+            f.flush()
+            os.fsync(f.fileno())
+
+        if os.path.exists(path):
+            try:
+                shutil.copy2(path, backup_path)
+            except OSError as e:
+                secure_log("WARNING", f"Failed to refresh state backup: {type(e).__name__}: {e}")
+        os.replace(temp_path, path)
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError as e:
+                secure_log("WARNING", f"Failed to remove temporary state file: {type(e).__name__}: {e}")
+
+
+def _external_state_payload(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Prepare state for durable external storage."""
+    external_data = copy.deepcopy(data)
+    # Visual buffers contain short-lived media references/base64 and are not
+    # critical after restart. Keeping them out avoids unnecessary DB bloat.
+    external_data.pop("visual_buffer", None)
+    return _sanitize_keys(external_data)
+
+
+def _save_state_to_external(data: Dict[str, Any]) -> bool:
+    """Save state to configured external store. Returns True when used."""
+    store = get_configured_state_store()
+    if not store:
+        if external_state_required():
+            raise RuntimeError("External state store is required but not configured")
+        return False
+    try:
+        store.save(_external_state_payload(data))
+        return True
+    except Exception as e:
+        secure_log("ERROR", f"Failed to save external state: {type(e).__name__}: {e}")
+        if external_state_required():
+            raise
+        return False
+
+
+def _load_state_from_external() -> Optional[Dict[str, Any]]:
+    """Load validated state from configured external store."""
+    store = get_configured_state_store()
+    if not store:
+        if external_state_required():
+            raise RuntimeError("External state store is required but not configured")
+        return None
+    try:
+        payload = store.load()
+        if not payload:
+            secure_log("INFO", "External state store is empty.")
+            return None
+        loaded = _validate_state_payload(payload, "EXTERNAL state store")
+        if loaded is not None:
+            secure_log("INFO", "State loaded from EXTERNAL state store.")
+        return loaded
+    except Exception as e:
+        secure_log("ERROR", f"Failed to load external state: {type(e).__name__}: {e}")
+        if external_state_required():
+            raise
+        return None
+
+
+def _cloud_save_worker() -> None:
+    """Drain pending cloud-save payloads with at most one worker thread."""
+    global _cloud_save_latest, _cloud_save_thread_running
+
+    while True:
+        with _cloud_save_lock:
+            payload = _cloud_save_latest
+            _cloud_save_latest = None
+            if payload is None:
+                _cloud_save_thread_running = False
+                return
+
+        try:
+            save_state_to_cloud(payload)
+        except Exception as e:
+            secure_log("ERROR", f"Cloud state save worker failed: {type(e).__name__}: {e}")
+
+
+def _schedule_cloud_state_save(cloud_json: str) -> None:
+    """Schedule a cloud backup, coalescing rapid state changes."""
+    global _cloud_save_latest, _cloud_save_thread_running
+
+    with _cloud_save_lock:
+        _cloud_save_latest = cloud_json
+        if _cloud_save_thread_running:
+            return
+        _cloud_save_thread_running = True
+
+    threading.Thread(target=_cloud_save_worker, daemon=True).start()
+
+
 def _save_state():
     """Save state to local JSON AND Google Sheets (Background)."""
     with _state_lock:
         try:
             # Normalize processed_messages for persistence
+            with _dedup_lock:
+                processed_items = list(_processed_messages.items())
             processed_dump = {}
-            for k, v in _processed_messages.items():
+            for k, v in processed_items:
                 ts, score = _normalize_dedup_entry(v)
                 if isinstance(ts, datetime):
                     processed_dump[k] = {"ts": ts.isoformat(), "score": int(score or 0)}
@@ -603,30 +810,50 @@ def _save_state():
                 else:
                     processed_dump[k] = {"ts": None, "score": int(score or 0)}
 
+            with _pending_lock:
+                pending_transactions_dump = copy.deepcopy(_pending_transactions)
+                pending_message_refs_dump = dict(_pending_message_refs)
+
+            with _refs_lock:
+                bot_message_refs_dump = dict(_bot_message_refs)
+                bot_interactions_dump = copy.deepcopy(_bot_interactions)
+                last_bot_reports_dump = dict(_last_bot_reports)
+                last_tx_events_dump = dict(_last_tx_events)
+
+            with _visual_lock:
+                visual_buffer_dump = copy.deepcopy(_visual_buffer)
+
+            with _registry_lock:
+                project_registry_dump = dict(_project_registry)
+                audit_log_dump = list(_audit_log)
+
+            with _confirmation_lock:
+                pending_confirmations_dump = copy.deepcopy(PENDING_CONFIRMATIONS)
+
             data = {
-                "pending_transactions": _pending_transactions,
-                "bot_message_refs": _bot_message_refs,
-                "pending_message_refs": _pending_message_refs,
+                "pending_transactions": pending_transactions_dump,
+                "bot_message_refs": bot_message_refs_dump,
+                "pending_message_refs": pending_message_refs_dump,
                 "processed_messages": processed_dump,
-                "project_registry": _project_registry,
-                "audit_log": _audit_log,
+                "project_registry": project_registry_dump,
+                "audit_log": audit_log_dump,
                 "bot_interactions": {
                     k: {**v, 'timestamp': v['timestamp'].isoformat() if isinstance(v.get('timestamp'), datetime) else str(v.get('timestamp', ''))}
-                    for k, v in _bot_interactions.items() if isinstance(v, dict)
+                    for k, v in bot_interactions_dump.items() if isinstance(v, dict)
                 },
                 "visual_buffer": {k: [
                     {**item, 'created_at': item['created_at'].isoformat() if isinstance(item.get('created_at'), datetime) else item.get('created_at')} 
                     for item in v
-                ] for k, v in _visual_buffer.items()},
-                "last_bot_reports": _last_bot_reports,
-                "last_tx_events": _last_tx_events,
+                ] for k, v in visual_buffer_dump.items()},
+                "last_bot_reports": last_bot_reports_dump,
+                "last_tx_events": last_tx_events_dump,
                 "pending_confirmations": {
                     k: {
                         **v,
                         'timestamp': v['timestamp'].isoformat() if isinstance(v.get('timestamp'), datetime) else str(v.get('timestamp', '')),
                         'expires_at': v['expires_at'].isoformat() if isinstance(v.get('expires_at'), datetime) else str(v.get('expires_at', ''))
                     }
-                    for k, v in PENDING_CONFIRMATIONS.items() if isinstance(v, dict)
+                    for k, v in pending_confirmations_dump.items() if isinstance(v, dict)
                 }
             }
             
@@ -634,9 +861,8 @@ def _save_state():
             os.makedirs(os.path.dirname(PERSISTENCE_FILE), exist_ok=True)
             safe_data = _sanitize_keys(data)
             json_str = json.dumps(safe_data, default=str)
-
-            with open(PERSISTENCE_FILE, 'w') as f:
-                f.write(json_str)
+            _write_state_file_atomic(PERSISTENCE_FILE, json_str)
+            _save_state_to_external(data)
 
             # 3. BACKUP KE GOOGLE SHEETS (Asynchronous / Fire-and-Forget)
             # Pakai thread biar bot tidak lemot nungguin Google API
@@ -699,8 +925,9 @@ def _save_state():
                     cloud_data["pending_confirmations"][key] = _prune_pending_entry(pending_conf)
 
             cloud_json = json.dumps(_sanitize_keys(cloud_data), default=str, separators=(",", ":"))
-            # If still too large, drop dedup + refs entirely
-            if len(cloud_json) > 45000:
+            # Chunked Google Sheets backup supports larger state than one cell.
+            # If it is still very large, drop non-critical caches before pending state.
+            if len(cloud_json) > CLOUD_STATE_MAX_CHARS:
                 cloud_data["processed_messages"] = {}
                 cloud_data["bot_message_refs"] = {}
                 cloud_data["pending_message_refs"] = {}
@@ -708,15 +935,17 @@ def _save_state():
                 cloud_data["last_bot_reports"] = {}
                 cloud_data["last_tx_events"] = {}
                 cloud_json = json.dumps(_sanitize_keys(cloud_data), default=str, separators=(",", ":"))
-            if len(cloud_json) > 45000:
+            if len(cloud_json) > CLOUD_STATE_MAX_CHARS:
                 cloud_data["pending_transactions"] = {}
                 cloud_data["pending_confirmations"] = {}
                 cloud_json = json.dumps(_sanitize_keys(cloud_data), default=str, separators=(",", ":"))
             
-            threading.Thread(target=save_state_to_cloud, args=(cloud_json,), daemon=True).start()
+            _schedule_cloud_state_save(cloud_json)
                 
         except Exception as e:
-            print(f"[ERROR] Failed to save state: {e}")
+            secure_log("ERROR", f"Failed to save state: {type(e).__name__}: {e}")
+            if external_state_required():
+                raise
 
 def _load_state():
     """Load state from JSON file."""
@@ -724,25 +953,33 @@ def _load_state():
     
     loaded_data = None
 
-    # 1. Coba load dari Local File (Prioritas 1)
-    if os.path.exists(PERSISTENCE_FILE):
-        try:
-            with open(PERSISTENCE_FILE, 'r') as f:
-                loaded_data = json.load(f)
-                print("[INFO] State loaded from LOCAL storage.")
-        except:
-            pass
+    # 1. Coba load dari external store (Postgres) jika dikonfigurasi.
+    loaded_data = _load_state_from_external()
+
+    # 2. Coba load dari Local File, lalu backup file.
+    for path, label in (
+        (PERSISTENCE_FILE, "LOCAL storage"),
+        (PERSISTENCE_BACKUP_FILE, "LOCAL backup storage"),
+    ):
+        if loaded_data:
+            break
+        if not os.path.exists(path):
+            continue
+        loaded_data = _load_state_file(path, label)
+        if loaded_data:
+            break
             
-    # 2. Jika Local gagal (misal baru Restart Koyeb), Load dari Google Sheets (Prioritas 2)
+    # 3. Jika Local gagal (misal baru Restart Koyeb), Load dari Google Sheets.
     if not loaded_data:
-        print("[INFO] Local state missing (Koyeb Restart?). Fetching from Google Sheets...")
+        secure_log("INFO", "Local state missing (Koyeb Restart?). Fetching from Google Sheets...")
         try:
             cloud_json = load_state_from_cloud() # Ini synchronous gpp, karena cuma sekali pas start
             if cloud_json:
-                loaded_data = json.loads(cloud_json)
-                print("[INFO] State restored from GOOGLE SHEETS backup!")
+                loaded_data = _validate_state_payload(json.loads(cloud_json), "GOOGLE SHEETS backup")
+                if loaded_data:
+                    secure_log("INFO", "State restored from GOOGLE SHEETS backup.")
         except Exception as e:
-            print(f"[WARNING] Could not restore from cloud: {e}")
+            secure_log("WARNING", f"Could not restore state from cloud: {type(e).__name__}: {e}")
 
     # 3. Terapkan Data ke Variable Memory
     if loaded_data:
@@ -750,82 +987,93 @@ def _load_state():
             data = loaded_data
             
             if "pending_transactions" in data:
-                _pending_transactions.update(data["pending_transactions"])
-                # Restore datetime objects
-                for pkey, pending in _pending_transactions.items():
-                    if "created_at" in pending and isinstance(pending["created_at"], str):
-                        try:
-                            pending["created_at"] = datetime.fromisoformat(pending["created_at"])
-                        except:
-                            pass
+                with _pending_lock:
+                    _pending_transactions.update(data["pending_transactions"])
+                    # Restore datetime objects
+                    for pkey, pending in _pending_transactions.items():
+                        if "created_at" in pending and isinstance(pending["created_at"], str):
+                            try:
+                                pending["created_at"] = datetime.fromisoformat(pending["created_at"])
+                            except (TypeError, ValueError) as e:
+                                secure_log("WARNING", "Invalid pending transaction timestamp", pending_key=pkey, error_type=type(e).__name__)
                             
             if "bot_message_refs" in data:
-                _bot_message_refs.update(data["bot_message_refs"])
+                with _refs_lock:
+                    _bot_message_refs.update(data["bot_message_refs"])
                 
             if "pending_message_refs" in data:
-                _pending_message_refs.update(data["pending_message_refs"])
+                with _pending_lock:
+                    _pending_message_refs.update(data["pending_message_refs"])
 
             if "processed_messages" in data:
-                for k, v in data["processed_messages"].items():
-                    try:
-                        if isinstance(v, dict):
-                            ts_raw = v.get("ts")
-                            score = int(v.get("score", 0) or 0)
-                        else:
-                            ts_raw = v
-                            score = 0
-                        ts = datetime.fromisoformat(ts_raw) if isinstance(ts_raw, str) else ts_raw
-                        if ts and (datetime.now() - ts).total_seconds() <= DEDUP_TTL_SECONDS:
-                            _processed_messages[k] = {"ts": ts, "score": score}
-                    except Exception:
-                        pass
+                with _dedup_lock:
+                    for k, v in data["processed_messages"].items():
+                        try:
+                            if isinstance(v, dict):
+                                ts_raw = v.get("ts")
+                                score = int(v.get("score", 0) or 0)
+                            else:
+                                ts_raw = v
+                                score = 0
+                            ts = datetime.fromisoformat(ts_raw) if isinstance(ts_raw, str) else ts_raw
+                            if ts and (datetime.now() - ts).total_seconds() <= DEDUP_TTL_SECONDS:
+                                _processed_messages[k] = {"ts": ts, "score": score}
+                        except (TypeError, ValueError) as e:
+                            secure_log("WARNING", "Invalid processed message state entry", message_key=k, error_type=type(e).__name__)
 
             if "project_registry" in data:
                 if isinstance(data["project_registry"], dict):
-                    _project_registry.update(data["project_registry"])
+                    with _registry_lock:
+                        _project_registry.update(data["project_registry"])
 
             if "audit_log" in data:
                 if isinstance(data["audit_log"], list):
-                    _audit_log.extend(data["audit_log"][:500])
+                    with _registry_lock:
+                        _audit_log.extend(data["audit_log"][:500])
                 
             if "bot_interactions" in data:
-                 for k, v in data["bot_interactions"].items():
-                     try:
-                         v['timestamp'] = datetime.fromisoformat(v['timestamp'])
-                         _bot_interactions[k] = v
-                     except:
-                         pass
+                 with _refs_lock:
+                     for k, v in data["bot_interactions"].items():
+                         try:
+                             v['timestamp'] = datetime.fromisoformat(v['timestamp'])
+                             _bot_interactions[k] = v
+                         except (KeyError, TypeError, ValueError) as e:
+                             secure_log("WARNING", "Invalid bot interaction state entry", interaction_key=k, error_type=type(e).__name__)
 
             if "visual_buffer" in data:
-                 for k, v in data["visual_buffer"].items():
-                     reconstructed = []
-                     for item in v:
-                         if "created_at" in item and isinstance(item["created_at"], str):
-                             try:
-                                 item["created_at"] = datetime.fromisoformat(item["created_at"])
-                             except:
-                                 pass
-                         reconstructed.append(item)
-                     _visual_buffer[k] = reconstructed
+                 with _visual_lock:
+                     for k, v in data["visual_buffer"].items():
+                         reconstructed = []
+                         for item in v:
+                             if "created_at" in item and isinstance(item["created_at"], str):
+                                 try:
+                                     item["created_at"] = datetime.fromisoformat(item["created_at"])
+                                 except (TypeError, ValueError) as e:
+                                     secure_log("WARNING", "Invalid visual buffer timestamp", visual_key=k, error_type=type(e).__name__)
+                             reconstructed.append(item)
+                         _visual_buffer[k] = reconstructed
                      
             if "last_bot_reports" in data:
-                _last_bot_reports.update(data["last_bot_reports"])
+                with _refs_lock:
+                    _last_bot_reports.update(data["last_bot_reports"])
 
             if "last_tx_events" in data:
                 if isinstance(data["last_tx_events"], dict):
-                    _last_tx_events.update(data["last_tx_events"])
+                    with _refs_lock:
+                        _last_tx_events.update(data["last_tx_events"])
 
             if "pending_confirmations" in data:
-                for k, v in data["pending_confirmations"].items():
-                    try:
-                        v['timestamp'] = datetime.fromisoformat(v['timestamp'])
-                        v['expires_at'] = datetime.fromisoformat(v['expires_at'])
-                        PENDING_CONFIRMATIONS[k] = v
-                    except:
-                        pass
+                with _confirmation_lock:
+                    for k, v in data["pending_confirmations"].items():
+                        try:
+                            v['timestamp'] = datetime.fromisoformat(v['timestamp'])
+                            v['expires_at'] = datetime.fromisoformat(v['expires_at'])
+                            PENDING_CONFIRMATIONS[k] = v
+                        except (KeyError, TypeError, ValueError) as e:
+                            secure_log("WARNING", "Invalid pending confirmation state entry", confirmation_key=k, error_type=type(e).__name__)
                 
         except Exception as e:
-             print(f"[ERROR] Error parsing loaded state: {e}")
+             secure_log("ERROR", f"Error parsing loaded state: {type(e).__name__}: {e}")
 
 # Load state on startup
 _load_state()
@@ -846,32 +1094,39 @@ def set_pending_confirmation(user_id: str, chat_id: str, data: dict):
         }
     """
     key = f"{chat_id}:{user_id}"
-    PENDING_CONFIRMATIONS[key] = {
-        **data,
-        'timestamp': datetime.now(),
-        'expires_at': datetime.now() + timedelta(minutes=15)
-    }
+    with _confirmation_lock:
+        PENDING_CONFIRMATIONS[key] = {
+            **data,
+            'timestamp': datetime.now(),
+            'expires_at': datetime.now() + timedelta(minutes=15)
+        }
     _save_state()
 
 def get_pending_confirmation(user_id: str, chat_id: str) -> dict:
     """Get pending confirmation data."""
     key = f"{chat_id}:{user_id}"
-    pending = PENDING_CONFIRMATIONS.get(key)
-    
-    # Check expiry
-    if pending and pending.get('expires_at'):
-        if datetime.now() > pending['expires_at']:
-            # Expired, remove
-            clear_pending_confirmation(user_id, chat_id)
-            return None
-    
+    should_save = False
+    with _confirmation_lock:
+        pending = PENDING_CONFIRMATIONS.get(key)
+
+        # Check expiry
+        if pending and pending.get('expires_at'):
+            if datetime.now() > pending['expires_at']:
+                # Expired, remove
+                PENDING_CONFIRMATIONS.pop(key, None)
+                should_save = True
+                pending = None
+
+    if should_save:
+        _save_state()
     return pending
     
 def clear_pending_confirmation(user_id: str, chat_id: str):
     """Clear pending state."""
     key = f"{chat_id}:{user_id}"
-    if key in PENDING_CONFIRMATIONS:
-        del PENDING_CONFIRMATIONS[key]
+    with _confirmation_lock:
+        removed = PENDING_CONFIRMATIONS.pop(key, None) is not None
+    if removed:
         _save_state()
         
 def has_pending_confirmation(user_id: str, chat_id: str) -> bool:
@@ -888,19 +1143,20 @@ def find_pending_confirmation_in_chat(chat_id: str):
         return None, None
     now = datetime.now()
     matches = []
-    for key, pending in list(PENDING_CONFIRMATIONS.items()):
-        if not key.startswith(f"{chat_id}:"):
-            continue
-        expires = pending.get('expires_at')
-        if expires and now > expires:
-            # Clean expired entry
-            try:
-                user_id = key.split(":", 1)[1]
-            except Exception:
-                user_id = ""
-            clear_pending_confirmation(user_id, chat_id)
-            continue
-        matches.append((key, pending))
+    expired_removed = False
+    with _confirmation_lock:
+        for key, pending in list(PENDING_CONFIRMATIONS.items()):
+            if not key.startswith(f"{chat_id}:"):
+                continue
+            expires = pending.get('expires_at')
+            if expires and now > expires:
+                # Clean expired entry
+                PENDING_CONFIRMATIONS.pop(key, None)
+                expired_removed = True
+                continue
+            matches.append((key, pending))
+    if expired_removed:
+        _save_state()
     if len(matches) == 1:
         return matches[0]
     return None, None
@@ -928,8 +1184,9 @@ def get_project_lock(project_name: str) -> Optional[str]:
     key = _normalize_project_key(project_name)
     if not key:
         return None
-    if key in _project_registry:
+    with _registry_lock:
         locked_dompet = _project_registry.get(key)
+    if locked_dompet:
         # Validate persisted lock against current spreadsheet state to avoid
         # stale/misassigned dompet forcing future transactions.
         try:
@@ -938,7 +1195,8 @@ def get_project_lock(project_name: str) -> Optional[str]:
             if found_dompet and found_dompet == locked_dompet:
                 return locked_dompet
             if found_dompet and found_dompet != locked_dompet:
-                _project_registry[key] = found_dompet
+                with _registry_lock:
+                    _project_registry[key] = found_dompet
                 _save_state()
                 add_audit_event({
                     "type": "project_lock_auto_correct",
@@ -949,7 +1207,8 @@ def get_project_lock(project_name: str) -> Optional[str]:
                 })
                 return found_dompet
             # No exact project found anywhere -> clear stale lock.
-            _project_registry.pop(key, None)
+            with _registry_lock:
+                _project_registry.pop(key, None)
             _save_state()
             add_audit_event({
                 "type": "project_lock_auto_clear",
@@ -958,19 +1217,21 @@ def get_project_lock(project_name: str) -> Optional[str]:
                 "to": None,
                 "reason": "sheet_no_exact_match"
             })
-        except Exception:
+        except Exception as e:
             # Fallback to persisted lock when validation lookup fails.
+            secure_log("WARNING", f"Project lock validation failed: {type(e).__name__}: {e}")
             return locked_dompet
     # Lazy resolve from sheets if exists
     try:
         from sheets_helper import find_company_for_project_exact
         found_dompet, _ = find_company_for_project_exact(project_name)
         if found_dompet:
-            _project_registry[key] = found_dompet
+            with _registry_lock:
+                _project_registry[key] = found_dompet
             _save_state()
             return found_dompet
-    except Exception:
-        pass
+    except Exception as e:
+        secure_log("WARNING", f"Project lock lazy resolve failed: {type(e).__name__}: {e}")
     return None
 
 
@@ -978,13 +1239,14 @@ def add_audit_event(event: dict) -> None:
     """Append audit event (bounded)."""
     try:
         event['ts'] = datetime.now().isoformat()
-        _audit_log.append(event)
-        # Keep last 500 events
-        if len(_audit_log) > 500:
-            _audit_log[:] = _audit_log[-500:]
+        with _registry_lock:
+            _audit_log.append(event)
+            # Keep last 500 events
+            if len(_audit_log) > 500:
+                _audit_log[:] = _audit_log[-500:]
         _save_state()
-    except Exception:
-        pass
+    except Exception as e:
+        secure_log("WARNING", f"Failed to add audit event: {type(e).__name__}: {e}")
 
 
 def set_project_lock(project_name: str, dompet_sheet: str, actor: str = None,
@@ -993,8 +1255,9 @@ def set_project_lock(project_name: str, dompet_sheet: str, actor: str = None,
     key = _normalize_project_key(project_name)
     if not key or not dompet_sheet:
         return
-    prev = _project_registry.get(key)
-    _project_registry[key] = dompet_sheet
+    with _registry_lock:
+        prev = _project_registry.get(key)
+        _project_registry[key] = dompet_sheet
     _save_state()
     
     if prev != dompet_sheet:
@@ -1010,7 +1273,8 @@ def set_project_lock(project_name: str, dompet_sheet: str, actor: str = None,
 
 def get_project_registry() -> Dict[str, str]:
     """Get full project registry mapping."""
-    return _project_registry.copy()
+    with _registry_lock:
+        return _project_registry.copy()
 
 
 # ===================== USER MESSAGE CONTEXT =====================
@@ -1024,17 +1288,19 @@ def store_user_message(user_id: str, chat_id: str, text: str):
     from datetime import datetime
     
     key = f"{chat_id}:{user_id}"
-    USER_LAST_MESSAGES[key] = {
-        'text': text,
-        'timestamp': datetime.now()
-    }
+    with _user_message_lock:
+        USER_LAST_MESSAGES[key] = {
+            'text': text,
+            'timestamp': datetime.now()
+        }
 
 def get_user_last_message(user_id: str, chat_id: str, max_age_seconds: int = 60) -> str:
     """Get user's last message if recent enough."""
     from datetime import datetime, timedelta
     
     key = f"{chat_id}:{user_id}"
-    last_msg = USER_LAST_MESSAGES.get(key)
+    with _user_message_lock:
+        last_msg = USER_LAST_MESSAGES.get(key)
     
     if not last_msg:
         return None
@@ -1048,21 +1314,31 @@ def get_user_last_message(user_id: str, chat_id: str, max_age_seconds: int = 60)
 def clear_user_last_message(user_id: str, chat_id: str):
     """Clear user's message buffer."""
     key = f"{chat_id}:{user_id}"
-    if key in USER_LAST_MESSAGES:
-        del USER_LAST_MESSAGES[key]
+    with _user_message_lock:
+        USER_LAST_MESSAGES.pop(key, None)
 
 
 # ===================== STATS =====================
 
 def get_state_stats() -> Dict[str, Any]:
     """Get statistics about current state (for debugging)."""
+    with _pending_lock:
+        pending_count = len(_pending_transactions)
+        pending_message_refs_count = len(_pending_message_refs)
+    with _confirmation_lock:
+        pending_conf_count = len(PENDING_CONFIRMATIONS)
+    with _dedup_lock:
+        processed_count = len(_processed_messages)
+    with _refs_lock:
+        bot_refs_count = len(_bot_message_refs)
+        last_tx_events_count = len(_last_tx_events)
     return {
-        'pending_count': len(_pending_transactions),
-        'pending_conf_count': len(PENDING_CONFIRMATIONS),
-        'processed_count': len(_processed_messages),
-        'bot_refs_count': len(_bot_message_refs),
-        'pending_message_refs_count': len(_pending_message_refs),
-        'last_tx_events_count': len(_last_tx_events),
+        'pending_count': pending_count,
+        'pending_conf_count': pending_conf_count,
+        'processed_count': processed_count,
+        'bot_refs_count': bot_refs_count,
+        'pending_message_refs_count': pending_message_refs_count,
+        'last_tx_events_count': last_tx_events_count,
     }
 
 # For testing
