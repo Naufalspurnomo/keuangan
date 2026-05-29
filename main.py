@@ -1905,8 +1905,20 @@ Balas 1 atau 2"""
             # Prefer explicit company mention in user text (e.g., "hojja").
             user_part, ocr_part = split_ocr_user_text(original_text)
             explicit_company = resolve_company_from_text(user_part or original_text)
+            selected_option = pending.get('selected_option') or {}
+            selected_company = selected_option.get('company')
             if explicit_company:
                 detected_company = explicit_company
+            elif detected_company and detected_company != "UMUM" and not selected_company:
+                # AI/model output may guess a company for project transactions.
+                # If the user did not explicitly mention it and it was not selected
+                # through the 1-5 prompt, keep it unresolved so we ask instead
+                # of silently defaulting (e.g. bare project text -> TX SBY).
+                secure_log(
+                    "WARNING",
+                    f"Company '{detected_company}' was not explicitly mentioned; asking user to choose",
+                )
+                detected_company = None
             
             dompet = None
             detected_dompet = next((t.get('detected_dompet') for t in txs if t.get('detected_dompet')), None)
@@ -1981,6 +1993,27 @@ Balas 1 atau 2"""
                                 "INFO",
                                 f"Auto-resolved dompet for project '{p_name_check}' to {found_dompet}; company remains ambiguous"
                             )
+
+            needs_company_selection = (
+                context.get('mode') == 'PROJECT'
+                and pending.get('is_new_project')
+                and not pending.get('selected_option')
+                and not explicit_company
+                and not explicit_dompet
+            )
+            if needs_company_selection:
+                pending['pending_type'] = 'selection'
+                reply = (
+                    "📁 *PROJECT BARU*\n"
+                    "Project baru belum punya company/dompet yang jelas.\n\n"
+                    "Pilih company untuk project ini supaya tidak otomatis masuk ke TX SBY.\n\n"
+                    f"{build_selection_prompt(txs)}"
+                )
+                if is_group:
+                    reply += "\n\n↩️ Reply angka 1-5"
+                sent = send_pending_reply(reply)
+                cache_prompt(pkey, pending, sent)
+                return jsonify({'status': 'asking_company_for_new_project'}), 200
 
             # 2. Save if Resolved
             if detected_company and dompet:
