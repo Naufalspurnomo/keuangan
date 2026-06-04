@@ -56,6 +56,7 @@ from handlers.telegram_webhook import handle_telegram_webhook
 from handlers.wuzapi_webhook import handle_wuzapi_webhook
 from services.retry_service import process_retry_queue
 from services.project_service import resolve_project_name, add_new_project_to_cache
+from services.finance_decision import decide_project_resolution
 from services.group_reply_hints import should_send_group_reply_hint
 from services.hutang_flow import (
     build_saldo_message as _build_saldo_message,
@@ -2390,29 +2391,34 @@ Balas 1 atau 2"""
                     company=selected_scope.get('company'),
                 )
 
-                if res['status'] == 'AMBIGUOUS':
-                    unique_candidate = int(res.get('match_count', 2) or 2) == 1
-                    if FAST_MODE and unique_candidate and res.get('final_name'):
-                        final = res['final_name']
-                        for t in pending['transactions']:
-                            t['nama_projek'] = final
-                        pending['project_confirmed'] = True
-                        pending['project_validated'] = True
-                        return finalize_transaction_workflow(pending, pending_pkey)
+                project_decision = decide_project_resolution(
+                    res,
+                    auto_accept_unique_ambiguous=bool(FAST_MODE),
+                )
+
+                if project_decision.should_accept:
+                    final = project_decision.final_name
+                    for t in pending['transactions']:
+                        t['nama_projek'] = final
+                    pending['project_confirmed'] = True
+                    pending['project_validated'] = True
+                    return finalize_transaction_workflow(pending, pending_pkey)
+
+                if project_decision.should_confirm:
                     pending['pending_type'] = 'confirmation_project'
-                    pending['suggested_project'] = res['final_name']
-                    send_pending_reply(f"???? Maksudnya **{res['final_name']}**?\n??? Ya / ??? Bukan")
+                    pending['suggested_project'] = project_decision.suggested_name
+                    send_pending_reply(f"???? Maksudnya **{project_decision.suggested_name}**?\n??? Ya / ??? Bukan")
                     return jsonify({'status': 'confirm'}), 200
 
-                if res['status'] == 'NEW':
+                if project_decision.action == 'new':
                     for t in pending['transactions']:
-                        t['nama_projek'] = res['final_name']
+                        t['nama_projek'] = project_decision.final_name
                     pending['pending_type'] = 'confirmation_new_project'
-                    pending['new_project_name'] = res['original']
-                    send_pending_reply(f"???? Project **{res['original']}** belum ada.\n\nBuat Project Baru?\n??? Ya / ??? Ganti Nama (Langsung Ketik Nama Baru)")
+                    pending['new_project_name'] = project_decision.final_name
+                    send_pending_reply(f"???? Project **{project_decision.final_name}** belum ada.\n\nBuat Project Baru?\n??? Ya / ??? Ganti Nama (Langsung Ketik Nama Baru)")
                     return jsonify({'status': 'asking_new_project'}), 200
 
-                final = res['final_name']
+                final = project_decision.final_name or res['final_name']
                 for t in pending['transactions']: t['nama_projek'] = final
                 # Set confirmed to true
                 pending['project_confirmed'] = True

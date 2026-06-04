@@ -17,6 +17,7 @@ from utils.lifecycle import apply_lifecycle_markers, select_start_marker_indexes
 from utils.parsers import parse_revision_amount
 from utils.amounts import has_amount_pattern
 from services.project_service import add_new_project_to_cache, resolve_project_name
+from services.finance_decision import decide_project_resolution
 from services.state_manager import set_project_lock, remember_project_knowledge
 from config.constants import PROJECT_STOPWORDS, KNOWN_COMPANY_NAMES
 from config.constants import FAST_MODE
@@ -1175,8 +1176,10 @@ Atau ketik /cancel untuk batal total"""
             company=company,
         )
 
-        if res.get('status') == 'AMBIGUOUS' and int(res.get('match_count', 2) or 2) != 1:
-            suggested = res.get('final_name')
+        decision = decide_project_resolution(res, auto_accept_unique_ambiguous=True)
+
+        if decision.should_confirm:
+            suggested = decision.suggested_name
             if prefix:
                 suggested = f"{prefix} - {suggested}".strip()
             else:
@@ -1289,12 +1292,12 @@ Atau ketik /cancel untuk batal total"""
                 'completed': False
             }
 
-        final_base = res.get('final_name') or lookup_name
+        final_base = decision.final_name or res.get('final_name') or lookup_name
         if prefix:
             final_name = f"{prefix} - {final_base}".strip()
         else:
             final_name = apply_company_prefix(final_base, dompet_sheet, company)
-        is_new_project = (res.get('status') == 'NEW')
+        is_new_project = (decision.action == 'new')
         transactions = pending_data.get('transactions', [])
 
         for tx in transactions:
