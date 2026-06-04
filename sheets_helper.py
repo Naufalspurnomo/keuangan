@@ -1,7 +1,9 @@
 import json
+import copy
 import os
 import time
 import hashlib
+import threading
 import gspread
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
@@ -362,6 +364,12 @@ _worksheet_cache = {}
 _project_exact_cache = {}
 _PROJECT_EXACT_CACHE_TTL_SECONDS = 300
 _PROJECT_EXACT_MISS_TTL_SECONDS = 60
+_read_cache_lock = threading.Lock()
+_all_data_cache = {}
+_wallet_balances_cache = None
+_wallet_balances_cache_at = 0
+ALL_DATA_CACHE_TTL_SECONDS = int(os.getenv("ALL_DATA_CACHE_TTL_SECONDS", "30"))
+WALLET_BALANCE_CACHE_TTL_SECONDS = int(os.getenv("WALLET_BALANCE_CACHE_TTL_SECONDS", "20"))
 _state_sheet_backoff_until = 0
 _STATE_SHEET_RATE_LIMIT_BACKOFF_SECONDS = 75
 
@@ -369,6 +377,48 @@ _STATE_SHEET_RATE_LIMIT_BACKOFF_SECONDS = 75
 def _is_google_rate_limit_error(error: Exception) -> bool:
     text = str(error).lower()
     return "429" in text or "quota exceeded" in text or "resource_exhausted" in text
+
+
+def _cache_copy(value):
+    return copy.deepcopy(value)
+
+
+def _get_all_data_cache(days) -> Optional[List[Dict]]:
+    cache_key = "all" if days is None else str(days)
+    now_ts = time.time()
+    with _read_cache_lock:
+        cached = _all_data_cache.get(cache_key)
+        if not cached:
+            return None
+        cached_at, cached_data = cached
+        if now_ts - cached_at > ALL_DATA_CACHE_TTL_SECONDS:
+            _all_data_cache.pop(cache_key, None)
+            return None
+        return _cache_copy(cached_data)
+
+
+def _set_all_data_cache(days, data: List[Dict]) -> None:
+    cache_key = "all" if days is None else str(days)
+    with _read_cache_lock:
+        _all_data_cache[cache_key] = (time.time(), _cache_copy(data))
+
+
+def _get_wallet_balances_cache() -> Optional[Dict]:
+    now_ts = time.time()
+    with _read_cache_lock:
+        if _wallet_balances_cache is None:
+            return None
+        if now_ts - _wallet_balances_cache_at > WALLET_BALANCE_CACHE_TTL_SECONDS:
+            return None
+        return _cache_copy(_wallet_balances_cache)
+
+
+def _set_wallet_balances_cache(data: Dict) -> None:
+    global _wallet_balances_cache, _wallet_balances_cache_at
+    with _read_cache_lock:
+        _wallet_balances_cache = _cache_copy(data)
+        _wallet_balances_cache_at = time.time()
+
 
 def authenticate():
     """
@@ -599,6 +649,7 @@ def append_hutang_entry(
         ]
 
         sheet.append_row(row_data, value_input_option='USER_ENTERED')
+        invalidate_dashboard_cache()
 
         secure_log("INFO", f"Hutang entry: Rp{jumlah:,} {hutang_dompet} -> {dihutangi_dompet}")
         return {
@@ -631,6 +682,7 @@ def update_hutang_status_by_no(no: int, status: str = "PAID") -> Optional[Dict]:
                 sheet.update_cell(row, HUTANG_COLS['STATUS'], status_norm)
                 if status_norm == "PAID":
                     sheet.update_cell(row, HUTANG_COLS['TGL_LUNAS'], now_wib().strftime('%Y-%m-%d'))
+                invalidate_dashboard_cache()
 
                 return {
                     'row': row,
@@ -904,6 +956,8 @@ def cancel_hutang_by_event_id(event_id: str) -> int:
                 sheet.update_cell(row, HUTANG_COLS['STATUS'], "CANCELLED")
                 sheet.update_cell(row, HUTANG_COLS['TGL_LUNAS'], "")
                 updated += 1
+        if updated:
+            invalidate_dashboard_cache()
         return updated
     except Exception as e:
         secure_log("ERROR", f"cancel_hutang_by_event_id failed: {type(e).__name__}: {str(e)}")
@@ -1085,6 +1139,7 @@ def append_project_transaction(
             cell_list.append(gspread.Cell(next_row, start_col + i, value))
         
         sheet.update_cells(cell_list, value_input_option='USER_ENTERED')
+        invalidate_dashboard_cache()
         _remember_project_exact_match(project_name, dompet_sheet)
         
         secure_log("INFO", f"Project TX: {tipe} Rp{jumlah:,} -> {dompet_sheet} Row {next_row}")
@@ -1234,6 +1289,7 @@ def append_operational_transaction(
         ]
         
         sheet.append_row(row_data, value_input_option='USER_ENTERED')
+        invalidate_dashboard_cache()
         
         secure_log("INFO", f"Operational TX: Rp{jumlah:,} [{category}] from {short_wallet}")
         
@@ -1649,7 +1705,7 @@ def _is_internal_transfer_tx(tx: Dict) -> bool:
         return True
     return False
 
-def get_all_data(days: int = 30) -> List[Dict]:
+def get_all_data(days: int = 30, force_refresh: bool = False) -> List[Dict]:
     """
     Get all transaction data from ALL dompet sheets.
     Handles SPLIT LAYOUT (Pemasukan Left, Pengeluaran Right) for correct context.
@@ -1660,6 +1716,12 @@ def get_all_data(days: int = 30) -> List[Dict]:
     Returns:
         List of transaction dicts with company and nama_projek
     """
+    if not force_refresh:
+        cached = _get_all_data_cache(days)
+        if cached is not None:
+            secure_log("DEBUG", f"get_all_data cache hit days={days}")
+            return cached
+
     try:
         from config.constants import (
             SPLIT_PEMASUKAN, SPLIT_PENGELUARAN, SPLIT_LAYOUT_DATA_START,
@@ -1812,6 +1874,7 @@ def get_all_data(days: int = 30) -> List[Dict]:
                 secure_log("WARNING", f"Could not read dompet {dompet}: {type(e).__name__}")
                 continue
         
+        _set_all_data_cache(days, data)
         return data
         
     except Exception as e:
@@ -2205,7 +2268,7 @@ def format_report_message(report: Dict) -> str:
     return '\n'.join(lines)
 
 
-def get_wallet_balances() -> Dict:
+def get_wallet_balances(force_refresh: bool = False) -> Dict:
     """
     Calculate REAL wallet balances using Virtual Balance formula:
     
@@ -2222,6 +2285,12 @@ def get_wallet_balances() -> Dict:
     This reads directly from Split Layout sheets (CV HB, TX SBY, TX BALI)
     and the Operasional Ktr sheet for operational debits.
     """
+    if not force_refresh:
+        cached = _get_wallet_balances_cache()
+        if cached is not None:
+            secure_log("DEBUG", "get_wallet_balances cache hit")
+            return cached
+
     balances = {}
     
     # 1. Calculate base balance from each dompet sheet (Split Layout)
@@ -2315,6 +2384,7 @@ def get_wallet_balances() -> Dict:
             + balances[dompet]['utang_open_in']
         )
         
+    _set_wallet_balances_cache(balances)
     return balances
 
 
@@ -2401,8 +2471,12 @@ DASHBOARD_CACHE_TTL = 60  # 60 seconds
 
 def invalidate_dashboard_cache():
     """Invalidate dashboard cache (call this after adding transactions)."""
-    global _dashboard_cache
+    global _dashboard_cache, _wallet_balances_cache, _wallet_balances_cache_at
     _dashboard_cache = None
+    with _read_cache_lock:
+        _all_data_cache.clear()
+        _wallet_balances_cache = None
+        _wallet_balances_cache_at = 0
     secure_log("INFO", "Dashboard cache invalidated")
 
 
@@ -2683,6 +2757,7 @@ def delete_transaction_row(dompet_sheet: str, row: int) -> bool:
             sheet = get_dompet_sheet(dompet_sheet)
         
         sheet.delete_rows(row)
+        invalidate_dashboard_cache()
         secure_log("INFO", f"Transaction deleted: {dompet_sheet} row {row}")
         return True
         
