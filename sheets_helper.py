@@ -1732,6 +1732,7 @@ def get_all_data(days: int = 30, force_refresh: bool = False) -> List[Dict]:
         
         spreadsheet = get_spreadsheet()
         data = []
+        read_had_error = False
         
         cutoff_date = None
         if days:
@@ -1782,6 +1783,7 @@ def get_all_data(days: int = 30, force_refresh: bool = False) -> List[Dict]:
                     secure_log("DEBUG", "Skipping invalid Operasional row", row=idx, error_type=type(e).__name__)
                     continue
         except Exception as e:
+            read_had_error = True
             secure_log("WARNING", f"Error reading Operasional: {e}")
 
         # 2. PROCESS WALLET SHEETS (Split Layout)
@@ -1871,10 +1873,14 @@ def get_all_data(days: int = 30, force_refresh: bool = False) -> List[Dict]:
                         secure_log("DEBUG", "Skipping invalid project expense row", dompet=dompet, row=idx, error_type=type(e).__name__)
                         
             except Exception as e:
+                read_had_error = True
                 secure_log("WARNING", f"Could not read dompet {dompet}: {type(e).__name__}")
                 continue
         
-        _set_all_data_cache(days, data)
+        if not read_had_error:
+            _set_all_data_cache(days, data)
+        else:
+            secure_log("WARNING", "Skipped all-data cache because Sheets read was partial")
         return data
         
     except Exception as e:
@@ -2292,6 +2298,7 @@ def get_wallet_balances(force_refresh: bool = False) -> Dict:
             return cached
 
     balances = {}
+    read_had_error = False
     
     # 1. Calculate base balance from each dompet sheet (Split Layout)
     for dompet in DOMPET_SHEETS:
@@ -2320,6 +2327,7 @@ def get_wallet_balances(force_refresh: bool = False) -> Dict:
             }
             
         except Exception as e:
+            read_had_error = True
             secure_log("ERROR", f"Error reading dompet {dompet}: {e}")
             balances[dompet] = {
                 'pemasukan': 0,
@@ -2352,6 +2360,7 @@ def get_wallet_balances(force_refresh: bool = False) -> Dict:
                             balances[dompet]['operational_debit'] += amount
                             break
     except Exception as e:
+        read_had_error = True
         secure_log("ERROR", f"Error parsing operational sheet: {e}")
 
     # 3. Parse Hutang sheet and adjust balances
@@ -2374,6 +2383,7 @@ def get_wallet_balances(force_refresh: bool = False) -> Dict:
                 # Tracked for audit/debug visibility only.
                 balances[yang_dihutangi]['utang_paid_in'] += amount
     except Exception as e:
+        read_had_error = True
         secure_log("ERROR", f"Error parsing hutang sheet: {e}")
     
     # 4. Calculate Final REAL Balance
@@ -2384,7 +2394,10 @@ def get_wallet_balances(force_refresh: bool = False) -> Dict:
             + balances[dompet]['utang_open_in']
         )
         
-    _set_wallet_balances_cache(balances)
+    if not read_had_error:
+        _set_wallet_balances_cache(balances)
+    else:
+        secure_log("WARNING", "Skipped wallet balance cache because Sheets read was partial")
     return balances
 
 
