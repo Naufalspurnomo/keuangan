@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from config.wallets import DOMPET_SHEETS, resolve_dompet_from_text
 from utils.amounts import parse_money_token
-from utils.parsers import extract_project_name_from_text, strip_explicit_catat_command
+from utils.parsers import extract_project_name_from_text, parse_revision_amount, strip_explicit_catat_command
 
 
 ALLOWED_AGENT_CATEGORIES = {
@@ -32,6 +32,22 @@ FINANCE_AGENT_MODEL = os.getenv("FINANCE_AGENT_MODEL", "llama-3.1-8b-instant")
 VALID_AGENT_MODES = {"off", "deterministic", "hybrid", "shadow"}
 CRITICAL_MISSING_FIELDS = {"tanggal", "date", "jumlah", "amount", "nominal", "keterangan", "tipe"}
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+SOURCE_LABELED_AMOUNT_RE = re.compile(
+    r"(?:nominal|jumlah|amount|total(?:\s+(?:transfer|pembayaran|bayar))?|debit|kredit)"
+    r"\s*[:\-]?\s*(?:rp\.?|idr)?\s*(?P<amount>[0-9][0-9\.,\s]*[0-9]|[0-9])",
+    re.IGNORECASE,
+)
+SOURCE_CURRENCY_AMOUNT_RE = re.compile(
+    r"\b(?:rp\.?|idr)\s*(?P<amount>[0-9][0-9\.,\s]*[0-9]|[0-9])",
+    re.IGNORECASE,
+)
+SOURCE_SEPARATED_AMOUNT_RE = re.compile(
+    r"\b(?P<amount>\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?)\b"
+)
+SOURCE_SUFFIX_AMOUNT_RE = re.compile(
+    r"\b(?P<amount>\d+(?:[.,]\d+)?\s*(?:rb|ribu|k|jt|juta|perak))\b",
+    re.IGNORECASE,
+)
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -120,12 +136,17 @@ class AgentDecision:
     reasoning: str = ""
     source: str = "agent"
     context_used: Dict[str, Any] = field(default_factory=dict)
+    source_amounts: List[int] = field(default_factory=list)
 
     def accepted(self) -> bool:
         critical_missing = {
             str(field_name).strip().lower()
             for field_name in self.missing_fields
         } & CRITICAL_MISSING_FIELDS
+        if self.source_amounts:
+            source_amounts = {int(amount) for amount in self.source_amounts if int(amount or 0) >= 100}
+            if any(int(tx.jumlah or 0) not in source_amounts for tx in self.transactions):
+                return False
         return (
             self.action == "PROCESS"
             and self.confidence >= finance_agent_min_confidence()
@@ -149,6 +170,26 @@ def _line_map(text: str) -> Dict[str, str]:
         if key_norm:
             lines[key_norm] = value.strip()
     return lines
+
+
+def _source_amounts(text: str) -> List[int]:
+    amounts: List[int] = []
+    seen = set()
+
+    def add(amount: int) -> None:
+        if amount < 100 or amount in seen:
+            return
+        seen.add(amount)
+        amounts.append(amount)
+
+    for regex in (SOURCE_LABELED_AMOUNT_RE, SOURCE_CURRENCY_AMOUNT_RE, SOURCE_SEPARATED_AMOUNT_RE):
+        for match in regex.finditer(text or ""):
+            add(parse_money_token(match.group("amount")))
+
+    for match in SOURCE_SUFFIX_AMOUNT_RE.finditer(text or ""):
+        add(parse_revision_amount(match.group("amount")))
+
+    return amounts
 
 
 def _parse_date(value: str) -> str:
@@ -199,6 +240,7 @@ def _extract_structured_project(text: str, fields: Dict[str, str]) -> str:
 
 def _deterministic_structured_decision(text: str) -> Optional[AgentDecision]:
     cleaned = strip_explicit_catat_command(text or "")
+    source_amounts = _source_amounts(cleaned)
     fields = _line_map(cleaned)
     if not fields:
         return None
@@ -252,6 +294,7 @@ def _deterministic_structured_decision(text: str) -> Optional[AgentDecision]:
         question="" if not missing else "Data transaksi terbaca, tapi ada field yang perlu dikonfirmasi.",
         reasoning="Structured finance fields parsed without relying on free-form AI extraction.",
         source="deterministic_structured",
+        source_amounts=source_amounts,
     )
 
 
@@ -344,7 +387,7 @@ def _coerce_agent_transaction(raw: Dict[str, Any]) -> AgentTransaction:
     )
 
 
-def _parse_agent_response(content: str, context: Dict[str, Any]) -> AgentDecision:
+def _parse_agent_response(content: str, context: Dict[str, Any], source_text: str) -> AgentDecision:
     raw = json.loads(content)
     transactions = [
         _coerce_agent_transaction(item)
@@ -365,6 +408,7 @@ def _parse_agent_response(content: str, context: Dict[str, Any]) -> AgentDecisio
         question=str(raw.get("question") or "").strip(),
         reasoning=str(raw.get("reasoning") or "").strip(),
         source="llm_agent",
+        source_amounts=_source_amounts(source_text),
         context_used={
             "known_projects_count": len(context.get("known_projects", [])),
             "sheet_context_available": bool(context.get("sheet_context_available")),
@@ -394,7 +438,7 @@ def plan_finance_message(
     try:
         response = llm_call(_agent_prompt(text, sender_name, context))
         content = response.choices[0].message.content.strip()
-        decision = _parse_agent_response(content, context)
+        decision = _parse_agent_response(content, context, text)
         if deterministic and deterministic.confidence > decision.confidence:
             return deterministic
         return decision

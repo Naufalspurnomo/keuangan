@@ -433,6 +433,30 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             )
             return should
 
+        def _looks_like_structured_finance_text(raw_text: str) -> bool:
+            lower = (raw_text or "").lower()
+            labels = [
+                r"\btanggal\s*:",
+                r"\btipe\s*:",
+                r"\bnominal\s*:",
+                r"\bketerangan\s*:",
+                r"\bcatatan\s*:",
+            ]
+            return sum(1 for pattern in labels if re.search(pattern, lower)) >= 2
+
+        def _should_preserve_extraction_text(original: str, candidate: str) -> bool:
+            original = original or ""
+            candidate = candidate or ""
+            if not candidate:
+                return True
+            if _looks_like_structured_finance_text(original):
+                return True
+            if has_amount_pattern(original) and not has_amount_pattern(candidate):
+                return True
+            if len(candidate) < max(40, int(len(original) * 0.6)) and has_amount_pattern(original):
+                return True
+            return False
+
         def _get_pending_confirmation_by_key(conf_key: str) -> Optional[dict]:
             """Resolve pending confirmation by exact key format: '<chat_id>:<user_id>'."""
             if not conf_key or ":" not in conf_key:
@@ -1542,6 +1566,7 @@ Balas 1 atau 2"""
         if explicit_catat:
             text = strip_explicit_catat_command(raw_text)
         text = sanitize_input(text or '')
+        extraction_text = text
         force_record = explicit_catat
 
         # ========== PRIORITY: COMMANDS FIRST (before layer processing) ==========
@@ -1671,6 +1696,7 @@ Balas 1 atau 2"""
                     combined_text = f"{last_message} {text}"
                     secure_log("INFO", f"Combined with last message: {combined_text}")
                     text = combined_text
+                    extraction_text = text
                     # Clear buffer after use
                     clear_user_last_message(sender_number, chat_jid)
 
@@ -1741,8 +1767,10 @@ Balas 1 atau 2"""
                     layer_category_scope = smart_result.get('category_scope', 'UNKNOWN')
                     if intent == "RECORD_TRANSACTION":
                          # In case smart_handler cleaned the text (e.g. from extracted data)
-                         if smart_result.get('normalized_text'):
-                             text = smart_result.get('normalized_text')
+                         normalized_text = smart_result.get('normalized_text')
+                         if normalized_text and not _should_preserve_extraction_text(text, normalized_text):
+                             text = normalized_text
+                             extraction_text = text
 
                 if action == "IGNORE": return jsonify({'status': 'ignored'}), 200
                 if action == "REPLY":
@@ -1780,6 +1808,7 @@ Balas 1 atau 2"""
                         # Force logic for Transfer/Saldo logic
                         if smart_result.get('layer_response'):
                              text = smart_result.get('layer_response')
+                             extraction_text = text
 
                         text_lower = (text or "").lower()
                         has_project_context = bool(re.search(r"\b(projek|project|proyek|prj)\b", text_lower))
@@ -2634,7 +2663,7 @@ Balas 1 atau 2"""
                 send_reply("🔍 Scan...")
 
             inp, media_list, caption = build_extraction_inputs(
-                text, input_type, media_url, local_media_path
+                extraction_text, input_type, media_url, local_media_path
             )
             transactions = safe_extract(inp, input_type, sender_name, media_list, caption)
             if transactions is None:
@@ -2693,7 +2722,7 @@ Balas 1 atau 2"""
                 'chat_jid': chat_jid,
                 'quoted_message_id': quoted_msg_id,
                 'requires_reply': is_group,
-                'original_text': text, # Important for Smart Router
+                'original_text': extraction_text, # Important for Smart Router
                 'normalized_text': text,
                 'input_type': input_type,
                 'caption': text if input_type == 'image' else None,
