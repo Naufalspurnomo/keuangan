@@ -165,6 +165,48 @@ class StateManagerSafetyTests(unittest.TestCase):
             state._project_registry.clear()
             state._project_registry.update(old_registry)
 
+    def test_recent_project_lock_uses_knowledge_without_sheet_lookup(self):
+        old_knowledge = {
+            "projects": dict(state._project_knowledge.get("projects", {})),
+            "aliases": dict(state._project_knowledge.get("aliases", {})),
+        }
+        old_registry = dict(state._project_registry)
+        try:
+            state._project_knowledge["projects"] = {}
+            state._project_knowledge["aliases"] = {}
+            state._project_registry.clear()
+            with patch.object(state, "_save_state", lambda: None):
+                state.remember_project_knowledge(
+                    "HOJJA - Taman Beringas Selatan",
+                    "CV HB(101)",
+                    company="HOJJA",
+                    aliases=["beringas"],
+                )
+
+            with patch("sheets_helper.find_company_for_project_exact") as exact_lookup:
+                locked = state.get_project_lock("HOJJA - Taman Beringas Selatan")
+
+            self.assertEqual(locked, "CV HB(101)")
+            exact_lookup.assert_not_called()
+        finally:
+            state._project_knowledge["projects"] = old_knowledge["projects"]
+            state._project_knowledge["aliases"] = old_knowledge["aliases"]
+            state._project_registry.clear()
+            state._project_registry.update(old_registry)
+
+    def test_set_project_lock_skips_save_when_unchanged(self):
+        old_registry = dict(state._project_registry)
+        try:
+            state._project_registry.clear()
+            state._project_registry["holla - workshop"] = "CV HB(101)"
+            with patch.object(state, "_save_state") as save_state:
+                state.set_project_lock("Holla - Workshop", "CV HB(101)")
+
+            save_state.assert_not_called()
+        finally:
+            state._project_registry.clear()
+            state._project_registry.update(old_registry)
+
     def test_cloud_save_scheduler_drains_payload(self):
         calls = []
         done = threading.Event()

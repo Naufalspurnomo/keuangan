@@ -27,6 +27,7 @@ from services.state_store import external_state_required, get_configured_state_s
 PENDING_TTL_SECONDS = Timeouts.PENDING_TRANSACTION
 DEDUP_TTL_SECONDS = Timeouts.DEDUP_WINDOW
 MAX_BOT_REFS = Timeouts.BOT_REFS_MAX
+PROJECT_LOCK_TRUST_SECONDS = int(os.getenv("PROJECT_LOCK_TRUST_SECONDS", "21600"))
 
 # Visual Buffer TTL (2 minutes - photos expire quickly)
 VISUAL_BUFFER_TTL_SECONDS = 120
@@ -1336,6 +1337,8 @@ def resolve_project_knowledge(query: str, dompet_sheet: str = None, company: str
             "final_name": entry.get("name"),
             "dompet": entry.get("dompet"),
             "company": entry.get("company"),
+            "project_status": entry.get("status"),
+            "updated_at": entry.get("updated_at"),
             "confidence": 1.0,
             "source": "project_knowledge",
             "match_count": 1,
@@ -1375,6 +1378,8 @@ def resolve_project_knowledge(query: str, dompet_sheet: str = None, company: str
             "final_name": entry.get("name"),
             "dompet": entry.get("dompet"),
             "company": entry.get("company"),
+            "project_status": entry.get("status"),
+            "updated_at": entry.get("updated_at"),
             "confidence": 0.9,
             "source": "project_knowledge",
             "match_count": 1,
@@ -1392,6 +1397,19 @@ def resolve_project_knowledge(query: str, dompet_sheet: str = None, company: str
     return None
 
 
+def _is_recent_project_knowledge(result: dict) -> bool:
+    if not result:
+        return False
+    updated_at = result.get("updated_at")
+    if not updated_at:
+        return False
+    try:
+        updated = datetime.fromisoformat(str(updated_at))
+    except (TypeError, ValueError):
+        return False
+    return (datetime.now() - updated).total_seconds() <= PROJECT_LOCK_TRUST_SECONDS
+
+
 def get_project_lock(project_name: str) -> Optional[str]:
     """Get locked dompet for a project.
 
@@ -1406,6 +1424,10 @@ def get_project_lock(project_name: str) -> Optional[str]:
     with _registry_lock:
         locked_dompet = _project_registry.get(key)
     if locked_dompet:
+        knowledge = resolve_project_knowledge(project_name, dompet_sheet=locked_dompet)
+        if knowledge and knowledge.get("dompet") == locked_dompet and _is_recent_project_knowledge(knowledge):
+            return locked_dompet
+
         # Validate persisted lock against current spreadsheet state to avoid
         # stale/misassigned dompet forcing future transactions.
         try:
@@ -1476,6 +1498,8 @@ def set_project_lock(project_name: str, dompet_sheet: str, actor: str = None,
         return
     with _registry_lock:
         prev = _project_registry.get(key)
+        if prev == dompet_sheet:
+            return
         _project_registry[key] = dompet_sheet
     _save_state()
     
