@@ -116,7 +116,8 @@ except ImportError:
 from utils.parsers import (
     parse_selection, parse_revision_amount,
     should_respond_in_group, is_command_match,
-    is_prefix_match, GROUP_TRIGGERS, PENDING_TTL_SECONDS,
+    is_prefix_match, is_explicit_catat_command,
+    strip_explicit_catat_command, GROUP_TRIGGERS, PENDING_TTL_SECONDS,
 )
 from utils.groq_analyzer import is_saldo_update
 from utils.formatters import (
@@ -297,7 +298,7 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             if not msg:
                 return False
             t = msg.strip().lower()
-            if t.startswith('/catat') or t.startswith('+catat') or t.startswith('+bot'):
+            if is_explicit_catat_command(t) or t.startswith('+bot'):
                 return True
             if re.match(r'^catat\b', t):
                 return True
@@ -1511,7 +1512,7 @@ Balas 1 atau 2"""
         # Group noise gate (pre-AI): avoid processing random media/chatter
         # If user recently sent an image, allow follow-up text to bind.
         raw_text = text or ""
-        explicit_catat = bool(re.match(r'^\s*\+?catat\b', raw_text, re.IGNORECASE))
+        explicit_catat = is_explicit_catat_command(raw_text)
         quoted_visual_item = None
         if is_group and quoted_msg_id:
             quoted_visual_item = get_visual_buffer_by_message(chat_jid, quoted_msg_id)
@@ -1539,7 +1540,7 @@ Balas 1 atau 2"""
 
         # 4. Filter AI Trigger
         if explicit_catat:
-            text = re.sub(r'^\s*\+?catat\b', '', raw_text, flags=re.IGNORECASE).strip()
+            text = strip_explicit_catat_command(raw_text)
         text = sanitize_input(text or '')
         force_record = explicit_catat
 
@@ -1694,8 +1695,6 @@ Balas 1 atau 2"""
                             quoted_message_text=quoted_message_text,
                             has_visual=has_visual
                         )
-                        if smart_result.get('normalized_text'):
-                            text = smart_result.get('normalized_text')
                         smart_scope = smart_result.get('category_scope')
                         if smart_scope in [None, '', 'UNKNOWN']:
                             smart_scope = None

@@ -38,6 +38,17 @@ QUERY_FINANCE_HINTS = [
 
 # Use centralized timeouts
 PENDING_TTL_SECONDS = Timeouts.PENDING_TRANSACTION
+EXPLICIT_CATAT_RE = re.compile(r"^\s*(?:/|\+)?catat\b", re.IGNORECASE)
+
+
+def is_explicit_catat_command(message: str) -> bool:
+    """Return True for /catat, +catat, or bare catat at the start."""
+    return bool(EXPLICIT_CATAT_RE.match(message or ""))
+
+
+def strip_explicit_catat_command(message: str) -> str:
+    """Strip the leading explicit catat command if present."""
+    return EXPLICIT_CATAT_RE.sub("", message or "", count=1).strip()
 
 
 def pending_key(sender_number: str, chat_jid: str) -> str:

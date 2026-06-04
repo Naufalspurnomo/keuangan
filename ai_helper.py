@@ -41,9 +41,16 @@ from security import (
     MAX_TRANSACTIONS_PER_MESSAGE,
 )
 from utils.parsers import parse_revision_amount, extract_project_name_from_text
-from utils.amounts import has_amount_pattern
+from utils.amounts import has_amount_pattern, parse_money_token
 from config.constants import KNOWN_COMPANY_NAMES, PROJECT_STOPWORDS
 from config.wallets import resolve_dompet_from_text
+from services.finance_agent import (
+    FINANCE_AGENT_MODEL,
+    finance_agent_accepts,
+    finance_agent_enabled,
+    finance_agent_mode,
+    plan_finance_message,
+)
 
 # OCR sanity limit (default 10B IDR) to avoid parsing long IDs as amounts
 OCR_MAX_AMOUNT = int(os.getenv('OCR_MAX_AMOUNT', '10000000000'))
@@ -612,73 +619,7 @@ def _parse_money_token(token: str) -> int:
     - 1.551.000,00 -> 1551000
     - 10.984.668   -> 10984668
     """
-    if not token:
-        return 0
-    t = token.strip()
-    # OCR confusion normalizer: common glyph swaps in numeric fields.
-    # Example: "1.O8O.OOO,OO" -> "1.080.000,00"
-    t = (
-        t.replace("O", "0")
-         .replace("o", "0")
-         .replace("I", "1")
-         .replace("l", "1")
-         .replace("|", "1")
-    )
-    t = re.sub(r"[^\d.,\s]", "", t)
-    if not t:
-        return 0
-    t = re.sub(r"\s+", ".", t)
-    if not re.search(r"\d", t):
-        return 0
-
-    has_dot = "." in t
-    has_comma = "," in t
-
-    def _strip_seps(val: str) -> str:
-        return val.replace(".", "").replace(",", "")
-
-    if has_dot and has_comma:
-        last_sep = re.search(r"([.,])(\d+)$", t)
-        if last_sep:
-            digits_after = len(last_sep.group(2))
-            head = t[:last_sep.start(1)]
-            if digits_after <= 2 and re.match(r"^\d{1,3}([.,]\d{3})+$", head):
-                t = _strip_seps(head)
-                try:
-                    return int(t)
-                except ValueError:
-                    return 0
-        t = _strip_seps(t)
-        try:
-            return int(t)
-        except ValueError:
-            return 0
-
-    if has_dot or has_comma:
-        sep = "." if has_dot else ","
-        sep_re = re.escape(sep)
-        if re.match(rf"^\d{{1,3}}(?:{sep_re}\d{{3}})+$", t):
-            t = t.replace(sep, "")
-            try:
-                return int(t)
-            except ValueError:
-                return 0
-        m = re.match(rf"^(\d+){sep_re}(\d{{2}})$", t)
-        if m:
-            try:
-                return int(m.group(1))
-            except ValueError:
-                return 0
-        t = t.replace(sep, "")
-        try:
-            return int(t)
-        except ValueError:
-            return 0
-
-    try:
-        return int(t)
-    except ValueError:
-        return 0
+    return parse_money_token(token)
 
 
 _MONEY_TOKEN_RE = re.compile(
@@ -1995,6 +1936,24 @@ def split_ocr_user_text(original_text: str) -> tuple:
     return original_text, ""
 
 
+_TEXT_LABELED_AMOUNT_RE = re.compile(
+    r"(?:nominal|jumlah|amount|total(?:\s+(?:transfer|pembayaran|bayar))?|debit|kredit)"
+    r"\s*[:\-]?\s*(?:rp\.?|idr)?\s*(?P<amount>[0-9][0-9\.,\s]*[0-9]|[0-9])",
+    re.IGNORECASE,
+)
+
+
+def _extract_labeled_amount_from_text(text: str) -> int:
+    """Extract an explicit labeled amount such as 'Nominal: 480,000.00'."""
+    if not text:
+        return 0
+    for match in _TEXT_LABELED_AMOUNT_RE.finditer(text):
+        amount = parse_money_token(match.group("amount"))
+        if amount >= 100:
+            return amount
+    return 0
+
+
 def extract_from_text(text: str, sender_name: str) -> List[Dict]:
     try:
         clean_text = sanitize_input(text)
@@ -2014,38 +1973,78 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
 
         secure_log("INFO", f"Extracting from text: {len(clean_text)} chars")
 
-        wrapped_input = get_safe_ai_prompt_wrapper(clean_text)
-        system_prompt = get_extraction_prompt(sender_name)
+        transactions = None
 
-        response = call_groq_api(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": wrapped_input}
-            ],
-            temperature=0.0,
-            max_tokens=1024,
-            response_format={"type": "json_object"}
-        )
+        if finance_agent_enabled():
+            def _finance_agent_llm_call(messages):
+                return call_groq_api(
+                    model=FINANCE_AGENT_MODEL,
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=900,
+                    response_format={"type": "json_object"}
+                )
 
-        response_text = response.choices[0].message.content.strip()
+            agent_decision = plan_finance_message(
+                clean_text,
+                sender_name,
+                llm_call=_finance_agent_llm_call,
+            )
+            if agent_decision.accepted() and finance_agent_accepts():
+                transactions = [
+                    tx.to_legacy_dict()
+                    for tx in agent_decision.transactions
+                ]
+                secure_log(
+                    "INFO",
+                    f"FinanceAgent accepted source={agent_decision.source} "
+                    f"mode={finance_agent_mode()} "
+                    f"confidence={agent_decision.confidence:.2f} "
+                    f"tx_count={len(transactions)} "
+                    f"missing={','.join(agent_decision.missing_fields) or '-'}"
+                )
+            else:
+                secure_log(
+                    "INFO",
+                    f"FinanceAgent fallback action={agent_decision.action} "
+                    f"mode={finance_agent_mode()} "
+                    f"confidence={agent_decision.confidence:.2f} "
+                    f"reason={agent_decision.reasoning[:120]}"
+                )
 
-        try:
-            result_json = json.loads(response_text)
-        except json.JSONDecodeError:
-            if response_text.startswith("```"):
-                lines = response_text.split("\n")
-                response_text = "\n".join(lines[1:-1])
-            result_json = json.loads(response_text)
+        if transactions is None:
+            wrapped_input = get_safe_ai_prompt_wrapper(clean_text)
+            system_prompt = get_extraction_prompt(sender_name)
 
-        if isinstance(result_json, dict):
-            transactions = result_json.get("transactions", [])
-            if not transactions and result_json:
-                transactions = [result_json]
-        elif isinstance(result_json, list):
-            transactions = result_json
-        else:
-            transactions = []
+            response = call_groq_api(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": wrapped_input}
+                ],
+                temperature=0.0,
+                max_tokens=1024,
+                response_format={"type": "json_object"}
+            )
+
+            response_text = response.choices[0].message.content.strip()
+
+            try:
+                result_json = json.loads(response_text)
+            except json.JSONDecodeError:
+                if response_text.startswith("```"):
+                    lines = response_text.split("\n")
+                    response_text = "\n".join(lines[1:-1])
+                result_json = json.loads(response_text)
+
+            if isinstance(result_json, dict):
+                transactions = result_json.get("transactions", [])
+                if not transactions and result_json:
+                    transactions = [result_json]
+            elif isinstance(result_json, list):
+                transactions = result_json
+            else:
+                transactions = []
 
         if not isinstance(transactions, list):
             transactions = [transactions]
@@ -2077,6 +2076,7 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
         if not regex_wallet and not ocr_body:
             regex_wallet = detect_wallet_from_text(clean_text)
         explicit_project_hint = _extract_explicit_project_hint(clean_text)
+        labeled_amount_fallback = _extract_labeled_amount_from_text(clean_text)
         text_without_amount_signal = (
             not wallet_update
             and not ocr_body
@@ -2084,6 +2084,14 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
         )
 
         for t in transactions:
+            if labeled_amount_fallback and parse_money_token(str(t.get("jumlah", 0) or 0)) < 100:
+                t = dict(t)
+                t["jumlah"] = labeled_amount_fallback
+                secure_log(
+                    "INFO",
+                    f"Amount restored from labeled text: {labeled_amount_fallback}",
+                )
+
             is_valid, error, sanitized = validate_transaction_data(t)
             if not is_valid:
                 secure_log("WARNING", f"Invalid transaction skipped: {error}")

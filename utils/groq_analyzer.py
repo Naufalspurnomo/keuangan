@@ -40,23 +40,42 @@ COMMAND_TO_HUMAN = [
     'beliin', 'bayarin', 'transferin', 'ambilin', 'kirim ke'
 ]
 
+NON_INTENT_METADATA_LINE_RE = re.compile(
+    r"^\s*(?:kategori\s+sementara|kategori|status)\s*:\s*perlu\s+review\s*$",
+    re.IGNORECASE,
+)
+
+
+def _strip_non_intent_metadata(text: str) -> str:
+    """Remove structured metadata lines that should not drive intent detection."""
+    return "\n".join(
+        line for line in (text or "").splitlines()
+        if not NON_INTENT_METADATA_LINE_RE.match(line)
+    )
+
+
+def _contains_indicator(text: str, indicators: list) -> bool:
+    text_lower = (text or "").lower()
+    for indicator in indicators:
+        escaped = re.escape(indicator.lower()).replace(r"\ ", r"\s+")
+        if re.search(rf"(?<!\w){escaped}(?!\w)", text_lower):
+            return True
+    return False
+
 
 def is_likely_past_tense(text: str) -> bool:
     """Check if text describes past event (already happened)."""
-    text_lower = text.lower()
-    return any(ind in text_lower for ind in PAST_TENSE_INDICATORS)
+    return _contains_indicator(text, PAST_TENSE_INDICATORS)
 
 
 def is_likely_future_plan(text: str) -> bool:
     """Check if text describes future plan (not actual transaction)."""
-    text_lower = text.lower()
-    return any(ind in text_lower for ind in FUTURE_PLAN_INDICATORS)
+    return _contains_indicator(_strip_non_intent_metadata(text), FUTURE_PLAN_INDICATORS)
 
 
 def is_command_to_human(text: str) -> bool:
     """Check if text is commanding another human (not reporting to bot)."""
-    text_lower = text.lower()
-    return any(ind in text_lower for ind in COMMAND_TO_HUMAN)
+    return _contains_indicator(text, COMMAND_TO_HUMAN)
 
 
 

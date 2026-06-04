@@ -509,7 +509,9 @@ def validate_transaction_data(transaction: Dict) -> Tuple[bool, Optional[str], D
     # jumlah
     jumlah = transaction.get("jumlah", 0)
     try:
-        jumlah = abs(int(float(str(jumlah).replace(".", "").replace(",", ""))))
+        from utils.amounts import parse_money_token
+
+        jumlah = abs(parse_money_token(str(jumlah)))
         if jumlah > 999999999999:
             jumlah = 999999999999
         # Reject transactions with trivially small amounts (< Rp 100)
