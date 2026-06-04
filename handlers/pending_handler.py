@@ -17,7 +17,7 @@ from utils.lifecycle import apply_lifecycle_markers, select_start_marker_indexes
 from utils.parsers import parse_revision_amount
 from utils.amounts import has_amount_pattern
 from services.project_service import add_new_project_to_cache, resolve_project_name
-from services.state_manager import set_project_lock
+from services.state_manager import set_project_lock, remember_project_knowledge
 from config.constants import PROJECT_STOPWORDS, KNOWN_COMPANY_NAMES
 from config.constants import FAST_MODE
 from sheets_helper import (
@@ -506,6 +506,14 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
         pname = t.get('nama_projek')
         if pname and pname.lower() not in ['saldo umum', 'operasional kantor', 'umum', 'unknown']:
             set_project_lock(pname, dompet_sheet, actor=sender_name, reason="commit")
+            remember_project_knowledge(
+                project_name=pname,
+                dompet_sheet=dompet_sheet,
+                company=company,
+                actor=sender_name,
+                source=source,
+                status='finished' if '(finish)' in pname.lower() else 'active',
+            )
 
     return {'response': response, 'completed': True, 'bot_ref_event_id': event_id}
 
@@ -808,7 +816,11 @@ Atau ketik /cancel untuk batal total"""
                 if project_name:
                     prefix = extract_company_prefix(project_name)
                     lookup_name = strip_company_prefix(project_name) if prefix else project_name
-                    res = resolve_project_name(lookup_name)
+                    res = resolve_project_name(
+                        lookup_name,
+                        dompet_sheet=inline_dompet,
+                        company=company,
+                    )
 
                     if res.get('status') == 'AMBIGUOUS' and int(res.get('match_count', 2) or 2) != 1:
                         suggested = res.get('final_name')
@@ -1157,7 +1169,11 @@ Atau ketik /cancel untuk batal total"""
 
         prefix = extract_company_prefix(project_name)
         lookup_name = strip_company_prefix(project_name) if prefix else project_name
-        res = resolve_project_name(lookup_name)
+        res = resolve_project_name(
+            lookup_name,
+            dompet_sheet=dompet_sheet,
+            company=company,
+        )
 
         if res.get('status') == 'AMBIGUOUS' and int(res.get('match_count', 2) or 2) != 1:
             suggested = res.get('final_name')
@@ -1240,7 +1256,11 @@ Atau ketik /cancel untuk batal total"""
 
         prefix = extract_company_prefix(project_name)
         lookup_name = strip_company_prefix(project_name) if prefix else project_name
-        res = resolve_project_name(lookup_name)
+        res = resolve_project_name(
+            lookup_name,
+            dompet_sheet=dompet_sheet,
+            company=company,
+        )
 
         # If ambiguous, ask confirmation
         if res.get('status') == 'AMBIGUOUS' and int(res.get('match_count', 2) or 2) != 1:
@@ -1509,7 +1529,11 @@ Atau ketik /cancel untuk batal total"""
 
         prefix = extract_company_prefix(new_name)
         lookup_name = strip_company_prefix(new_name) if prefix else new_name
-        res = resolve_project_name(lookup_name)
+        res = resolve_project_name(
+            lookup_name,
+            dompet_sheet=dompet_sheet,
+            company=company,
+        )
 
         if res.get('status') == 'AMBIGUOUS' and int(res.get('match_count', 2) or 2) != 1:
             suggested = res.get('final_name')
@@ -1936,6 +1960,13 @@ Atau ketik /cancel untuk batal total"""
                 pname = transactions[0].get('nama_projek')
                 if pname:
                     set_project_lock(pname, dompet_input, actor=sender_name, reason="user_move", previous_dompet=dompet_locked)
+                    remember_project_knowledge(
+                        project_name=pname,
+                        dompet_sheet=dompet_input,
+                        company=company_input,
+                        actor=sender_name,
+                        source=pending_data.get('source', 'WhatsApp'),
+                    )
             debt_use = None if debt_source == dompet_input else debt_source
             set_pending_confirmation(
                 user_id=user_id,

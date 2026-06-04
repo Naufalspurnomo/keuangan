@@ -86,7 +86,7 @@ from services.state_manager import (
     get_pending_confirmation, set_pending_confirmation,
     has_pending_confirmation,
     store_user_message, get_user_last_message, clear_user_last_message,
-    get_project_lock, set_project_lock
+    get_project_lock, set_project_lock, remember_project_knowledge
 )
 
 # Layer Integration - Superseded by SmartHandler
@@ -826,6 +826,16 @@ Balas 1 atau 2"""
             # --- VALIDATION: CHECK PROJECT EXISTENCE ---
             # Checks if project exists in Spreadsheet/Cache before proceeding
             if not pending.get('project_validated'):
+                validation_user_part, _validation_ocr_part = split_ocr_user_text(original_text)
+                validation_text_scope = validation_user_part or original_text
+                validation_dompet_scope = resolve_dompet_from_text(validation_text_scope)
+                validation_company_scope = resolve_company_from_text(
+                    validation_text_scope,
+                    validation_dompet_scope,
+                )
+                if not validation_dompet_scope and validation_company_scope and validation_company_scope != "UMUM":
+                    validation_dompet_scope = get_dompet_for_company(validation_company_scope)
+
                 for t in txs:
                     p_name_raw = t.get('nama_projek')
                     # Skip validation for "Saldo Umum", empty, or "Umum"
@@ -834,14 +844,22 @@ Balas 1 atau 2"""
 
                     # Resolve Name
                     lookup_name = strip_company_prefix(p_name_raw)
-                    res = resolve_project_name(lookup_name)
+                    res = resolve_project_name(
+                        lookup_name,
+                        dompet_sheet=validation_dompet_scope,
+                        company=validation_company_scope,
+                    )
                     if res['status'] == 'AMBIGUOUS':
                         # Safety: never auto-pick ambiguous project names unless the user
                         # explicitly gave a trusted prefix (HOLLA/HOJJA) that resolves exactly.
                         raw_prefix = extract_company_prefix(p_name_raw or "")
                         if FAST_MODE and raw_prefix:
                             prefixed_candidate = f"{raw_prefix} - {lookup_name}"
-                            prefixed_res = resolve_project_name(prefixed_candidate)
+                            prefixed_res = resolve_project_name(
+                                prefixed_candidate,
+                                dompet_sheet=validation_dompet_scope,
+                                company=raw_prefix,
+                            )
                             if prefixed_res.get('status') in ['EXACT', 'AUTO_FIX']:
                                 t['nama_projek'] = prefixed_res.get('final_name') or prefixed_candidate
                                 pending['project_confirmed'] = True
@@ -991,6 +1009,18 @@ Balas 1 atau 2"""
                             detected_company = scoped_company
                         elif dompet != "CV HB(101)":
                             detected_company = get_company_name_from_sheet(dompet)
+
+            if dompet and not detected_company and pending.get('project_confirmed'):
+                valid_companies = set(DOMPET_COMPANIES.get(dompet, []))
+                for t in txs:
+                    project_company = extract_company_prefix(t.get('nama_projek') or "")
+                    if project_company and project_company in valid_companies:
+                        detected_company = project_company
+                        secure_log(
+                            "INFO",
+                            f"Resolved company from canonical project prefix '{project_company}' for {dompet}"
+                        )
+                        break
 
             # --- AUTO-RESOLVE COMPANY FROM PROJECT HISTORY (NEW) ---
             # If we know the project, but not the company, try to find where it was last used
@@ -1210,6 +1240,14 @@ Balas 1 atau 2"""
                             )
                         if pname and pname.lower() not in ['saldo umum', 'operasional kantor', 'umum', 'unknown']:
                             set_project_lock(pname, dompet, actor=pending.get('sender_name', sender_name), reason='commit')
+                            remember_project_knowledge(
+                                project_name=pname,
+                                dompet_sheet=dompet,
+                                company=detected_company,
+                                actor=pending.get('sender_name', sender_name),
+                                source=pending.get('source', 'WhatsApp'),
+                                status='finished' if '(finish)' in pname.lower() else 'active',
+                            )
 
                     # If any saves failed, notify user and abort success flow
                     if failed_saves:
@@ -2290,7 +2328,12 @@ Balas 1 atau 2"""
                     if len(final_proj) < 3:
                         send_reply("⚠️ Nama terlalu pendek.")
                         return jsonify({'status': 'invalid'}), 200
-                    res_check = resolve_project_name(strip_company_prefix(final_proj))
+                    selected_scope = pending.get('selected_option') or {}
+                    res_check = resolve_project_name(
+                        strip_company_prefix(final_proj),
+                        dompet_sheet=selected_scope.get('dompet') or pending.get('override_dompet'),
+                        company=selected_scope.get('company'),
+                    )
                     if res_check.get('final_name'):
                         final_proj = res_check['final_name']
                     if res_check.get('status') == 'NEW':
@@ -2322,7 +2365,12 @@ Balas 1 atau 2"""
                     # Treat input as the CORRECT name (and implicitly NEW if not resolved previously)
                     final_proj = sanitize_input(text.strip())
                     # Check if actually exists now
-                    res_check = resolve_project_name(strip_company_prefix(final_proj))
+                    selected_scope = pending.get('selected_option') or {}
+                    res_check = resolve_project_name(
+                        strip_company_prefix(final_proj),
+                        dompet_sheet=selected_scope.get('dompet') or pending.get('override_dompet'),
+                        company=selected_scope.get('company'),
+                    )
                     if res_check['status'] == 'NEW':
                          pending['is_new_project'] = True
 
@@ -2335,7 +2383,12 @@ Balas 1 atau 2"""
             # C. Needs Project
             if ptype == 'needs_project':
                 proj = sanitize_input(text.strip())
-                res = resolve_project_name(strip_company_prefix(proj))
+                selected_scope = pending.get('selected_option') or {}
+                res = resolve_project_name(
+                    strip_company_prefix(proj),
+                    dompet_sheet=selected_scope.get('dompet') or pending.get('override_dompet'),
+                    company=selected_scope.get('company'),
+                )
 
                 if res['status'] == 'AMBIGUOUS':
                     unique_candidate = int(res.get('match_count', 2) or 2) == 1

@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional, Any, Tuple
 import json
 import os
+import re
 import shutil
 from sheets_helper import save_state_to_cloud, load_state_from_cloud
 from config.constants import Timeouts
@@ -409,6 +410,7 @@ def clear_pending_message_ref(bot_msg_id: str) -> None:
 # Format: {message_id: timestamp}
 _processed_messages: Dict[str, Any] = {}
 _project_registry: Dict[str, str] = {}  # project_name(lower) -> dompet_sheet
+_project_knowledge: Dict[str, Any] = {"projects": {}, "aliases": {}}
 _audit_log: list = []
 _last_state_save: Optional[datetime] = None
 
@@ -627,6 +629,7 @@ _STATE_SECTION_TYPES = {
     "pending_message_refs": dict,
     "processed_messages": dict,
     "project_registry": dict,
+    "project_knowledge": dict,
     "audit_log": list,
     "bot_interactions": dict,
     "visual_buffer": dict,
@@ -825,6 +828,7 @@ def _save_state():
 
             with _registry_lock:
                 project_registry_dump = dict(_project_registry)
+                project_knowledge_dump = copy.deepcopy(_project_knowledge)
                 audit_log_dump = list(_audit_log)
 
             with _confirmation_lock:
@@ -836,6 +840,7 @@ def _save_state():
                 "pending_message_refs": pending_message_refs_dump,
                 "processed_messages": processed_dump,
                 "project_registry": project_registry_dump,
+                "project_knowledge": project_knowledge_dump,
                 "audit_log": audit_log_dump,
                 "bot_interactions": {
                     k: {**v, 'timestamp': v['timestamp'].isoformat() if isinstance(v.get('timestamp'), datetime) else str(v.get('timestamp', ''))}
@@ -1029,6 +1034,15 @@ def _load_state():
                     with _registry_lock:
                         _project_registry.update(data["project_registry"])
 
+            if "project_knowledge" in data:
+                if isinstance(data["project_knowledge"], dict):
+                    projects = data["project_knowledge"].get("projects", {})
+                    aliases = data["project_knowledge"].get("aliases", {})
+                    if isinstance(projects, dict) and isinstance(aliases, dict):
+                        with _registry_lock:
+                            _project_knowledge["projects"].update(projects)
+                            _project_knowledge["aliases"].update(aliases)
+
             if "audit_log" in data:
                 if isinstance(data["audit_log"], list):
                     with _registry_lock:
@@ -1174,6 +1188,208 @@ def _normalize_project_key(name: str) -> str:
     clean = clean.replace("(Start)", "").replace("(Finish)", "")
     clean = clean.replace("(start)", "").replace("(finish)", "")
     return clean.strip().lower()
+
+
+def _normalize_project_alias(name: str) -> str:
+    if not name:
+        return ""
+    try:
+        from config.wallets import strip_company_prefix
+        name = strip_company_prefix(str(name))
+    except Exception:
+        name = str(name)
+    clean = _normalize_project_key(name)
+    clean = re.sub(r"\b(?:projek|project|proyek|prj)\b", " ", clean)
+    clean = re.sub(r"[^a-z0-9]+", " ", clean)
+    return re.sub(r"\s+", " ", clean).strip()
+
+
+def _project_aliases_for_name(project_name: str) -> list:
+    try:
+        from config.wallets import strip_company_prefix
+        base_name = strip_company_prefix(project_name)
+    except Exception:
+        base_name = project_name or ""
+
+    aliases = []
+    for raw in (project_name, base_name):
+        alias = _normalize_project_alias(raw)
+        if alias and alias not in aliases:
+            aliases.append(alias)
+
+    words = _normalize_project_alias(base_name).split()
+    if len(words) >= 2:
+        tail = " ".join(words[-2:])
+        if tail and tail not in aliases:
+            aliases.append(tail)
+    if len(words) >= 3:
+        acronym = "".join(w[0] for w in words if w)
+        if len(acronym) >= 3 and acronym not in aliases:
+            aliases.append(acronym)
+
+    for token in re.findall(r"[A-Za-z0-9]+", str(base_name or "")):
+        if len(token) >= 3 and token.upper() == token and token.lower() not in aliases:
+            aliases.append(token.lower())
+
+    return aliases[:12]
+
+
+def _knowledge_entry_in_scope(entry: dict, dompet_sheet: str = None, company: str = None) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    if dompet_sheet and entry.get("dompet") != dompet_sheet:
+        return False
+    if company and str(entry.get("company") or "").upper() != str(company).upper():
+        return False
+    return True
+
+
+def remember_project_knowledge(
+    project_name: str,
+    dompet_sheet: str,
+    company: str = None,
+    aliases: list = None,
+    actor: str = None,
+    source: str = None,
+    status: str = None,
+) -> None:
+    """Persist lightweight project knowledge for fast future routing."""
+    key = _normalize_project_key(project_name)
+    if not key or not dompet_sheet:
+        return
+
+    try:
+        from config.wallets import extract_company_prefix, strip_company_prefix
+        base_name = strip_company_prefix(project_name)
+        company = company or extract_company_prefix(project_name)
+    except Exception:
+        base_name = project_name
+
+    alias_values = _project_aliases_for_name(project_name)
+    for alias in aliases or []:
+        normalized = _normalize_project_alias(alias)
+        if normalized and normalized not in alias_values:
+            alias_values.append(normalized)
+
+    now_text = datetime.now().isoformat()
+    with _registry_lock:
+        entry = dict(_project_knowledge.get("projects", {}).get(key) or {})
+        entry.update({
+            "name": project_name,
+            "base_name": base_name,
+            "dompet": dompet_sheet,
+            "company": company,
+            "status": status or entry.get("status") or "active",
+            "updated_at": now_text,
+            "last_actor": actor,
+            "last_source": source,
+        })
+        entry.setdefault("created_at", now_text)
+        existing_aliases = list(entry.get("aliases") or [])
+        for alias in alias_values:
+            if alias and alias not in existing_aliases:
+                existing_aliases.append(alias)
+        entry["aliases"] = existing_aliases[:20]
+
+        _project_knowledge.setdefault("projects", {})[key] = entry
+        _project_registry[key] = dompet_sheet
+        base_key = _normalize_project_key(base_name)
+        if base_key:
+            _project_registry[base_key] = dompet_sheet
+
+        alias_map = _project_knowledge.setdefault("aliases", {})
+        for alias in entry["aliases"]:
+            keys = alias_map.get(alias) or []
+            if isinstance(keys, str):
+                keys = [keys]
+            if key not in keys:
+                keys.append(key)
+            alias_map[alias] = keys[:10]
+
+    _save_state()
+
+
+def resolve_project_knowledge(query: str, dompet_sheet: str = None, company: str = None) -> Optional[dict]:
+    """Resolve a project from persisted bot knowledge before reading Sheets."""
+    alias = _normalize_project_alias(query)
+    if not alias or len(alias) < 3:
+        return None
+
+    with _registry_lock:
+        projects = copy.deepcopy(_project_knowledge.get("projects", {}))
+        alias_map = copy.deepcopy(_project_knowledge.get("aliases", {}))
+
+    def _entry_for_key(project_key: str) -> Optional[dict]:
+        entry = projects.get(project_key)
+        if entry and _knowledge_entry_in_scope(entry, dompet_sheet, company):
+            return entry
+        return None
+
+    exact_keys = alias_map.get(alias) or []
+    if isinstance(exact_keys, str):
+        exact_keys = [exact_keys]
+    exact_matches = [entry for key in exact_keys if (entry := _entry_for_key(key))]
+    if len(exact_matches) == 1:
+        entry = exact_matches[0]
+        return {
+            "status": "EXACT",
+            "final_name": entry.get("name"),
+            "dompet": entry.get("dompet"),
+            "company": entry.get("company"),
+            "confidence": 1.0,
+            "source": "project_knowledge",
+            "match_count": 1,
+        }
+    if len(exact_matches) > 1:
+        return {
+            "status": "AMBIGUOUS",
+            "final_name": exact_matches[0].get("name"),
+            "matches": [m.get("name") for m in exact_matches],
+            "confidence": 0.75,
+            "source": "project_knowledge",
+            "match_count": len(exact_matches),
+        }
+
+    fuzzy_matches = []
+    for entry in projects.values():
+        if not _knowledge_entry_in_scope(entry, dompet_sheet, company):
+            continue
+        candidates = set(entry.get("aliases") or [])
+        candidates.add(_normalize_project_alias(entry.get("name") or ""))
+        candidates.add(_normalize_project_alias(entry.get("base_name") or ""))
+        if any(alias in c or c in alias for c in candidates if c):
+            fuzzy_matches.append(entry)
+
+    unique = []
+    seen = set()
+    for entry in fuzzy_matches:
+        key = _normalize_project_key(entry.get("name") or "")
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(entry)
+
+    if len(unique) == 1:
+        entry = unique[0]
+        return {
+            "status": "AUTO_FIX",
+            "final_name": entry.get("name"),
+            "dompet": entry.get("dompet"),
+            "company": entry.get("company"),
+            "confidence": 0.9,
+            "source": "project_knowledge",
+            "match_count": 1,
+        }
+    if len(unique) > 1:
+        return {
+            "status": "AMBIGUOUS",
+            "final_name": unique[0].get("name"),
+            "matches": [m.get("name") for m in unique],
+            "confidence": 0.7,
+            "source": "project_knowledge",
+            "match_count": len(unique),
+        }
+
+    return None
 
 
 def get_project_lock(project_name: str) -> Optional[str]:

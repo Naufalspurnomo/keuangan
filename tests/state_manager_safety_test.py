@@ -97,6 +97,74 @@ class StateManagerSafetyTests(unittest.TestCase):
         self.assertIn("pending_transactions", loaded)
         self.assertNotIn("processed_messages", loaded)
 
+    def test_project_knowledge_resolves_alias_in_scope(self):
+        old_knowledge = {
+            "projects": dict(state._project_knowledge.get("projects", {})),
+            "aliases": dict(state._project_knowledge.get("aliases", {})),
+        }
+        old_registry = dict(state._project_registry)
+        try:
+            state._project_knowledge["projects"] = {}
+            state._project_knowledge["aliases"] = {}
+            state._project_registry.clear()
+            with patch.object(state, "_save_state", lambda: None):
+                state.remember_project_knowledge(
+                    "HOJJA - Taman Beringas Selatan",
+                    "CV HB(101)",
+                    company="HOJJA",
+                    aliases=["beringas"],
+                )
+
+            result = state.resolve_project_knowledge(
+                "beringas",
+                dompet_sheet="CV HB(101)",
+                company="HOJJA",
+            )
+
+            self.assertEqual(result["status"], "EXACT")
+            self.assertEqual(result["final_name"], "HOJJA - Taman Beringas Selatan")
+            self.assertEqual(result["dompet"], "CV HB(101)")
+            self.assertEqual(result["company"], "HOJJA")
+        finally:
+            state._project_knowledge["projects"] = old_knowledge["projects"]
+            state._project_knowledge["aliases"] = old_knowledge["aliases"]
+            state._project_registry.clear()
+            state._project_registry.update(old_registry)
+
+    def test_project_knowledge_keeps_duplicate_alias_ambiguous(self):
+        old_knowledge = {
+            "projects": dict(state._project_knowledge.get("projects", {})),
+            "aliases": dict(state._project_knowledge.get("aliases", {})),
+        }
+        old_registry = dict(state._project_registry)
+        try:
+            state._project_knowledge["projects"] = {}
+            state._project_knowledge["aliases"] = {}
+            state._project_registry.clear()
+            with patch.object(state, "_save_state", lambda: None):
+                state.remember_project_knowledge(
+                    "HOJJA - Taman Beringas Selatan",
+                    "CV HB(101)",
+                    company="HOJJA",
+                    aliases=["beringas"],
+                )
+                state.remember_project_knowledge(
+                    "HOLLA - Beringas Festival",
+                    "CV HB(101)",
+                    company="HOLLA",
+                    aliases=["beringas"],
+                )
+
+            result = state.resolve_project_knowledge("beringas", dompet_sheet="CV HB(101)")
+
+            self.assertEqual(result["status"], "AMBIGUOUS")
+            self.assertEqual(result["match_count"], 2)
+        finally:
+            state._project_knowledge["projects"] = old_knowledge["projects"]
+            state._project_knowledge["aliases"] = old_knowledge["aliases"]
+            state._project_registry.clear()
+            state._project_registry.update(old_registry)
+
     def test_cloud_save_scheduler_drains_payload(self):
         calls = []
         done = threading.Event()

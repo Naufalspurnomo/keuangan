@@ -2,16 +2,23 @@ import time
 import logging
 from difflib import SequenceMatcher
 from sheets_helper import get_sheet
-from config.constants import COL_NAMA_PROJEK, KNOWN_COMPANY_NAMES, OPERATIONAL_KEYWORDS
+from config.constants import KNOWN_COMPANY_NAMES, OPERATIONAL_KEYWORDS
+from services.state_manager import resolve_project_knowledge
 
 _project_cache = {
     'names': set(),
+    'records': [],
     'last_updated': 0,
     'ttl': 300
 }
 
-from config.wallets import DOMPET_SHEETS
-from config.constants import SPLIT_LAYOUT_DATA_START
+from config.wallets import (
+    DOMPET_SHEETS,
+    extract_company_prefix,
+    get_company_name_from_sheet,
+    strip_company_prefix,
+)
+from config.constants import SPLIT_LAYOUT_DATA_START, SPLIT_PEMASUKAN, SPLIT_PENGELUARAN
 import re
 
 
@@ -39,31 +46,40 @@ def get_existing_projects(force_refresh=False):
     if force_refresh or (now - _project_cache['last_updated'] > _project_cache['ttl']):
         try:
             all_projects = set()
+            project_records = []
+            seen_records = set()
             
             # Iterate all real sheets
             for sheet_name in DOMPET_SHEETS:
                 sh = get_sheet(sheet_name)
                 if not sh: continue
                 
-                # Get Column N (Project in Pengeluaran) - Index 14
-                # And maybe Column E (Project in Pemasukan) - Index 5
-                
-                # Optimization: Read all values and filter in memory
                 try:
-                    # Get values starting from Row 9
-                    # Assuming max 2000 rows to be safe/fast
-                    # We grab Col E and Col N
-                    # Col E = 5, Col N = 14
-                    
-                    # Reading Col N (Pengeluaran Project)
-                    col_n = sh.col_values(14)[SPLIT_LAYOUT_DATA_START-1:]
-                    for p in col_n:
-                        if p.strip(): all_projects.add(p.strip())
-                        
-                    # Reading Col E (Pemasukan Project)
-                    col_e = sh.col_values(5)[SPLIT_LAYOUT_DATA_START-1:]
-                    for p in col_e:
-                        if p.strip(): all_projects.add(p.strip())
+                    rows = sh.get(f"A{SPLIT_LAYOUT_DATA_START}:R") or []
+                    for row in rows:
+                        for col_idx in (SPLIT_PEMASUKAN['PROJECT'], SPLIT_PENGELUARAN['PROJECT']):
+                            raw_project = row[col_idx - 1] if len(row) >= col_idx else ""
+                            raw_project = str(raw_project or "").strip()
+                            if not raw_project:
+                                continue
+
+                            all_projects.add(raw_project)
+                            clean_project = _normalize_project_name(raw_project)
+                            if not clean_project:
+                                continue
+
+                            prefix = extract_company_prefix(clean_project)
+                            company = prefix or get_company_name_from_sheet(sheet_name)
+                            record_key = (clean_project.lower(), sheet_name, str(company or "").upper())
+                            if record_key in seen_records:
+                                continue
+                            seen_records.add(record_key)
+                            project_records.append({
+                                'name': clean_project,
+                                'base_name': strip_company_prefix(clean_project),
+                                'dompet': sheet_name,
+                                'company': company,
+                            })
 
                 except Exception as ex:
                     logging.warning(f"Error reading projects from {sheet_name}: {ex}")
@@ -84,6 +100,11 @@ def get_existing_projects(force_refresh=False):
             clean_projects = set(clean_projects_by_key.values())
             
             _project_cache['names'] = clean_projects
+            _project_cache['records'] = [
+                r for r in project_records
+                if len(r.get('base_name') or r.get('name') or '') > 2
+                and (r.get('base_name') or r.get('name') or '').lower() not in KNOWN_COMPANY_NAMES
+            ]
             _project_cache['last_updated'] = now
             logging.info(f"[ProjectService] Loaded {len(clean_projects)} projects from Sheets")
             
@@ -91,6 +112,17 @@ def get_existing_projects(force_refresh=False):
             logging.error(f"[ProjectService] Failed: {e}")
             
     return _project_cache['names']
+
+
+def get_existing_project_records(force_refresh=False, dompet_sheet=None, company=None):
+    get_existing_projects(force_refresh=force_refresh)
+    records = list(_project_cache.get('records') or [])
+    if dompet_sheet:
+        records = [r for r in records if r.get('dompet') == dompet_sheet]
+    if company:
+        company_key = str(company).strip().upper()
+        records = [r for r in records if str(r.get('company') or '').strip().upper() == company_key]
+    return records
 
 def add_new_project_to_cache(new_project_name):
     normalized = _normalize_project_name(new_project_name)
@@ -106,6 +138,12 @@ def add_new_project_to_cache(new_project_name):
             return
 
     _project_cache['names'].add(normalized)
+    _project_cache.setdefault('records', []).append({
+        'name': normalized,
+        'base_name': strip_company_prefix(normalized),
+        'dompet': None,
+        'company': extract_company_prefix(normalized),
+    })
 
 def calculate_similarity(a, b):
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
@@ -136,7 +174,7 @@ def is_operational_keyword(text: str) -> bool:
     return False
 
 
-def resolve_project_name(candidate):
+def resolve_project_name(candidate, dompet_sheet=None, company=None):
     """
     Logika Matching Strict & Professional.
     
@@ -157,8 +195,21 @@ def resolve_project_name(candidate):
             'original': candidate_clean,
             'detected_keyword': candidate_clean.lower()
         }
+
+    knowledge = resolve_project_knowledge(
+        candidate_clean,
+        dompet_sheet=dompet_sheet,
+        company=company,
+    )
+    if knowledge:
+        knowledge['original'] = candidate_clean
+        return knowledge
     
-    existing_projects = get_existing_projects()
+    scoped_records = get_existing_project_records(dompet_sheet=dompet_sheet, company=company)
+    if dompet_sheet or company:
+        existing_projects = [r.get('name') for r in scoped_records if r.get('name')]
+    else:
+        existing_projects = get_existing_projects()
     
     # Kalau nama kependekan (misal singkatan 2 huruf), anggap NEW saja biar aman
     if len(candidate_clean) < 3:
@@ -174,8 +225,13 @@ def resolve_project_name(candidate):
     AMBIGUOUS_THRESHOLD = 0.8  # Mirip banget atau Substring
     
     for existing in existing_projects:
+        existing_base = strip_company_prefix(existing)
+        existing_candidates = [existing]
+        if existing_base and existing_base.lower() != existing.lower():
+            existing_candidates.append(existing_base)
+
         # 1. EXACT MATCH (Case Insensitive)
-        if existing.lower() == candidate_clean.lower():
+        if any(e.lower() == candidate_clean.lower() for e in existing_candidates):
             return {
                 'status': 'EXACT',
                 'final_name': existing, 
@@ -184,7 +240,10 @@ def resolve_project_name(candidate):
             
         # 2. SUBSTRING MATCH (Kasus "Vadim Purana" vs "Purana")
         # Jika salah satu nama ada di dalam nama yang lain
-        if candidate_clean.lower() in existing.lower() or existing.lower() in candidate_clean.lower():
+        if any(
+            candidate_clean.lower() in e.lower() or e.lower() in candidate_clean.lower()
+            for e in existing_candidates
+        ):
             # Tandai ini kandidat kuat untuk konfirmasi
             is_substring_match = True
             best_match = existing
@@ -197,9 +256,10 @@ def resolve_project_name(candidate):
         
         # 3. TYPO CHECK (Sequence Matcher)
         # Hanya hitung skor jika panjang string mirip (biar Prn ga match ke Purana)
-        len_diff = abs(len(candidate_clean) - len(existing))
+        typo_target = existing_base or existing
+        len_diff = abs(len(candidate_clean) - len(typo_target))
         if len_diff <= 3: # Panjang cuma beda dikit (indikasi typo)
-            score = calculate_similarity(candidate_clean, existing)
+            score = calculate_similarity(candidate_clean, typo_target)
             if score >= AMBIGUOUS_THRESHOLD:
                 close_matches.add(existing)
             if score > highest_score:
@@ -209,6 +269,14 @@ def resolve_project_name(candidate):
     # --- DECISION LOGIC ---
     
     if highest_score >= AUTO_FIX_THRESHOLD:
+        return {
+            'status': 'AUTO_FIX',
+            'final_name': best_match,
+            'confidence': highest_score,
+            'match_count': 1,
+            'original': candidate_clean
+        }
+    elif is_substring_match and (dompet_sheet or company) and len(close_matches) == 1:
         return {
             'status': 'AUTO_FIX',
             'final_name': best_match,
