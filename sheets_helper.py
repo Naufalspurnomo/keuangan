@@ -62,6 +62,13 @@ def get_or_create_state_sheet():
     """
     Cari sheet _BOT_STATE. Jika tidak ada, buat baru dan HIDE.
     """
+    global _state_sheet_backoff_until
+    now_ts = time.time()
+    if now_ts < _state_sheet_backoff_until:
+        remaining = int(_state_sheet_backoff_until - now_ts)
+        secure_log("WARNING", f"Skipping state sheet access during Google Sheets quota backoff ({remaining}s left)")
+        return None
+
     try:
         sh = get_spreadsheet() # Fungsi ini sudah ada di helper Anda
         
@@ -77,6 +84,8 @@ def get_or_create_state_sheet():
             
         return worksheet
     except Exception as e:
+        if _is_google_rate_limit_error(e):
+            _state_sheet_backoff_until = time.time() + _STATE_SHEET_RATE_LIMIT_BACKOFF_SECONDS
         secure_log("ERROR", f"Failed to get state sheet: {type(e).__name__}: {e}")
         return None
 
@@ -349,6 +358,17 @@ import re  # For parsing [Sumber: X] tags
 # Global instances
 _client = None
 _spreadsheet = None
+_worksheet_cache = {}
+_project_exact_cache = {}
+_PROJECT_EXACT_CACHE_TTL_SECONDS = 300
+_PROJECT_EXACT_MISS_TTL_SECONDS = 60
+_state_sheet_backoff_until = 0
+_STATE_SHEET_RATE_LIMIT_BACKOFF_SECONDS = 75
+
+
+def _is_google_rate_limit_error(error: Exception) -> bool:
+    text = str(error).lower()
+    return "429" in text or "quota exceeded" in text or "resource_exhausted" in text
 
 def authenticate():
     """
@@ -408,9 +428,14 @@ def get_spreadsheet():
 
 def get_sheet(sheet_name: str):
     """Get a specific worksheet by name from the main spreadsheet."""
+    if sheet_name in _worksheet_cache:
+        return _worksheet_cache[sheet_name]
+
     spreadsheet = get_spreadsheet()
     try:
-        return spreadsheet.worksheet(sheet_name)
+        worksheet = spreadsheet.worksheet(sheet_name)
+        _worksheet_cache[sheet_name] = worksheet
+        return worksheet
     except gspread.WorksheetNotFound:
         secure_log("ERROR", f"Worksheet '{sheet_name}' not found.")
         return None
@@ -444,13 +469,19 @@ def get_dompet_sheet(dompet_name: str):
     spreadsheet = get_spreadsheet()
     
     try:
-        sheet = spreadsheet.worksheet(dompet_name)
+        if dompet_name in _worksheet_cache:
+            sheet = _worksheet_cache[dompet_name]
+        else:
+            sheet = spreadsheet.worksheet(dompet_name)
+            _worksheet_cache[dompet_name] = sheet
         secure_log("INFO", f"Using dompet sheet: {dompet_name}")
         return sheet
     except gspread.WorksheetNotFound:
         # Auto-create with Split Layout structure
         secure_log("INFO", f"Creating new dompet sheet: {dompet_name}")
-        return _create_dompet_sheet_with_split_layout(spreadsheet, dompet_name)
+        sheet = _create_dompet_sheet_with_split_layout(spreadsheet, dompet_name)
+        _worksheet_cache[dompet_name] = sheet
+        return sheet
 
 
 def _create_dompet_sheet_with_split_layout(spreadsheet, dompet_name: str):
@@ -897,6 +928,42 @@ def _ensure_rows_available(sheet, target_row: int, buffer: int = 100) -> None:
         secure_log("INFO", f"Auto-expanded sheet '{sheet.title}': added {rows_to_add} rows (was {current_row_count}, now {current_row_count + rows_to_add})")
 
 
+def _read_split_layout_rows(sheet) -> List[List[str]]:
+    """Read the split-layout data area once for append metadata."""
+    return sheet.get(f"A{SPLIT_LAYOUT_DATA_START}:R") or []
+
+
+def _split_col_value(rows: List[List[str]], row_idx: int, col_idx: int) -> str:
+    zero_based = col_idx - 1
+    if row_idx >= len(rows) or zero_based >= len(rows[row_idx]):
+        return ""
+    return str(rows[row_idx][zero_based] or "").strip()
+
+
+def _split_append_metadata(rows: List[List[str]], no_column: int, message_id_column: int) -> tuple:
+    next_row = SPLIT_LAYOUT_DATA_START
+    entry_count = 0
+    found_empty = False
+    existing_ids = set()
+
+    for row_idx in range(len(rows)):
+        no_value = _split_col_value(rows, row_idx, no_column)
+        if no_value:
+            entry_count += 1
+        elif not found_empty:
+            next_row = SPLIT_LAYOUT_DATA_START + row_idx
+            found_empty = True
+
+        message_id = _split_col_value(rows, row_idx, message_id_column)
+        if message_id:
+            existing_ids.add(message_id)
+
+    if not found_empty:
+        next_row = SPLIT_LAYOUT_DATA_START + len(rows)
+
+    return next_row, entry_count, existing_ids
+
+
 def _find_next_empty_row(sheet, check_column: int, start_row: int = 9) -> int:
     """Find the next empty row in a specific column.
     
@@ -969,30 +1036,24 @@ def append_project_transaction(
             no_col = cols['NO']
         
         message_id = (transaction.get('message_id', '') or '').strip()
+        layout_rows = _read_split_layout_rows(sheet)
+        next_row, entry_count, existing_ids = _split_append_metadata(
+            layout_rows,
+            no_col,
+            cols['MESSAGE_ID'],
+        )
 
         # Idempotency guard (multi-replica safe): skip duplicate message_id in the same block.
         if message_id:
-            try:
-                existing_ids = [
-                    str(v).strip()
-                    for v in sheet.col_values(cols['MESSAGE_ID'])[SPLIT_LAYOUT_DATA_START - 1:]
-                    if str(v).strip()
-                ]
-                if message_id in existing_ids:
-                    secure_log("INFO", f"Project TX duplicate ignored: {dompet_sheet} {tipe} message_id={message_id}")
-                    return {
-                        'success': True,
-                        'duplicate': True,
-                        'dompet': dompet_sheet,
-                        'tipe': tipe,
-                        'jumlah': abs(int(transaction.get('jumlah', 0) or 0)),
-                    }
-            except Exception as dedupe_err:
-                secure_log("WARNING", f"Project TX dedupe check failed: {type(dedupe_err).__name__}: {str(dedupe_err)}")
-
-        # Find next empty row and count for numbering
-        next_row = _find_next_empty_row(sheet, no_col, SPLIT_LAYOUT_DATA_START)
-        entry_count = _count_entries_in_block(sheet, no_col, SPLIT_LAYOUT_DATA_START)
+            if message_id in existing_ids:
+                secure_log("INFO", f"Project TX duplicate ignored: {dompet_sheet} {tipe} message_id={message_id}")
+                return {
+                    'success': True,
+                    'duplicate': True,
+                    'dompet': dompet_sheet,
+                    'tipe': tipe,
+                    'jumlah': abs(int(transaction.get('jumlah', 0) or 0)),
+                }
         
         # Build row data
         now = now_wib()
@@ -1024,6 +1085,7 @@ def append_project_transaction(
             cell_list.append(gspread.Cell(next_row, start_col + i, value))
         
         sheet.update_cells(cell_list, value_input_option='USER_ENTERED')
+        _remember_project_exact_match(project_name, dompet_sheet)
         
         secure_log("INFO", f"Project TX: {tipe} Rp{jumlah:,} -> {dompet_sheet} Row {next_row}")
         
@@ -2642,6 +2704,61 @@ def _normalize_project_lookup_name(project_name: str) -> str:
     return cleaned
 
 
+def _project_exact_cache_key(project_name: str) -> tuple:
+    try:
+        from config.wallets import extract_company_prefix
+        requested_prefix = extract_company_prefix(str(project_name or "")) or ""
+    except Exception:
+        requested_prefix = ""
+    return (_normalize_project_lookup_name(project_name), requested_prefix.upper())
+
+
+def _get_project_exact_cache(project_name: str) -> Optional[tuple]:
+    key = _project_exact_cache_key(project_name)
+    if not key[0]:
+        return None
+
+    cached = _project_exact_cache.get(key)
+    if not cached:
+        return None
+
+    result, cached_at, ttl = cached
+    if time.time() - cached_at > ttl:
+        _project_exact_cache.pop(key, None)
+        return None
+    return result
+
+
+def _set_project_exact_cache(project_name: str, result: tuple, ttl: int = _PROJECT_EXACT_CACHE_TTL_SECONDS) -> None:
+    key = _project_exact_cache_key(project_name)
+    if not key[0]:
+        return
+    _project_exact_cache[key] = (result, time.time(), ttl)
+
+
+def _remember_project_exact_match(project_name: str, dompet_name: str) -> None:
+    clean_target = _normalize_project_lookup_name(project_name)
+    if not clean_target or not dompet_name:
+        return
+
+    try:
+        from config.wallets import get_company_name_from_sheet, extract_company_prefix
+        raw_prefix = extract_company_prefix(project_name or "")
+        company_name = raw_prefix or get_company_name_from_sheet(dompet_name)
+    except Exception:
+        raw_prefix = ""
+        company_name = None
+
+    if company_name:
+        _project_exact_cache[(clean_target, str(company_name).upper())] = (
+            (dompet_name, company_name),
+            time.time(),
+            _PROJECT_EXACT_CACHE_TTL_SECONDS,
+        )
+    if not raw_prefix:
+        _project_exact_cache[(clean_target, "")] = ((dompet_name, company_name), time.time(), _PROJECT_EXACT_CACHE_TTL_SECONDS)
+
+
 def find_company_for_project_exact(project_name: str) -> tuple:
     """
     Exact project resolver across dompet sheets.
@@ -2656,6 +2773,10 @@ def find_company_for_project_exact(project_name: str) -> tuple:
         from config.constants import SPLIT_PEMASUKAN, SPLIT_PENGELUARAN
 
         requested_prefix = extract_company_prefix(str(project_name or ""))
+        cached = _get_project_exact_cache(project_name)
+        if cached is not None:
+            return cached
+
         matches = []
         seen = set()
 
@@ -2686,23 +2807,37 @@ def find_company_for_project_exact(project_name: str) -> tuple:
                     _append_match(dompet, p)
 
         if not matches:
+            _set_project_exact_cache(
+                project_name,
+                (None, None),
+                ttl=_PROJECT_EXACT_MISS_TTL_SECONDS,
+            )
             return None, None
 
         # If user typed explicit prefix, prioritize that exact company.
         if requested_prefix:
             pref_matches = [m for m in matches if str(m[1] or "").upper() == requested_prefix.upper()]
             if len(pref_matches) == 1:
+                _set_project_exact_cache(project_name, pref_matches[0])
                 return pref_matches[0]
+            _set_project_exact_cache(
+                project_name,
+                (None, None),
+                ttl=_PROJECT_EXACT_MISS_TTL_SECONDS,
+            )
             return None, None
 
         if len(matches) == 1:
+            _set_project_exact_cache(project_name, matches[0])
             return matches[0]
 
         dompet_candidates = {m[0] for m in matches}
         if len(dompet_candidates) == 1:
             # Same dompet but multiple company prefixes (e.g. HOLLA vs HOJJA).
             # Keep dompet hint but force downstream company confirmation.
-            return next(iter(dompet_candidates)), None
+            result = (next(iter(dompet_candidates)), None)
+            _set_project_exact_cache(project_name, result)
+            return result
 
     except Exception as e:
         secure_log("ERROR", f"find_company_for_project_exact error: {e}")

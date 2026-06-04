@@ -862,7 +862,10 @@ def _save_state():
             safe_data = _sanitize_keys(data)
             json_str = json.dumps(safe_data, default=str)
             _write_state_file_atomic(PERSISTENCE_FILE, json_str)
-            _save_state_to_external(data)
+            external_state_saved = _save_state_to_external(data)
+
+            if external_state_saved and os.getenv("ENABLE_GOOGLE_STATE_BACKUP", "").strip().lower() not in {"1", "true", "yes"}:
+                return
 
             # 3. BACKUP KE GOOGLE SHEETS (Asynchronous / Fire-and-Forget)
             # Pakai thread biar bot tidak lemot nungguin Google API
