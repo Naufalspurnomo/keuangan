@@ -70,6 +70,26 @@ class StateManagerSafetyTests(unittest.TestCase):
         self.assertIn("pending_transactions", external)
         self.assertNotIn("visual_buffer", external)
 
+    def test_external_state_payload_normalizes_nested_datetimes(self):
+        now = datetime.now()
+        payload = {
+            "pending_transactions": {
+                "p1": {
+                    "transactions": [],
+                    "created_at": now,
+                    "nested": {"timestamp": now},
+                }
+            },
+            "audit_log": [{"created_at": now}],
+        }
+
+        external = state._external_state_payload(payload)
+
+        self.assertEqual(external["pending_transactions"]["p1"]["created_at"], str(now))
+        self.assertEqual(external["pending_transactions"]["p1"]["nested"]["timestamp"], str(now))
+        self.assertEqual(external["audit_log"][0]["created_at"], str(now))
+        json.dumps(external)
+
     def test_external_store_required_fails_closed_when_missing(self):
         with patch.object(state, "get_configured_state_store", lambda: None), \
              patch.object(state, "external_state_required", lambda: True):

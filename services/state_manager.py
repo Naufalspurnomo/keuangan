@@ -723,7 +723,10 @@ def _external_state_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     # Visual buffers contain short-lived media references/base64 and are not
     # critical after restart. Keeping them out avoids unnecessary DB bloat.
     external_data.pop("visual_buffer", None)
-    return _sanitize_keys(external_data)
+    sanitized = _sanitize_keys(external_data)
+    # psycopg JSONB adaptation is stricter than local json.dumps(default=str).
+    # Normalize nested datetime/date-like values before handing payload to Postgres.
+    return json.loads(json.dumps(sanitized, default=str))
 
 
 def _save_state_to_external(data: Dict[str, Any]) -> bool:
