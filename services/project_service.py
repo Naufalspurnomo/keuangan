@@ -303,3 +303,26 @@ def resolve_project_name(candidate, dompet_sheet=None, company=None):
             'match_count': 0,
             'original': candidate_clean
         }
+
+
+def resolve_project_name_for_context(candidate, dompet_sheet=None, company=None, debt_source_dompet=None):
+    """Resolve project with a guard for debt-source wallet mentions.
+
+    Example: "pinjam dompet CV HB, projek Grand Cayman" mentions CV HB as the
+    funding wallet, not necessarily the project owner. If the scoped lookup says
+    NEW only because it searched inside the debt-source wallet, retry unscoped
+    before asking the user to create a new project.
+    """
+    result = resolve_project_name(candidate, dompet_sheet=dompet_sheet, company=company)
+    if (
+        result.get('status') == 'NEW'
+        and debt_source_dompet
+        and dompet_sheet
+        and str(dompet_sheet).strip() == str(debt_source_dompet).strip()
+    ):
+        fallback = resolve_project_name(candidate)
+        if fallback.get('status') in {'EXACT', 'AUTO_FIX'}:
+            fallback['original'] = result.get('original') or candidate
+            fallback['debt_source_scope_fallback'] = True
+            return fallback
+    return result

@@ -55,7 +55,11 @@ from sheets_helper import (
 from handlers.telegram_webhook import handle_telegram_webhook
 from handlers.wuzapi_webhook import handle_wuzapi_webhook
 from services.retry_service import process_retry_queue
-from services.project_service import resolve_project_name, add_new_project_to_cache
+from services.project_service import (
+    resolve_project_name,
+    resolve_project_name_for_context,
+    add_new_project_to_cache,
+)
 from services.finance_decision import decide_project_resolution
 from services.group_reply_hints import should_send_group_reply_hint
 from services.hutang_flow import (
@@ -845,10 +849,11 @@ Balas 1 atau 2"""
 
                     # Resolve Name
                     lookup_name = strip_company_prefix(p_name_raw)
-                    res = resolve_project_name(
+                    res = resolve_project_name_for_context(
                         lookup_name,
                         dompet_sheet=validation_dompet_scope,
                         company=validation_company_scope,
+                        debt_source_dompet=debt_source_hint,
                     )
                     if res['status'] == 'AMBIGUOUS':
                         # Safety: never auto-pick ambiguous project names unless the user
@@ -2330,10 +2335,11 @@ Balas 1 atau 2"""
                         send_reply("⚠️ Nama terlalu pendek.")
                         return jsonify({'status': 'invalid'}), 200
                     selected_scope = pending.get('selected_option') or {}
-                    res_check = resolve_project_name(
+                    res_check = resolve_project_name_for_context(
                         strip_company_prefix(final_proj),
                         dompet_sheet=selected_scope.get('dompet') or pending.get('override_dompet'),
                         company=selected_scope.get('company'),
+                        debt_source_dompet=pending.get('debt_source_dompet'),
                     )
                     if res_check.get('final_name'):
                         final_proj = res_check['final_name']
@@ -2367,10 +2373,11 @@ Balas 1 atau 2"""
                     final_proj = sanitize_input(text.strip())
                     # Check if actually exists now
                     selected_scope = pending.get('selected_option') or {}
-                    res_check = resolve_project_name(
+                    res_check = resolve_project_name_for_context(
                         strip_company_prefix(final_proj),
                         dompet_sheet=selected_scope.get('dompet') or pending.get('override_dompet'),
                         company=selected_scope.get('company'),
+                        debt_source_dompet=pending.get('debt_source_dompet'),
                     )
                     if res_check['status'] == 'NEW':
                          pending['is_new_project'] = True
@@ -2385,10 +2392,11 @@ Balas 1 atau 2"""
             if ptype == 'needs_project':
                 proj = sanitize_input(text.strip())
                 selected_scope = pending.get('selected_option') or {}
-                res = resolve_project_name(
+                res = resolve_project_name_for_context(
                     strip_company_prefix(proj),
                     dompet_sheet=selected_scope.get('dompet') or pending.get('override_dompet'),
                     company=selected_scope.get('company'),
+                    debt_source_dompet=pending.get('debt_source_dompet'),
                 )
 
                 project_decision = decide_project_resolution(

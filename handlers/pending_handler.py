@@ -16,7 +16,11 @@ from utils.formatters import (
 from utils.lifecycle import apply_lifecycle_markers, select_start_marker_indexes
 from utils.parsers import parse_revision_amount
 from utils.amounts import has_amount_pattern
-from services.project_service import add_new_project_to_cache, resolve_project_name
+from services.project_service import (
+    add_new_project_to_cache,
+    resolve_project_name,
+    resolve_project_name_for_context,
+)
 from services.finance_decision import decide_project_resolution
 from services.state_manager import set_project_lock, remember_project_knowledge
 from config.constants import PROJECT_STOPWORDS, KNOWN_COMPANY_NAMES
@@ -817,10 +821,11 @@ Atau ketik /cancel untuk batal total"""
                 if project_name:
                     prefix = extract_company_prefix(project_name)
                     lookup_name = strip_company_prefix(project_name) if prefix else project_name
-                    res = resolve_project_name(
+                    res = resolve_project_name_for_context(
                         lookup_name,
                         dompet_sheet=inline_dompet,
                         company=company,
+                        debt_source_dompet=debt_source,
                     )
 
                     if res.get('status') == 'AMBIGUOUS' and int(res.get('match_count', 2) or 2) != 1:
@@ -1170,10 +1175,11 @@ Atau ketik /cancel untuk batal total"""
 
         prefix = extract_company_prefix(project_name)
         lookup_name = strip_company_prefix(project_name) if prefix else project_name
-        res = resolve_project_name(
+        res = resolve_project_name_for_context(
             lookup_name,
             dompet_sheet=dompet_sheet,
             company=company,
+            debt_source_dompet=debt_source,
         )
 
         decision = decide_project_resolution(res, auto_accept_unique_ambiguous=True)
@@ -1259,10 +1265,11 @@ Atau ketik /cancel untuk batal total"""
 
         prefix = extract_company_prefix(project_name)
         lookup_name = strip_company_prefix(project_name) if prefix else project_name
-        res = resolve_project_name(
+        res = resolve_project_name_for_context(
             lookup_name,
             dompet_sheet=dompet_sheet,
             company=company,
+            debt_source_dompet=debt_source,
         )
 
         # If ambiguous, ask confirmation
@@ -1532,10 +1539,11 @@ Atau ketik /cancel untuk batal total"""
 
         prefix = extract_company_prefix(new_name)
         lookup_name = strip_company_prefix(new_name) if prefix else new_name
-        res = resolve_project_name(
+        res = resolve_project_name_for_context(
             lookup_name,
             dompet_sheet=dompet_sheet,
             company=company,
+            debt_source_dompet=debt_source,
         )
 
         if res.get('status') == 'AMBIGUOUS' and int(res.get('match_count', 2) or 2) != 1:

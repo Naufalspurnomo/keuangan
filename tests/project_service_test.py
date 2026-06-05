@@ -24,6 +24,7 @@ class ProjectServiceTests(unittest.TestCase):
                 "Holla - Mural PVJ",
                 "TEXTURIN - Booth PVJ",
                 "Holla - Workshop",
+                "Grand Cayman",
             },
             "records": [
                 {
@@ -43,6 +44,12 @@ class ProjectServiceTests(unittest.TestCase):
                     "base_name": "Workshop",
                     "dompet": "CV HB(101)",
                     "company": "HOLLA",
+                },
+                {
+                    "name": "Grand Cayman",
+                    "base_name": "Grand Cayman",
+                    "dompet": "TX SBY(216)",
+                    "company": "TEXTURIN-Surabaya",
                 },
             ],
             "last_updated": time.time(),
@@ -69,6 +76,23 @@ class ProjectServiceTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "AMBIGUOUS")
         self.assertEqual(result["match_count"], 2)
+
+    def test_debt_source_scope_fallback_finds_project_in_real_wallet(self):
+        scoped = project_service.resolve_project_name(
+            "Grand Cayman",
+            dompet_sheet="CV HB(101)",
+        )
+        self.assertEqual(scoped["status"], "NEW")
+
+        result = project_service.resolve_project_name_for_context(
+            "Grand Cayman",
+            dompet_sheet="CV HB(101)",
+            debt_source_dompet="CV HB(101)",
+        )
+
+        self.assertEqual(result["status"], "EXACT")
+        self.assertEqual(result["final_name"], "Grand Cayman")
+        self.assertTrue(result["debt_source_scope_fallback"])
 
 
 if __name__ == "__main__":
