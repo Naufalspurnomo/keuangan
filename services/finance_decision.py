@@ -76,6 +76,13 @@ def decide_project_resolution(
             reason="operational_keyword",
         )
 
+    if status == "INVALID":
+        return ProjectResolutionDecision(
+            action="missing",
+            suggested_name=original,
+            reason=(result or {}).get("reason") or "invalid_project_name",
+        )
+
     return ProjectResolutionDecision(
         action="confirm",
         suggested_name=final_name or original,

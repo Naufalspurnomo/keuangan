@@ -45,6 +45,16 @@ class FinanceDecisionTests(unittest.TestCase):
         self.assertEqual(decision.action, "new")
         self.assertEqual(decision.final_name, "Taman Beringas Selatan")
 
+    def test_invalid_project_name_is_missing_action(self):
+        decision = decide_project_resolution({
+            "status": "INVALID",
+            "original": "Pinjam",
+            "reason": "generic_project_keyword",
+        })
+
+        self.assertEqual(decision.action, "missing")
+        self.assertEqual(decision.reason, "generic_project_keyword")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -94,6 +94,33 @@ class ProjectServiceTests(unittest.TestCase):
         self.assertEqual(result["final_name"], "Grand Cayman")
         self.assertTrue(result["debt_source_scope_fallback"])
 
+    def test_debt_words_are_invalid_project_names(self):
+        for candidate in ["Pinjam", "utang", "minjam", "pakai"]:
+            with self.subTest(candidate=candidate):
+                result = project_service.resolve_project_name(candidate)
+                self.assertEqual(result["status"], "INVALID")
+                self.assertEqual(result["reason"], "generic_project_keyword")
+
+    def test_infers_existing_project_from_full_text_without_project_keyword(self):
+        result = project_service.infer_project_from_text_context(
+            "fee tyo jesica grand cayman pinjam cv hb",
+            dompet_sheet="CV HB(101)",
+            debt_source_dompet="CV HB(101)",
+        )
+
+        self.assertEqual(result["status"], "EXACT")
+        self.assertEqual(result["final_name"], "Grand Cayman")
+
+    def test_infers_existing_project_from_typo_in_full_text(self):
+        result = project_service.infer_project_from_text_context(
+            "fee tyo jesica grand caiman pinjam cv hb",
+            dompet_sheet="CV HB(101)",
+            debt_source_dompet="CV HB(101)",
+        )
+
+        self.assertEqual(result["status"], "AUTO_FIX")
+        self.assertEqual(result["final_name"], "Grand Cayman")
+
 
 if __name__ == "__main__":
     unittest.main()

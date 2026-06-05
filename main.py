@@ -58,6 +58,7 @@ from services.retry_service import process_retry_queue
 from services.project_service import (
     resolve_project_name,
     resolve_project_name_for_context,
+    infer_project_from_text_context,
     add_new_project_to_cache,
 )
 from services.finance_decision import decide_project_resolution
@@ -123,6 +124,7 @@ from utils.parsers import (
     should_respond_in_group, is_command_match,
     is_prefix_match, is_explicit_catat_command,
     strip_explicit_catat_command, GROUP_TRIGGERS, PENDING_TTL_SECONDS,
+    extract_project_name_from_text,
 )
 from utils.groq_analyzer import is_saldo_update
 from utils.formatters import (
@@ -845,6 +847,15 @@ Balas 1 atau 2"""
                     p_name_raw = t.get('nama_projek')
                     # Skip validation for "Saldo Umum", empty, or "Umum"
                     if not p_name_raw or p_name_raw.lower() in ['saldo umum', 'umum', 'unknown']:
+                        inferred_project = infer_project_from_text_context(
+                            validation_text_scope or original_text,
+                            dompet_sheet=validation_dompet_scope,
+                            company=validation_company_scope,
+                            debt_source_dompet=debt_source_hint,
+                        )
+                        if inferred_project and inferred_project.get('status') in ['EXACT', 'AUTO_FIX']:
+                            t['nama_projek'] = inferred_project['final_name']
+                            pending['project_confirmed'] = True
                         continue
 
                     # Resolve Name
@@ -855,6 +866,44 @@ Balas 1 atau 2"""
                         company=validation_company_scope,
                         debt_source_dompet=debt_source_hint,
                     )
+                    if res['status'] == 'INVALID':
+                        inferred_project = infer_project_from_text_context(
+                            validation_text_scope or original_text,
+                            dompet_sheet=validation_dompet_scope,
+                            company=validation_company_scope,
+                            debt_source_dompet=debt_source_hint,
+                        )
+                        explicit_project = extract_project_name_from_text(validation_text_scope or original_text)
+                        if inferred_project and inferred_project.get('status') in ['EXACT', 'AUTO_FIX']:
+                            t['nama_projek'] = inferred_project['final_name']
+                            pending['project_confirmed'] = True
+                            continue
+                        if explicit_project and explicit_project.lower() != str(p_name_raw).strip().lower():
+                            t['nama_projek'] = explicit_project
+                            p_name_raw = explicit_project
+                            lookup_name = strip_company_prefix(p_name_raw)
+                            res = resolve_project_name_for_context(
+                                lookup_name,
+                                dompet_sheet=validation_dompet_scope,
+                                company=validation_company_scope,
+                                debt_source_dompet=debt_source_hint,
+                            )
+                        else:
+                            t.pop('nama_projek', None)
+                            t['needs_project'] = True
+                            pending['project_confirmed'] = False
+                            continue
+                    if res['status'] == 'NEW':
+                        inferred_project = infer_project_from_text_context(
+                            validation_text_scope or original_text,
+                            dompet_sheet=validation_dompet_scope,
+                            company=validation_company_scope,
+                            debt_source_dompet=debt_source_hint,
+                        )
+                        if inferred_project and inferred_project.get('status') in ['EXACT', 'AUTO_FIX']:
+                            t['nama_projek'] = inferred_project['final_name']
+                            pending['project_confirmed'] = True
+                            continue
                     if res['status'] == 'AMBIGUOUS':
                         # Safety: never auto-pick ambiguous project names unless the user
                         # explicitly gave a trusted prefix (HOLLA/HOJJA) that resolves exactly.
@@ -2341,6 +2390,9 @@ Balas 1 atau 2"""
                         company=selected_scope.get('company'),
                         debt_source_dompet=pending.get('debt_source_dompet'),
                     )
+                    if res_check.get('status') == 'INVALID':
+                        send_pending_reply("Nama projeknya belum valid. Ketik nama projek yang benar.")
+                        return jsonify({'status': 'asking_project_name'}), 200
                     if res_check.get('final_name'):
                         final_proj = res_check['final_name']
                     if res_check.get('status') == 'NEW':
@@ -2379,6 +2431,9 @@ Balas 1 atau 2"""
                         company=selected_scope.get('company'),
                         debt_source_dompet=pending.get('debt_source_dompet'),
                     )
+                    if res_check.get('status') == 'INVALID':
+                        send_pending_reply("Nama projeknya belum valid. Ketik nama projek yang benar.")
+                        return jsonify({'status': 'asking_project_name'}), 200
                     if res_check['status'] == 'NEW':
                          pending['is_new_project'] = True
 
@@ -2411,6 +2466,10 @@ Balas 1 atau 2"""
                     pending['project_confirmed'] = True
                     pending['project_validated'] = True
                     return finalize_transaction_workflow(pending, pending_pkey)
+
+                if project_decision.action == 'missing':
+                    send_pending_reply("Nama projeknya belum valid. Ketik nama projek yang benar.")
+                    return jsonify({'status': 'asking_project_name'}), 200
 
                 if project_decision.should_confirm:
                     pending['pending_type'] = 'confirmation_project'

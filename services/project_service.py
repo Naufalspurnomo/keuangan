@@ -2,7 +2,7 @@ import time
 import logging
 from difflib import SequenceMatcher
 from sheets_helper import get_sheet
-from config.constants import KNOWN_COMPANY_NAMES, OPERATIONAL_KEYWORDS
+from config.constants import KNOWN_COMPANY_NAMES, OPERATIONAL_KEYWORDS, PROJECT_STOPWORDS
 from services.state_manager import resolve_project_knowledge
 
 _project_cache = {
@@ -185,6 +185,7 @@ def resolve_project_name(candidate, dompet_sheet=None, company=None):
         return {'status': 'NEW', 'final_name': candidate}
     
     candidate_clean = candidate.strip()
+    candidate_lower = candidate_clean.lower()
     
     # =============== OPERATIONAL KEYWORD FILTER ===============
     # Check if this is an operational expense, not a project
@@ -194,6 +195,14 @@ def resolve_project_name(candidate, dompet_sheet=None, company=None):
             'final_name': None,
             'original': candidate_clean,
             'detected_keyword': candidate_clean.lower()
+        }
+
+    if candidate_lower in PROJECT_STOPWORDS or candidate_lower in KNOWN_COMPANY_NAMES:
+        return {
+            'status': 'INVALID',
+            'final_name': None,
+            'original': candidate_clean,
+            'reason': 'generic_project_keyword',
         }
 
     knowledge = resolve_project_knowledge(
@@ -326,3 +335,98 @@ def resolve_project_name_for_context(candidate, dompet_sheet=None, company=None,
             fallback['debt_source_scope_fallback'] = True
             return fallback
     return result
+
+
+def _normalize_text_for_project_scan(value: str) -> str:
+    if not value:
+        return ""
+    cleaned = str(value).lower()
+    cleaned = re.sub(r"[^a-z0-9]+", " ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _project_scan_candidates(text_norm: str, phrase_norm: str) -> tuple:
+    """Return (matched, score) for an exact/fuzzy phrase match in free text."""
+    if not text_norm or not phrase_norm:
+        return False, 0.0
+
+    if re.search(rf"(?<!\w){re.escape(phrase_norm)}(?!\w)", text_norm):
+        return True, 1.0
+
+    phrase_tokens = phrase_norm.split()
+    text_tokens = text_norm.split()
+    if len(phrase_tokens) < 2 or len(text_tokens) < len(phrase_tokens):
+        return False, 0.0
+
+    window_size = len(phrase_tokens)
+    best_score = 0.0
+    for i in range(0, len(text_tokens) - window_size + 1):
+        window = " ".join(text_tokens[i:i + window_size])
+        score = SequenceMatcher(None, window, phrase_norm).ratio()
+        if score > best_score:
+            best_score = score
+
+    return best_score >= 0.88, best_score
+
+
+def infer_project_from_text_context(text, dompet_sheet=None, company=None, debt_source_dompet=None):
+    """Infer an existing project by scanning the whole user text.
+
+    This is used when model extraction produced a generic project name or no
+    project at all. It intentionally only returns existing known projects.
+    """
+    text_norm = _normalize_text_for_project_scan(text)
+    if not text_norm:
+        return None
+
+    def _match_records(records):
+        matches = []
+        for record in records:
+            phrases = {
+                _normalize_text_for_project_scan(record.get('name') or ""),
+                _normalize_text_for_project_scan(record.get('base_name') or ""),
+            }
+            phrases = {
+                p for p in phrases
+                if p and len(p) >= 3 and p not in PROJECT_STOPWORDS and p not in KNOWN_COMPANY_NAMES
+            }
+            for phrase in phrases:
+                matched, score = _project_scan_candidates(text_norm, phrase)
+                if matched:
+                    matches.append((score, len(phrase), record))
+                    break
+        return sorted(matches, key=lambda item: (item[0], item[1]), reverse=True)
+
+    records = get_existing_project_records(dompet_sheet=dompet_sheet, company=company)
+    matches = _match_records(records)
+
+    if not matches and debt_source_dompet and dompet_sheet and str(dompet_sheet).strip() == str(debt_source_dompet).strip():
+        matches = _match_records(get_existing_project_records())
+
+    if not matches:
+        return None
+
+    top_score, _top_len, top_record = matches[0]
+    tied = [
+        record for score, length, record in matches
+        if abs(score - top_score) <= 0.02 and length == _top_len
+    ]
+    if len({r.get('name') for r in tied}) > 1:
+        return {
+            'status': 'AMBIGUOUS',
+            'final_name': top_record.get('name'),
+            'matches': [r.get('name') for r in tied],
+            'confidence': top_score,
+            'match_count': len(tied),
+            'source': 'text_project_scan',
+        }
+
+    return {
+        'status': 'EXACT' if top_score >= 0.99 else 'AUTO_FIX',
+        'final_name': top_record.get('name'),
+        'dompet': top_record.get('dompet'),
+        'company': top_record.get('company'),
+        'confidence': top_score,
+        'match_count': 1,
+        'source': 'text_project_scan',
+    }

@@ -18,6 +18,7 @@ from utils.parsers import parse_revision_amount
 from utils.amounts import has_amount_pattern
 from services.project_service import (
     add_new_project_to_cache,
+    infer_project_from_text_context,
     resolve_project_name,
     resolve_project_name_for_context,
 )
@@ -817,6 +818,17 @@ Atau ketik /cancel untuk batal total"""
                         'completed': False
                     }
                 project_name = next((t.get('nama_projek') for t in transactions if t.get('nama_projek')), '') or ''
+                if not project_name:
+                    inferred_project = infer_project_from_text_context(
+                        merged_raw_text,
+                        dompet_sheet=inline_dompet,
+                        company=company,
+                        debt_source_dompet=debt_source,
+                    )
+                    if inferred_project and inferred_project.get('status') in ['EXACT', 'AUTO_FIX']:
+                        project_name = inferred_project.get('final_name') or ''
+                        for tx in transactions:
+                            tx['nama_projek'] = project_name
 
                 if project_name:
                     prefix = extract_company_prefix(project_name)
@@ -827,6 +839,23 @@ Atau ketik /cancel untuk batal total"""
                         company=company,
                         debt_source_dompet=debt_source,
                     )
+
+                    if res.get('status') == 'INVALID':
+                        set_pending_confirmation(
+                            user_id=user_id,
+                            chat_id=chat_id,
+                            data={
+                                'type': 'project_name_input',
+                                'dompet_sheet': inline_dompet,
+                                'company': company,
+                                'transactions': transactions,
+                                'raw_text': merged_raw_text,
+                                'debt_source_dompet': debt_source,
+                                'original_message_id': original_msg_id,
+                                'event_id': event_id
+                            }
+                        )
+                        return {'response': 'Nama projeknya belum valid. Ketik nama projek yang benar.', 'completed': False}
 
                     if res.get('status') == 'AMBIGUOUS' and int(res.get('match_count', 2) or 2) != 1:
                         suggested = res.get('final_name')
@@ -1157,6 +1186,17 @@ Atau ketik /cancel untuk batal total"""
 
         project_name = next((t.get('nama_projek') for t in transactions if t.get('nama_projek')), '')
         if not project_name:
+            inferred_project = infer_project_from_text_context(
+                raw_text,
+                dompet_sheet=dompet_sheet,
+                company=company,
+                debt_source_dompet=debt_source,
+            )
+            if inferred_project and inferred_project.get('status') in ['EXACT', 'AUTO_FIX']:
+                project_name = inferred_project.get('final_name') or ''
+                for tx in transactions:
+                    tx['nama_projek'] = project_name
+        if not project_name:
             set_pending_confirmation(
                 user_id=user_id,
                 chat_id=chat_id,
@@ -1183,6 +1223,23 @@ Atau ketik /cancel untuk batal total"""
         )
 
         decision = decide_project_resolution(res, auto_accept_unique_ambiguous=True)
+
+        if decision.action == 'missing':
+            set_pending_confirmation(
+                user_id=user_id,
+                chat_id=chat_id,
+                data={
+                    'type': 'project_name_input',
+                    'dompet_sheet': dompet_sheet,
+                    'company': company,
+                    'transactions': transactions,
+                    'raw_text': raw_text,
+                    'debt_source_dompet': debt_source,
+                    'original_message_id': pending_data.get('original_message_id'),
+                    'event_id': pending_data.get('event_id')
+                }
+            )
+            return {'response': 'Nama projeknya belum valid. Ketik nama projek yang benar.', 'completed': False}
 
         if decision.should_confirm:
             suggested = decision.suggested_name
@@ -1271,6 +1328,23 @@ Atau ketik /cancel untuk batal total"""
             company=company,
             debt_source_dompet=debt_source,
         )
+
+        if res.get('status') == 'INVALID':
+            set_pending_confirmation(
+                user_id=user_id,
+                chat_id=chat_id,
+                data={
+                    'type': 'project_name_input',
+                    'dompet_sheet': dompet_sheet,
+                    'company': company,
+                    'transactions': pending_data.get('transactions', []),
+                    'raw_text': raw_text,
+                    'debt_source_dompet': debt_source,
+                    'original_message_id': pending_data.get('original_message_id'),
+                    'event_id': pending_data.get('event_id')
+                }
+            )
+            return {'response': 'Nama projeknya belum valid. Ketik nama projek yang benar.', 'completed': False}
 
         # If ambiguous, ask confirmation
         if res.get('status') == 'AMBIGUOUS' and int(res.get('match_count', 2) or 2) != 1:
@@ -1545,6 +1619,23 @@ Atau ketik /cancel untuk batal total"""
             company=company,
             debt_source_dompet=debt_source,
         )
+
+        if res.get('status') == 'INVALID':
+            set_pending_confirmation(
+                user_id=user_id,
+                chat_id=chat_id,
+                data={
+                    'type': 'project_name_input',
+                    'dompet_sheet': dompet_sheet,
+                    'company': company,
+                    'transactions': transactions,
+                    'raw_text': pending_data.get('raw_text', ''),
+                    'debt_source_dompet': debt_source,
+                    'original_message_id': pending_data.get('original_message_id'),
+                    'event_id': pending_data.get('event_id')
+                }
+            )
+            return {'response': 'Nama projeknya belum valid. Ketik nama projek yang benar.', 'completed': False}
 
         if res.get('status') == 'AMBIGUOUS' and int(res.get('match_count', 2) or 2) != 1:
             suggested = res.get('final_name')

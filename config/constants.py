@@ -165,8 +165,9 @@ PROJECT_STOPWORDS = {
     
     # Istilah Keuangan
     "fee", "gaji", "pajak", "kas", "uang", "lunas", "dp", "pelunasan",
-    "cicil", "cicilan", "admin", "tunai", "cash", "debt", "hutang",
-    "saldo", "wallet", "dompet", "rekening", "atm", "bank",
+    "cicil", "cicilan", "admin", "tunai", "cash", "debt", "utang", "hutang",
+    "piutang", "minjam", "minjem", "pinjam", "saldo", "wallet", "dompet",
+    "rekening", "atm", "bank", "pakai", "pake",
     
     # Kebutuhan Umum (Bukan nama bangunan/projek spesifik)
     "makan", "minum", "jamu", "snack", "konsumsi",
