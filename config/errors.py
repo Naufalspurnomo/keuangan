@@ -22,6 +22,10 @@ class UserErrors:
     SELECTION_INVALID = "Balas dengan angka 1-5 untuk memilih."
     SELECTION_SINGLE_ONLY = "Pilih satu saja. Ketik angka 1-5."
     SELECTION_OUT_OF_RANGE = "Pilihan tidak tersedia. Ketik angka 1-5."
+    SELECTION_UNAVAILABLE = (
+        "❌ Pilihan itu tidak tersedia di prompt ini.\n"
+        "Balas angka yang muncul di daftar pilihan terbaru."
+    )
     
     # Wallet detection errors
     WALLET_NOT_DETECTED = (
@@ -64,12 +68,60 @@ class UserErrors:
     
     # Session errors
     SESSION_EXPIRED = "⌛ Sesi sebelumnya sudah kedaluwarsa (lebih dari 15 menit).\nKirim transaksi lagi ya."
+    NO_ACTIVE_QUESTION = (
+        "⚠️ Tidak ada pertanyaan aktif untuk balasan itu.\n"
+        "Kemungkinan prompt sudah lewat 15 menit atau transaksi sudah selesai.\n"
+        "Kirim ulang transaksi jika masih mau dicatat."
+    )
+    GROUP_REPLY_REQUIRED = (
+        "⚠️ Di grup, balasan singkat seperti angka/Ya wajib reply ke prompt bot yang mau dijawab.\n"
+        "Ini mencegah jawaban masuk ke sesi transaksi orang lain."
+    )
+    GROUP_REPLY_PROMPT_NOT_ACTIVE = (
+        "⚠️ Prompt yang di-reply tidak punya sesi aktif.\n"
+        "Kemungkinan sudah lewat 15 menit, bot sempat restart, atau yang di-reply bukan prompt bot terbaru.\n"
+        "Kirim ulang transaksi jika masih mau dicatat."
+    )
+    STALE_PENDING_STATE = (
+        "⚠️ Sesi lama tidak lengkap lagi, jadi balasan ini tidak diproses.\n"
+        "Kemungkinan bot restart atau prompt sebelumnya sudah kedaluwarsa.\n"
+        "Kirim ulang transaksi supaya aman."
+    )
+    SESSION_ACCESS_DENIED = (
+        "⚠️ Sesi ini milik user lain.\n"
+        "Kalau membantu menjawab, reply langsung ke prompt bot milik sesi itu."
+    )
     CANCELLED = "❌ Transaksi dibatalkan."
     ALL_REMOVED = "❌ Semua transaksi dihapus. Transaksi dibatalkan."
     
     # System errors
     SHEET_ERROR = "⚠️ Sistem sedang sibuk, coba lagi dalam 1 menit."
-    UNKNOWN_ERROR = "❌ Terjadi kesalahan. Silakan coba lagi."
+    SHEET_READ_FAILED = "❌ Gagal membaca data spreadsheet. Coba lagi 1 menit."
+    SHEET_WRITE_FAILED = (
+        "❌ Gagal menyimpan transaksi ke spreadsheet.\n"
+        "Data belum dicatat. Coba kirim ulang transaksi; kalau masih gagal, hubungi admin."
+    )
+    QUERY_FAILED = "❌ Gagal menganalisis data keuangan. Coba lagi 1 menit."
+    SYSTEM_PROCESSING_FAILED = (
+        "❌ Pesan belum bisa diproses karena sistem gagal membaca konteks transaksi.\n"
+        "Coba kirim ulang dengan format lebih jelas."
+    )
+    UNKNOWN_ERROR = "❌ Terjadi kesalahan sistem. Coba lagi 1 menit."
+
+    # Hutang errors
+    HUTANG_FORMAT = "Format: /lunas NO_HUTANG (contoh: /lunas 3)."
+    HUTANG_NOT_FOUND = "❌ Hutang #{no} tidak ditemukan atau sudah lunas."
+    HUTANG_SETTLE_FAILED = "❌ Pelunasan hutang #{no} gagal.\n⚠️ {reason}"
+
+    # Image/OCR errors
+    IMAGE_NOT_READABLE = (
+        "❓ Teks atau nominal pada gambar tidak terbaca.\n"
+        "Kirim ulang gambar yang lebih jelas atau tambahkan caption transaksi."
+    )
+    IMAGE_NOT_RECEIPT = (
+        "❗ Gambar tidak terdeteksi sebagai struk/transaksi.\n"
+        "Kirim struk yang lebih jelas atau tambahkan keterangan transaksi."
+    )
     
     # PDF errors
     PDF_NO_DATA = (

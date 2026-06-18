@@ -3,6 +3,7 @@
 import re
 from typing import Dict, List, Optional
 
+from config.errors import UserErrors
 from config.wallets import DOMPET_ALIASES
 from services.state_manager import set_pending_confirmation
 from sheets_helper import find_open_hutang, invalidate_dashboard_cache, settle_hutang
@@ -53,23 +54,23 @@ def format_hutang_paid_response(info: Dict) -> str:
     ket = info.get('keterangan', '-')
 
     lines = [
-        f"âœ… Hutang #{info['no']} ditandai PAID.",
-        f"ðŸ“ {ket}",
-        f"ðŸ’° {borrower} â†’ {lender}",
-        f"ðŸ’µ Rp {amount:,}",
+        f"✅ Hutang #{info['no']} ditandai PAID.",
+        f"📝 {ket}",
+        f"💰 {borrower} → {lender}",
+        f"💵 Rp {amount:,}",
     ]
     if info.get('settled'):
         lines.append("")
-        lines.append(f"ðŸ“Š Saldo diperbarui:")
-        lines.append(f"   ðŸ’¸ {borrower}: Pengeluaran Rp {amount:,}")
-        lines.append(f"   ðŸ’° {lender}: Pemasukan Rp {amount:,}")
+        lines.append("📊 Saldo diperbarui:")
+        lines.append(f"   💸 {borrower}: Pengeluaran Rp {amount:,}")
+        lines.append(f"   💰 {lender}: Pemasukan Rp {amount:,}")
 
     return "\n".join(lines).replace(',', '.')
 
 
 def build_saldo_message(balances: Dict[str, Dict]) -> str:
     """Build wallet-balance message using real-balance components."""
-    msg = "ðŸ’° SALDO DOMPET REAL\n\n"
+    msg = "💰 SALDO DOMPET REAL\n\n"
     for dompet, info in balances.items():
         masuk = int(info.get('pemasukan', 0) or 0)
         keluar = int(info.get('pengeluaran', 0) or 0)
@@ -78,7 +79,7 @@ def build_saldo_message(balances: Dict[str, Dict]) -> str:
         hutang_paid = int(info.get('utang_paid_in', 0) or 0)
         saldo = int(info.get('saldo', 0) or 0)
 
-        msg += f"ðŸ“Š {dompet}\n"
+        msg += f"📊 {dompet}\n"
         msg += f"   Masuk: Rp {masuk:,}\n".replace(',', '.')
         msg += f"   Keluar Internal: Rp {keluar:,}\n".replace(',', '.')
         msg += f"   Potongan Operasional: Rp {op:,}\n".replace(',', '.')
@@ -140,11 +141,12 @@ def handle_auto_hutang_payment(
     # Allow direct "no 3" or "nomor 3"
     m_no = re.search(r"\b(?:no|nomor)\.?\s*(\d+)\b", lower)
     if m_no:
-        info = settle_hutang(int(m_no.group(1)), sender_name="System", source="WhatsApp")
+        no = int(m_no.group(1))
+        info = settle_hutang(no, sender_name="System", source="WhatsApp")
         if not info:
-            return "âŒ No hutang tidak ditemukan."
+            return UserErrors.HUTANG_NOT_FOUND.format(no=no)
         if info.get('error'):
-            return f"âŒ Pelunasan hutang #{info.get('no', '?')} gagal.\nâš ï¸ {info['error']}"
+            return UserErrors.HUTANG_SETTLE_FAILED.format(no=info.get('no', no), reason=info['error'])
         invalidate_dashboard_cache()
         return format_hutang_paid_response(info)
 
@@ -154,7 +156,7 @@ def handle_auto_hutang_payment(
 
     if not lender and not borrower:
         return (
-            "ðŸ¤” Ini pelunasan hutang dompet atau transaksi project?\n"
+            "🤔 Ini pelunasan hutang dompet atau transaksi project?\n"
             "Jika hutang dompet, tulis: bayar hutang ke TX SBY 2jt / bayar hutang no 3.\n"
             "Jika transaksi project, tulis kata 'projek'."
         )
@@ -194,14 +196,14 @@ def handle_auto_hutang_payment(
             )
             if pair_candidates:
                 lines = [
-                    "âš ï¸ Nominal pelunasan tidak cocok dengan hutang OPEN untuk pasangan dompet ini.",
+                    "⚠️ Nominal pelunasan tidak cocok dengan hutang OPEN untuk pasangan dompet ini.",
                     f"Nominal terdeteksi: Rp {amount:,}".replace(',', '.'),
                     "",
                     "Hutang OPEN yang tersedia:",
                 ]
                 for item in pair_candidates[:5]:
                     lines.append(
-                        f"#{item['no']} {item.get('yang_hutang','-')} â†’ {item.get('yang_dihutangi','-')} "
+                        f"#{item['no']} {item.get('yang_hutang','-')} → {item.get('yang_dihutangi','-')} "
                         f"Rp {item.get('amount',0):,} ({item.get('keterangan','-')})"
                     )
                 lines.append("")
@@ -220,15 +222,15 @@ def handle_auto_hutang_payment(
         candidates = find_open_hutang(amount=amount)
 
     if not candidates:
-        return "âŒ Tidak ada hutang OPEN yang cocok. Tulis contoh: bayar hutang ke TX SBY 2jt."
+        return "❌ Tidak ada hutang OPEN yang cocok. Tulis contoh: bayar hutang ke TX SBY 2jt."
 
     if len(candidates) > 1:
         if user_id and chat_id:
             compact_candidates = _compact_candidates(candidates[:8])
-            lines = ["ðŸ¤” Ketemu beberapa hutang OPEN. Pilih yang mau dilunasi:"]
+            lines = ["🤔 Ketemu beberapa hutang OPEN. Pilih yang mau dilunasi:"]
             for idx, item in enumerate(compact_candidates, start=1):
                 lines.append(
-                    f"{idx}. #{item['no']} {item['yang_hutang']} â†’ {item['yang_dihutangi']} Rp {item['amount']:,} ({item['keterangan']})"
+                    f"{idx}. #{item['no']} {item['yang_hutang']} → {item['yang_dihutangi']} Rp {item['amount']:,} ({item['keterangan']})"
                 )
             lines.append("")
             lines.append(f"Balas angka 1-{len(compact_candidates)} untuk konfirmasi pelunasan.")
@@ -244,10 +246,10 @@ def handle_auto_hutang_payment(
             )
             return "\n".join(lines).replace(',', '.')
 
-        lines = ["ðŸ¤” Ada beberapa hutang OPEN. Balas dengan format: `bayar hutang no 3`."]
+        lines = ["🤔 Ada beberapa hutang OPEN. Balas dengan format: `bayar hutang no 3`."]
         for item in candidates[:5]:
             lines.append(
-                f"#{item['no']} {item.get('yang_hutang','-')} â†’ {item.get('yang_dihutangi','-')} "
+                f"#{item['no']} {item.get('yang_hutang','-')} → {item.get('yang_dihutangi','-')} "
                 f"Rp {item.get('amount',0):,} ({item.get('keterangan','-')})"
             )
         return "\n".join(lines).replace(',', '.')
@@ -265,8 +267,8 @@ def handle_auto_hutang_payment(
             }
         )
         lines = [
-            "ðŸ¤” Konfirmasi pelunasan hutang ini?",
-            f"#{chosen['no']} {chosen['yang_hutang']} â†’ {chosen['yang_dihutangi']}",
+            "🤔 Konfirmasi pelunasan hutang ini?",
+            f"#{chosen['no']} {chosen['yang_hutang']} → {chosen['yang_dihutangi']}",
             f"Rp {chosen['amount']:,} ({chosen['keterangan']})",
             "",
             "Balas Ya untuk lunasi. Batal untuk cancel.",
@@ -277,6 +279,6 @@ def handle_auto_hutang_payment(
         return "\n".join(lines).replace(',', '.')
 
     return (
-        "ðŸ¤” Ketemu 1 hutang OPEN. "
+        "🤔 Ketemu 1 hutang OPEN. "
         f"Lunasi dengan perintah: bayar hutang no {chosen['no']}"
     )

@@ -524,10 +524,7 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             )
 
         def _session_access_denied_message() -> str:
-            return (
-                "⚠️ Sesi ini milik user lain. "
-                "Reply ke prompt bot yang benar untuk membantu menjawab sesi user lain."
-            )
+            return UserErrors.SESSION_ACCESS_DENIED
 
         def _count_active_group_sessions(target_chat_id: str) -> int:
             """Count active pending transaction + confirmation sessions in a group chat."""
@@ -1313,7 +1310,7 @@ Balas 1 atau 2"""
                         response = (
                             f"❌ Gagal menyimpan {fail_count}/{total_count} transaksi ke spreadsheet!\n"
                             f"📋 Dompet: {dompet}\n"
-                            f"⚠️ Error: {error_msg[:150]}\n\n"
+                            f"⚠️ Penyebab: {error_msg[:150]}\n\n"
                             f"Coba kirim ulang transaksi."
                         )
                         _send_and_track(response, event_id)
@@ -1491,8 +1488,11 @@ Balas 1 atau 2"""
                 ):
                     quoted_pending_ref = ''
                 if not quoted_pending_ref:
+                    if quoted_msg_id:
+                        send_reply(UserErrors.GROUP_REPLY_PROMPT_NOT_ACTIVE)
+                        return jsonify({'status': 'prompt_not_active_for_answer'}), 200
                     if should_send_group_reply_hint(chat_jid, sender_number, "reply_required_for_answers"):
-                        send_reply("⚠️ Untuk jawaban (angka/ya/nominal), wajib *reply* ke pesan bot yang ingin dijawab.")
+                        send_reply(UserErrors.GROUP_REPLY_REQUIRED)
                     return jsonify({'status': 'reply_required_for_answers'}), 200
 
         # ========================================
@@ -1620,10 +1620,13 @@ Balas 1 atau 2"""
             clean_sel = (text or "").strip()
             if clean_sel.isdigit() and len(clean_sel) <= 2:
                 if is_group and chat_jid:
-                    send_reply("Jawaban angka di grup wajib *reply* ke prompt bot yang sesuai.")
-                    return jsonify({'status': 'reply_required_for_selection'}), 200
+                    if quoted_msg_id:
+                        send_reply(UserErrors.GROUP_REPLY_PROMPT_NOT_ACTIVE)
+                        return jsonify({'status': 'prompt_not_active_for_selection'}), 200
+                    send_reply(UserErrors.NO_ACTIVE_QUESTION)
+                    return jsonify({'status': 'no_active_selection'}), 200
                 else:
-                    send_reply("⚠️ Tidak ada pertanyaan aktif atau sesi sudah kedaluwarsa.\nKirim ulang transaksi ya.")
+                    send_reply(UserErrors.NO_ACTIVE_QUESTION)
                     return jsonify({'status': 'no_pending_selection'}), 200
 
         # Group noise gate (pre-AI): avoid processing random media/chatter
@@ -1684,28 +1687,30 @@ Balas 1 atau 2"""
                     send_reply(msg)
                     return jsonify({'status': 'command_saldo'}), 200
                 except Exception as e:
-                    send_reply(f"❌ Error: {str(e)}")
+                    secure_log("ERROR", f"Saldo command failed: {e}")
+                    send_reply(UserErrors.SHEET_READ_FAILED)
                     return jsonify({'status': 'error'}), 200
 
             if is_prefix_match(text, Commands.LUNAS_PREFIXES, is_group):
                 try:
                     match = re.search(r"\b(\d+)\b", text)
                     if not match:
-                        send_reply("Format: /lunas NO_HUTANG (contoh: /lunas 3)")
+                        send_reply(UserErrors.HUTANG_FORMAT)
                         return jsonify({'status': 'command_lunas_invalid'}), 200
                     no = int(match.group(1))
                     info = settle_hutang(no, sender_name=sender_name, source='WhatsApp')
                     if not info:
-                        send_reply("No hutang tidak ditemukan.")
+                        send_reply(UserErrors.HUTANG_NOT_FOUND.format(no=no))
                         return jsonify({'status': 'command_lunas_not_found'}), 200
                     if info.get('error'):
-                        send_reply(f"❌ Pelunasan hutang #{no} gagal.\n⚠️ {info['error']}")
+                        send_reply(UserErrors.HUTANG_SETTLE_FAILED.format(no=no, reason=info['error']))
                         return jsonify({'status': 'command_lunas_failed'}), 200
                     invalidate_dashboard_cache()
                     send_reply(_format_hutang_paid_response(info))
                     return jsonify({'status': 'command_lunas'}), 200
                 except Exception as e:
-                    send_reply(f"Error: {str(e)}")
+                    secure_log("ERROR", f"Lunas command failed: {e}")
+                    send_reply(UserErrors.HUTANG_SETTLE_FAILED.format(no="?", reason="sistem tidak bisa membaca/update data. Coba lagi 1 menit."))
                     return jsonify({'status': 'error'}), 200
 
 
@@ -1716,7 +1721,8 @@ Balas 1 atau 2"""
                     send_reply(msg)
                     return jsonify({'status': 'command_status'}), 200
                 except Exception as e:
-                    send_reply(f"❌ Error: {str(e)}")
+                    secure_log("ERROR", f"Status command failed: {e}")
+                    send_reply(UserErrors.SHEET_READ_FAILED)
                     return jsonify({'status': 'error'}), 200
 
     # ========================================
@@ -1747,7 +1753,7 @@ Balas 1 atau 2"""
                 except Exception as e:
                     # secure_assert logger is not defined in this scope locally, using secure_log if available or just print
                     secure_log("ERROR", f"/tanya command failed: {e}")
-                    send_reply(f"❌ Maaf, terjadi kesalahan saat menganalisis data.")
+                    send_reply(UserErrors.QUERY_FAILED)
                     return jsonify({'status': 'command_tanya_error'}), 200
 
         # Initialize category scope and intent variables (prevent UnboundLocalError)
@@ -2141,7 +2147,7 @@ Balas 1 atau 2"""
             # Guard stale pending entries (e.g., confirmation state missing after restart/replica drift).
             if ptype is None and is_quick_control_reply:
                 _pending_transactions.pop(pending_pkey, None)
-                send_reply("⚠️ Tidak ada pertanyaan aktif untuk balasan itu. Balas ke prompt bot terbaru atau kirim ulang transaksi.")
+                send_reply(UserErrors.STALE_PENDING_STATE)
                 return jsonify({'status': 'stale_pending'}), 200
 
             if (
@@ -2474,7 +2480,7 @@ Balas 1 atau 2"""
                 if project_decision.should_confirm:
                     pending['pending_type'] = 'confirmation_project'
                     pending['suggested_project'] = project_decision.suggested_name
-                    send_pending_reply(f"???? Maksudnya **{project_decision.suggested_name}**?\n??? Ya / ??? Bukan")
+                    send_pending_reply(f"🤔 Maksudnya **{project_decision.suggested_name}**?\n✅ Ya / ❌ Bukan")
                     return jsonify({'status': 'confirm'}), 200
 
                 if project_decision.action == 'new':
@@ -2482,7 +2488,11 @@ Balas 1 atau 2"""
                         t['nama_projek'] = project_decision.final_name
                     pending['pending_type'] = 'confirmation_new_project'
                     pending['new_project_name'] = project_decision.final_name
-                    send_pending_reply(f"???? Project **{project_decision.final_name}** belum ada.\n\nBuat Project Baru?\n??? Ya / ??? Ganti Nama (Langsung Ketik Nama Baru)")
+                    send_pending_reply(
+                        f"📁 Project **{project_decision.final_name}** belum terdaftar.\n\n"
+                        "Buat project baru?\n"
+                        "✅ Ya / ketik nama lain untuk ganti"
+                    )
                     return jsonify({'status': 'asking_new_project'}), 200
 
                 final = project_decision.final_name or res['final_name']
@@ -2510,7 +2520,7 @@ Balas 1 atau 2"""
 
                 opt = get_selection_by_idx(sel)
                 if not opt:
-                    send_reply("❌ Pilihan tidak valid (System Error).")
+                    send_reply(UserErrors.SELECTION_UNAVAILABLE)
                     return jsonify({'status': 'error_opt'}), 200
 
                 pending['selected_option'] = opt
@@ -2524,7 +2534,7 @@ Balas 1 atau 2"""
                     opt = pending.get('selected_option')
                     if not opt:
                          _pending_transactions.pop(pending_pkey, None)
-                         send_reply("❌ Error state. Transaksi dibatalkan.")
+                         send_reply(UserErrors.STALE_PENDING_STATE)
                          return jsonify({'status': 'error_state'}), 200
 
                     # Manual save
@@ -2595,28 +2605,30 @@ Balas 1 atau 2"""
                 send_reply(msg)
                 return jsonify({'status': 'command_saldo'}), 200
             except Exception as e:
-                send_reply(f"❌ Error: {str(e)}")
+                secure_log("ERROR", f"Saldo command failed: {e}")
+                send_reply(UserErrors.SHEET_READ_FAILED)
                 return jsonify({'status': 'error'}), 200
 
         if is_prefix_match(text, Commands.LUNAS_PREFIXES, is_group):
             try:
                 match = re.search(r"\b(\d+)\b", text)
                 if not match:
-                    send_reply("Format: /lunas NO_HUTANG (contoh: /lunas 3)")
+                    send_reply(UserErrors.HUTANG_FORMAT)
                     return jsonify({'status': 'command_lunas_invalid'}), 200
                 no = int(match.group(1))
                 info = settle_hutang(no, sender_name=sender_name, source='WhatsApp')
                 if not info:
-                    send_reply("No hutang tidak ditemukan.")
+                    send_reply(UserErrors.HUTANG_NOT_FOUND.format(no=no))
                     return jsonify({'status': 'command_lunas_not_found'}), 200
                 if info.get('error'):
-                    send_reply(f"❌ Pelunasan hutang #{no} gagal.\n⚠️ {info['error']}")
+                    send_reply(UserErrors.HUTANG_SETTLE_FAILED.format(no=no, reason=info['error']))
                     return jsonify({'status': 'command_lunas_failed'}), 200
                 invalidate_dashboard_cache()
                 send_reply(_format_hutang_paid_response(info))
                 return jsonify({'status': 'command_lunas'}), 200
             except Exception as e:
-                send_reply(f"Error: {str(e)}")
+                secure_log("ERROR", f"Lunas command failed: {e}")
+                send_reply(UserErrors.HUTANG_SETTLE_FAILED.format(no="?", reason="sistem tidak bisa membaca/update data. Coba lagi 1 menit."))
                 return jsonify({'status': 'error'}), 200
 
 
@@ -2627,7 +2639,8 @@ Balas 1 atau 2"""
                 send_reply(msg)
                 return jsonify({'status': 'command_status'}), 200
             except Exception as e:
-                send_reply(f"❌ Error: {str(e)}")
+                secure_log("ERROR", f"Status command failed: {e}")
+                send_reply(UserErrors.SHEET_READ_FAILED)
                 return jsonify({'status': 'error'}), 200
 
         if is_command_match(text, Commands.LIST, is_group):
@@ -2654,7 +2667,8 @@ Balas 1 atau 2"""
                     send_reply(msg)
                 return jsonify({'status': 'command_list'}), 200
             except Exception as e:
-                send_reply(f"❌ Error: {str(e)}")
+                secure_log("ERROR", f"List command failed: {e}")
+                send_reply(UserErrors.SHEET_READ_FAILED)
                 return jsonify({'status': 'error'}), 200
         if is_command_match(text, Commands.LAPORAN, is_group) or is_command_match(text, Commands.LAPORAN_30, is_group):
             try:
@@ -2702,7 +2716,8 @@ Balas 1 atau 2"""
                 send_reply(msg)
                 return jsonify({'status': 'command_laporan'}), 200
             except Exception as e:
-                send_reply(f"❌ Error: {str(e)}")
+                secure_log("ERROR", f"Laporan command failed: {e}")
+                send_reply(UserErrors.SHEET_READ_FAILED)
                 return jsonify({'status': 'error'}), 200
 
         if is_command_match(text, Commands.LINK, is_group):
@@ -2726,7 +2741,10 @@ Balas 1 atau 2"""
                          fname = os.path.basename(fpath)
                          send_reply(f"✅ PDF berhasil dibuat: {fname}\nDi channel ini belum bisa kirim PDF. Silakan ambil dari server.")
                  else:
-                     send_reply("❌ Gagal membuat PDF (Data kosong/Format salah).")
+                     send_reply(
+                         "❌ PDF tidak dibuat karena data periode kosong atau format periode tidak cocok.\n"
+                         "Contoh: exportpdf 2026-01"
+                     )
                  return jsonify({'status': 'command_pdf'}), 200
              except PDFNoDataError as nde:
                  period = getattr(nde, "period", arg or "periode tersebut")
@@ -2748,7 +2766,7 @@ Balas 1 atau 2"""
                  if "tahun tidak valid" in msg or "bulan tidak valid" in msg or "format tidak" in msg:
                      send_reply(UserErrors.PDF_FORMAT_ERROR)
                      return jsonify({'status': 'error_pdf'}), 200
-                 send_reply("❌ Gagal export PDF. Coba lagi beberapa saat.")
+                 send_reply("❌ Gagal export PDF karena sistem pembuat PDF bermasalah. Coba lagi 1 menit.")
                  return jsonify({'status': 'error'}), 200
 
         # Group image grace period: give users time to type after sending image
@@ -2814,7 +2832,7 @@ Balas 1 atau 2"""
                     _release_visual_source_claim()
                 if message_id:
                     clear_message_duplicate(message_id)
-                if input_type == 'image': send_reply("❓ Tidak terbaca.")
+                if input_type == 'image': send_reply(UserErrors.IMAGE_NOT_READABLE)
                 return jsonify({'status': 'no_tx'}), 200
 
             # Clear visual buffer on successful extraction to avoid double-binding
@@ -2939,13 +2957,13 @@ Balas 1 atau 2"""
                 clear_message_duplicate(message_id)
             if input_type == 'image':
                 if "Tidak ada teks ditemukan" in msg:
-                    send_reply("❓ Tidak terbaca.")
+                    send_reply(UserErrors.IMAGE_NOT_READABLE)
                 elif "tidak terdeteksi sebagai struk" in msg:
-                    send_reply("❗ Gambar tidak terdeteksi sebagai struk. Tolong kirim struk yang jelas atau tambahkan keterangan transaksi.")
+                    send_reply(UserErrors.IMAGE_NOT_RECEIPT)
                 else:
-                    send_reply("❌ Error sistem.")
+                    send_reply(UserErrors.SYSTEM_PROCESSING_FAILED)
             else:
-                send_reply("❌ Error sistem.")
+                send_reply(UserErrors.SYSTEM_PROCESSING_FAILED)
             return jsonify({'status': 'error'}), 200
         except Exception as e:
             secure_log("ERROR", f"AI Proc Error: {e}")
@@ -2953,7 +2971,7 @@ Balas 1 atau 2"""
                 _release_visual_source_claim()
             if message_id:
                 clear_message_duplicate(message_id)
-            send_reply("❌ Error sistem.")
+            send_reply(UserErrors.SYSTEM_PROCESSING_FAILED)
             return jsonify({'status': 'error'}), 200
 
     except Exception as e:

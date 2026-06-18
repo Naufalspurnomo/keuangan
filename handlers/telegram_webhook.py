@@ -44,7 +44,10 @@ def handle_telegram_webhook(flask_request, process_message: Callable):
 
         if not is_sender_allowed([sender_number, sender_username, sender_name]):
             secure_log("WARNING", f"Telegram: Access denied for {sender_number}")
-            send_telegram_reply(chat_id, "Ã¢ÂÅ’ Akses Ditolak. Hubungi Admin.")
+            send_telegram_reply(
+                chat_id,
+                "❌ Akses ditolak.\nAkun Telegram ini belum masuk allowlist bot. Hubungi admin."
+            )
             return jsonify({'status': 'forbidden'}), 200
 
         text = message.get('text') or ''

@@ -399,18 +399,33 @@ class SmartHandler:
                 original_tx_id = get_original_message_id(last_bot_msg_id)
                  
         if not original_tx_id:
-            return {"action": "REPLY", "response": "💡 Reply pesan laporan untuk merevisi."}
+            return {
+                "action": "REPLY",
+                "response": (
+                    "⚠️ Target revisi tidak ditemukan.\n"
+                    "Reply pesan laporan bot yang berisi transaksi tercatat, lalu tulis revisinya."
+                )
+            }
         
         from sheets_helper import find_all_transactions_by_message_id
         items = find_all_transactions_by_message_id(original_tx_id)
         
         if not items:
-            return {"action": "REPLY", "response": "❌ Data transaksi lama tidak ditemukan."}
+            return {
+                "action": "REPLY",
+                "response": (
+                    "❌ Data transaksi lama tidak ditemukan di spreadsheet.\n"
+                    "Kemungkinan transaksi sudah dihapus/revisi sebelumnya atau pesan yang di-reply bukan laporan transaksi."
+                )
+            }
 
         match_result = find_matching_item(items, hint, amount)
         
         if not match_result:
-            return {"action": "REPLY", "response": f"⚠️ Bingung item '{hint}'. Bisa lebih spesifik?"}
+            return {
+                "action": "REPLY",
+                "response": f"⚠️ Item '{hint}' tidak cocok dengan detail transaksi di laporan itu. Sebutkan item yang mau direvisi."
+            }
              
         target = match_result['matched_item']
         
@@ -421,4 +436,7 @@ class SmartHandler:
         if success:
             return {"action": "REPLY", "response": f"✅ Revisi: {target.get('keterangan')} → Rp {amount:,}"}
         else:
-            return {"action": "REPLY", "response": "❌ Gagal update spreadsheet."}
+            return {
+                "action": "REPLY",
+                "response": "❌ Spreadsheet belum bisa di-update untuk revisi ini. Data belum berubah. Coba lagi 1 menit."
+            }

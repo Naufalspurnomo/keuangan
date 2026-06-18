@@ -257,7 +257,8 @@ def is_prefix_match(text: str, prefix_list: list, is_group: bool = False) -> boo
 
 def parse_selection(text: str) -> tuple:
     """
-    Parse user selection input (1-4 or company name).
+    Parse project company selection input (1-4 or company name).
+    Option 5 (Operasional Kantor) is handled by the caller before this parser.
     
     Returns:
         (is_valid: bool, selection: int, error_message: str)
@@ -277,7 +278,7 @@ def parse_selection(text: str) -> tuple:
         if 1 <= num <= 4:  # Changed from 5 to 4
             return True, num, ""
         else:
-            return False, 0, "Pilihan tidak tersedia. Ketik angka 1-4."
+            return False, 0, "Pilihan tidak tersedia di prompt ini. Pilih angka yang ada di daftar terbaru."
     except ValueError:
         # Not a number - try fuzzy match against company names
         text_lower = text.lower()
@@ -299,7 +300,7 @@ def parse_selection(text: str) -> tuple:
         if highest_score > 0.6: # Threshold for confidence
             return True, best_match, ""
             
-        return False, 0, "Balas dengan angka 1-4 atau nama perusahaan untuk memilih."
+        return False, 0, "Balas angka 1-4 untuk company, 5 untuk Operasional Kantor, atau ketik nama company yang ada di prompt."
 
 
 def parse_revision_amount(text: str) -> int:

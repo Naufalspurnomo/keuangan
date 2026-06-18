@@ -120,7 +120,10 @@ def handle_wuzapi_webhook(
         if not is_sender_allowed([sender_number]):
             secure_log("WARNING", f"Webhook: Access denied for {sender_number}")
             reply_target = chat_jid if (is_group and chat_jid) else sender_number
-            send_wuzapi_reply(reply_target, "Ã¢ÂÅ’ Akses Ditolak. Hubungi Admin.")
+            send_wuzapi_reply(
+                reply_target,
+                "❌ Akses ditolak.\nNomor ini belum masuk allowlist bot. Hubungi admin."
+            )
             return jsonify({'status': 'forbidden'}), 200
 
         message_obj = event.get('Message', {})

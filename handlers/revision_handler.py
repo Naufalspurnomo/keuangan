@@ -130,7 +130,10 @@ def handle_revision_command(user_id: str, chat_id: str, text: str,
     if is_group and not quoted_message_id:
         return {
             'action': 'REPLY',
-            'response': '💡 Di grup, /revisi harus reply pesan laporan bot (Transaksi Tercatat).'
+            'response': (
+                '💡 Di grup, /revisi harus reply pesan laporan bot "Transaksi Tercatat!"\n'
+                'Tanpa reply, bot tidak tahu transaksi mana yang mau diubah.'
+            )
         }
 
     # DM: allow last bot report fallback when no quoted message
@@ -153,7 +156,10 @@ def handle_revision_command(user_id: str, chat_id: str, text: str,
     if not original_tx_id:
         return {
             'action': 'REPLY',
-            'response': '💡 Reply pesan laporan bot yang mau direvisi agar targetnya tepat.'
+            'response': (
+                '⚠️ Target revisi tidak ditemukan.\n'
+                'Reply pesan laporan bot "Transaksi Tercatat!" yang mau direvisi, bukan pesan user/prompt pilihan.'
+            )
         }
     
     # Fetch transactions from sheet
@@ -168,7 +174,10 @@ def handle_revision_command(user_id: str, chat_id: str, text: str,
     if not items:
         return {
             'action': 'REPLY',
-            'response': '❌ Data transaksi tidak ditemukan di spreadsheet.'
+            'response': (
+                '❌ Data transaksi tidak ditemukan di spreadsheet.\n'
+                'Kemungkinan transaksi sudah dihapus/revisi sebelumnya, atau laporan yang di-reply bukan laporan transaksi.'
+            )
         }
 
     non_debt_items = [i for i in items if not _is_debt_item(i)]
@@ -239,7 +248,13 @@ def handle_revision_command(user_id: str, chat_id: str, text: str,
                     'action': 'REPLY',
                     'response': response_text
                 }
-            return {'action': 'REPLY', 'response': 'Gagal update spreadsheet.'}
+            return {
+                'action': 'REPLY',
+                'response': (
+                    '❌ Spreadsheet belum bisa di-update untuk revisi ini.\n'
+                    'Data belum berubah. Coba lagi 1 menit atau hubungi admin jika tetap gagal.'
+                )
+            }
     # 2. Category scope revision (OPERATIONAL <-> PROJECT)
     if any(word in text_lower for word in ['operational', 'operasional', 'project', 'projek']):
         
@@ -337,7 +352,10 @@ def handle_undo_command(user_id: str, chat_id: str, quoted_message_id: str = Non
         if not quoted_message_id:
             return {
                 'action': 'REPLY',
-                'response': '💡 Di grup, /undo wajib reply pesan "Transaksi Tercatat!" yang ingin dihapus.'
+                'response': (
+                    '💡 Di grup, /undo wajib reply pesan laporan bot "Transaksi Tercatat!" yang ingin dihapus.\n'
+                    'Tanpa reply, bot tidak tahu transaksi mana yang harus dihapus.'
+                )
             }
         original_tx_id = get_original_message_id(quoted_message_id) or ""
         if not original_tx_id:
@@ -356,7 +374,10 @@ def handle_undo_command(user_id: str, chat_id: str, quoted_message_id: str = Non
     if not original_tx_id:
         return {
             'action': 'REPLY',
-            'response': '❌ Data transaksi tidak ditemukan. Reply pesan laporan bot yang benar.'
+            'response': (
+                '⚠️ Target undo tidak ditemukan.\n'
+                'Reply pesan laporan bot "Transaksi Tercatat!" yang benar, bukan prompt pilihan atau pesan user.'
+            )
         }
     
     # Fetch transactions
@@ -365,7 +386,10 @@ def handle_undo_command(user_id: str, chat_id: str, quoted_message_id: str = Non
     if not items:
         return {
             'action': 'REPLY',
-            'response': '❌ Transaksi tidak ditemukan di spreadsheet (mungkin sudah dihapus manual).'
+            'response': (
+                '❌ Transaksi tidak ditemukan di spreadsheet.\n'
+                'Kemungkinan transaksi sudah dihapus manual atau sudah pernah di-undo.'
+            )
         }
     
     # Show preview and ask confirmation

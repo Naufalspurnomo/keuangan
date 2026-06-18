@@ -445,7 +445,7 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
                 'response': (
                     f"❌ Gagal menyimpan transaksi ke spreadsheet!\n"
                     f"📋 Dompet: {dompet_sheet}\n"
-                    f"⚠️ Error: {error_msg[:150]}\n\n"
+                    f"⚠️ Penyebab: {error_msg[:150]}\n\n"
                     f"Coba kirim ulang transaksi. Jika masih gagal, hubungi admin."
                 ),
                 'completed': False
@@ -502,10 +502,10 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
     response = format_success_reply_new(transactions, dompet_sheet, company, "").replace('*', '')
     tx_ids = [t.get('tx_id') for t in transactions if t.get('tx_id')]
     if tx_ids:
-        response += f"\nðŸ†” TX: {', '.join(tx_ids)}"
+        response += f"\n🆔 TX: {', '.join(tx_ids)}"
     if debt_source and debt_source != dompet_sheet:
         total_amount = sum(int(t.get('jumlah', 0) or 0) for t in transactions)
-        response += f"\nðŸ’³ Utang dicatat: {debt_source} â†’ {dompet_sheet} (Rp {total_amount:,})".replace(',', '.')
+        response += f"\n💳 Utang dicatat: {debt_source} → {dompet_sheet} (Rp {total_amount:,})".replace(',', '.')
 
     # Lock project to dompet for consistency
     for t in transactions:
@@ -1573,7 +1573,7 @@ Atau ketik /cancel untuk batal total"""
                 clear_pending_confirmation(user_id, chat_id)
                 if pending_data.get('pending_key'):
                     clear_pending_transaction(pending_data.get('pending_key'))
-                return {'response': 'âŒ Dibatalkan.', 'completed': True}
+                return {'response': '❌ Dibatalkan.', 'completed': True}
             if clean.isdigit():
                 return {'response': 'Balas 1/2/3 atau ketik nama project baru.', 'completed': False}
 
