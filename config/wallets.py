@@ -282,9 +282,28 @@ def resolve_dompet_from_text(text: str) -> Optional[str]:
         "bl",
     }
 
+    # Location/person words are valid wallet hints only when the user is
+    # actually talking about a wallet. Otherwise phrases like
+    # "pp sby-batu-sby" are travel context, not TX SBY selection.
+    context_required_aliases = {
+        "surabaya",
+        "sby",
+        "suraba",
+        "surbaya",
+        "bali",
+        "denpasar",
+        "ke bali",
+        "bali aja",
+        "evan",
+        "evan punya",
+        "punya evan",
+    }
+
     candidates = []
     for alias, dompet in DOMPET_ALIASES.items():
         if alias in ambiguous_dompet_aliases:
+            continue
+        if alias in context_required_aliases and not has_dompet_context:
             continue
         if alias in clean:
             if any(token in alias for token in ("rek", "rekening", "no ") ) and not has_dompet_context:

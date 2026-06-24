@@ -319,20 +319,25 @@ def resolve_project_name_for_context(candidate, dompet_sheet=None, company=None,
 
     Example: "pinjam dompet CV HB, projek Grand Cayman" mentions CV HB as the
     funding wallet, not necessarily the project owner. If the scoped lookup says
-    NEW only because it searched inside the debt-source wallet, retry unscoped
-    before asking the user to create a new project.
+    NEW only because it searched inside the wrong wallet/company scope, retry
+    unscoped before asking the user to create a new project.
     """
     result = resolve_project_name(candidate, dompet_sheet=dompet_sheet, company=company)
-    if (
-        result.get('status') == 'NEW'
-        and debt_source_dompet
-        and dompet_sheet
-        and str(dompet_sheet).strip() == str(debt_source_dompet).strip()
-    ):
+    if result.get('status') == 'NEW' and (dompet_sheet or company):
         fallback = resolve_project_name(candidate)
-        if fallback.get('status') in {'EXACT', 'AUTO_FIX'}:
+        if (
+            fallback.get('status') in {'EXACT', 'AUTO_FIX'}
+            and fallback.get('final_name')
+            and int(fallback.get('match_count') or 1) == 1
+        ):
             fallback['original'] = result.get('original') or candidate
-            fallback['debt_source_scope_fallback'] = True
+            fallback['scope_fallback'] = True
+            if (
+                debt_source_dompet
+                and dompet_sheet
+                and str(dompet_sheet).strip() == str(debt_source_dompet).strip()
+            ):
+                fallback['debt_source_scope_fallback'] = True
             return fallback
     return result
 
@@ -400,7 +405,7 @@ def infer_project_from_text_context(text, dompet_sheet=None, company=None, debt_
     records = get_existing_project_records(dompet_sheet=dompet_sheet, company=company)
     matches = _match_records(records)
 
-    if not matches and debt_source_dompet and dompet_sheet and str(dompet_sheet).strip() == str(debt_source_dompet).strip():
+    if not matches and (dompet_sheet or company):
         matches = _match_records(get_existing_project_records())
 
     if not matches:

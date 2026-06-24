@@ -3,6 +3,7 @@ import unittest
 
 from services import project_service
 from services import state_manager
+from config.wallets import resolve_dompet_from_text
 
 
 class ProjectServiceTests(unittest.TestCase):
@@ -24,6 +25,7 @@ class ProjectServiceTests(unittest.TestCase):
                 "Holla - Mural PVJ",
                 "TEXTURIN - Booth PVJ",
                 "Holla - Workshop",
+                "Holla - Bu Astri",
                 "Grand Cayman",
             },
             "records": [
@@ -42,6 +44,12 @@ class ProjectServiceTests(unittest.TestCase):
                 {
                     "name": "Holla - Workshop",
                     "base_name": "Workshop",
+                    "dompet": "CV HB(101)",
+                    "company": "HOLLA",
+                },
+                {
+                    "name": "Holla - Bu Astri",
+                    "base_name": "Bu Astri",
                     "dompet": "CV HB(101)",
                     "company": "HOLLA",
                 },
@@ -93,6 +101,40 @@ class ProjectServiceTests(unittest.TestCase):
         self.assertEqual(result["status"], "EXACT")
         self.assertEqual(result["final_name"], "Grand Cayman")
         self.assertTrue(result["debt_source_scope_fallback"])
+
+    def test_scoped_project_lookup_falls_back_to_unique_existing_project(self):
+        scoped = project_service.resolve_project_name(
+            "Bu Astri",
+            dompet_sheet="TX SBY(216)",
+        )
+        self.assertEqual(scoped["status"], "NEW")
+
+        result = project_service.resolve_project_name_for_context(
+            "Bu Astri",
+            dompet_sheet="TX SBY(216)",
+        )
+
+        self.assertEqual(result["status"], "EXACT")
+        self.assertEqual(result["final_name"], "Holla - Bu Astri")
+        self.assertTrue(result["scope_fallback"])
+
+    def test_infers_existing_project_across_wrong_scope_from_explicit_text(self):
+        result = project_service.infer_project_from_text_context(
+            "rembus dan uang pp sby-batu-sby rio, projek bu astri",
+            dompet_sheet="TX SBY(216)",
+        )
+
+        self.assertEqual(result["status"], "EXACT")
+        self.assertEqual(result["final_name"], "Holla - Bu Astri")
+
+    def test_travel_sby_text_does_not_select_tx_sby_wallet(self):
+        self.assertIsNone(
+            resolve_dompet_from_text(
+                "rembus dan uang pp sby-batu-sby rio, projek bu astri"
+            )
+        )
+        self.assertEqual(resolve_dompet_from_text("dompet sby"), "TX SBY(216)")
+        self.assertEqual(resolve_dompet_from_text("tx sby"), "TX SBY(216)")
 
     def test_debt_words_are_invalid_project_names(self):
         for candidate in ["Pinjam", "utang", "minjam", "pakai"]:
