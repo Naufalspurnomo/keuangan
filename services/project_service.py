@@ -27,7 +27,7 @@ def _normalize_project_name(name: str) -> str:
     if not name:
         return ""
     cleaned = str(name).strip()
-    cleaned = re.sub(r'\s*\((Start|Finish)\)$', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*\((Start|Finish|Selesai)\)$', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     return cleaned
 

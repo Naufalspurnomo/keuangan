@@ -37,7 +37,7 @@ EVIDENCE_LIMIT_DEFAULT = 5
 EVIDENCE_LIMIT_DETAIL = 10
 
 PROJECT_PREFIX_RE = re.compile(r"^\s*(holla|hojja)\s*[-:]\s*", re.IGNORECASE)
-PROJECT_PHASE_RE = re.compile(r"\s*\((start|finish)\)\s*$", re.IGNORECASE)
+PROJECT_PHASE_RE = re.compile(r"\s*\((start|finish|selesai)\)\s*$", re.IGNORECASE)
 PROJECT_QUERY_STOPWORDS = {
     "bot", "tolong", "dong", "berapa", "gimana", "bagaimana", "cek", "check", "lihat",
     "pengeluaran", "pemasukan", "income", "expense", "biaya", "total", "rekap", "status",
@@ -541,8 +541,8 @@ def _handle_finished_projects_query(norm_text: str, days: int, period_label: str
     """Handle queries about finished projects."""
     data = get_all_data(days) if days is not None else get_all_data(None)
 
-    # Build project buckets by base name (without Start/Finish marker).
-    # A project is included only if at least one tx has Finish marker.
+    # Build project buckets by base name (without Start/Selesai marker).
+    # A project is included only if at least one tx has a finish marker.
     projects_by_base = {}
     for d in data:
         proj = d.get("nama_projek", "").strip()
@@ -563,7 +563,7 @@ def _handle_finished_projects_query(norm_text: str, days: int, period_label: str
         bucket["rows_all"].append(d)
 
         proj_lower = proj.lower()
-        if "(finish)" in proj_lower or "finish" in proj_lower:
+        if re.search(r"\((finish|selesai)\)", proj, re.IGNORECASE):
             bucket["rows_finish"].append(d)
             # Keep latest finish label as display name when available.
             bucket["display_name"] = proj
@@ -571,11 +571,11 @@ def _handle_finished_projects_query(norm_text: str, days: int, period_label: str
     finished_projects = {b: info for b, info in projects_by_base.items() if info["rows_finish"]}
 
     if not finished_projects:
-        return f"Tidak ada projek yang finish ({period_label})."
+        return f"Tidak ada projek yang selesai ({period_label})."
 
     show_detail = _wants_detail(norm_text)
     lines = [
-        f"🏁 Projek Finish ({period_label})",
+        f"🏁 Projek Selesai ({period_label})",
         f"📋 {len(finished_projects)} projek selesai",
     ]
 

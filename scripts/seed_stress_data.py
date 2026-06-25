@@ -195,7 +195,7 @@ def seed_data(start_dt: datetime, end_dt: datetime, projects_per_company: int, s
 
             is_finished = random.random() < 0.7
             start_name = f"{project_name} (Start)"
-            finish_name = f"{project_name} (Finish)" if is_finished else project_name
+            finish_name = f"{project_name} (Selesai)" if is_finished else project_name
 
             # Income: DP
             no_in[dompet] += 1
@@ -226,7 +226,7 @@ def seed_data(start_dt: datetime, end_dt: datetime, projects_per_company: int, s
                 )
             )
 
-            # Income: Pelunasan (finish)
+            # Income: Pelunasan (selesai)
             if is_finished:
                 no_in[dompet] += 1
                 rows_by_sheet_in[dompet].append(

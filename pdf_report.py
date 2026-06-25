@@ -404,11 +404,11 @@ def _is_salary(tx: Dict) -> bool:
 def _strip_project_markers(name: str) -> str:
     if not name:
         return ""
-    clean = re.sub(r"\s*\((start|finish)\)\s*$", "", name.strip(), flags=re.IGNORECASE)
+    clean = re.sub(r"\s*\((start|finish|selesai)\)\s*$", "", name.strip(), flags=re.IGNORECASE)
     return clean.strip()
 
 def _has_finish_marker(name: str) -> bool:
-    return "(finish)" in (name or "").lower()
+    return bool(re.search(r"\((finish|selesai)\)", name or "", re.IGNORECASE))
 
 def _project_key(name: str) -> str:
     return _strip_project_markers(name)

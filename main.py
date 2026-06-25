@@ -4,7 +4,7 @@ main.py
 Features:
 - COST ACCOUNTING: Splits Operational (Fixed) vs Project (Variable) costs.
 - SMART ROUTING: Auto-detects context (Salary/Utilities vs Project Expenses).
-- PROJECT LIFECYCLE: Auto-tags projects with (Start) and (Finish).
+- PROJECT LIFECYCLE: Auto-tags confirmed new projects with (Start) and completed projects with (Selesai).
 - MULTI-CHANNEL: WhatsApp + Telegram support.
 - SECURE: Rate limiting, prompt injection protection...
 """
@@ -135,7 +135,7 @@ from utils.formatters import (
     START_MESSAGE, HELP_MESSAGE,
     CATEGORIES_DISPLAY, SELECTION_DISPLAY,
 )
-from utils.lifecycle import apply_lifecycle_markers, select_start_marker_indexes
+from utils.lifecycle import apply_lifecycle_markers, has_finish_marker, select_start_marker_indexes
 from utils.wallet_updates import (
     is_absolute_balance_update,
     pick_wallet_target_amount,
@@ -1283,7 +1283,7 @@ Balas 1 atau 2"""
                                 'error': save_result.get('error', 'Unknown error'),
                                 'pname': pname
                             })
-                        if save_result.get('success') and '(finish)' in pname.lower():
+                        if save_result.get('success') and has_finish_marker(pname):
                             move_finish_marker_to_latest(
                                 dompet_sheet=dompet,
                                 project_name=pname,
@@ -1298,7 +1298,7 @@ Balas 1 atau 2"""
                                 company=detected_company,
                                 actor=pending.get('sender_name', sender_name),
                                 source=pending.get('source', 'WhatsApp'),
-                                status='finished' if '(finish)' in pname.lower() else 'active',
+                                status='finished' if has_finish_marker(pname) else 'active',
                             )
 
                     # If any saves failed, notify user and abort success flow

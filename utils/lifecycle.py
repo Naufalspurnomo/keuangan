@@ -1,17 +1,22 @@
 """
-Lifecycle helpers for project naming (Start/Finish markers).
+Lifecycle helpers for project naming (Start/Selesai markers).
 """
 import re
-from services.project_service import get_existing_projects
 from config.wallets import strip_company_prefix
 
 
-MARKER_RE = re.compile(r"\s*\((start|finish)\)\s*$", re.IGNORECASE)
+MARKER_RE = re.compile(r"\s*\((start|finish|selesai)\)\s*$", re.IGNORECASE)
+FINISH_MARKER_RE = re.compile(r"\((finish|selesai)\)", re.IGNORECASE)
 
 
 def _strip_marker(project_name: str) -> str:
     """Remove trailing lifecycle marker to prevent duplicate markers."""
     return MARKER_RE.sub("", project_name or "").strip()
+
+
+def has_finish_marker(project_name: str) -> bool:
+    """Return True for both current '(Selesai)' and legacy '(Finish)' markers."""
+    return bool(FINISH_MARKER_RE.search(project_name or ""))
 
 
 def select_start_marker_indexes(transactions: list) -> set:
@@ -50,9 +55,10 @@ def apply_lifecycle_markers(
     allow_start: bool = True,
 ) -> str:
     """
-    Applies (Start) or (Finish) markers to project names.
+    Applies (Start) or (Selesai) markers to project names.
     Rules:
-    - New projects always get (Start), even if first TX is Pengeluaran.
+    - New projects get (Start) only when the caller has explicitly confirmed
+      the project is new.
     - Finish marker is applied on pelunasan-like pemasukan.
     - Marker is normalized so we do not end up with duplicate suffixes.
     """
@@ -66,23 +72,15 @@ def apply_lifecycle_markers(
     # Rule 1: Finish
     finish_keywords = ['pelunasan', 'lunas', 'final payment', 'penyelesaian', 'selesai', 'kelar', 'beres']
     if allow_finish and tipe == 'Pemasukan' and any(k in desc for k in finish_keywords):
-        return f"{base_name} (Finish)"
+        return f"{base_name} (Selesai)"
 
-    # Rule 2: Start for explicitly new project (works for Pengeluaran too)
+    # Rule 2: Start only for explicitly confirmed new project.
     if is_new_project and allow_start:
         return f"{base_name} (Start)"
     if is_new_project and not allow_start:
         return project_name
 
-    # Existing auto-detect keeps old behavior: only mark Start on Pemasukan
-    if tipe != 'Pemasukan' or not allow_start:
-        return project_name
-
-    existing = get_existing_projects()
-    lookup_name = strip_company_prefix(base_name) or base_name
-
-    # Check if project exists (case insensitive)
-    if not any(e.lower() in {base_name.lower(), lookup_name.lower()} for e in existing):
-        return f"{base_name} (Start)"
-
+    # Do not infer Start from cache misses. A missed lookup can happen because
+    # of prefix/company ambiguity, sheet latency, or typo handling; Start must
+    # mean "user confirmed this is the project's first entry."
     return project_name

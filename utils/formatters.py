@@ -108,7 +108,7 @@ Koreksi (reply pesan bot):
 Catatan akurasi:
 - Project: tulis kata `projek/project` + nama projek
 - Operasional: tulis kata `kantor`
-- Project baru ditandai `(Start)`, pelunasan bisa ditandai `(Finish)`
+- Project baru ditandai `(Start)`, pelunasan bisa ditandai `(Selesai)`
 """
 
 

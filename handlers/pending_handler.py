@@ -13,7 +13,7 @@ from utils.formatters import (
     format_draft_summary_operational, format_draft_summary_project,
     format_success_reply_new, format_success_reply_operational
 )
-from utils.lifecycle import apply_lifecycle_markers, select_start_marker_indexes
+from utils.lifecycle import apply_lifecycle_markers, has_finish_marker, select_start_marker_indexes
 from utils.parsers import parse_revision_amount
 from utils.amounts import has_amount_pattern
 from services.project_service import (
@@ -450,7 +450,7 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
                 ),
                 'completed': False
             }
-        if save_result.get('success') and '(finish)' in p_name.lower():
+        if save_result.get('success') and has_finish_marker(p_name):
             move_finish_marker_to_latest(
                 dompet_sheet=dompet_sheet,
                 project_name=p_name,
@@ -518,7 +518,7 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
                 company=company,
                 actor=sender_name,
                 source=source,
-                status='finished' if '(finish)' in pname.lower() else 'active',
+                status='finished' if has_finish_marker(pname) else 'active',
             )
 
     return {'response': response, 'completed': True, 'bot_ref_event_id': event_id}
@@ -1936,7 +1936,7 @@ Atau ketik /cancel untuk batal total"""
                     }
                 )
                 return {
-                    'response': 'Terdeteksi kata pelunasan/selesai. Tandai project sebagai (Finish)?\n\n1️⃣ Ya\n2️⃣ Tidak',
+                    'response': 'Terdeteksi kata pelunasan/selesai. Tandai project sebagai (Selesai)?\n\n1️⃣ Ya\n2️⃣ Tidak',
                     'completed': False
                 }
 
@@ -2017,7 +2017,7 @@ Atau ketik /cancel untuk batal total"""
         if text_lower in ['2', 'tidak', 'no', 'bukan']:
             pending_data['finish_decision'] = 'SKIP'
             return _commit_project_transactions(pending_data, sender_name, user_id, chat_id, is_group)
-        return {'response': 'Balas 1 untuk tandai (Finish) atau 2 untuk tidak.', 'completed': False}
+        return {'response': 'Balas 1 untuk tandai (Selesai) atau 2 untuk tidak.', 'completed': False}
 
     elif pending_type == 'project_dompet_mismatch':
         choice = text_lower.strip()

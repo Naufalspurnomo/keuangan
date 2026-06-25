@@ -1188,9 +1188,9 @@ def _normalize_project_key(name: str) -> str:
     if not name:
         return ""
     clean = name.strip()
-    # Remove (Start)/(Finish) markers
-    clean = clean.replace("(Start)", "").replace("(Finish)", "")
-    clean = clean.replace("(start)", "").replace("(finish)", "")
+    # Remove (Start)/(Finish)/(Selesai) markers
+    clean = clean.replace("(Start)", "").replace("(Finish)", "").replace("(Selesai)", "")
+    clean = clean.replace("(start)", "").replace("(finish)", "").replace("(selesai)", "")
     return clean.strip().lower()
 
 

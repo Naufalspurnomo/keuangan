@@ -1167,15 +1167,15 @@ def move_finish_marker_to_latest(
     keep_tipe: str = "",
 ) -> int:
     """
-    Ensure only the newest row keeps '(Finish)' marker for the same project.
+    Ensure only the newest row keeps a finish marker for the same project.
 
     When a new finish transaction is recorded, old rows with the same project base
-    that still have '(Finish)' are normalized back to plain project name.
+    that still have '(Finish)' or '(Selesai)' are normalized back to plain project name.
     """
     if not dompet_sheet or not project_name:
         return 0
 
-    if "(finish" not in str(project_name).lower():
+    if not re.search(r"\((finish|selesai)", str(project_name), re.IGNORECASE):
         return 0
 
     target_key = _normalize_project_lookup_name(project_name)
@@ -1210,7 +1210,7 @@ def move_finish_marker_to_latest(
                 raw_name = col_values[row_idx] if row_idx < len(col_values) else ""
                 if not raw_name:
                     continue
-                if "(finish" not in raw_name.lower():
+                if not re.search(r"\((finish|selesai)", raw_name, re.IGNORECASE):
                     continue
                 if _normalize_project_lookup_name(raw_name) != target_key:
                     continue
@@ -1219,7 +1219,7 @@ def move_finish_marker_to_latest(
                     if keep_col is None or keep_col == col_idx:
                         continue
 
-                cleaned_name = re.sub(r"\s*\((start|finish)\)\s*$", "", raw_name, flags=re.IGNORECASE).strip()
+                cleaned_name = re.sub(r"\s*\((start|finish|selesai)\)\s*$", "", raw_name, flags=re.IGNORECASE).strip()
                 if not cleaned_name or cleaned_name == raw_name:
                     continue
                 updates.append(gspread.Cell(row_number, col_idx, cleaned_name))
@@ -1332,7 +1332,8 @@ def get_all_categories() -> List[str]:
 
 
 def _normalize_project_key(name: str) -> str:
-    return " ".join(name.split()).casefold()
+    clean = re.sub(r"\s*\((start|finish|selesai)\)\s*$", "", str(name or ""), flags=re.IGNORECASE)
+    return " ".join(clean.split()).casefold()
 
 
 def _titlecase_preserve_acronyms(name: str) -> str:
@@ -2787,7 +2788,7 @@ def _normalize_project_lookup_name(project_name: str) -> str:
         cleaned = strip_company_prefix(str(project_name).strip()) or str(project_name).strip()
     except Exception:
         cleaned = str(project_name).strip()
-    cleaned = re.sub(r"\((start|finish)\)", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\((start|finish|selesai)\)", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+", " ", cleaned).strip().lower()
     return cleaned
 
