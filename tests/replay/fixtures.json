@@ -1,0 +1,181 @@
+{
+  "_schema": {
+    "description": "Replay fixtures = ground truth dari chat nyata. Setiap case dilabeli manual oleh manusia. Resolver/pipeline diukur terhadap label ini, BUKAN terhadap output pipeline lama.",
+    "fields": {
+      "id": "string unik, stabil (jangan diubah setelah dibuat)",
+      "text": "caption/teks user apa adanya",
+      "ocr_text": "opsional, body OCR struk",
+      "note": "konteks kasus untuk reviewer manusia",
+      "known_gap": "true bila resolver SAAT INI diketahui gagal; runner memperlakukannya sebagai expected-fail (xfail) agar CI tetap hijau tanpa menyembunyikan temuan",
+      "expect": {
+        "project": "nama project yang BENAR, atau null",
+        "main_wallet": "dompet utama kanonik (CV HB(101)|TX SBY(216)|TX BALI(087)) atau null",
+        "debt_source": "lender kanonik atau null",
+        "company": "HOLLA|HOJJA|TEXTURIN-Surabaya|TEXTURIN-Bali atau null",
+        "needs_confirmation": "true jika bot SEHARUSNYA bertanya, bukan auto-commit"
+      }
+    },
+    "checked_fields": ["project", "main_wallet", "debt_source", "company", "needs_confirmation"]
+  },
+  "cases": [
+    {
+      "id": "debt-holla-funds-vadim-fee",
+      "text": "bayar fee sugeng project vadim utang CV HB",
+      "note": "REGRESSION: pinjam CV HB adalah LENDER, bukan dompet utama project. Dompet utama tidak disebut -> harus konfirmasi.",
+      "expect": {
+        "project": "vadim",
+        "main_wallet": null,
+        "debt_source": "CV HB(101)",
+        "company": null,
+        "needs_confirmation": true
+      }
+    },
+    {
+      "id": "debt-holla-alias-spelling",
+      "text": "beli material project taman kota minjam holla",
+      "note": "REGRESSION: alias 'holla' -> CV HB(101) sebagai lender, bukan main wallet.",
+      "expect": {
+        "project": "taman kota",
+        "main_wallet": null,
+        "debt_source": "CV HB(101)",
+        "company": null,
+        "needs_confirmation": true
+      }
+    },
+    {
+      "id": "ocr-successful-not-project",
+      "text": "bayar project Successful dari TX SBY",
+      "ocr_text": "Transfer Successful\nAmount Rp 480.000\nStatus Berhasil",
+      "note": "REGRESSION: kata 'Successful'/'Berhasil' tidak boleh jadi nama project walau masuk posisi project.",
+      "expect": {
+        "project": null,
+        "main_wallet": "TX SBY(216)",
+        "debt_source": null,
+        "company": "TEXTURIN-Surabaya",
+        "needs_confirmation": true
+      }
+    },
+    {
+      "id": "debt-holla-exact-ronald-fee",
+      "text": "Fee paw minggu ke juni , projek ronald, pinjam HOLLA",
+      "note": "REGRESSION produksi: pinjam HOLLA adalah sumber hutang, bukan dompet utama project Ronald.",
+      "expect": {
+        "project": "ronald",
+        "main_wallet": null,
+        "debt_source": "CV HB(101)",
+        "company": null,
+        "needs_confirmation": true
+      }
+    },
+    {
+      "id": "debt-pinjem-variant-spelling",
+      "text": "fee tukang vadim pinjem holla",
+      "note": "REGRESSION (ditemukan probe): 'pinjem' = varian umum 'pinjam'. FIX: HOLLA kini dikenali sebagai lender, bukan main_wallet. Project SENGAJA null: tanpa kata 'project', resolver tidak boleh menebak 'vadim' itu project atau nama orang -> needs_confirmation=true (bot bertanya). Ini perilaku BENAR, bukan bug.",
+      "expect": {
+        "project": null,
+        "main_wallet": null,
+        "debt_source": "CV HB(101)",
+        "company": null,
+        "needs_confirmation": true
+      }
+
+    },
+    {
+      "id": "clean-project-with-wallet",
+
+      "text": "beli cat project vadim dari TX SBY",
+      "note": "Happy path: project + dompet utama eksplisit, tanpa hutang.",
+      "expect": {
+        "project": "vadim",
+        "main_wallet": "TX SBY(216)",
+        "debt_source": null,
+        "company": "TEXTURIN-Surabaya",
+        "needs_confirmation": false
+      }
+    },
+    {
+      "id": "wallet-by-account-number",
+      "text": "bayar semen project ruko dari rekening 216",
+      "note": "Dompet via nomor rekening. FIXED: narrow_resolver._wallet_from_account_context mengenali 'rekening 216' -> TX SBY(216) (config.resolve_dompet_from_text masih melewatkannya, sengaja tidak diubah karena blast radius produksi).",
+      "expect": {
+
+        "project": "ruko",
+        "main_wallet": "TX SBY(216)",
+        "debt_source": null,
+        "company": null,
+        "needs_confirmation": false
+      }
+    },
+    {
+      "id": "debt-lender-by-account-number",
+      "text": "beli cat project vadim utang rekening 216",
+      "note": "Debt lender can be expressed via account context. 'rekening 216' in debt clause is TX SBY lender, not main wallet.",
+      "expect": {
+        "project": "vadim",
+        "main_wallet": null,
+        "debt_source": "TX SBY(216)",
+        "company": null,
+        "needs_confirmation": true
+      }
+    },    {
+      "id": "project-word-no-name",
+      "text": "bayar projek dari TX BALI",
+      "note": "Ada kata 'projek' tapi tanpa nama -> harus konfirmasi nama project.",
+      "expect": {
+        "project": null,
+        "main_wallet": "TX BALI(087)",
+        "debt_source": null,
+        "company": "TEXTURIN-Bali",
+        "needs_confirmation": true
+      }
+    },
+    {
+      "id": "debt-with-both-wallets",
+      "text": "beli besi project gudang dari TX BALI utang TX SBY",
+      "note": "Dompet utama (TX BALI) dan lender (TX SBY) keduanya eksplisit dan berbeda.",
+      "expect": {
+        "project": "gudang",
+        "main_wallet": "TX BALI(087)",
+        "debt_source": "TX SBY(216)",
+        "company": "TEXTURIN-Bali",
+        "needs_confirmation": false
+      }
+    },
+    {
+      "id": "company-holla-derives-wallet",
+      "text": "beli alat project mural holla",
+      "note": "Company HOLLA eksplisit -> derive CV HB(101). Tanpa hutang.",
+      "expect": {
+        "project": "mural",
+        "main_wallet": "CV HB(101)",
+        "debt_source": null,
+        "company": "HOLLA",
+        "needs_confirmation": false
+      }
+    },
+    {
+      "id": "empty-text",
+      "text": "",
+      "note": "Edge: teks kosong -> konfirmasi, jangan crash.",
+      "expect": {
+        "project": null,
+        "main_wallet": null,
+        "debt_source": null,
+        "company": null,
+        "needs_confirmation": true
+      }
+    },
+    {
+      "id": "no-finance-signal",
+      "text": "oke siap besok ya",
+      "note": "Chatter biasa: tidak ada dompet/project -> konfirmasi (low confidence).",
+      "expect": {
+        "project": null,
+        "main_wallet": null,
+        "debt_source": null,
+        "company": null,
+        "needs_confirmation": true
+      }
+    }
+  ]
+}

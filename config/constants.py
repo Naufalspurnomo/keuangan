@@ -252,6 +252,12 @@ class Commands:
     SALDO_SLASH = ['/saldo']
     SALDO_PRIVATE = ['saldo']
     SALDO = SALDO_SLASH + SALDO_PRIVATE
+
+    # Data integrity audit: flag rows likely broken by manual Sheet edits.
+    AUDIT_SLASH = ['/audit']
+    AUDIT_PRIVATE = ['audit']
+    AUDIT = AUDIT_SLASH + AUDIT_PRIVATE
+
     
     LIST_SLASH = ['/list']
     LIST_PRIVATE = ['list']

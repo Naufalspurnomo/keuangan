@@ -47,6 +47,7 @@ from sheets_helper import (
     cancel_hutang_by_event_id,
     find_open_hutang,
     get_all_data,
+    get_raw_rows_for_audit,
     get_hutang_summary,
     find_company_for_project_exact,
 )
@@ -192,6 +193,65 @@ import services.state_manager as state_manager_module
 smart_handler = SmartHandler(state_manager_module)
 
 from utils.amounts import has_amount_pattern
+
+# ===================== NARROW RESOLVER SHADOW (Fase 2a) =====================
+# Run the typed narrow_resolver in PARALLEL with the legacy pipeline and only
+# LOG divergences. The legacy pipeline still makes every decision; this changes
+# no behavior. Enable by setting NARROW_RESOLVER_SHADOW=1 to collect comparison
+# data from real chats before any promotion (Fase 2b).
+NARROW_RESOLVER_SHADOW = os.getenv('NARROW_RESOLVER_SHADOW', '0').strip().lower() in ('1', 'true', 'yes', 'on')
+
+# Fase 3: context-aware confirmation prompts. Default ON for the small trusted
+# group; set SMART_CONFIRMATION=0 to revert to the plain prompt instantly.
+SMART_CONFIRMATION = os.getenv('SMART_CONFIRMATION', '1').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+
+def _shadow_compare_narrow_resolver(original_text, pipeline_dompet,
+                                    pipeline_debt_source, pipeline_projects):
+    """Compare narrow_resolver output against the pipeline decision (log-only).
+
+    Never raises: any failure here must not affect the live transaction flow.
+    """
+    if not NARROW_RESOLVER_SHADOW:
+        return
+    try:
+        from services.narrow_resolver import resolve_finance_message
+        decision = resolve_finance_message(original_text or "")
+
+        diffs = []
+        # main_wallet vs pipeline dompet
+        if (decision.main_wallet or None) != (pipeline_dompet or None):
+            diffs.append(f"main_wallet: resolver={decision.main_wallet!r} pipeline={pipeline_dompet!r}")
+        # debt_source
+        if (decision.debt_source or None) != (pipeline_debt_source or None):
+            diffs.append(f"debt_source: resolver={decision.debt_source!r} pipeline={pipeline_debt_source!r}")
+        # project (compare resolver hint against normalized pipeline project names)
+        def _project_shadow_key(value):
+            base = strip_company_prefix(str(value or "").strip()) or str(value or "").strip()
+            return base.lower()
+
+        pipeline_proj_set = {
+            key for p in (pipeline_projects or [])
+            if (key := _project_shadow_key(p))
+        }
+        resolver_proj = _project_shadow_key(decision.project)
+        if resolver_proj or pipeline_proj_set:
+            if not resolver_proj or resolver_proj not in pipeline_proj_set:
+                diffs.append(f"project: resolver={decision.project!r} pipeline={sorted(pipeline_proj_set)}")
+
+        if diffs:
+            secure_log(
+                "INFO",
+                "NARROW_SHADOW divergence | "
+                + f"conf={decision.confidence} needs_conf={decision.needs_confirmation} | "
+                + " | ".join(diffs)
+            )
+        else:
+            secure_log("INFO", f"NARROW_SHADOW match | conf={decision.confidence}")
+    except Exception as e:
+        secure_log("WARNING", f"NARROW_SHADOW failed (ignored): {type(e).__name__}: {e}")
+
 
 
 # ===================== HEALTH CHECK ENDPOINT =====================
@@ -768,13 +828,29 @@ Balas 1 atau 2"""
                     total = sum(t.get('jumlah', 0) for t in txs)
                     item = txs[0].get('keterangan', 'Biaya')
 
-                    msg = (f"🏢 *Deteksi: Operasional Kantor*\n"
-                           f"📝 {item} (Rp {total:,})\n\n"
-                           f"{prompt}").replace(',', '.')
+                    if SMART_CONFIRMATION:
+                        # Context-aware prompt: mention the detected item + amount
+                        # so the question feels specific, not a blank menu.
+                        try:
+                            from services.smart_confirmation import build_wallet_question
+                            body = build_wallet_question(
+                                transactions=txs,
+                                base_prompt=prompt,
+                            )
+                            msg = ("🏢 *Deteksi: Operasional Kantor*\n" + body)
+                        except Exception:
+                            msg = (f"🏢 *Deteksi: Operasional Kantor*\n"
+                                   f"📝 {item} (Rp {total:,})\n\n"
+                                   f"{prompt}").replace(',', '.')
+                    else:
+                        msg = (f"🏢 *Deteksi: Operasional Kantor*\n"
+                               f"📝 {item} (Rp {total:,})\n\n"
+                               f"{prompt}").replace(',', '.')
 
                     sent = send_reply(msg)
                     cache_prompt(pkey, pending, sent)
                     return jsonify({'status': 'asking_wallet'}), 200
+
 
                 # Step 2: Save to Operational Sheet (fast mode auto-commit)
                 if FAST_MODE:
@@ -1384,9 +1460,18 @@ Balas 1 atau 2"""
                         if raw_proj:
                             add_new_project_to_cache(raw_proj)
 
+                    # Fase 2a: shadow-compare narrow_resolver (log-only, no behavior change).
+                    _shadow_compare_narrow_resolver(
+                        original_text,
+                        dompet,
+                        debt_source if debt_source and debt_source != dompet else None,
+                        [t.get('nama_projek') for t in txs],
+                    )
+
                     invalidate_dashboard_cache()
                     _pending_transactions.pop(pkey, None)
                     response = format_success_reply_new(txs, dompet, detected_company, "")
+
                     if lock_note:
                         response += f"\n {lock_note}"
                     if new_project_expense_note:
@@ -2761,6 +2846,22 @@ Balas 1 atau 2"""
             url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}"
             send_reply(f"🔗 *Google Sheets Link:*\n{url}")
             return jsonify({'status': 'command_link'}), 200
+
+        if is_command_match(text, Commands.AUDIT, is_group):
+            # Read-only data integrity check. Flags rows likely broken by
+            # manual Sheet edits (empty/non-numeric amount, unknown tipe,
+            # unknown dompet/company). Does not modify any data.
+            try:
+                from services.row_validator import validate_rows, format_issue_report
+                rows = get_raw_rows_for_audit()
+                issues = validate_rows(rows)
+                send_reply(format_issue_report(issues))
+                return jsonify({'status': 'command_audit', 'issues': len(issues)}), 200
+            except Exception as e:
+                secure_log("ERROR", f"Audit command failed: {type(e).__name__}: {e}")
+                send_reply(UserErrors.SHEET_READ_FAILED)
+                return jsonify({'status': 'error'}), 200
+
 
         if is_prefix_match(text, Commands.EXPORT_PDF_PREFIXES, is_group) or is_command_match(text, Commands.EXPORT_PDF_PREFIXES, is_group):
              try:

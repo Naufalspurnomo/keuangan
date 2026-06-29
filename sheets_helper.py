@@ -1706,6 +1706,91 @@ def _is_internal_transfer_tx(tx: Dict) -> bool:
         return True
     return False
 
+
+def get_raw_rows_for_audit() -> List[Dict]:
+    """Read raw transaction-like rows from Sheets for data integrity audit.
+
+    Unlike get_all_data(), this keeps rows with invalid date/amount so /audit
+    can report manual-edit damage instead of silently skipping it.
+    """
+    from config.constants import (
+        OPERASIONAL_COLS, OPERASIONAL_DATA_START, OPERASIONAL_SHEET_NAME,
+        SPLIT_LAYOUT_DATA_START, SPLIT_PEMASUKAN, SPLIT_PENGELUARAN,
+    )
+    from config.wallets import DOMPET_COMPANIES
+
+    spreadsheet = get_spreadsheet()
+    rows: List[Dict] = []
+    read_errors: List[str] = []
+
+    def _cell(row: list, col_idx: int) -> str:
+        return row[col_idx - 1] if len(row) >= col_idx else ""
+
+    def _has_any(row: list, col_indexes: list) -> bool:
+        return any(str(_cell(row, col)).strip() for col in col_indexes)
+
+    try:
+        op_sheet = spreadsheet.worksheet(OPERASIONAL_SHEET_NAME)
+        op_rows = op_sheet.get_all_values()
+        op_cols = list(OPERASIONAL_COLS.values())
+        for idx, row in enumerate(op_rows[OPERASIONAL_DATA_START - 1:], start=OPERASIONAL_DATA_START):
+            if not _has_any(row, op_cols):
+                continue
+            rows.append({
+                'tanggal': _cell(row, OPERASIONAL_COLS['TANGGAL']),
+                'jumlah': _cell(row, OPERASIONAL_COLS['JUMLAH']),
+                'tipe': 'Pengeluaran',
+                'keterangan': _cell(row, OPERASIONAL_COLS['KETERANGAN']),
+                'kategori': _cell(row, OPERASIONAL_COLS['KATEGORI']),
+                'company_sheet': 'Operasional Kantor',
+                'nama_projek': 'Operasional',
+                'sheet_name': OPERASIONAL_SHEET_NAME,
+                'sheet_row': idx,
+                'source_block': 'operasional',
+            })
+    except Exception as exc:
+        read_errors.append(f"{OPERASIONAL_SHEET_NAME}: {type(exc).__name__}")
+
+    for dompet in DOMPET_SHEETS:
+        try:
+            sheet = spreadsheet.worksheet(dompet)
+            all_values = sheet.get_all_values()
+            company_name = next((k for k, _v in DOMPET_COMPANIES.items() if k.lower() in dompet.lower()), dompet)
+
+            for idx, row in enumerate(all_values[SPLIT_LAYOUT_DATA_START - 1:], start=SPLIT_LAYOUT_DATA_START):
+                if _has_any(row, list(SPLIT_PEMASUKAN.values())):
+                    rows.append({
+                        'tanggal': _cell(row, SPLIT_PEMASUKAN['TANGGAL']),
+                        'jumlah': _cell(row, SPLIT_PEMASUKAN['JUMLAH']),
+                        'tipe': 'Pemasukan',
+                        'keterangan': _cell(row, SPLIT_PEMASUKAN['KETERANGAN']),
+                        'kategori': 'Income',
+                        'company_sheet': company_name,
+                        'nama_projek': _cell(row, SPLIT_PEMASUKAN['PROJECT']),
+                        'sheet_name': dompet,
+                        'sheet_row': idx,
+                        'source_block': 'pemasukan',
+                    })
+                if _has_any(row, list(SPLIT_PENGELUARAN.values())):
+                    rows.append({
+                        'tanggal': _cell(row, SPLIT_PENGELUARAN['TANGGAL']),
+                        'jumlah': _cell(row, SPLIT_PENGELUARAN['JUMLAH']),
+                        'tipe': 'Pengeluaran',
+                        'keterangan': _cell(row, SPLIT_PENGELUARAN['KETERANGAN']),
+                        'kategori': 'Project Expense',
+                        'company_sheet': company_name,
+                        'nama_projek': _cell(row, SPLIT_PENGELUARAN['PROJECT']),
+                        'sheet_name': dompet,
+                        'sheet_row': idx,
+                        'source_block': 'pengeluaran',
+                    })
+        except Exception as exc:
+            read_errors.append(f"{dompet}: {type(exc).__name__}")
+
+    if read_errors:
+        raise RuntimeError("Audit read failed: " + "; ".join(read_errors))
+
+    return rows
 def get_all_data(days: int = 30, force_refresh: bool = False) -> List[Dict]:
     """
     Get all transaction data from ALL dompet sheets.
