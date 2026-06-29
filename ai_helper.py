@@ -2810,6 +2810,8 @@ def is_semantically_valid_project_name(text: str) -> bool:
         return False
         
     text_lower = text.lower().strip()
+    if text_lower in PROJECT_STOPWORDS:
+        return False
     
     # 1. Check length
     if len(text) < 3: return False

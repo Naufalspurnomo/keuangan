@@ -668,6 +668,16 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 # Last resort: full text parse
                 return resolve_dompet_from_text(normalized) or resolve_dompet_from_text(lower)
 
+            def _without_debt_source_context(text: str) -> str:
+                if not text:
+                    return ""
+                return re.sub(
+                    r"\b(?:utang|hutang|minjem|minjam|pinjam)\b.*$",
+                    "",
+                    str(text),
+                    flags=re.IGNORECASE,
+                ).strip()
+
             def _send_and_track(response: str, event_id: str) -> None:
                 sent = send_reply(response)
                 bid = extract_bot_msg_id(sent)
@@ -832,9 +842,14 @@ Balas 1 atau 2"""
             if not pending.get('project_validated'):
                 validation_user_part, _validation_ocr_part = split_ocr_user_text(original_text)
                 validation_text_scope = validation_user_part or original_text
-                validation_dompet_scope = resolve_dompet_from_text(validation_text_scope)
+                validation_main_scope = (
+                    _without_debt_source_context(validation_text_scope)
+                    if has_debt_context
+                    else validation_text_scope
+                )
+                validation_dompet_scope = resolve_dompet_from_text(validation_main_scope)
                 validation_company_scope = resolve_company_from_text(
-                    validation_text_scope,
+                    validation_main_scope,
                     validation_dompet_scope,
                 )
                 if not validation_dompet_scope and validation_company_scope and validation_company_scope != "UMUM":
@@ -990,7 +1005,12 @@ Balas 1 atau 2"""
 
             # Prefer explicit company mention in user text (e.g., "hojja").
             user_part, ocr_part = split_ocr_user_text(original_text)
-            explicit_company = resolve_company_from_text(user_part or original_text)
+            user_main_scope = (
+                _without_debt_source_context(user_part or original_text)
+                if has_debt_context
+                else (user_part or original_text)
+            )
+            explicit_company = resolve_company_from_text(user_main_scope)
             selected_option = pending.get('selected_option') or {}
             selected_company = selected_option.get('company')
             if explicit_company:
@@ -1041,6 +1061,7 @@ Balas 1 atau 2"""
                         "INFO",
                         f"Ignoring explicit dompet {explicit_dompet} as main dompet (treated as debt source context)"
                     )
+                    explicit_dompet = None
                 else:
                     dompet = explicit_dompet
                     # Only override company if not already detected by AI,
@@ -1200,6 +1221,7 @@ Balas 1 atau 2"""
                             lock_note = f"Dompet disesuaikan ke {locked_dompet} (sesuai riwayat project)."
                         else:
                             # Ask user to confirm locked dompet or move project
+                            debt_source_is_input = bool(debt_source and debt_source == dompet)
                             set_pending_confirmation(
                                 user_id=sender_number,
                                 chat_id=chat_jid,
@@ -1220,19 +1242,34 @@ Balas 1 atau 2"""
                                     'pending_key': pkey
                                 }
                             )
-                            msg = (
-                                f"⚠️ *KONFIRMASI DOMPET*\n"
-                                f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                                f"📁 Project: *{p_name_check}*\n"
-                                f"📌 Terdaftar di: *{locked_dompet}*\n"
-                                f"🔄 Input baru: *{dompet}*\n\n"
-                                f"━━━━━━━━━━━━━━━━━━━━━\n"
-                                f"*Pilih tindakan:*\n\n"
-                                f"1️⃣  Gunakan dompet terdaftar ({locked_dompet})\n"
-                                f"2️⃣  Pindahkan project ke ({dompet})\n"
-                                f"3️⃣  Batal\n\n"
-                                f"↩️ _Balas dengan angka 1, 2, atau 3_"
-                            )
+                            if debt_source_is_input:
+                                msg = (
+                                    f"\u26a0\ufe0f *KONFIRMASI SUMBER DANA*\n"
+                                    f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                                    f"\U0001F4C1 Project: *{p_name_check}*\n"
+                                    f"\U0001F4CC Project terdaftar di: *{locked_dompet}*\n"
+                                    f"\U0001F4B3 Sumber dana terdeteksi: *{dompet}*\n\n"
+                                    f"━━━━━━━━━━━━━━━━━━━━━\n"
+                                    f"*Pilih tindakan:*\n\n"
+                                    f"\u0031\ufe0f\u20e3  Catat project di {locked_dompet}, pinjam dari {dompet}\n"
+                                    f"\u0032\ufe0f\u20e3  Pindahkan project ke {dompet}\n"
+                                    f"\u0033\ufe0f\u20e3  Batal\n\n"
+                                    f"↩️ _Balas 1, 2, 3, atau ketik: pinjam <dompet>_"
+                                )
+                            else:
+                                msg = (
+                                    f"\u26a0\ufe0f *KONFIRMASI DOMPET*\n"
+                                    f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+                                    f"\U0001F4C1 Project: *{p_name_check}*\n"
+                                    f"\U0001F4CC Terdaftar di: *{locked_dompet}*\n"
+                                    f"\U0001F504 Input baru: *{dompet}*\n\n"
+                                    f"━━━━━━━━━━━━━━━━━━━━━\n"
+                                    f"*Pilih tindakan:*\n\n"
+                                    f"\u0031\ufe0f\u20e3  Gunakan dompet terdaftar ({locked_dompet})\n"
+                                    f"\u0032\ufe0f\u20e3  Pindahkan project ke ({dompet})\n"
+                                    f"\u0033\ufe0f\u20e3  Batal\n\n"
+                                    f"↩️ _Balas 1, 2, 3, atau ketik: pinjam <dompet>_"
+                                )
                             send_reply(msg)
                             return jsonify({'status': 'project_lock_mismatch'}), 200
 

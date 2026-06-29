@@ -2032,8 +2032,7 @@ Atau ketik /cancel untuk batal total"""
             raw_text = pending_data.get('raw_text', '')
             debt_source = _extract_debt_source(raw_text)
 
-        if choice in ['1', 'gunakan', 'ya', 'yes']:
-            debt_use = None if debt_source == dompet_locked else debt_source
+        def _draft_with_locked_dompet(debt_use: Optional[str]) -> dict:
             set_pending_confirmation(
                 user_id=user_id,
                 chat_id=chat_id,
@@ -2056,6 +2055,24 @@ Atau ketik /cancel untuk batal total"""
                 transactions, dompet_locked, company_locked, "", debt_use or ""
             )
             return {'response': response, 'completed': False}
+
+        debt_reply = _extract_debt_source(text_lower)
+        if not debt_reply and debt_source:
+            hinted_debt = resolve_dompet_from_text(text_lower)
+            if hinted_debt:
+                debt_reply = hinted_debt
+        if debt_reply:
+            debt_use = None if debt_reply == dompet_locked else debt_reply
+            return _draft_with_locked_dompet(debt_use)
+        if re.search(r"\b(?:utang|hutang|minjem|minjam|pinjam)\b", text_lower):
+            return {
+                'response': 'Dompet pemberi pinjaman yang mana? Ketik nama dompetnya, contoh: CV HB / TX SBY / TX BALI.',
+                'completed': False
+            }
+
+        if choice in ['1', 'gunakan', 'ya', 'yes']:
+            debt_use = None if debt_source == dompet_locked else debt_source
+            return _draft_with_locked_dompet(debt_use)
 
         if choice in ['2', 'pindahkan', 'ganti', 'lanjut']:
             if transactions:

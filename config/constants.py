@@ -168,6 +168,7 @@ PROJECT_STOPWORDS = {
     "cicil", "cicilan", "admin", "tunai", "cash", "debt", "utang", "hutang",
     "piutang", "minjam", "minjem", "pinjam", "saldo", "wallet", "dompet",
     "rekening", "atm", "bank", "pakai", "pake",
+    "status", "success", "successful", "sukses", "berhasil",
     
     # Kebutuhan Umum (Bukan nama bangunan/projek spesifik)
     "makan", "minum", "jamu", "snack", "konsumsi",
