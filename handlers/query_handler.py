@@ -10,6 +10,7 @@ Features:
 """
 
 import logging
+import os
 import re
 from collections import Counter
 from datetime import datetime
@@ -1233,6 +1234,16 @@ def handle_query_command(query: str, user_id: str, chat_id: str, raw_query: str 
         norm = normalize_nyeleneh_text(detect_query)
         raw_norm = _normalize_text(detect_query)
         days, period_label = _extract_days(norm)
+
+        if os.getenv("NL_QUERY_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
+            try:
+                from handlers.nl_query_handler import handle_nl_query
+
+                nl_answer = handle_nl_query(detect_query, get_all_data(None))
+                if nl_answer:
+                    return nl_answer
+            except Exception as exc:
+                logger.debug("NL query handler failed: %s", type(exc).__name__)
 
         dompet = resolve_dompet_from_text(raw_norm)
         wants_hutang = any(k in norm for k in ["hutang", "utang", "piutang"])

@@ -77,6 +77,7 @@ from services.transaction_queue import (
     merge_transaction_queue as _merge_transaction_queue,
 )
 from services.transaction_context import detect_transaction_context
+from agent_core.conversation_memory import record_message
 from services.state_manager import (
     pending_key, pending_is_expired,
     clear_message_duplicate, store_bot_message_ref,
@@ -327,6 +328,18 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                              source_label: str = 'WhatsApp', reply_to=None,
                              deferred: bool = False):
     try:
+        record_message(chat_jid, sender_number, 'user', text)
+        send_reply_fn = send_reply
+
+        def send_reply_tracked(body: str, mention: bool = True):
+            if send_reply_fn is None:
+                return None
+            sent = send_reply_fn(body, mention=mention)
+            record_message(chat_jid, sender_number, 'bot', body)
+            return sent
+
+        send_reply = send_reply_tracked
+
         # --- Helper: State Management ---
         def extract_bot_msg_id(sent):
             if not sent or not isinstance(sent, dict): return None
@@ -355,7 +368,10 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
         def safe_extract(input_data: str, in_type: str, sender: str, media_list=None, caption=None):
             """Extract financial data with graceful AI rate-limit handling."""
             try:
-                return extract_financial_data(input_data, in_type, sender, media_list, caption)
+                return extract_financial_data(
+                    input_data, in_type, sender, media_list, caption,
+                    chat_id=chat_jid, user_id=sender_number
+                )
             except RateLimitException as e:
                 wait = getattr(e, "wait_time", "beberapa saat")
                 send_reply(f"⚠️ AI sedang sibuk (limit). Coba lagi dalam {wait}.")

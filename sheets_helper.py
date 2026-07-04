@@ -1995,6 +1995,26 @@ def check_duplicate_transaction(new_amount: int, new_desc: str, new_project: str
         
         # Pull recent data
         recent_data = get_all_data(days=days_lookback)
+
+        if os.getenv('SEMANTIC_DEDUP_ENABLED', 'false').strip().lower() in {'1', 'true', 'yes', 'on'}:
+            try:
+                from agent_core.semantic_dedup import find_likely_duplicates
+
+                hits = find_likely_duplicates({
+                    'jumlah': new_amount,
+                    'keterangan': new_desc,
+                    'nama_projek': new_project,
+                    'company': company,
+                }, recent_data, threshold=0.75)
+                if hits:
+                    _score, dupe = hits[0]
+                    msg = (f"⚠️ Transaksi ini mirip dengan yang sudah ada:\n"
+                           f"📅 {dupe['tanggal']} | {dupe['keterangan']} | Rp {dupe['jumlah']:,}\n"
+                           f"📍 {dupe.get('company_sheet', 'Unknown')} ({dupe.get('nama_projek', '-')})\n\n"
+                           f"Yakin mau simpan lagi? (Reply Y untuk lanjut simpan)")
+                    return True, msg
+            except Exception as exc:
+                secure_log("WARNING", f"Semantic duplicate check failed: {type(exc).__name__}")
         
         normalized_new_desc = new_desc.lower().strip()
         normalized_new_proj = (new_project or "").lower().strip()

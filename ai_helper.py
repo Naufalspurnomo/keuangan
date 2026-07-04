@@ -1954,7 +1954,7 @@ def _extract_labeled_amount_from_text(text: str) -> int:
     return 0
 
 
-def extract_from_text(text: str, sender_name: str) -> List[Dict]:
+def extract_from_text(text: str, sender_name: str, chat_id: str = None, user_id: str = None) -> List[Dict]:
     try:
         clean_text = sanitize_input(text)
         if not clean_text:
@@ -1989,6 +1989,8 @@ def extract_from_text(text: str, sender_name: str) -> List[Dict]:
                 clean_text,
                 sender_name,
                 llm_call=_finance_agent_llm_call,
+                chat_id=chat_id,
+                user_id=user_id,
             )
             if agent_decision.accepted() and finance_agent_accepts():
                 transactions = [
@@ -3183,7 +3185,8 @@ def looks_like_receipt_text(text: str) -> bool:
     return score >= 2
 
 
-def extract_from_image(image_paths: Union[str, List[str]], sender_name: str, caption: str = None) -> List[Dict]:
+def extract_from_image(image_paths: Union[str, List[str]], sender_name: str, caption: str = None,
+                       chat_id: str = None, user_id: str = None) -> List[Dict]:
     """
     Extract financial data from Single or Multiple images: OCR -> Text -> Groq.
     SECURED: All text is sanitized.
@@ -3200,7 +3203,7 @@ def extract_from_image(image_paths: Union[str, List[str]], sender_name: str, cap
         
         if not ocr_text.strip():
             if clean_caption and not caption_is_generic:
-                return extract_from_text(clean_caption, sender_name)
+                return extract_from_text(clean_caption, sender_name, chat_id=chat_id, user_id=user_id)
             raise ValueError("Tidak ada teks ditemukan di gambar")
 
         if not looks_like_receipt_text(ocr_text) and not (clean_caption and not caption_is_generic):
@@ -3226,7 +3229,7 @@ def extract_from_image(image_paths: Union[str, List[str]], sender_name: str, cap
             if not is_injection and clean_caption and not caption_is_generic:
                 full_text = f"Note: {clean_caption}\n\n{full_text}"
         
-        return extract_from_text(full_text, sender_name)
+        return extract_from_text(full_text, sender_name, chat_id=chat_id, user_id=user_id)
         
     except SecurityError:
         raise
@@ -3236,7 +3239,8 @@ def extract_from_image(image_paths: Union[str, List[str]], sender_name: str, cap
 
 
 def extract_financial_data(input_data: str, input_type: str, sender_name: str,
-                           media_urls: Union[str, List[str]] = None, caption: str = None) -> List[Dict]:
+                           media_urls: Union[str, List[str]] = None, caption: str = None,
+                           chat_id: str = None, user_id: str = None) -> List[Dict]:
     """
     Main function to extract financial data from various input types.
     Supports MULTIPLE images (List[str]).
@@ -3275,7 +3279,7 @@ def extract_financial_data(input_data: str, input_type: str, sender_name: str,
     
     try:
         if input_type == 'text':
-            return extract_from_text(input_data, sender_name)
+            return extract_from_text(input_data, sender_name, chat_id=chat_id, user_id=user_id)
         
         elif input_type == 'audio':
             # Audio usually single file
@@ -3291,7 +3295,7 @@ def extract_financial_data(input_data: str, input_type: str, sender_name: str,
             
             transcribed_text = transcribe_audio(audio_file)
             _debug_log(f"Transcribed: {transcribed_text[:100] if transcribed_text else 'EMPTY'}")
-            return extract_from_text(transcribed_text, sender_name)
+            return extract_from_text(transcribed_text, sender_name, chat_id=chat_id, user_id=user_id)
         
         elif input_type == 'image':
             if url_list:
@@ -3325,13 +3329,13 @@ def extract_financial_data(input_data: str, input_type: str, sender_name: str,
                 
                 # Extract from ALL downloaded images
                 if temp_files:
-                    return extract_from_image(temp_files, sender_name, caption)
+                    return extract_from_image(temp_files, sender_name, caption, chat_id=chat_id, user_id=user_id)
                 else:
                     raise ValueError("Gagal mengunduh gambar")
             
             else:
                 # Local file path input (legacy/testing)
-                return extract_from_image(input_data, sender_name, caption)
+                return extract_from_image(input_data, sender_name, caption, chat_id=chat_id, user_id=user_id)
         
         else:
             raise ValueError(f"Tipe input tidak dikenal: {input_type}")
