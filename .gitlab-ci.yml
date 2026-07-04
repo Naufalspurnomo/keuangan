@@ -1,0 +1,15 @@
+image: python:3.11-slim
+
+stages:
+  - test
+
+agent-foundation-tests:
+  stage: test
+  before_script:
+    - python -V
+    - python -m pip install --upgrade pip
+    - python -m pip install -r requirements.txt
+  script:
+    - python -m py_compile agent_core/conversation_memory.py agent_core/audit_log.py agent_core/intent_router.py agent_core/query_engine.py agent_core/semantic_dedup.py handlers/nl_query_handler.py services/finance_agent.py main.py
+    - python -m unittest discover -s tests -p "*_test.py"
+    - git diff --check

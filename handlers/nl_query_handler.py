@@ -58,7 +58,12 @@ def handle_nl_query(question: str, rows: List[Dict]) -> Optional[str]:
         ast = parse_ast(_ask_llm_for_ast(question))
         result = execute(ast, rows)
     except Exception as exc:
-        logger.debug("NL query fallback: %s", type(exc).__name__)
+        error_type = type(exc).__name__
+        logger.warning("NL query fallback: %s", error_type)
+        log_event("nl_query_fallback", {
+            "question": (question or "")[:120],
+            "error_type": error_type,
+        })
         return None
 
     log_event("nl_query", {"question": (question or "")[:120], "ast": ast, "result": result})
@@ -72,4 +77,3 @@ def handle_nl_query(question: str, rows: List[Dict]) -> Optional[str]:
             for key, value in groups.items()
         )
     return answer
-

@@ -2,9 +2,12 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 from agent_core.conversation_memory import get_recent, record_message, render_for_prompt
+from agent_core.intent_router import record_intent_shadow, route_intent
 from agent_core.query_engine import execute, parse_ast
 from agent_core.semantic_dedup import find_likely_duplicates
 from services.finance_agent import plan_finance_message
@@ -48,6 +51,66 @@ class AgentCoreTests(unittest.TestCase):
         self.assertIn("user: catat semen 50rb", rendered)
         self.assertIn("bot: Disimpan", rendered)
 
+    def test_conversation_memory_filters_old_messages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "memory.jsonl"
+            old_ts = (datetime.now() - timedelta(days=2)).isoformat(timespec="seconds")
+            new_ts = datetime.now().isoformat(timespec="seconds")
+            path.write_text(
+                "\n".join([
+                    json.dumps({"ts": old_ts, "chat_id": "chat-1", "user_id": "user-1", "role": "user", "text": "lama"}),
+                    json.dumps({"ts": new_ts, "chat_id": "chat-1", "user_id": "user-1", "role": "user", "text": "baru"}),
+                ]) + "\n",
+                encoding="utf-8",
+            )
+
+            with patch.dict(os.environ, {
+                "CONVERSATION_MEMORY_PATH": str(path),
+                "CONVERSATION_MEMORY_ENABLED": "true",
+                "CONVERSATION_MEMORY_TTL_SECONDS": str(24 * 60 * 60),
+            }):
+                recent = get_recent("chat-1", "user-1", limit=6)
+
+        self.assertEqual([item["text"] for item in recent], ["baru"])
+
+    def test_conversation_memory_rotates_large_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "memory.jsonl"
+            path.write_text("x" * 32, encoding="utf-8")
+
+            with patch.dict(os.environ, {
+                "CONVERSATION_MEMORY_PATH": str(path),
+                "CONVERSATION_MEMORY_ENABLED": "true",
+                "CONVERSATION_MEMORY_MAX_BYTES": "10",
+            }):
+                record_message("chat-1", "user-1", "user", "catat semen 50rb")
+
+            rotated = Path(str(path) + ".1")
+            self.assertTrue(rotated.exists())
+            self.assertIn("catat semen 50rb", path.read_text(encoding="utf-8"))
+
+    def test_intent_router_routes_common_finance_messages(self):
+        self.assertEqual(route_intent("catat beli semen 50rb project Villa").intent, "RECORD")
+        self.assertEqual(route_intent("total pengeluaran project Villa bulan ini?").intent, "QUERY")
+        self.assertEqual(route_intent("yang tadi ganti 100rb", is_reply=True).intent, "REVISE")
+        self.assertEqual(route_intent("ya", has_pending=True).intent, "CONFIRM_PENDING")
+
+    def test_intent_router_shadow_logs_only_when_enabled(self):
+        events = []
+
+        def fake_log(event_type, payload):
+            events.append((event_type, payload))
+
+        with patch.dict(os.environ, {"INTENT_ROUTER_MODE": "off"}):
+            self.assertIsNone(record_intent_shadow("catat semen 50rb"))
+
+        with patch.dict(os.environ, {"INTENT_ROUTER_MODE": "shadow"}), \
+             patch("agent_core.intent_router.log_event", fake_log):
+            decision = record_intent_shadow("catat semen 50rb", chat_id="chat-1", user_id="user-1")
+
+        self.assertEqual(decision.intent, "RECORD")
+        self.assertEqual(events[0][0], "intent_router_shadow")
+        self.assertEqual(events[0][1]["decision"]["intent"], "RECORD")
     def test_semantic_dedup_matches_same_amount_similar_text(self):
         hits = find_likely_duplicates(
             {"jumlah": 50000, "keterangan": "beli semen", "nama_projek": "Villa"},

@@ -27,6 +27,8 @@ Thumbs.db
 # Logs
 *.log
 logs/
+data/*.jsonl
+data/*.jsonl.*
 
 # Test files
 analyze_xlsx.py

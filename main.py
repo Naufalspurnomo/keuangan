@@ -78,6 +78,7 @@ from services.transaction_queue import (
 )
 from services.transaction_context import detect_transaction_context
 from agent_core.conversation_memory import record_message
+from agent_core.intent_router import record_intent_shadow
 from services.state_manager import (
     pending_key, pending_is_expired,
     clear_message_duplicate, store_bot_message_ref,
@@ -329,6 +330,21 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                              deferred: bool = False):
     try:
         record_message(chat_jid, sender_number, 'user', text)
+        try:
+            shadow_pending = _pending_transactions.get(pending_key(sender_number, chat_jid))
+            shadow_has_pending = bool(shadow_pending and not pending_is_expired(shadow_pending))
+        except Exception:
+            shadow_has_pending = False
+        record_intent_shadow(
+            text,
+            chat_id=chat_jid,
+            user_id=sender_number,
+            source=source_label,
+            is_group=is_group,
+            has_media=bool(input_type in {'image', 'voice'} or media_url or local_media_path),
+            has_pending=shadow_has_pending,
+            is_reply=bool(quoted_msg_id),
+        )
         send_reply_fn = send_reply
 
         def send_reply_tracked(body: str, mention: bool = True):
