@@ -1,7 +1,13 @@
 import unittest
+from unittest.mock import patch
 
-from config.constants import SPLIT_LAYOUT_DATA_START, SPLIT_PEMASUKAN, SPLIT_PENGELUARAN
-from sheets_helper import _split_append_metadata
+from config.constants import (
+    OPERASIONAL_COLS,
+    SPLIT_LAYOUT_DATA_START,
+    SPLIT_PEMASUKAN,
+    SPLIT_PENGELUARAN,
+)
+from sheets_helper import _split_append_metadata, append_operational_transaction
 
 
 class SheetsHelperAppendTests(unittest.TestCase):
@@ -34,6 +40,64 @@ class SheetsHelperAppendTests(unittest.TestCase):
         )
 
         self.assertEqual(existing_ids, {"msg-out-1"})
+
+    def test_operational_append_is_idempotent_by_message_id(self):
+        class FakeSheet:
+            def __init__(self):
+                self.rows = []
+
+            def col_values(self, column):
+                if column == OPERASIONAL_COLS["MESSAGE_ID"]:
+                    return ["MessageID"] + [row[OPERASIONAL_COLS["MESSAGE_ID"] - 1] for row in self.rows]
+                return ["No"] + [str(index) for index, _row in enumerate(self.rows, start=1)]
+
+            def append_row(self, row, value_input_option=None):
+                self.rows.append(row)
+
+        sheet = FakeSheet()
+        transaction = {
+            "jumlah": 450000,
+            "keterangan": "Fee Rio sisanya",
+            "message_id": "image-1|0",
+        }
+        with patch("sheets_helper.get_or_create_operational_sheet", return_value=sheet), \
+             patch("sheets_helper.invalidate_dashboard_cache"), \
+             patch("services.ledger_lock._database_url", return_value=""):
+            first = append_operational_transaction(
+                transaction, "Admin", "WhatsApp", "CV HB(101)", "Gaji"
+            )
+            second = append_operational_transaction(
+                transaction, "Admin", "WhatsApp", "CV HB(101)", "Gaji"
+            )
+
+        self.assertTrue(first["success"])
+        self.assertTrue(second["success"])
+        self.assertTrue(second["duplicate"])
+        self.assertEqual(len(sheet.rows), 1)
+
+    def test_operational_failure_is_queued_and_never_reports_success(self):
+        class FailingSheet:
+            def col_values(self, column):
+                return ["header"]
+
+            def append_row(self, row, value_input_option=None):
+                raise TimeoutError("sheets timeout")
+
+        transaction = {
+            "jumlah": 450000,
+            "keterangan": "Fee Rio sisanya",
+            "message_id": "image-fail|0",
+        }
+        with patch("sheets_helper.get_or_create_operational_sheet", return_value=FailingSheet()), \
+             patch("sheets_helper.add_to_retry_queue", return_value="queue-1") as queue, \
+             patch("services.ledger_lock._database_url", return_value=""):
+            with self.assertRaises(TimeoutError):
+                append_operational_transaction(
+                    transaction, "Admin", "WhatsApp", "CV HB(101)", "Gaji"
+                )
+
+        queue.assert_called_once()
+        self.assertEqual(queue.call_args.args[1]["write_kind"], "operational")
 
 
 if __name__ == "__main__":

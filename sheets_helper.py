@@ -4,6 +4,7 @@ import os
 import time
 import hashlib
 import threading
+from functools import wraps
 import gspread
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
@@ -18,6 +19,24 @@ _project_cache = {
     'names': set(),
     'last_updated': None
 }
+
+_ledger_write_lock = threading.RLock()
+
+
+def _serialized_ledger_write(func):
+    """Serialize read-before-append idempotency checks within one process."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        from services.ledger_lock import ledger_write_guard
+
+        if func.__name__ == "append_hutang_entry":
+            message_id = kwargs.get("message_id", args[4] if len(args) > 4 else "")
+        else:
+            transaction = args[0] if args else kwargs.get("transaction", {})
+            message_id = transaction.get("message_id", "") if isinstance(transaction, dict) else ""
+        with _ledger_write_lock, ledger_write_guard(message_id, func.__name__):
+            return func(*args, **kwargs)
+    return wrapper
 
 def get_existing_projects(force_refresh=False):
     """
@@ -616,17 +635,24 @@ def _normalize_dompet_name(value: str) -> str:
     return value.strip()
 
 
+@_serialized_ledger_write
 def append_hutang_entry(
     amount: int,
     keterangan: str,
     yang_hutang: str,
     yang_dihutangi: str,
     message_id: str = "",
-    status: str = "OPEN"
+    status: str = "OPEN",
+    allow_queue: bool = True,
 ) -> Dict:
     """Append a hutang entry into Hutang sheet."""
     try:
         sheet = get_or_create_hutang_sheet()
+        if message_id:
+            existing_ids = sheet.col_values(HUTANG_COLS['MESSAGE_ID'])
+            if str(message_id).strip() in {str(value).strip() for value in existing_ids if value}:
+                secure_log("INFO", f"Hutang duplicate ignored: message_id={message_id}")
+                return {'success': True, 'duplicate': True, 'amount': abs(int(amount or 0))}
         col_values = sheet.col_values(HUTANG_COLS['NO'])
         entry_count = len([v for v in col_values[HUTANG_DATA_START - 1:] if v.strip()])
 
@@ -661,7 +687,16 @@ def append_hutang_entry(
         }
     except Exception as e:
         secure_log("ERROR", f"append_hutang_entry failed: {type(e).__name__}: {str(e)}")
-        return {'success': False, 'error': str(e)}
+        if allow_queue:
+            add_to_retry_queue({
+                'amount': amount,
+                'keterangan': keterangan,
+                'yang_hutang': yang_hutang,
+                'yang_dihutangi': yang_dihutangi,
+                'message_id': message_id,
+                'status': status,
+            }, {'write_kind': 'hutang'})
+        raise
 
 
 def update_hutang_status_by_no(no: int, status: str = "PAID") -> Optional[Dict]:
@@ -1053,12 +1088,14 @@ def _count_entries_in_block(sheet, no_column: int, start_row: int = 9) -> int:
         return 0
 
 
+@_serialized_ledger_write
 def append_project_transaction(
     transaction: Dict,
     sender_name: str,
     source: str,
     dompet_sheet: str,
-    project_name: str
+    project_name: str,
+    allow_queue: bool = True,
 ) -> Dict:
     """
     Append transaction to Split Layout dompet sheet.
@@ -1154,10 +1191,15 @@ def append_project_transaction(
         
     except Exception as e:
         secure_log("ERROR", f"append_project_transaction failed: {type(e).__name__}: {str(e)}")
-        return {
-            'success': False,
-            'error': str(e)
-        }
+        if allow_queue:
+            add_to_retry_queue(transaction, {
+                'write_kind': 'project',
+                'sender_name': sender_name,
+                'source': source,
+                'dompet_sheet': dompet_sheet,
+                'project_name': project_name,
+            })
+        raise
 
 
 def move_finish_marker_to_latest(
@@ -1239,12 +1281,14 @@ def move_finish_marker_to_latest(
         return 0
 
 
+@_serialized_ledger_write
 def append_operational_transaction(
     transaction: Dict,
     sender_name: str,
     source: str,
     source_wallet: str,
-    category: str = 'Lain Lain'
+    category: str = 'Lain Lain',
+    allow_queue: bool = True,
 ) -> Dict:
     """
     Append operational expense to Operasional Ktr sheet.
@@ -1276,6 +1320,17 @@ def append_operational_transaction(
         jumlah = abs(int(transaction.get('jumlah', 0)))
         safe_sender = sanitize_input(sender_name)[:50]
         message_id = transaction.get('message_id', '')
+        if message_id:
+            existing_ids = sheet.col_values(OPERASIONAL_COLS['MESSAGE_ID'])
+            if str(message_id).strip() in {str(value).strip() for value in existing_ids if value}:
+                secure_log("INFO", f"Operational TX duplicate ignored: message_id={message_id}")
+                return {
+                    'success': True,
+                    'duplicate': True,
+                    'source_wallet': source_wallet,
+                    'category': category,
+                    'jumlah': jumlah,
+                }
         
         row_data = [
             entry_count + 1,                        # No
@@ -1303,10 +1358,15 @@ def append_operational_transaction(
         
     except Exception as e:
         secure_log("ERROR", f"append_operational_transaction failed: {type(e).__name__}: {str(e)}")
-        return {
-            'success': False,
-            'error': str(e)
-        }
+        if allow_queue:
+            add_to_retry_queue(transaction, {
+                'write_kind': 'operational',
+                'sender_name': sender_name,
+                'source': source,
+                'source_wallet': source_wallet,
+                'category': category,
+            })
+        raise
 
 
 def get_company_sheet(company_name: str):
@@ -1364,6 +1424,7 @@ def _prefer_display_name(current: str, candidate: str) -> str:
     return current
 
 
+@_serialized_ledger_write
 def append_transaction(transaction: Dict, sender_name: str, source: str = "Text", 
                        dompet_sheet: str = None, company: str = None, 
                        nama_projek: str = None,
@@ -1459,6 +1520,13 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
         
         # Get message_id from transaction if provided
         message_id = transaction.get('message_id', '')
+        if message_id:
+            existing_ids = sheet.col_values(11)
+            normalized_id = str(message_id).strip()
+            for row_index, existing_id in enumerate(existing_ids, start=1):
+                if str(existing_id or '').strip() == normalized_id:
+                    secure_log("INFO", f"Transaction duplicate ignored: message_id={message_id}")
+                    return row_index
         
         # Calculate No (Auto-increment)
         try:

@@ -35,6 +35,7 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=5 \
 
 # Run with optimized gunicorn settings (Increased threads for IO-bound work)
 CMD ["gunicorn", "main:app", \
+     "-c", "gunicorn.conf.py", \
      "--bind", "0.0.0.0:8000", \
      "--workers", "1", \
      "--threads", "4", \

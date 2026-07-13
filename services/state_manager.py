@@ -12,6 +12,7 @@ State will be lost on restart. For production, consider external storage (Redis/
 
 import threading
 import copy
+import time
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any, Tuple
 import json
@@ -36,6 +37,7 @@ VISUAL_CONSUMED_TTL_SECONDS = 6 * 60 * 60
 # Thread lock for dedup operations
 _dedup_lock = threading.Lock()
 _visual_lock = threading.Lock()
+_visual_condition = threading.Condition(_visual_lock)
 _pending_lock = threading.Lock()
 _refs_lock = threading.Lock()
 _registry_lock = threading.Lock()
@@ -119,7 +121,7 @@ def store_visual_buffer(sender_number: str, chat_jid: str, media_url: str,
         'sender_number': sender_number,
         'created_at': datetime.now()
     }
-    with _visual_lock:
+    with _visual_condition:
         _prune_visual_buffer_locked()
         if key not in _visual_buffer:
             _visual_buffer[key] = []
@@ -135,6 +137,7 @@ def store_visual_buffer(sender_number: str, chat_jid: str, media_url: str,
             _visual_buffer[key].append(item)
 
         _visual_buffer[key].sort(key=lambda x: x.get('created_at') or datetime.min)
+        _visual_condition.notify_all()
 
 
 def get_visual_buffer(sender_number: str, chat_jid: str) -> list:
@@ -147,6 +150,23 @@ def get_visual_buffer(sender_number: str, chat_jid: str) -> list:
         _prune_visual_buffer_locked()
         items = _visual_buffer.get(key, [])
         return list(items) if items else []
+
+
+def wait_for_visual_buffer(sender_number: str, chat_jid: str,
+                           timeout_seconds: float = 2.0) -> list:
+    """Wait briefly for a concurrent image webhook from the same user/chat."""
+    key = visual_buffer_key(sender_number, chat_jid)
+    deadline = time.monotonic() + max(0.0, float(timeout_seconds or 0))
+    with _visual_condition:
+        while True:
+            _prune_visual_buffer_locked()
+            items = _visual_buffer.get(key, [])
+            if items:
+                return list(items)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return []
+            _visual_condition.wait(timeout=remaining)
 
 
 def get_visual_buffer_by_message(chat_jid: str, message_id: str) -> Optional[dict]:

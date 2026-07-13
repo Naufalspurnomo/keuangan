@@ -7,11 +7,25 @@ The bot can run with the legacy local JSON + `_BOT_STATE` Google Sheets backup, 
 ```env
 STATE_STORE_BACKEND=postgres
 STATE_STORE_REQUIRED=1
+DURABLE_INBOX_REQUIRED=1
 STATE_DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
 STATE_STORE_KEY=default
+SPLIT_EVENT_JOIN_SECONDS=2.5
+SPLIT_EVENT_PAIR_WINDOW_SECONDS=30
+INBOX_RETENTION_DAYS=14
 ```
 
 `STATE_STORE_REQUIRED=1` makes the bot fail closed if Postgres cannot load or save state. That is safer for financial workflows than silently continuing with empty in-memory state.
+
+`DURABLE_INBOX_REQUIRED=1` makes `/webhook_wuzapi` return HTTP 503 when the
+transaction inbox cannot be persisted. WuzAPI can retry the delivery instead
+of receiving a false HTTP 200 while the evidence is lost. The same Postgres
+database also stores failed Google Sheets writes and coordinates cross-replica
+idempotency locks.
+
+Gunicorn must load `gunicorn.conf.py`. Its `post_worker_init` hook starts the
+inbox recovery and durable retry workers. Both the included `Procfile` and
+`Dockerfile` already use this configuration.
 
 ## Fallback Behavior
 

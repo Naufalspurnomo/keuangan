@@ -9,15 +9,17 @@ Features:
 - SECURE: Rate limiting, prompt injection protection...
 """
 
+import base64
 import os
 import re
 import threading
+import tempfile
 import time
 import uuid
 from datetime import datetime
 from typing import Optional
 
-from flask import Flask, request, jsonify
+from flask import Flask, g, request, jsonify
 from dotenv import load_dotenv
 from werkzeug.exceptions import RequestEntityTooLarge
 
@@ -56,6 +58,13 @@ from sheets_helper import (
 from handlers.telegram_webhook import handle_telegram_webhook
 from handlers.wuzapi_webhook import handle_wuzapi_webhook
 from services.retry_service import process_retry_queue
+from services.durable_inbox import (
+    claim_recovery_bundle,
+    complete_bundle,
+    inbox_health,
+    inbox_required,
+    prune_inbox,
+)
 from services.project_service import (
     resolve_project_name,
     resolve_project_name_for_context,
@@ -95,6 +104,7 @@ from services.state_manager import (
     get_pending_confirmation, set_pending_confirmation,
     has_pending_confirmation,
     store_user_message, get_user_last_message, clear_user_last_message,
+    wait_for_visual_buffer,
     get_project_lock, set_project_lock, remember_project_knowledge
 )
 
@@ -170,6 +180,8 @@ app = Flask(__name__)
 DEBUG = os.getenv('FLASK_DEBUG', '0') == '1'
 IMAGE_GRACE_SECONDS = int(os.getenv('IMAGE_GRACE_SECONDS', '5'))
 OWNER_FAST_FOLLOW_SECONDS = int(os.getenv('OWNER_FAST_FOLLOW_SECONDS', '3'))
+SPLIT_EVENT_JOIN_SECONDS = float(os.getenv('SPLIT_EVENT_JOIN_SECONDS', '2.5'))
+SPLIT_EVENT_PAIR_WINDOW_SECONDS = int(os.getenv('SPLIT_EVENT_PAIR_WINDOW_SECONDS', '30'))
 MAX_WEBHOOK_BYTES = int(os.getenv('MAX_WEBHOOK_BYTES', str(25 * 1024 * 1024)))
 app.config['MAX_CONTENT_LENGTH'] = MAX_WEBHOOK_BYTES
 app.config['MAX_FORM_MEMORY_SIZE'] = MAX_WEBHOOK_BYTES
@@ -260,8 +272,23 @@ def _shadow_compare_narrow_resolver(original_text, pipeline_dompet,
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Health check for monitoring and Docker healthcheck."""
-    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()}), 200
+    """Health check including the transaction durability gate."""
+    try:
+        inbox = inbox_health()
+        durable = bool(inbox.get('durable'))
+        serving = durable or not inbox_required()
+        return jsonify({
+            'status': 'healthy' if durable else 'degraded',
+            'timestamp': datetime.now().isoformat(),
+            'transaction_inbox': inbox,
+        }), 200 if serving else 503
+    except Exception as exc:
+        secure_log("ERROR", f"Health durable inbox check failed: {type(exc).__name__}: {exc}")
+        return jsonify({
+            'status': 'unhealthy' if inbox_required() else 'degraded',
+            'timestamp': datetime.now().isoformat(),
+            'transaction_inbox': {'durable': False, 'error': type(exc).__name__},
+        }), 503 if inbox_required() else 200
 
 
 # ===================== WUZAPI HANDLER =====================
@@ -283,7 +310,8 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
                            local_media_path: str = None,
                            quoted_msg_id: str = None, message_id: str = None,
                            is_group: bool = False, chat_jid: str = None,
-                           sender_jid: str = None, quoted_message_text: str = None):
+                           sender_jid: str = None, quoted_message_text: str = None,
+                           deferred: bool = False):
     try:
         reply_to = chat_jid if (is_group and chat_jid) else sender_number
 
@@ -313,6 +341,7 @@ def process_wuzapi_message(sender_number: str, sender_name: str, text: str,
             send_document=send_wuzapi_document,
             source_label='WhatsApp',
             reply_to=reply_to,
+            deferred=deferred,
         )
     except Exception as e:
         secure_log("ERROR", f"WuzAPI processing failed: {type(e).__name__}: {e}")
@@ -436,6 +465,21 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 if not deferred_text:
                     item_ctx = item.get('context') if isinstance(item.get('context'), dict) else {}
                     deferred_text = (item_ctx.get('original_text') or '').strip()
+                if not deferred_text:
+                    latest_text = (
+                        get_user_last_message(
+                            sender_number,
+                            chat_jid,
+                            max_age_seconds=max(1, SPLIT_EVENT_PAIR_WINDOW_SECONDS),
+                        )
+                        or ''
+                    ).strip()
+                    if latest_text and _should_bind_visual_text(latest_text):
+                        deferred_text = latest_text
+                        secure_log(
+                            "INFO",
+                            f"Deferred image {item_message_id} joined with follow-up text",
+                        )
 
                 # Deferred worker runs outside request context; provide app context
                 # because process_incoming_message uses Flask helpers (jsonify).
@@ -1783,17 +1827,71 @@ Balas 1 atau 2"""
                     send_reply(UserErrors.NO_ACTIVE_QUESTION)
                     return jsonify({'status': 'no_pending_selection'}), 200
 
-        # Group noise gate (pre-AI): avoid processing random media/chatter
-        # If user recently sent an image, allow follow-up text to bind.
+        # Bind split image/text events before any group or AI gate. A webhook log
+        # appearing first does not guarantee its request reaches the buffer first.
         raw_text = text or ""
         explicit_catat = is_explicit_catat_command(raw_text)
         quoted_visual_item = None
-        if is_group and quoted_msg_id:
+        if input_type == 'text' and quoted_msg_id:
             quoted_visual_item = get_visual_buffer_by_message(chat_jid, quoted_msg_id)
-        quoted_visual_actionable = bool(quoted_visual_item and _should_bind_visual_text(text))
+
+        visual_item = quoted_visual_item
+        should_bind_visual = input_type == 'text' and _should_bind_visual_text(text)
+        if input_type == 'text' and not visual_item:
+            user_buf = get_visual_buffer(sender_number, chat_jid)
+            if not user_buf and should_bind_visual and SPLIT_EVENT_JOIN_SECONDS > 0:
+                user_buf = wait_for_visual_buffer(
+                    sender_number,
+                    chat_jid,
+                    timeout_seconds=SPLIT_EVENT_JOIN_SECONDS,
+                )
+
+            now = datetime.now()
+            for item in reversed(user_buf):
+                candidate_id = item.get('message_id')
+                if candidate_id and is_visual_message_consumed(chat_jid, candidate_id):
+                    continue
+                created = item.get('created_at')
+                if isinstance(created, datetime):
+                    age_seconds = (now - created).total_seconds()
+                    if age_seconds > SPLIT_EVENT_PAIR_WINDOW_SECONDS:
+                        continue
+                visual_item = item
+                break
+
+        if input_type == 'text' and quoted_msg_id and not visual_item and should_bind_visual:
+            if is_visual_message_consumed(chat_jid, quoted_msg_id):
+                send_reply("ℹ️ Struk ini sudah diproses. Gunakan /revisi atau /undo jika perlu koreksi.")
+                return jsonify({'status': 'duplicate_visual_reference'}), 200
+
+        if visual_item and should_bind_visual:
+            candidate_id = str(visual_item.get('message_id') or "")
+            media_url = visual_item.get('media_url')
+            local_media_path = visual_item.get('media_path')
+            buf_caption = visual_item.get('caption') or ''
+            ref_phrase = re.search(
+                r'\b(catat\s+(di\s+)?(atas|tadi|sebelumnya)|catat\s+itu)\b',
+                (text or '').lower(),
+            )
+            if ref_phrase and buf_caption.strip():
+                text = buf_caption.strip()
+            input_type = 'image'
+            if candidate_id:
+                bound_visual_message_id = candidate_id
+                # Use the visual source as the stable ledger id in both the live
+                # path and crash-recovery path, preventing split-flow duplicates.
+                event_id = candidate_id
+                g.transaction_visual_message_id = candidate_id
+            secure_log(
+                "INFO",
+                f"Joined split transaction text={message_id} visual={candidate_id}",
+            )
+
+        quoted_visual_actionable = bool(visual_item and should_bind_visual)
         has_visual = (
             has_visual_buffer(sender_number, chat_jid) or quoted_visual_actionable
         ) if is_group else False
+        # Group noise gate (pre-AI): avoid processing random media/chatter.
         if is_group and not has_pending:
             is_mentioned = False
             try:
@@ -2137,6 +2235,8 @@ Balas 1 atau 2"""
                                 # provided actionable caption yet. Keep image buffered and wait
                                 # for follow-up text (e.g. "2 project X dompet tx sby").
                                 if not has_context_hint:
+                                    if not deferred:
+                                        schedule_group_image_grace()
                                     secure_log(
                                         "INFO",
                                         "Buffered image with weak caption; waiting follow-up text before scope prompt",
@@ -2183,44 +2283,6 @@ Balas 1 atau 2"""
                                 if bid:
                                     store_pending_message_ref(bid, f"{chat_jid}:{sender_number}")
                                 return jsonify({'status': 'asking_scope'}), 200
-
-            # Check visual link
-            if input_type == 'text':
-                visual_item = quoted_visual_item if quoted_msg_id else None
-                if quoted_msg_id and not visual_item:
-                    visual_item = get_visual_buffer_by_message(chat_jid, quoted_msg_id)
-                if quoted_msg_id and not visual_item and _should_bind_visual_text(text):
-                    if is_visual_message_consumed(chat_jid, quoted_msg_id):
-                        send_reply("ℹ️ Struk ini sudah diproses. Gunakan /revisi atau /undo jika perlu koreksi.")
-                        return jsonify({'status': 'duplicate_visual_reference'}), 200
-
-                if not visual_item:
-                    user_buf = get_visual_buffer(sender_number, chat_jid)
-                    for item in user_buf:
-                        candidate_id = item.get('message_id')
-                        if candidate_id and is_visual_message_consumed(chat_jid, candidate_id):
-                            continue
-                        visual_item = item
-                        break
-
-                if visual_item and _should_bind_visual_text(text):
-                    candidate_id = str(visual_item.get('message_id') or "")
-                    if candidate_id and is_visual_message_consumed(chat_jid, candidate_id):
-                        send_reply("ℹ️ Struk ini sudah diproses. Gunakan /revisi atau /undo jika perlu koreksi.")
-                        return jsonify({'status': 'duplicate_visual_reference'}), 200
-
-                    media_url = visual_item.get('media_url')
-                    local_media_path = visual_item.get('media_path')
-                    buf_caption = visual_item.get('caption') or ''
-
-                    # If user says "catat diatas" and caption exists, use caption as text
-                    ref_phrase = re.search(r'\b(catat\s+(di\s+)?(atas|tadi|sebelumnya)|catat\s+itu)\b', (text or '').lower())
-                    if ref_phrase and buf_caption.strip():
-                        text = buf_caption.strip()
-
-                    input_type = 'image'
-                    if candidate_id:
-                        bound_visual_message_id = candidate_id
 
         # 5. REVISION HANDLER (New)
         clean_text = (text or "").strip().lower()
@@ -3148,6 +3210,10 @@ Balas 1 atau 2"""
         secure_log("ERROR", f"Flow Error: {e}")
         return jsonify({'status': 'error'}), 500
 
+_background_worker_lock = threading.Lock()
+_background_workers_started = False
+
+
 def run_retry_service():
     """Background loop to process retry queue."""
     import time
@@ -3155,16 +3221,48 @@ def run_retry_service():
 
     def retry_handler(transaction, metadata):
         try:
-            res = append_transaction(
+            write_kind = metadata.get('write_kind', 'general')
+            if write_kind == 'project':
+                result = append_project_transaction(
+                    transaction=transaction,
+                    sender_name=metadata.get('sender_name', 'System'),
+                    source=metadata.get('source', 'Retry'),
+                    dompet_sheet=metadata.get('dompet_sheet'),
+                    project_name=metadata.get('project_name'),
+                    allow_queue=False,
+                )
+                return bool(result.get('success'))
+            if write_kind == 'operational':
+                result = append_operational_transaction(
+                    transaction=transaction,
+                    sender_name=metadata.get('sender_name', 'System'),
+                    source=metadata.get('source', 'Retry'),
+                    source_wallet=metadata.get('source_wallet'),
+                    category=metadata.get('category', 'Lain Lain'),
+                    allow_queue=False,
+                )
+                return bool(result.get('success'))
+            if write_kind == 'hutang':
+                result = append_hutang_entry(
+                    amount=transaction.get('amount'),
+                    keterangan=transaction.get('keterangan', ''),
+                    yang_hutang=transaction.get('yang_hutang', ''),
+                    yang_dihutangi=transaction.get('yang_dihutangi', ''),
+                    message_id=transaction.get('message_id', ''),
+                    status=transaction.get('status', 'OPEN'),
+                    allow_queue=False,
+                )
+                return bool(result.get('success'))
+            result = append_transaction(
                 transaction=transaction,
                 sender_name=metadata.get('sender_name', 'System'),
                 source=metadata.get('source', 'Retry'),
                 dompet_sheet=metadata.get('dompet_sheet'),
                 company=metadata.get('company'),
                 nama_projek=metadata.get('nama_projek'),
-                allow_queue=False
+                allow_queue=False,
             )
-            return res > 0
+            return result > 0
         except Exception as e:
             secure_log("ERROR", f"Retry handler failed: {e}")
             return False
@@ -3177,7 +3275,147 @@ def run_retry_service():
             secure_log("ERROR", f"Retry service crashed: {e}")
             time.sleep(60)
 
+
+def _background_result_status(result) -> str:
+    response = result[0] if isinstance(result, tuple) and result else result
+    try:
+        payload = response.get_json(silent=True)
+    except Exception:
+        payload = None
+    return str((payload or {}).get('status') or '')
+
+
+def _notify_inbox_review(event: dict, text: str, reason: str) -> None:
+    target = str(event.get('chat_id') or event.get('sender_id') or '')
+    if not target:
+        return
+    preview = " ".join((text or '').split())[:140] or "gambar tanpa keterangan"
+    message_id = str(event.get('message_id') or '')[-16:]
+    body = (
+        "⚠️ *TRANSAKSI TERTAHAN*\n"
+        f"📝 {preview}\n"
+        f"🔖 Ref: {message_id or '-'}\n"
+        f"Alasan: {reason}\n\n"
+        "Data sudah diamankan di inbox audit. Admin cukup tindak lanjuti alert ini; "
+        "tidak perlu mencari chat awal."
+    )
+    media_data = str(event.get('media_data') or '')
+    if media_data.startswith('data:') and ',' in media_data:
+        temp_path = ''
+        try:
+            encoded = media_data.split(',', 1)[1]
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_file:
+                temp_file.write(base64.b64decode(encoded))
+                temp_path = temp_file.name
+            if send_wuzapi_document(target, temp_path, caption=body):
+                return
+        except Exception as exc:
+            secure_log("WARNING", f"Could not attach review evidence: {type(exc).__name__}")
+        finally:
+            if temp_path:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+    send_wuzapi_reply(target, body)
+
+
+def run_inbox_recovery_service():
+    """Recover webhook events left unfinished by races, crashes, or restarts."""
+    last_prune_at = 0.0
+    while True:
+        try:
+            if time.time() - last_prune_at >= 3600:
+                removed = prune_inbox()
+                if removed:
+                    secure_log("INFO", f"Pruned {removed} terminal inbox events")
+                last_prune_at = time.time()
+            bundle = claim_recovery_bundle(SPLIT_EVENT_PAIR_WINDOW_SECONDS)
+            if not bundle:
+                time.sleep(10)
+                continue
+
+            events = [event for event in (bundle.get('primary'), bundle.get('counterpart')) if event]
+            image_event = next((event for event in events if event.get('event_type') == 'image'), None)
+            text_event = next((event for event in events if event.get('event_type') == 'text'), None)
+            base_event = image_event or text_event or bundle['primary']
+            body_text = str((text_event or base_event).get('body_text') or '')
+            input_type = 'image' if image_event else str(base_event.get('event_type') or 'text')
+            media_data = image_event.get('media_data') if image_event else None
+            quoted_id = str((text_event or base_event).get('quoted_message_id') or '')
+            source_message_id = str((image_event or base_event).get('message_id') or '')
+
+            with app.app_context():
+                result = process_wuzapi_message(
+                    sender_number=str(base_event.get('sender_id') or ''),
+                    sender_name=str(base_event.get('sender_name') or 'User'),
+                    text=body_text,
+                    input_type=input_type,
+                    media_url=media_data,
+                    local_media_path=None,
+                    quoted_msg_id=quoted_id,
+                    message_id=source_message_id,
+                    is_group=bool(base_event.get('is_group')),
+                    chat_jid=str(base_event.get('chat_id') or ''),
+                    sender_jid=str(base_event.get('sender_jid') or ''),
+                    deferred=True,
+                )
+                result_status = _background_result_status(result)
+
+            finance_signal = any(bool(event.get('finance_signal')) for event in events)
+            if result_status in {'error', 'rate_limit'} or result_status.startswith('error_'):
+                attempts = max(int(event.get('attempts') or 0) for event in events)
+                if attempts >= 4:
+                    _notify_inbox_review(base_event, body_text, f"gagal diproses setelah retry ({result_status})")
+                    complete_bundle(bundle, 'needs_review_notified', result_status)
+                else:
+                    complete_bundle(bundle, 'retryable', result_status, result_status)
+            elif (
+                result_status.startswith('ignored')
+                or result_status in {
+                    'buffered_image_waiting_text',
+                    'buffered_image_pending_confirmation',
+                    'queued_image',
+                }
+            ):
+                if finance_signal:
+                    reason = (
+                        "gambar dan keterangan belum dapat dipastikan"
+                        if image_event and not text_event
+                        else f"pipeline belum menghasilkan transaksi ({result_status})"
+                    )
+                    _notify_inbox_review(base_event, body_text, reason)
+                    complete_bundle(bundle, 'needs_review_notified', result_status)
+                else:
+                    complete_bundle(bundle, 'ignored', result_status)
+            else:
+                complete_bundle(bundle, 'processed', result_status)
+        except Exception as exc:
+            secure_log("ERROR", f"Inbox recovery worker failed: {type(exc).__name__}: {exc}")
+            time.sleep(30)
+
+
+def start_background_workers():
+    """Start durable background workers once per Gunicorn worker process."""
+    global _background_workers_started
+    with _background_worker_lock:
+        if _background_workers_started:
+            return
+        retry_thread = threading.Thread(
+            target=run_retry_service,
+            daemon=True,
+            name="transaction-retry-worker",
+        )
+        retry_thread.start()
+        inbox_thread = threading.Thread(
+            target=run_inbox_recovery_service,
+            daemon=True,
+            name="transaction-inbox-recovery-worker",
+        )
+        inbox_thread.start()
+        _background_workers_started = True
+        secure_log("INFO", "Background transaction retry and inbox recovery workers started")
+
 if __name__ == '__main__':
-    retry_thread = threading.Thread(target=run_retry_service, daemon=True)
-    retry_thread.start()
+    start_background_workers()
     app.run(host='0.0.0.0', port=5000, debug=DEBUG, use_reloader=False)
