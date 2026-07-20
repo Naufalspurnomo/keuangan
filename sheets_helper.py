@@ -23,6 +23,20 @@ _project_cache = {
 _ledger_write_lock = threading.RLock()
 
 
+def _mirror_financial_ledger(row: Dict) -> None:
+    """Best-effort Postgres mirror after a confirmed Google Sheets write.
+
+    Sheets stays authoritative during rollout, so a mirror outage is visible in
+    logs but must never turn a successful financial write into a false failure.
+    """
+    try:
+        from services.ledger_store import upsert_row
+
+        upsert_row(row)
+    except Exception as exc:
+        secure_log("ERROR", f"Financial ledger mirror wrapper failed: {type(exc).__name__}: {exc}")
+
+
 def _serialized_ledger_write(func):
     """Serialize read-before-append idempotency checks within one process."""
     @wraps(func)
@@ -1178,6 +1192,20 @@ def append_project_transaction(
         sheet.update_cells(cell_list, value_input_option='USER_ENTERED')
         invalidate_dashboard_cache()
         _remember_project_exact_match(project_name, dompet_sheet)
+
+        _mirror_financial_ledger({
+            **transaction,
+            'tanggal': now.strftime('%Y-%m-%d'),
+            'jumlah': jumlah,
+            'tipe': tipe,
+            'keterangan': keterangan,
+            'nama_projek': safe_project,
+            'oleh': safe_sender,
+            'source': source,
+            'sheet_name': dompet_sheet,
+            'sheet_row': next_row,
+            'source_block': 'pemasukan' if tipe == 'Pemasukan' else 'pengeluaran',
+        })
         
         secure_log("INFO", f"Project TX: {tipe} Rp{jumlah:,} -> {dompet_sheet} Row {next_row}")
         
@@ -1345,6 +1373,23 @@ def append_operational_transaction(
         
         sheet.append_row(row_data, value_input_option='USER_ENTERED')
         invalidate_dashboard_cache()
+
+        _mirror_financial_ledger({
+            **transaction,
+            'tanggal': now_wib().strftime('%Y-%m-%d'),
+            'jumlah': jumlah,
+            'tipe': 'Pengeluaran',
+            'keterangan': keterangan_with_source,
+            'kategori': category,
+            'nama_projek': 'Operasional',
+            'company_sheet': 'Operasional Kantor',
+            'oleh': safe_sender,
+            'source': source,
+            'source_wallet': source_wallet,
+            'sheet_name': OPERASIONAL_SHEET_NAME,
+            'sheet_row': next_row,
+            'source_block': 'operasional',
+        })
         
         secure_log("INFO", f"Operational TX: Rp{jumlah:,} [{category}] from {short_wallet}")
         
@@ -1554,6 +1599,21 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
         
         sheet.append_row(row, value_input_option='USER_ENTERED')
         invalidate_dashboard_cache()  # Force fresh data after write
+        _mirror_financial_ledger({
+            **transaction,
+            'tanggal': row[1],
+            'jumlah': jumlah,
+            'tipe': tipe,
+            'keterangan': keterangan,
+            'kategori': kategori,
+            'nama_projek': safe_nama_projek,
+            'company_sheet': safe_company,
+            'oleh': safe_sender,
+            'source': source,
+            'sheet_name': dompet_sheet,
+            'sheet_row': row_number,
+            'source_block': 'legacy',
+        })
         secure_log("INFO", f"Transaction added to {dompet_sheet}/{safe_company}: {kategori} - {jumlah} - {safe_nama_projek}")
         
         # Return row number for revision tracking
@@ -1632,6 +1692,8 @@ def update_transaction_amount(dompet_sheet: str, row: int, new_amount: int) -> b
         if dompet_sheet == OPERASIONAL_SHEET_NAME:
             sheet = get_or_create_operational_sheet()
             sheet.update_cell(row, OPERASIONAL_COLS['JUMLAH'], new_amount)
+            from services.ledger_store import update_amount_by_source
+            update_amount_by_source(dompet_sheet, row, 'operasional', new_amount)
             secure_log("INFO", f"Operational TX updated: {dompet_sheet} row {row} -> {new_amount}")
             return True
         
@@ -1654,6 +1716,13 @@ def update_transaction_amount(dompet_sheet: str, row: int, new_amount: int) -> b
             target_col = SPLIT_PENGELUARAN['JUMLAH']
         
         sheet.update_cell(row, target_col, new_amount)
+        from services.ledger_store import update_amount_by_source
+        update_amount_by_source(
+            dompet_sheet,
+            row,
+            'pemasukan' if target_col == SPLIT_PEMASUKAN['JUMLAH'] else 'pengeluaran',
+            new_amount,
+        )
         
         secure_log("INFO", f"Transaction updated: {dompet_sheet} row {row} -> {new_amount}")
         return True
@@ -1815,6 +1884,9 @@ def get_raw_rows_for_audit() -> List[Dict]:
                 'sheet_name': OPERASIONAL_SHEET_NAME,
                 'sheet_row': idx,
                 'source_block': 'operasional',
+                'oleh': _cell(row, OPERASIONAL_COLS['OLEH']),
+                'source': _cell(row, OPERASIONAL_COLS['SOURCE']),
+                'message_id': _cell(row, OPERASIONAL_COLS['MESSAGE_ID']),
             })
     except Exception as exc:
         read_errors.append(f"{OPERASIONAL_SHEET_NAME}: {type(exc).__name__}")
@@ -1838,6 +1910,9 @@ def get_raw_rows_for_audit() -> List[Dict]:
                         'sheet_name': dompet,
                         'sheet_row': idx,
                         'source_block': 'pemasukan',
+                        'oleh': _cell(row, SPLIT_PEMASUKAN['OLEH']),
+                        'source': _cell(row, SPLIT_PEMASUKAN['SOURCE']),
+                        'message_id': _cell(row, SPLIT_PEMASUKAN['MESSAGE_ID']),
                     })
                 if _has_any(row, list(SPLIT_PENGELUARAN.values())):
                     rows.append({
@@ -1851,6 +1926,9 @@ def get_raw_rows_for_audit() -> List[Dict]:
                         'sheet_name': dompet,
                         'sheet_row': idx,
                         'source_block': 'pengeluaran',
+                        'oleh': _cell(row, SPLIT_PENGELUARAN['OLEH']),
+                        'source': _cell(row, SPLIT_PENGELUARAN['SOURCE']),
+                        'message_id': _cell(row, SPLIT_PENGELUARAN['MESSAGE_ID']),
                     })
         except Exception as exc:
             read_errors.append(f"{dompet}: {type(exc).__name__}")
@@ -1871,6 +1949,14 @@ def get_all_data(days: int = 30, force_refresh: bool = False) -> List[Dict]:
         List of transaction dicts with company and nama_projek
     """
     if not force_refresh:
+        try:
+            from services.ledger_store import read_recent_transactions
+
+            postgres_data = read_recent_transactions(days)
+            if postgres_data is not None:
+                return postgres_data
+        except Exception as exc:
+            secure_log("ERROR", f"Financial ledger read wrapper failed; using Sheets: {type(exc).__name__}: {exc}")
         cached = _get_all_data_cache(days)
         if cached is not None:
             secure_log("DEBUG", f"get_all_data cache hit days={days}")
@@ -2944,6 +3030,8 @@ def delete_transaction_row(dompet_sheet: str, row: int) -> bool:
             sheet = get_dompet_sheet(dompet_sheet)
         
         sheet.delete_rows(row)
+        from services.ledger_store import delete_by_source
+        delete_by_source(dompet_sheet, row)
         invalidate_dashboard_cache()
         secure_log("INFO", f"Transaction deleted: {dompet_sheet} row {row}")
         return True

@@ -3401,6 +3401,9 @@ def start_background_workers():
     with _background_worker_lock:
         if _background_workers_started:
             return
+        from services.ledger_bootstrap import start_ledger_bootstrap_if_requested
+
+        start_ledger_bootstrap_if_requested()
         retry_thread = threading.Thread(
             target=run_retry_service,
             daemon=True,

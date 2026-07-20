@@ -48,9 +48,39 @@ def get_existing_projects(force_refresh=False):
             all_projects = set()
             project_records = []
             seen_records = set()
-            
-            # Iterate all real sheets
-            for sheet_name in DOMPET_SHEETS:
+
+            # Once the import is verified, this avoids a full Sheets scan for
+            # every project validation. Returning None deliberately preserves
+            # the Sheets path until the database contains real ledger data.
+            try:
+                from services.ledger_store import read_project_records
+
+                database_records = read_project_records()
+            except Exception as exc:
+                logging.error(f"[ProjectService] Ledger index unavailable: {type(exc).__name__}")
+                database_records = None
+
+            if database_records is not None:
+                for record in database_records:
+                    raw_project = str(record.get('name') or '').strip()
+                    if not raw_project:
+                        continue
+                    all_projects.add(raw_project)
+                    clean_project = _normalize_project_name(raw_project)
+                    prefix = extract_company_prefix(clean_project)
+                    company = prefix or record.get('company') or get_company_name_from_sheet(record.get('dompet') or '')
+                    record_key = (clean_project.lower(), record.get('dompet') or '', str(company or '').upper())
+                    if record_key not in seen_records:
+                        seen_records.add(record_key)
+                        project_records.append({
+                            'name': clean_project,
+                            'base_name': strip_company_prefix(clean_project),
+                            'dompet': record.get('dompet') or '',
+                            'company': company,
+                        })
+
+            # Iterate Sheets only before database cutover or during fallback.
+            for sheet_name in ([] if database_records is not None else DOMPET_SHEETS):
                 sh = get_sheet(sheet_name)
                 if not sh: continue
                 
