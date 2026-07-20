@@ -15,6 +15,7 @@ SECURITY: All inputs are sanitized before AI processing.
 import os
 import re
 import json
+import io
 import tempfile
 import threading
 import requests
@@ -2543,6 +2544,7 @@ USE_EASYOCR = os.getenv('USE_EASYOCR', 'false').lower() == 'true'
 
 # ===================== GROQ VISION OCR (ACTIVE) =====================
 import base64
+from PIL import Image
 
 # List of potential Groq Vision models to try (fallback mechanism)
 # Can be overridden via env: GROQ_VISION_MODELS="modelA,modelB"
@@ -2692,15 +2694,30 @@ Status: Transfer Successful"""
             }
         ]
         
-        # Build payload
+        # Build payload. WhatsApp receipt screenshots are often tiny thumbnails;
+        # upscaling them before the vision request makes table text legible.
         for path in paths:
-            with open(path, 'rb') as img_file:
-                image_data = base64.b64encode(img_file.read()).decode('utf-8')
-            
-            ext = os.path.splitext(path)[1].lower()
-            mime_types = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', 
-                         '.png': 'image/png', '.webp': 'image/webp'}
-            mime_type = mime_types.get(ext, 'image/jpeg')
+            with Image.open(path) as image:
+                width, height = image.size
+                if max(width, height) < 1600:
+                    scale = min(4, 1600 / max(width, height))
+                    image = image.convert('RGB').resize(
+                        (round(width * scale), round(height * scale)),
+                        Image.Resampling.LANCZOS,
+                    )
+                    buffered = io.BytesIO()
+                    image.save(buffered, format='JPEG', quality=95, optimize=True)
+                    image_bytes = buffered.getvalue()
+                    mime_type = 'image/jpeg'
+                else:
+                    with open(path, 'rb') as img_file:
+                        image_bytes = img_file.read()
+                    ext = os.path.splitext(path)[1].lower()
+                    mime_types = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+                                  '.png': 'image/png', '.webp': 'image/webp'}
+                    mime_type = mime_types.get(ext, 'image/jpeg')
+
+            image_data = base64.b64encode(image_bytes).decode('utf-8')
             
             content_payload.append({
                 "type": "image_url",
@@ -2719,17 +2736,15 @@ Status: Transfer Successful"""
                         on_model_attempt(model_name)
                     except Exception:
                         pass
-                response = call_groq_api(
-                    model=model_name,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": content_payload
-                        }
-                    ],
-                    temperature=0.0,  # CRITICAL: Keep at 0 for deterministic output
-                    max_completion_tokens=2048  # Increased for detailed extraction
-                )
+                request_kwargs = {
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": content_payload}],
+                    "temperature": 0.0,
+                    "max_completion_tokens": 2048,
+                }
+                if model_name == "qwen/qwen3.6-27b":
+                    request_kwargs.update(reasoning_effort="none", reasoning_format="hidden")
+                response = call_groq_api(**request_kwargs)
                 
                 extracted_text = response.choices[0].message.content.strip()
                 extracted_text = sanitize_input(extracted_text)
