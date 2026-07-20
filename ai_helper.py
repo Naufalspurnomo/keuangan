@@ -2056,6 +2056,7 @@ def extract_from_text(text: str, sender_name: str, chat_id: str = None, user_id:
             transactions = transactions[:MAX_TRANSACTIONS_PER_MESSAGE]
 
         validated_transactions = []
+        rejection_reasons = []
         # Extract user note (caption) if present in clean_text
         user_note_global = ""
         if clean_text.lower().startswith("note:"):
@@ -2098,6 +2099,7 @@ def extract_from_text(text: str, sender_name: str, chat_id: str = None, user_id:
             is_valid, error, sanitized = validate_transaction_data(t)
             if not is_valid:
                 secure_log("WARNING", f"Invalid transaction skipped: {error}")
+                rejection_reasons.append(str(error))
                 continue
 
             # ---- ENFORCE RULES ----
@@ -2495,6 +2497,12 @@ def extract_from_text(text: str, sender_name: str, chat_id: str = None, user_id:
                 clean_text,
             )
 
+        if not validated_transactions and rejection_reasons:
+            secure_log(
+                "WARNING",
+                "All extracted transaction candidates rejected: "
+                + "; ".join(dict.fromkeys(rejection_reasons))[:500],
+            )
         secure_log("INFO", f"Extracted {len(validated_transactions)} valid transactions")
         return validated_transactions
 

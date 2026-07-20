@@ -208,6 +208,45 @@ smart_handler = SmartHandler(state_manager_module)
 
 from utils.amounts import has_amount_pattern
 
+
+def _build_extraction_failure_message(raw_text: str, input_type: str) -> str:
+    """Explain why an accepted transaction attempt produced no valid record."""
+    text = str(raw_text or '').strip()
+    lower = text.lower()
+    zero_amount = re.search(r"\b(?:0|nol)\s*(?:rupiah|rp|idr|ribu|rb|k)?\b", lower)
+
+    if zero_amount:
+        return (
+            "⚠️ *Belum dicatat.*\n"
+            "Alasan: nominal yang terbaca adalah *Rp0*. Nominal nol ditolak agar tidak menjadi transaksi palsu.\n\n"
+            "Yang sudah terbaca: transaksi masuk untuk operasional kantor.\n"
+            "Yang kurang: nominal pemasukan harus lebih dari Rp0.\n\n"
+            "Contoh: *Masuk 250rb, untuk operasional kantor CV HB*"
+        )
+
+    if input_type == 'image':
+        return (
+            "⚠️ *Belum dicatat.*\n"
+            "Gambar sudah dipindai, tetapi tidak ada transaksi valid yang bisa disimpan.\n"
+            "Kemungkinan penyebab: nominal tidak terbaca, gambar terlalu kecil/buram, atau format struk tidak dikenali.\n\n"
+            "Kirim gambar resolusi penuh atau tambahkan caption dengan nominal, contoh:\n"
+            "*Bayar 250rb, operasional kantor CV HB*"
+        )
+
+    if not has_amount_pattern(text):
+        return (
+            "⚠️ *Belum dicatat.*\n"
+            "Konteks transaksi sudah terbaca, tetapi nominal belum ditemukan.\n\n"
+            "Tambahkan nominal lebih dari Rp0, contoh:\n"
+            "*Masuk 250rb, untuk operasional kantor CV HB*"
+        )
+
+    return (
+        "⚠️ *Belum dicatat.*\n"
+        "Bot belum menemukan transaksi yang lolos validasi. Pastikan ada jenis transaksi, nominal, dan keterangan yang jelas.\n\n"
+        "Contoh: *Keluar 150rb, beli ATK operasional kantor CV HB*"
+    )
+
 # ===================== NARROW RESOLVER SHADOW (Fase 2a) =====================
 # Run the typed narrow_resolver in PARALLEL with the legacy pipeline and only
 # LOG divergences. The legacy pipeline still makes every decision; this changes
@@ -3068,7 +3107,7 @@ Balas 1 atau 2"""
                     _release_visual_source_claim()
                 if message_id:
                     clear_message_duplicate(message_id)
-                if input_type == 'image': send_reply(UserErrors.IMAGE_NOT_READABLE)
+                send_reply(_build_extraction_failure_message(extraction_text, input_type))
                 return jsonify({'status': 'no_tx'}), 200
 
             # Clear visual buffer on successful extraction to avoid double-binding
