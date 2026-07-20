@@ -75,6 +75,28 @@ class SheetsHelperAppendTests(unittest.TestCase):
         self.assertTrue(second["duplicate"])
         self.assertEqual(len(sheet.rows), 1)
 
+    def test_operational_append_mirrors_only_after_sheet_write(self):
+        class FakeSheet:
+            def col_values(self, column):
+                return ["header"]
+
+            def append_row(self, row, value_input_option=None):
+                self.row = row
+
+        sheet = FakeSheet()
+        transaction = {"jumlah": 450000, "keterangan": "Fee Rio", "message_id": "mirror-1"}
+        with patch("sheets_helper.get_or_create_operational_sheet", return_value=sheet), \
+             patch("sheets_helper.invalidate_dashboard_cache"), \
+             patch("sheets_helper._mirror_financial_ledger") as mirror, \
+             patch("services.ledger_lock._database_url", return_value=""):
+            append_operational_transaction(transaction, "Admin", "WhatsApp", "CV HB(101)", "Gaji")
+
+        mirror.assert_called_once()
+        row = mirror.call_args.args[0]
+        self.assertEqual(row["source_block"], "operasional")
+        self.assertEqual(row["sheet_name"], "Operasional Kantor")
+        self.assertEqual(row["message_id"], "mirror-1")
+
     def test_operational_failure_is_queued_and_never_reports_success(self):
         class FailingSheet:
             def col_values(self, column):

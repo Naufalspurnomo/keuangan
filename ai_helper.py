@@ -2547,10 +2547,9 @@ import base64
 # List of potential Groq Vision models to try (fallback mechanism)
 # Can be overridden via env: GROQ_VISION_MODELS="modelA,modelB"
 VALID_VISION_MODELS = [
+    # Current Groq multimodal model. Keep this first for receipt OCR.
+    "qwen/qwen3.6-27b",
     "meta-llama/llama-4-scout-17b-16e-instruct",
-    "llama-3.2-90b-vision-preview",
-    "llama-3.2-11b-vision-preview",
-    "llama-3.2-11b-vision-instruct"
 ]
 _env_models = os.getenv("GROQ_VISION_MODELS", "").strip()
 if _env_models:
@@ -2598,7 +2597,7 @@ def validate_financial_ocr(ocr_text: str) -> dict:
     return validation
 
 
-def ocr_image(image_source: Union[str, List[str]]) -> str:
+def ocr_image(image_source: Union[str, List[str]], on_model_attempt: Optional[Callable[[str], None]] = None) -> str:
     """
     Extract text from Single or Multiple images using Groq Vision.
     Uses fallback mechanism to try multiple models if one is decommissioned.
@@ -2715,6 +2714,11 @@ Status: Transfer Successful"""
         for model_name in VALID_VISION_MODELS:
             try:
                 secure_log("INFO", f"Trying Vision Model: {model_name}")
+                if on_model_attempt:
+                    try:
+                        on_model_attempt(model_name)
+                    except Exception:
+                        pass
                 response = call_groq_api(
                     model=model_name,
                     messages=[
@@ -3186,7 +3190,8 @@ def looks_like_receipt_text(text: str) -> bool:
 
 
 def extract_from_image(image_paths: Union[str, List[str]], sender_name: str, caption: str = None,
-                       chat_id: str = None, user_id: str = None) -> List[Dict]:
+                       chat_id: str = None, user_id: str = None,
+                       ocr_progress: Optional[Callable[[str], None]] = None) -> List[Dict]:
     """
     Extract financial data from Single or Multiple images: OCR -> Text -> Groq.
     SECURED: All text is sanitized.
@@ -3197,7 +3202,7 @@ def extract_from_image(image_paths: Union[str, List[str]], sender_name: str, cap
         caption: Optional caption text
     """
     try:
-        ocr_text = normalize_ocr_text(ocr_image(image_paths))
+        ocr_text = normalize_ocr_text(ocr_image(image_paths, on_model_attempt=ocr_progress))
         clean_caption = sanitize_input(caption) if caption else ""
         caption_is_generic = is_generic_caption(clean_caption)
         
@@ -3240,7 +3245,8 @@ def extract_from_image(image_paths: Union[str, List[str]], sender_name: str, cap
 
 def extract_financial_data(input_data: str, input_type: str, sender_name: str,
                            media_urls: Union[str, List[str]] = None, caption: str = None,
-                           chat_id: str = None, user_id: str = None) -> List[Dict]:
+                           chat_id: str = None, user_id: str = None,
+                           ocr_progress: Optional[Callable[[str], None]] = None) -> List[Dict]:
     """
     Main function to extract financial data from various input types.
     Supports MULTIPLE images (List[str]).
@@ -3329,13 +3335,19 @@ def extract_financial_data(input_data: str, input_type: str, sender_name: str,
                 
                 # Extract from ALL downloaded images
                 if temp_files:
-                    return extract_from_image(temp_files, sender_name, caption, chat_id=chat_id, user_id=user_id)
+                    return extract_from_image(
+                        temp_files, sender_name, caption, chat_id=chat_id, user_id=user_id,
+                        ocr_progress=ocr_progress,
+                    )
                 else:
                     raise ValueError("Gagal mengunduh gambar")
             
             else:
                 # Local file path input (legacy/testing)
-                return extract_from_image(input_data, sender_name, caption, chat_id=chat_id, user_id=user_id)
+                return extract_from_image(
+                    input_data, sender_name, caption, chat_id=chat_id, user_id=user_id,
+                    ocr_progress=ocr_progress,
+                )
         
         else:
             raise ValueError(f"Tipe input tidak dikenal: {input_type}")

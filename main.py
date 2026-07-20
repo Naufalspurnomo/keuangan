@@ -412,10 +412,14 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
 
         def safe_extract(input_data: str, in_type: str, sender: str, media_list=None, caption=None):
             """Extract financial data with graceful AI rate-limit handling."""
+            def announce_ocr_model(model_name: str) -> None:
+                send_reply(f"🔎 Memindai gambar dengan AI Vision: *{model_name}*")
+
             try:
                 return extract_financial_data(
                     input_data, in_type, sender, media_list, caption,
-                    chat_id=chat_jid, user_id=sender_number
+                    chat_id=chat_jid, user_id=sender_number,
+                    ocr_progress=announce_ocr_model if in_type == 'image' else None,
                 )
             except RateLimitException as e:
                 wait = getattr(e, "wait_time", "beberapa saat")
