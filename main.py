@@ -992,6 +992,32 @@ Balas 1 atau 2"""
                             category=kategori
                         )
 
+                    # Operational expenses can also be funded by another wallet.
+                    # The expense belongs to the selected wallet; mirror the
+                    # lender outflow and create the OPEN inter-wallet debt.
+                    if debt_source_hint and source_wallet and debt_source_hint != source_wallet:
+                        total_amount = sum(int(t.get('jumlah', 0) or 0) for t in txs)
+                        if total_amount > 0:
+                            append_project_transaction(
+                                transaction={
+                                    'jumlah': total_amount,
+                                    'keterangan': f'Hutang ke dompet {source_wallet}',
+                                    'tipe': 'Pengeluaran',
+                                    'message_id': f'{event_id}|UTANG',
+                                },
+                                sender_name=pending.get('sender_name', sender_name),
+                                source=pending.get('source', 'WhatsApp'),
+                                dompet_sheet=debt_source_hint,
+                                project_name='Saldo Umum',
+                            )
+                            append_hutang_entry(
+                                amount=total_amount,
+                                keterangan=txs[0].get('keterangan', '') if txs else '',
+                                yang_hutang=source_wallet,
+                                yang_dihutangi=debt_source_hint,
+                                message_id=f'{event_id}|HUTANG',
+                            )
+
                     invalidate_dashboard_cache()
                     _pending_transactions.pop(pkey, None)
 
@@ -1001,6 +1027,12 @@ Balas 1 atau 2"""
                         category,
                         "",
                     )
+                    if debt_source_hint and source_wallet and debt_source_hint != source_wallet:
+                        total_amount = sum(int(t.get('jumlah', 0) or 0) for t in txs)
+                        response += (
+                            f'\n💳 Hutang dicatat: {source_wallet} pinjam dari '
+                            f'{debt_source_hint} (Rp {total_amount:,})'
+                        ).replace(',', '.')
                     _send_and_track(response, event_id)
                     return jsonify({'status': 'saved_operational'}), 200
 
