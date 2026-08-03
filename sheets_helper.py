@@ -10,15 +10,7 @@ from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 from typing import List, Dict, Optional
-from config.constants import COL_NAMA_PROJEK
-from security import now_wib, secure_log
-
-
-# Cache sederhana agar tidak boros kuota Google API
-_project_cache = {
-    'names': set(),
-    'last_updated': None
-}
+from security import log_timing, now_wib, secure_log
 
 _ledger_write_lock = threading.RLock()
 
@@ -42,50 +34,26 @@ def _serialized_ledger_write(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         from services.ledger_lock import ledger_write_guard
+        started_at = time.perf_counter()
 
         if func.__name__ == "append_hutang_entry":
             message_id = kwargs.get("message_id", args[4] if len(args) > 4 else "")
         else:
             transaction = args[0] if args else kwargs.get("transaction", {})
             message_id = transaction.get("message_id", "") if isinstance(transaction, dict) else ""
-        with _ledger_write_lock, ledger_write_guard(message_id, func.__name__):
-            return func(*args, **kwargs)
+        try:
+            with _ledger_write_lock, ledger_write_guard(message_id, func.__name__):
+                return func(*args, **kwargs)
+        finally:
+            log_timing("sheets.write." + func.__name__, started_at)
     return wrapper
 
+
 def get_existing_projects(force_refresh=False):
-    """
-    Mengambil set nama projek unik dari Spreadsheet.
-    Menggunakan cache memori selama 5 menit.
-    """
-    global _project_cache
-    now = datetime.now()
-    
-    # Refresh jika cache kosong atau sudah > 5 menit
-    if force_refresh or not _project_cache['names'] or \
-       (_project_cache['last_updated'] and (now - _project_cache['last_updated']).total_seconds() > 300):
-           
-        try:
-            sh = get_sheet("Data_Agregat") # Atau sheet utama tempat transaksi masuk
-            # Ambil semua data kolom Nama Projek (Kolom J = index 10)
-            # Asumsi row 1 adalah header
-            values = sh.col_values(COL_NAMA_PROJEK)[1:] 
-            
-            # Bersihkan data: Hapus kosong, hapus strip, lowercase untuk set
-            unique_projects = set()
-            for v in values:
-                clean = v.strip()
-                if clean and clean.lower() not in ["-", "bensin", "test", ""]: # Filter sampah
-                    unique_projects.add(clean)
-            
-            _project_cache['names'] = unique_projects
-            _project_cache['last_updated'] = now
-            print(f"[INFO] Project cache updated: {len(unique_projects)} projects found.")
-            
-        except Exception as e:
-            print(f"[ERROR] Failed to fetch projects: {e}")
-            # Return old cache if fail
-            
-    return _project_cache['names']
+    """Compatibility wrapper for the single project cache implementation."""
+    from services.project_service import get_existing_projects as _get_existing_projects
+
+    return _get_existing_projects(force_refresh=force_refresh)
     
 # ===================== STATE PERSISTENCE (HIDDEN SHEET) =====================
 STATE_SHEET_NAME = "_BOT_STATE"
@@ -1948,18 +1916,21 @@ def get_all_data(days: int = 30, force_refresh: bool = False) -> List[Dict]:
     Returns:
         List of transaction dicts with company and nama_projek
     """
+    started_at = time.perf_counter()
     if not force_refresh:
         try:
             from services.ledger_store import read_recent_transactions
 
             postgres_data = read_recent_transactions(days)
             if postgres_data is not None:
+                log_timing("sheets.read.all_data.ledger", started_at, days=days)
                 return postgres_data
         except Exception as exc:
             secure_log("ERROR", f"Financial ledger read wrapper failed; using Sheets: {type(exc).__name__}: {exc}")
         cached = _get_all_data_cache(days)
         if cached is not None:
             secure_log("DEBUG", f"get_all_data cache hit days={days}")
+            log_timing("sheets.read.all_data.cache", started_at, days=days)
             return cached
 
     try:
@@ -2121,10 +2092,12 @@ def get_all_data(days: int = 30, force_refresh: bool = False) -> List[Dict]:
             _set_all_data_cache(days, data)
         else:
             secure_log("WARNING", "Skipped all-data cache because Sheets read was partial")
+        log_timing("sheets.read.all_data", started_at, days=days, partial=read_had_error)
         return data
         
     except Exception as e:
         secure_log("ERROR", f"Failed to get data: {type(e).__name__}")
+        log_timing("sheets.read.all_data", started_at, days=days, partial=True)
         return []
 
 
@@ -2551,10 +2524,12 @@ def get_wallet_balances(force_refresh: bool = False) -> Dict:
     This reads directly from Split Layout sheets (CV HB, TX SBY, TX BALI)
     and the Operasional Ktr sheet for operational debits.
     """
+    started_at = time.perf_counter()
     if not force_refresh:
         cached = _get_wallet_balances_cache()
         if cached is not None:
             secure_log("DEBUG", "get_wallet_balances cache hit")
+            log_timing("sheets.read.wallet_balances.cache", started_at)
             return cached
 
     balances = {}
@@ -2564,18 +2539,22 @@ def get_wallet_balances(force_refresh: bool = False) -> Dict:
     for dompet in DOMPET_SHEETS:
         try:
             sheet = get_dompet_sheet(dompet)
-            
-            # Sum Pemasukan (Left block, Column D = JUMLAH)
-            pemasukan_col = sheet.col_values(SPLIT_PEMASUKAN['JUMLAH'])
-            total_masuk = 0
-            for v in pemasukan_col[SPLIT_LAYOUT_DATA_START - 1:]:  # Skip headers
-                total_masuk += _parse_amount(v)
-            
-            # Sum Pengeluaran (Right block, Column M = JUMLAH)
-            pengeluaran_col = sheet.col_values(SPLIT_PENGELUARAN['JUMLAH'])
-            total_keluar = 0
-            for v in pengeluaran_col[SPLIT_LAYOUT_DATA_START - 1:]:
-                total_keluar += _parse_amount(v)
+
+            # One row read replaces two column reads while preserving the
+            # existing split-layout columns and balance formula.
+            all_values = sheet.get_all_values()
+            income_idx = SPLIT_PEMASUKAN['JUMLAH'] - 1
+            expense_idx = SPLIT_PENGELUARAN['JUMLAH'] - 1
+            total_masuk = sum(
+                _parse_amount(row[income_idx])
+                for row in all_values[SPLIT_LAYOUT_DATA_START - 1:]
+                if len(row) > income_idx
+            )
+            total_keluar = sum(
+                _parse_amount(row[expense_idx])
+                for row in all_values[SPLIT_LAYOUT_DATA_START - 1:]
+                if len(row) > expense_idx
+            )
             
             balances[dompet] = {
                 'pemasukan': total_masuk,
@@ -2658,6 +2637,7 @@ def get_wallet_balances(force_refresh: bool = False) -> Dict:
         _set_wallet_balances_cache(balances)
     else:
         secure_log("WARNING", "Skipped wallet balance cache because Sheets read was partial")
+    log_timing("sheets.read.wallet_balances", started_at, partial=read_had_error)
     return balances
 
 

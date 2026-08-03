@@ -224,6 +224,38 @@ class DurablePipelineTests(unittest.TestCase):
         self.assertTrue(calls[0]["has_media"])
         self.assertEqual(calls[0]["text"], "Fee rio sisanya, projek bu astri")
 
+    def test_clear_finance_input_acks_without_classifier_round_trip(self):
+        import main
+
+        events = []
+
+        def smart_process(**_kwargs):
+            events.append("classifier")
+            raise AssertionError("clear finance input should use deterministic routing")
+
+        with main.app.test_request_context("/"), \
+             patch.object(main, "rate_limit_check", return_value=(True, 0)), \
+             patch.object(main.smart_handler, "process", side_effect=smart_process), \
+             patch.object(main, "extract_financial_data", return_value=[]):
+            response, status_code = main.process_incoming_message(
+                sender_number="628100999",
+                sender_name="Admin",
+                text="dp 100.000 project pak rina tx sby",
+                input_type="text",
+                message_id="ack-before-classifier-1",
+                is_group=False,
+                chat_jid="628100999@s.whatsapp.net",
+                sender_jid="628100999@s.whatsapp.net",
+                send_reply=lambda *_args, **_kwargs: events.append("ack"),
+                source_label="WhatsApp",
+                reply_to="628100999@s.whatsapp.net",
+            )
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(response.get_json()["status"], "no_tx")
+        self.assertEqual(events[0], "ack")
+        self.assertNotIn("classifier", events)
+
     def test_split_text_waits_for_image_webhook_race(self):
         import main
 

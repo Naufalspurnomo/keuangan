@@ -18,6 +18,7 @@ import json
 import io
 import tempfile
 import threading
+import time
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
@@ -36,6 +37,7 @@ from security import (
     validate_media_url,
     validate_transaction_data,
     get_safe_ai_prompt_wrapper,
+    log_timing,
     secure_log,
     SecurityError,
     MAX_INPUT_LENGTH,
@@ -1634,6 +1636,7 @@ class RotatingGroqClient:
 
         for idx in self._rotation_order():
             client = self._clients[idx]
+            started_at = time.perf_counter()
             try:
                 result = caller(client)
                 self._set_active_index(idx)
@@ -1642,11 +1645,14 @@ class RotatingGroqClient:
                         "INFO",
                         f"Groq fallback switched active key for {operation_name} -> {_masked_key(self._api_keys[idx])}",
                     )
+                log_timing("groq." + operation_name, started_at, key_index=idx, result="ok")
                 return result
             except Exception as exc:
                 if not _is_rate_limit_error(exc):
+                    log_timing("groq." + operation_name, started_at, key_index=idx, result="error")
                     raise
                 last_rate_limit_error = exc
+                log_timing("groq." + operation_name, started_at, key_index=idx, result="rate_limit")
                 secure_log(
                     "WARNING",
                     f"Groq rate limit on {operation_name} with key {_masked_key(self._api_keys[idx])}",
@@ -1986,13 +1992,17 @@ def extract_from_text(text: str, sender_name: str, chat_id: str = None, user_id:
                     response_format={"type": "json_object"}
                 )
 
-            agent_decision = plan_finance_message(
-                clean_text,
-                sender_name,
-                llm_call=_finance_agent_llm_call,
-                chat_id=chat_id,
-                user_id=user_id,
-            )
+            agent_started_at = time.perf_counter()
+            try:
+                agent_decision = plan_finance_message(
+                    clean_text,
+                    sender_name,
+                    llm_call=_finance_agent_llm_call,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                )
+            finally:
+                log_timing("finance_agent.extract", agent_started_at)
             if agent_decision.accepted() and finance_agent_accepts():
                 transactions = [
                     tx.to_legacy_dict()

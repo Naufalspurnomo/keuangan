@@ -1,9 +1,10 @@
 import os
 import base64
+import time
 import requests
 import mimetypes
 from typing import Dict, Optional, Any
-from security import secure_log
+from security import log_timing, secure_log
 
 # Environment Variables
 WUZAPI_DOMAIN = (os.getenv('WUZAPI_DOMAIN') or '').strip()  # e.g. https://wuzapi-x.sumopod.my.id
@@ -119,6 +120,8 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
         endpoints = _build_wuzapi_endpoints(base, "chat/send/text")
         last_err = ""
         for url in endpoints:
+            endpoint_started = time.perf_counter()
+            resp = None
             try:
                 resp = session.post(url, json=payload, timeout=8, allow_redirects=False)
                 if resp.status_code in (200, 201, 202):
@@ -141,6 +144,13 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
                     )
             except Exception as e:
                 last_err = f"{type(e).__name__}: {str(e)[:200]}"
+            finally:
+                log_timing(
+                    "wuzapi.send_text",
+                    endpoint_started,
+                    endpoint="chat/send/text",
+                    status=getattr(resp, "status_code", "error"),
+                )
 
         secure_log("ERROR", f"WuzAPI: send text failed: {last_err}")
         return None

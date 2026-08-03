@@ -120,6 +120,7 @@ from wuzapi_helper import (
 from security import (
     sanitize_input, detect_prompt_injection,
     rate_limit_check, secure_log,
+    log_timing,
     SecurityError, RateLimitError,
     ALLOWED_CATEGORIES, now_wib,
 )
@@ -207,6 +208,37 @@ import services.state_manager as state_manager_module
 smart_handler = SmartHandler(state_manager_module)
 
 from utils.amounts import has_amount_pattern
+
+
+def _deterministic_transaction_scope(text: str) -> Optional[str]:
+    """Return a safe scope for obvious transactions without invoking Groq."""
+    lower = (text or '').strip().lower()
+    if not lower or not has_amount_pattern(lower):
+        return None
+    if '?' in lower or re.search(r"\b(berapa|gimana|bagaimana|cek|lihat|tanya|besok|nanti|akan|rencana|mau|perlu)\b", lower):
+        return None
+
+    has_action = bool(re.search(
+        r"\b(dp|bayar|beli|biaya|fee|gaji|upah|honor|transfer|kirim|isi|tambah|topup|deposit|tarik|ambil|masuk|keluar|catat|simpan)\b",
+        lower,
+    ))
+    has_project = bool(re.search(r"\b(projek|project|proyek|prj)\b", lower))
+    has_operational = bool(re.search(r"\b(kantor|operasional|operational|office|ops)\b", lower)) or any(
+        re.search(r"\b" + re.escape(keyword) + r"\b", lower)
+        for keyword in OPERATIONAL_KEYWORDS
+    )
+    has_wallet = bool(resolve_dompet_from_text(lower)) or bool(
+        re.search(r"\b(dompet|wallet|saldo|rekening|rek)\b", lower)
+    )
+    if not has_action and not (has_project or has_operational or has_wallet):
+        return None
+    if is_saldo_update(lower) or (has_wallet and not has_project and not has_operational):
+        return "TRANSFER"
+    if has_project:
+        return "PROJECT"
+    if has_operational:
+        return "OPERATIONAL"
+    return None
 
 
 def _build_extraction_failure_message(raw_text: str, input_type: str) -> str:
@@ -454,6 +486,7 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             def announce_ocr_model(model_name: str) -> None:
                 send_reply(f"🔎 Memindai gambar dengan AI Vision: *{model_name}*")
 
+            started_at = time.perf_counter()
             try:
                 return extract_financial_data(
                     input_data, in_type, sender, media_list, caption,
@@ -464,6 +497,12 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
                 wait = getattr(e, "wait_time", "beberapa saat")
                 send_reply(f"⚠️ AI sedang sibuk (limit). Coba lagi dalam {wait}.")
                 return None
+            finally:
+                log_timing(
+                    "ocr" if in_type == 'image' else "extract_financial_data",
+                    started_at,
+                    input_type=in_type,
+                )
 
         def is_explicit_bot_call(msg: str) -> bool:
             if not msg:
@@ -1820,13 +1859,18 @@ Balas 1 atau 2"""
                 )
                 return jsonify({'status': 'buffered_image_pending_confirmation'}), 200
             # Check if handled by pending handler
-            result = handle_pending_response(
-                user_id=pending_conf_user,
-                chat_id=chat_jid,
-                text=text,
-                pending_data=pending_conf,
-                sender_name=sender_name
-            )
+            send_reply("⏳ Memproses jawaban...")
+            pending_started_at = time.perf_counter()
+            try:
+                result = handle_pending_response(
+                    user_id=pending_conf_user,
+                    chat_id=chat_jid,
+                    text=text,
+                    pending_data=pending_conf,
+                    sender_name=sender_name
+                )
+            finally:
+                log_timing("pending_response", pending_started_at)
 
             if result:
                 if result.get('response'):
@@ -2092,6 +2136,53 @@ Balas 1 atau 2"""
         smart_result = {}
         processing_ack_sent = False
 
+        def run_smart_handler():
+            started_at = time.perf_counter()
+            try:
+                return smart_handler.process(
+                    text=text,
+                    chat_jid=chat_jid,
+                    sender_number=sender_number,
+                    reply_message_id=quoted_msg_id,
+                    has_media=(input_type == 'image' or media_url is not None),
+                    sender_name=sender_name,
+                    quoted_message_text=quoted_message_text,
+                    has_visual=has_visual,
+                )
+            finally:
+                log_timing("smart_handler", started_at)
+
+        # Acknowledge clear finance inputs before the classifier or extractor.
+        # Group chatter still stays quiet unless it carries an actionable signal.
+        clear_finance_signal = (
+            input_type == 'image'
+            or force_record
+            or is_explicit_bot_call(text)
+            or (
+                has_amount_pattern(text)
+                and bool(re.search(
+                    r"\b(dp|fee|gaji|upah|bayar|beli|biaya|transfer|saldo|hutang|utang|projek|project|proyek|operasional|dompet|wifi|nota|struk)\b",
+                    (text or '').lower(),
+                ))
+            )
+            or (
+                not is_group
+                and bool(re.search(
+                    r"\b(saldo|hutang|utang|dompet|transfer|bayar|beli|biaya|fee|gaji|upah|nota|struk|projek|project|proyek|operasional|wifi)\b",
+                    (text or '').lower(),
+                ))
+            )
+        )
+        if not has_pending and clear_finance_signal:
+            send_reply("⏳ Memproses...")
+            processing_ack_sent = True
+
+        deterministic_scope = (
+            _deterministic_transaction_scope(text)
+            if input_type == 'text' and not has_pending
+            else None
+        )
+
         if has_pending:
             # Bypass AI if pending active to reach state machine below
             pass
@@ -2131,28 +2222,12 @@ Balas 1 atau 2"""
 
             # Smart Handler (AI Layer)
             if USE_LAYERS:
-                if force_record:
+                if force_record or deterministic_scope:
                     action = "PROCESS"
                     intent = "RECORD_TRANSACTION"
-                    # Use SmartHandler for better normalization/scope, but never allow IGNORE.
-                    smart_scope = None
-                    try:
-                        smart_result = smart_handler.process(
-                            text=text,
-                            chat_jid=chat_jid,
-                            sender_number=sender_number,
-                            reply_message_id=quoted_msg_id,
-                            has_media=(input_type == 'image' or media_url is not None),
-                            sender_name=sender_name,
-                            quoted_message_text=quoted_message_text,
-                            has_visual=has_visual
-                        )
-                        smart_scope = smart_result.get('category_scope')
-                        if smart_scope in [None, '', 'UNKNOWN']:
-                            smart_scope = None
-                    except Exception:
-                        smart_result = {}
-                        smart_scope = None
+                    # Explicit/obvious transactions do not need a classifier round trip.
+                    smart_result = {}
+                    smart_scope = deterministic_scope
 
                     # Fallback lightweight scope detection for explicit "catat"
                     if not smart_scope:
@@ -2174,16 +2249,7 @@ Balas 1 atau 2"""
                 else:
                     # Use the initialized smart_handler instance
                     # It returns a dict with action, intent, normalized_text, etc.
-                    smart_result = smart_handler.process(
-                        text=text,
-                        chat_jid=chat_jid,
-                        sender_number=sender_number,
-                        reply_message_id=quoted_msg_id,
-                        has_media=(input_type == 'image' or media_url is not None),
-                        sender_name=sender_name,
-                        quoted_message_text=quoted_message_text,
-                        has_visual=has_visual
-                    )
+                    smart_result = run_smart_handler()
 
                     action = smart_result.get('action', 'IGNORE')
                     resp = smart_result.get('response') # For REPLY

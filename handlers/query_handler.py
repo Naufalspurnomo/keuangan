@@ -482,6 +482,49 @@ def _handle_project_query(query: str, norm_text: str, days: int, period_label: s
         if row_base_name == target_base_name or target_base_name in row_base_name or row_base_name in target_base_name:
             project_rows.append(d)
 
+    # The name may be known from all-time history while the requested period
+    # has no rows. Never turn that mismatch into a misleading Rp 0 report.
+    if not project_rows and days is not None:
+        all_time_data = get_all_data(None)
+        historical_rows = []
+        for row in all_time_data:
+            row_base_name = _normalize_project_label(row.get("nama_projek", ""))
+            if row_base_name and (
+                row_base_name == target_base_name
+                or target_base_name in row_base_name
+                or row_base_name in target_base_name
+            ):
+                historical_rows.append(row)
+
+        if historical_rows:
+            historical_income = sum(
+                int(row.get("jumlah", 0) or 0)
+                for row in historical_rows
+                if row.get("tipe") == "Pemasukan"
+            )
+            historical_expense = sum(
+                int(row.get("jumlah", 0) or 0)
+                for row in historical_rows
+                if row.get("tipe") == "Pengeluaran"
+            )
+            last_row = _recent_transactions(historical_rows, 1)[0]
+            lines = [
+                f"📭 Belum ada transaksi untuk {project_name} dalam {period_label}.",
+                (
+                    f"Sepanjang riwayat, project ini punya {len(historical_rows)} transaksi: "
+                    f"keluar {_format_idr(historical_expense)}, "
+                    f"masuk {_format_idr(historical_income)}."
+                ),
+                (
+                    f"Aktivitas terakhir: {last_row.get('tanggal', 'tanggal tidak tersedia')} — "
+                    f"{_format_idr(last_row.get('jumlah', 0))} — "
+                    f"{last_row.get('keterangan', 'tanpa keterangan')}"
+                ),
+            ]
+            if _wants_detail(norm_text):
+                _append_evidence(lines, historical_rows, EVIDENCE_LIMIT_DETAIL, "Rincian riwayat:")
+            return "\n".join(lines)
+
     # Descriptor filtering (e.g., "fee sugeng" within project)
     descriptor_tokens = _extract_query_descriptor_tokens(query, project_name)
     filtered_rows = project_rows
@@ -605,34 +648,151 @@ def _handle_finished_projects_query(norm_text: str, days: int, period_label: str
     return "\n".join(lines)
 
 
-def _handle_project_list_query(norm_text: str, days: int, period_label: str) -> str:
-    """Handle queries listing all projects with summaries."""
-    summary = get_summary(days) if days is not None else get_summary(365)
-    by_projek = summary.get("by_projek", {})
+_NON_PROJECT_NAMES = {
+    "",
+    "umum",
+    "saldo umum",
+    "operasional",
+    "operasional kantor",
+    "unknown",
+    "-",
+}
 
-    if not by_projek:
-        return f"Tidak ada data projek ({period_label})."
 
-    lines = [
-        f"📊 Daftar Projek ({period_label})",
-        f"📋 {len(by_projek)} projek aktif",
-    ]
+def _is_project_activity_query(norm_text: str) -> bool:
+    """Recognize questions asking which projects are being/ were worked on."""
+    if not any(word in norm_text for word in ["projek", "project", "proyek"]):
+        return False
+    return any(phrase in norm_text for phrase in (
+        "yang dikerjakan",
+        "dikerjakan",
+        "sedang berjalan",
+        "yang berjalan",
+        "masih berjalan",
+        "project aktif",
+        "projek aktif",
+        "yang aktif",
+        "aktivitas project",
+        "aktivitas projek",
+        "project apa",
+        "projek apa",
+        "daftar project",
+        "daftar projek",
+        "list project",
+        "list projek",
+        "semua project",
+        "semua projek",
+    ))
 
-    sorted_projects = sorted(
-        by_projek.values(),
-        key=lambda x: (x.get("expense", 0) + x.get("income", 0)),
-        reverse=True
+
+def _project_display_name(rows: list) -> str:
+    """Choose a readable project label without lifecycle suffixes."""
+    candidates = []
+    for row in rows:
+        raw_name = str(row.get("nama_projek") or "").strip()
+        if not raw_name:
+            continue
+        clean_name = PROJECT_PHASE_RE.sub("", raw_name).strip(" -")
+        if clean_name.casefold() not in _NON_PROJECT_NAMES:
+            candidates.append(clean_name)
+    if not candidates:
+        return "Project"
+    return max(candidates, key=lambda name: (len(name), name.casefold()))
+
+
+def _project_activity_groups(rows: list) -> list:
+    groups = {}
+    for row in rows:
+        raw_name = str(row.get("nama_projek") or "").strip()
+        base_name = _normalize_project_label(raw_name)
+        if not base_name or base_name in _NON_PROJECT_NAMES:
+            continue
+        group = groups.setdefault(base_name, {
+            "rows": [],
+            "name": "Project",
+            "income": 0,
+            "expense": 0,
+            "wallets": set(),
+            "finished": False,
+        })
+        group["rows"].append(row)
+        group["name"] = _project_display_name(group["rows"])
+        amount = int(row.get("jumlah", 0) or 0)
+        if row.get("tipe") == "Pemasukan":
+            group["income"] += amount
+        elif row.get("tipe") == "Pengeluaran":
+            group["expense"] += amount
+        wallet = str(row.get("company_sheet") or "").strip()
+        if wallet and wallet != OPERASIONAL_SHEET_NAME:
+            group["wallets"].add(wallet)
+        if re.search(r"\((finish|selesai)\)", raw_name, re.IGNORECASE):
+            group["finished"] = True
+
+    for group in groups.values():
+        latest_row = max(
+            group["rows"],
+            key=lambda row: _parse_date(str(row.get("tanggal") or "")),
+            default={},
+        )
+        group["last_date"] = str(latest_row.get("tanggal") or "")
+        group["net"] = group["income"] - group["expense"]
+
+    return sorted(
+        groups.values(),
+        key=lambda group: (group["last_date"], len(group["rows"])),
+        reverse=True,
     )
 
-    for i, info in enumerate(sorted_projects, 1):
-        name = info.get("name", "?")
-        inc = info.get("income", 0)
-        exp = info.get("expense", 0)
-        profit = inc - exp
-        status = "✅" if profit > 0 else "❌" if profit < 0 else "➖"
-        lines.append(f"\n{i}. {name}")
-        lines.append(f"   📥 {_format_idr(inc)} | 📤 {_format_idr(exp)} | {status} {_format_idr(profit)}")
 
+def _handle_project_activity_query(norm_text: str, days: int, period_label: str) -> str:
+    """Answer project-activity questions from transaction evidence, not guesses."""
+    rows = get_all_data(days) if days is not None else get_all_data(None)
+    groups = _project_activity_groups(rows)
+
+    if not groups and days is not None:
+        all_rows = get_all_data(None)
+        historical_groups = _project_activity_groups(all_rows)
+        if historical_groups:
+            lines = [
+                f"🧭 Belum ada transaksi project dalam {period_label}.",
+                "Project yang pernah tercatat, tetapi aktivitas terakhirnya di luar periode:",
+            ]
+            for group in historical_groups[:5]:
+                lines.append(
+                    f"• {group['name']} — terakhir {group['last_date'] or 'tanggal tidak tersedia'} "
+                    f"({len(group['rows'])} transaksi sepanjang data)"
+                )
+            lines.append("\nKalau mau, saya bisa cek seluruh riwayatnya: /tanya daftar project sejak awal")
+            return "\n".join(lines)
+        return f"Saya belum menemukan aktivitas project dalam {period_label}."
+
+    if not groups:
+        return "Saya belum menemukan transaksi project di data yang tersedia."
+
+    requested_detail = _wants_detail(norm_text)
+    lines = [
+        f"🧭 Project yang punya aktivitas ({period_label})",
+        f"Saya menemukan {len(groups)} project dari transaksi nyata:",
+    ]
+    for index, group in enumerate(groups[:10], 1):
+        status = "selesai" if group["finished"] else "berjalan/aktif"
+        wallets = ", ".join(sorted(group["wallets"]))
+        lines.append(f"\n{index}. *{group['name']}* — {status}")
+        lines.append(
+            f"   {len(group['rows'])} transaksi, terakhir {group['last_date'] or 'tanggal tidak tersedia'}"
+        )
+        lines.append(
+            f"   Keluar {_format_idr(group['expense'])} | "
+            f"Masuk {_format_idr(group['income'])} | "
+            f"Posisi {_format_idr(group['net'])}"
+        )
+        if wallets:
+            lines.append(f"   Dompet: {wallets}")
+        if requested_detail:
+            _append_evidence(lines, group["rows"], 3, "   Transaksi terakhir:")
+
+    if len(groups) > 10:
+        lines.append(f"\n... dan {len(groups) - 10} project lainnya.")
     return "\n".join(lines)
 
 
@@ -1162,6 +1322,9 @@ def _drill_down_suggestions(query: str, response: str) -> list:
         norm = _normalize_text(query)
         wants_detail = _wants_detail(norm)
 
+        if _is_project_activity_query(norm):
+            return []
+
         if "📊 Projek " in response and not wants_detail:
             m = re.search(r"📊 Projek (.+?) \(", response)
             if m:
@@ -1235,15 +1398,18 @@ def handle_query_command(query: str, user_id: str, chat_id: str, raw_query: str 
         raw_norm = _normalize_text(detect_query)
         days, period_label = _extract_days(norm)
 
-        if os.getenv("NL_QUERY_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
+        query_agent_enabled = os.getenv("QUERY_AGENT_ENABLED", "true").strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+        if query_agent_enabled:
             try:
                 from handlers.nl_query_handler import handle_nl_query
 
-                nl_answer = handle_nl_query(detect_query, get_all_data(None))
+                nl_answer = handle_nl_query(detect_query, default_days=days)
                 if nl_answer:
                     return nl_answer
             except Exception as exc:
-                logger.debug("NL query handler failed: %s", type(exc).__name__)
+                logger.debug("Query agent failed: %s", type(exc).__name__)
 
         dompet = resolve_dompet_from_text(raw_norm)
         wants_hutang = any(k in norm for k in ["hutang", "utang", "piutang"])
@@ -1256,6 +1422,7 @@ def handle_query_command(query: str, user_id: str, chat_id: str, raw_query: str 
             has_project_keyword or "projek" in norm or "project" in norm
         )
         wants_project_list = any(k in norm for k in ["daftar", "list", "semua"]) and has_project_keyword
+        wants_project_activity = _is_project_activity_query(norm) or wants_project_list
 
         # Phase 3: New query type detection
         wants_ranking = any(k in norm for k in ["ranking", "peringkat", "paling", "terbanyak"])
@@ -1285,9 +1452,10 @@ def handle_query_command(query: str, user_id: str, chat_id: str, raw_query: str 
         if wants_finished:
             return _wrap(_handle_finished_projects_query(norm, days, period_label))
 
-        # 2. Project list
-        if wants_project_list:
-            return _wrap(_handle_project_list_query(norm, days, period_label))
+        # 2. Project activity/list: do not interpret "yang dikerjakan" as a
+        # project name. Build the answer from transaction evidence instead.
+        if wants_project_activity:
+            return _wrap(_handle_project_activity_query(norm, days, period_label))
 
         # 3. Ranking (projek paling untung, dompet paling aktif)
         if wants_ranking:

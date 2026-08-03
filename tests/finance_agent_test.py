@@ -3,6 +3,7 @@ import os
 import unittest
 from unittest.mock import patch
 
+from services import finance_agent
 from services.finance_agent import finance_agent_accepts, finance_agent_mode, plan_finance_message
 
 
@@ -15,6 +16,16 @@ Catatan: projek workshop"""
 
 
 class FinanceAgentTests(unittest.TestCase):
+    def test_sheet_context_reuses_project_service_cache(self):
+        with patch(
+            "services.project_service.get_existing_projects",
+            return_value={"Zeta", "Alpha"},
+        ), patch("sheets_helper.get_sheet", side_effect=AssertionError("duplicate scan")):
+            context = finance_agent._safe_sheet_context()
+
+        self.assertEqual(context["known_projects"], ["Alpha", "Zeta"])
+        self.assertTrue(context["sheet_context_available"])
+
     def test_structured_bank_message_becomes_agent_transaction(self):
         decision = plan_finance_message(STRUCTURED_MESSAGE, "Naufal", llm_call=None)
 

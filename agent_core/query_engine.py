@@ -131,7 +131,7 @@ def _metric(metric: str, values: List[int]) -> float:
 
 def execute(ast: Dict[str, Any], rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     parsed = parse_ast(ast)
-    filtered = [row for row in rows or [] if isinstance(row, dict) and _matches(row, parsed["filters"])]
+    filtered = select_rows(parsed, rows)
     values = [_amount(row.get("jumlah") or row.get("amount")) for row in filtered]
     result = {
         "metric": parsed["metric"],
@@ -153,10 +153,18 @@ def execute(ast: Dict[str, Any], rows: Iterable[Dict[str, Any]]) -> Dict[str, An
     return result
 
 
+def select_rows(ast: Dict[str, Any], rows: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return the validated rows matching an AST, for evidence retrieval."""
+    parsed = parse_ast(ast)
+    return [
+        row for row in rows or []
+        if isinstance(row, dict) and _matches(row, parsed["filters"])
+    ]
+
+
 def format_idr(amount: Any) -> str:
     try:
         value = int(round(float(amount or 0)))
     except (TypeError, ValueError):
         value = 0
     return f"Rp {value:,}".replace(",", ".")
-

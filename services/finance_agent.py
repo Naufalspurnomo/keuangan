@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
@@ -17,6 +18,7 @@ from typing import Any, Callable, Dict, List, Optional
 from config.wallets import DOMPET_SHEETS, resolve_dompet_from_text
 from utils.amounts import parse_money_token
 from utils.parsers import extract_project_name_from_text, parse_revision_amount, strip_explicit_catat_command
+from security import log_timing
 
 
 ALLOWED_AGENT_CATEGORIES = {
@@ -307,14 +309,17 @@ def _safe_sheet_context() -> Dict[str, Any]:
     if not finance_agent_sheet_context_enabled():
         return context
 
+    started_at = time.perf_counter()
     try:
-        from sheets_helper import get_existing_projects
+        from services.project_service import get_existing_projects
 
         projects = sorted(str(p) for p in get_existing_projects() if str(p).strip())
         context["known_projects"] = projects[:40]
         context["sheet_context_available"] = True
     except Exception as exc:
         context["sheet_context_error"] = type(exc).__name__
+    finally:
+        log_timing("finance_agent.sheet_context", started_at)
     return context
 
 
@@ -453,6 +458,7 @@ def plan_finance_message(
 
     context = _safe_sheet_context()
     conversation_context = _conversation_context(chat_id, user_id)
+    llm_started_at = time.perf_counter()
     try:
         response = llm_call(_agent_prompt(text, sender_name, context, conversation_context))
         content = response.choices[0].message.content.strip()
@@ -467,3 +473,5 @@ def plan_finance_message(
             reasoning=f"Finance agent fallback after {type(exc).__name__}.",
             source="agent_error",
         )
+    finally:
+        log_timing("finance_agent.plan", llm_started_at)

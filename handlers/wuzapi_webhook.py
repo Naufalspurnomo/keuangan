@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import re
+import time
 import traceback
 from typing import Callable
 
@@ -11,7 +12,7 @@ from flask import g, jsonify
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from config.allowlist import is_sender_allowed
-from security import secure_log
+from security import log_timing, secure_log
 from services.state_manager import clear_message_duplicate, is_message_duplicate, store_visual_buffer
 from services.durable_inbox import InboxUnavailable, capture_event, mark_event, mark_source_event
 from wuzapi_helper import download_wuzapi_image, send_wuzapi_reply
@@ -33,8 +34,8 @@ IGNORED_EVENT_TYPES = {
 
 
 def _extract_sender_number(info: dict) -> str:
-    sender_alt = info.get('SenderAlt', '')
-    sender_jid = info.get('Sender', '')
+    sender_alt = str(info.get('SenderAlt') or '')
+    sender_jid = str(info.get('Sender') or '')
     sender_number = (
         sender_alt.split('@')[0].split(':')[0]
         if '@' in sender_alt
@@ -263,6 +264,7 @@ def handle_wuzapi_webhook(
                 secure_log("WARNING", f"Could not persist downloaded media: {type(exc).__name__}")
 
         finance_signal = _finance_signal(text, input_type)
+        capture_started = time.perf_counter()
         try:
             inbox_event_key = capture_event({
                 'provider': 'wuzapi',
@@ -284,6 +286,8 @@ def handle_wuzapi_webhook(
             clear_message_duplicate(message_id)
             secure_log("CRITICAL", f"Webhook not acknowledged because durable inbox is unavailable: {exc}")
             return jsonify({'status': 'durable_inbox_unavailable'}), 503
+        finally:
+            log_timing("webhook.capture_event", capture_started)
 
         if image_missing_media:
             mark_event(
@@ -295,11 +299,15 @@ def handle_wuzapi_webhook(
             return jsonify({'status': 'image_missing_media'}), 200
 
         mark_event(inbox_event_key, 'processing')
-        result = process_message(
-            sender_number, info.get('PushName', 'User'), text,
-            input_type, media_url, local_media_path, quoted_msg_id, message_id,
-            is_group, chat_jid, info.get('SenderAlt', '')
-        )
+        process_started = time.perf_counter()
+        try:
+            result = process_message(
+                sender_number, info.get('PushName', 'User'), text,
+                input_type, media_url, local_media_path, quoted_msg_id, message_id,
+                is_group, chat_jid, info.get('SenderAlt', '')
+            )
+        finally:
+            log_timing("webhook.process_message", process_started, input_type=input_type)
         result_status = _result_status(result)
         lifecycle_status = _lifecycle_for_result(result_status, finance_signal)
         mark_event(

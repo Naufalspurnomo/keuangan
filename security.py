@@ -592,6 +592,13 @@ def secure_log(level: str, message: str, **kwargs) -> None:
             pass
 
 
+def log_timing(stage: str, started_at: float, **kwargs) -> float:
+    """Log a bounded stage duration without exposing request contents."""
+    elapsed_ms = round((time.perf_counter() - started_at) * 1000, 1)
+    secure_log("INFO", "Stage timing", stage=stage, elapsed_ms=elapsed_ms, **kwargs)
+    return elapsed_ms
+
+
 # ===================== DECORATORS =====================
 
 def rate_limited(func):

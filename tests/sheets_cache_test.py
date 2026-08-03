@@ -103,14 +103,14 @@ class SheetsCacheTests(unittest.TestCase):
              patch.object(sheets, "get_or_create_operational_sheet", lambda: operational), \
              patch.object(sheets, "get_or_create_hutang_sheet", lambda: hutang):
             first = sheets.get_wallet_balances()
-            calls_after_first = sum(w.col_values_calls for w in dompet_sheets.values())
+            calls_after_first = sum(w.get_all_values_calls for w in dompet_sheets.values())
 
             second = sheets.get_wallet_balances()
-            calls_after_second = sum(w.col_values_calls for w in dompet_sheets.values())
+            calls_after_second = sum(w.get_all_values_calls for w in dompet_sheets.values())
 
             sheets.invalidate_dashboard_cache()
             third = sheets.get_wallet_balances()
-            calls_after_invalidate = sum(w.col_values_calls for w in dompet_sheets.values())
+            calls_after_invalidate = sum(w.get_all_values_calls for w in dompet_sheets.values())
 
         self.assertEqual(first, second)
         self.assertEqual(second, third)
@@ -121,7 +121,7 @@ class SheetsCacheTests(unittest.TestCase):
     def test_get_wallet_balances_does_not_cache_partial_reads(self):
         failing_dompet = sheets.DOMPET_SHEETS[0]
         dompet_sheets = {dompet: _FakeWorksheet() for dompet in sheets.DOMPET_SHEETS}
-        dompet_sheets[failing_dompet] = _FailingWorksheet(fail_col_values=True)
+        dompet_sheets[failing_dompet] = _FailingWorksheet(fail_get_all_values=True)
         operational = _FakeWorksheet()
         hutang = _FakeWorksheet()
 
@@ -131,7 +131,7 @@ class SheetsCacheTests(unittest.TestCase):
             sheets.get_wallet_balances()
             sheets.get_wallet_balances()
 
-        self.assertEqual(dompet_sheets[failing_dompet].col_values_calls, 2)
+        self.assertEqual(dompet_sheets[failing_dompet].get_all_values_calls, 2)
 
 
 if __name__ == "__main__":
