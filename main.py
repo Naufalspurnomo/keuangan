@@ -451,7 +451,14 @@ def process_incoming_message(sender_number: str, sender_name: str, text: str,
             if send_reply_fn is None:
                 return None
             sent = send_reply_fn(body, mention=mention)
-            record_message(chat_jid, sender_number, 'bot', body)
+            if sent is None:
+                secure_log(
+                    "ERROR",
+                    f"WhatsApp reply not acknowledged source={source_label} "
+                    f"chat={chat_jid or '-'} body_len={len(body or '')}",
+                )
+            else:
+                record_message(chat_jid, sender_number, 'bot', body)
             return sent
 
         send_reply = send_reply_tracked

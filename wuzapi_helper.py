@@ -86,6 +86,74 @@ def _safe_response_excerpt(resp: requests.Response, max_chars: int = 200) -> str
     return body
 
 
+def _wuzapi_response_objects(payload: Any) -> list[dict]:
+    """Return the top-level and common nested WuzAPI response objects."""
+    if not isinstance(payload, dict):
+        return []
+
+    objects = [payload]
+    for key in ("data", "Data", "result", "Result"):
+        nested = payload.get(key)
+        if isinstance(nested, dict):
+            objects.append(nested)
+    return objects
+
+
+def _wuzapi_send_ack(payload: Any) -> tuple[str, str, str]:
+    """Classify a WuzAPI send response without trusting HTTP status alone.
+
+    WuzAPI's normal send response contains delivery metadata such as Details,
+    Timestamp, and Id. Some deployments wrap that response in ``data`` or
+    expose an explicit ``success`` flag. A positive HTTP status with neither
+    success marker nor send metadata is deliberately treated as unknown.
+    """
+    objects = _wuzapi_response_objects(payload)
+    if not objects:
+        return "unknown", "", "response bukan object JSON"
+
+    error_values = []
+    for obj in objects:
+        for key in ("success", "Success", "ok", "Ok"):
+            if key in obj and obj[key] is False:
+                reason = obj.get("error") or obj.get("Error") or obj.get("message") or obj.get("Message")
+                return "rejected", "", str(reason or "provider menyatakan gagal")[:200]
+        for key in ("error", "Error", "errors", "Errors", "failure", "Failure"):
+            value = obj.get(key)
+            if value not in (None, "", False, [], {}):
+                error_values.append(str(value)[:200])
+
+    if error_values:
+        return "rejected", "", error_values[0]
+
+    for obj in objects:
+        status = str(obj.get("status") or obj.get("Status") or "").strip().casefold()
+        if status in {"error", "failed", "failure", "rejected", "not sent"}:
+            return "rejected", "", status
+
+    message_id = ""
+    timestamp = ""
+    details = ""
+    explicit_success = False
+    for obj in objects:
+        if not message_id:
+            message_id = str(obj.get("Id") or obj.get("id") or obj.get("ID") or "")
+        if not timestamp:
+            timestamp = str(obj.get("Timestamp") or obj.get("timestamp") or "")
+        if not details:
+            details = str(obj.get("Details") or obj.get("details") or "").strip()
+        for key in ("success", "Success", "ok", "Ok"):
+            if obj.get(key) is True:
+                explicit_success = True
+
+    detail_status = details.casefold()
+    if explicit_success or detail_status in {"sent", "success", "successful", "ok", "accepted"}:
+        return "sent", message_id, details or "success"
+    if message_id or timestamp:
+        return "sent", message_id, details or "metadata"
+
+    return "unknown", "", "provider tidak mengembalikan acknowledgement pengiriman"
+
+
 def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[Dict]:
     """Send WhatsApp message via WuzAPI.
     
@@ -125,11 +193,34 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
             try:
                 resp = session.post(url, json=payload, timeout=8, allow_redirects=False)
                 if resp.status_code in (200, 201, 202):
-                    secure_log("INFO", f"WuzAPI Send OK via {url.split('/')[-1]}")
                     try:
-                        return resp.json()
+                        provider_payload = resp.json()
                     except Exception:
-                        return {"status": "ok", "status_code": resp.status_code}
+                        provider_payload = None
+
+                    ack_state, message_id, ack_reason = _wuzapi_send_ack(provider_payload)
+                    if ack_state == "sent":
+                        secure_log(
+                            "INFO",
+                            "WuzAPI Send acknowledged "
+                            f"endpoint={url.split('/')[-1]} status={resp.status_code} "
+                            f"message_id={message_id[:80] or '-'} body_len={len(body or '')} "
+                            f"ack={ack_reason}",
+                        )
+                        return provider_payload
+
+                    last_err = (
+                        f"{resp.status_code} on {url} provider_ack={ack_state}: {ack_reason}"
+                    )
+                    secure_log("WARNING", f"WuzAPI Send not acknowledged: {last_err}")
+                    # An explicit provider rejection is safe to try against the
+                    # supported fallback endpoint. Unknown outcomes are not
+                    # retried on the same endpoint because a send may already
+                    # have reached WhatsApp despite a malformed response.
+                    if ack_state == "unknown":
+                        secure_log("ERROR", f"WuzAPI: send outcome unknown; not retrying: {last_err}")
+                        return None
+                    continue
 
                 loc = resp.headers.get("Location", "")
                 last_err = f"{resp.status_code} on {url} loc={loc}: {_safe_response_excerpt(resp)}"
