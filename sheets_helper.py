@@ -11,6 +11,8 @@ from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 from typing import List, Dict, Optional
 from security import log_timing, now_wib, secure_log
+from utils.amounts import parse_money_token
+from utils.parsers import parse_revision_amount
 
 _ledger_write_lock = threading.RLock()
 
@@ -1791,11 +1793,20 @@ def _safe_get(lst, idx, default=''):
     return default
 
 def _parse_amount(amt_str):
-    """Parse amount safely."""
-    try:
-        return int(float(str(amt_str).replace(',', '').replace('Rp', '').replace('.', '').strip() or 0))
-    except (TypeError, ValueError):
+    """Parse a Sheets amount without corrupting locale separators or suffixes."""
+    if amt_str is None:
         return 0
+    text = str(amt_str).strip()
+    if not text:
+        return 0
+    # Revision parsing understands both Indonesian suffixes (100rb/1,5jt)
+    # and grouped/decimal separators (480,000.00 / 480.000,00).
+    parsed = parse_revision_amount(text)
+    if parsed > 0:
+        return parsed
+    # Keep a conservative fallback for numeric values represented by Sheets
+    # as floats or strings with currency symbols.
+    return parse_money_token(text)
 
 
 def _is_internal_transfer_tx(tx: Dict) -> bool:
@@ -1976,7 +1987,9 @@ def get_all_data(days: int = 30, force_refresh: bool = False) -> List[Dict]:
                     if cutoff_date and row_date < cutoff_date: continue
                     
                     # Parse Amount
-                    amount = int(float(str(amt_str).replace(',', '').replace('Rp', '').replace('.', '').strip() or 0))
+                    amount = _parse_amount(amt_str)
+                    if amount <= 0:
+                        continue
                     
                     data.append({
                         'tanggal': date_str,
@@ -2031,7 +2044,9 @@ def get_all_data(days: int = 30, force_refresh: bool = False) -> List[Dict]:
                                 except: continue
                                 
                             if row_date and (not cutoff_date or row_date >= cutoff_date):
-                                amount = int(float(str(amt_str).replace(',', '').replace('Rp', '').replace('.', '').strip() or 0))
+                                amount = _parse_amount(amt_str)
+                                if amount <= 0:
+                                    continue
                                 
                                 data.append({
                                     'tanggal': date_str,
@@ -2067,7 +2082,9 @@ def get_all_data(days: int = 30, force_refresh: bool = False) -> List[Dict]:
                                     continue
                                 
                             if row_date and (not cutoff_date or row_date >= cutoff_date):
-                                amount = int(float(str(amt_str).replace(',', '').replace('Rp', '').replace('.', '').strip() or 0))
+                                amount = _parse_amount(amt_str)
+                                if amount <= 0:
+                                    continue
                                 
                                 data.append({
                                     'tanggal': date_str,
@@ -2689,17 +2706,6 @@ def format_dashboard_message(summary: Dict) -> str:
     lines.append(f"Last Update: {datetime.now().strftime('%H:%M')} WIB")
 
     return "\n".join(lines)
-
-def _parse_amount(value) -> int:
-    """Parse amount string to integer, handling various formats."""
-    if not value:
-        return 0
-    try:
-        # Remove common formatting
-        clean = str(value).replace('.', '').replace(',', '').replace('Rp', '').replace(' ', '').strip()
-        return int(float(clean))
-    except (ValueError, TypeError):
-        return 0
 
 def test_connection() -> bool:
     """Test connection to Google Sheets."""

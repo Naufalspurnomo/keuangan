@@ -39,6 +39,19 @@ class FinanceAgentTests(unittest.TestCase):
         self.assertEqual(tx.jumlah, 480000)
         self.assertEqual(tx.nama_projek, "workshop")
 
+    def test_structured_suffix_amount_keeps_rupiah_scale(self):
+        text = """/catat
+Tanggal: 01/06/2026
+Tipe: DB
+Nominal: 100rb
+Keterangan: beli semen
+Catatan: projek workshop"""
+
+        decision = plan_finance_message(text, "Naufal", llm_call=None)
+
+        self.assertTrue(decision.accepted())
+        self.assertEqual(decision.transactions[0].jumlah, 100000)
+
     def test_llm_agent_response_is_coerced_to_schema(self):
         class FakeMessage:
             content = json.dumps({
@@ -204,6 +217,133 @@ Catatan: projek workshop"""
             )
 
         self.assertEqual(decision.source_amounts, [480000])
+        self.assertFalse(decision.accepted())
+
+    def test_llm_agent_rejects_dropped_source_amount(self):
+        class FakeMessage:
+            content = json.dumps({
+                "action": "PROCESS",
+                "confidence": 1.0,
+                "transactions": [{
+                    "tanggal": "2026-06-01",
+                    "kategori": "Operasi Kantor",
+                    "keterangan": "beli alat",
+                    "jumlah": 100000,
+                    "tipe": "Pengeluaran",
+                    "nama_projek": "workshop",
+                }],
+                "missing_fields": [],
+            })
+
+        class FakeChoice:
+            message = FakeMessage()
+
+        class FakeResponse:
+            choices = [FakeChoice()]
+
+        with patch("services.finance_agent._safe_sheet_context", return_value={
+            "wallets": [],
+            "known_projects": ["workshop"],
+            "sheet_context_available": True,
+        }):
+            decision = plan_finance_message(
+                "beli alat 100rb dan ongkir 200rb projek workshop",
+                "Naufal",
+                llm_call=lambda _messages: FakeResponse(),
+            )
+
+        self.assertEqual(decision.source_amounts, [100000, 200000])
+        self.assertFalse(decision.accepted())
+
+    def test_repeated_source_amounts_keep_their_multiplicity(self):
+        text = "beli semen 100rb dan ongkir 100rb projek workshop"
+        self.assertEqual(finance_agent._source_amounts(text), [100000, 100000])
+        self.assertEqual(
+            finance_agent._source_amounts("Nominal: 100rb projek workshop"),
+            [100000],
+        )
+
+    def test_source_amounts_do_not_cross_labeled_lines(self):
+        text = "Nominal: 100rb\nKeterangan: ongkir\nNominal: 200rb"
+        self.assertEqual(finance_agent._source_amounts(text), [100000, 200000])
+
+    def test_llm_agent_accepts_repeated_source_amounts_when_all_are_preserved(self):
+        class FakeMessage:
+            content = json.dumps({
+                "action": "PROCESS",
+                "confidence": 1.0,
+                "transactions": [
+                    {
+                        "tanggal": "2026-06-01",
+                        "kategori": "Bahan Alat",
+                        "keterangan": "beli semen",
+                        "jumlah": 100000,
+                        "tipe": "Pengeluaran",
+                        "nama_projek": "workshop",
+                    },
+                    {
+                        "tanggal": "2026-06-01",
+                        "kategori": "Lain-lain",
+                        "keterangan": "ongkir",
+                        "jumlah": 100000,
+                        "tipe": "Pengeluaran",
+                        "nama_projek": "workshop",
+                    },
+                ],
+                "missing_fields": [],
+            })
+
+        class FakeChoice:
+            message = FakeMessage()
+
+        class FakeResponse:
+            choices = [FakeChoice()]
+
+        with patch("services.finance_agent._safe_sheet_context", return_value={
+            "wallets": [],
+            "known_projects": ["workshop"],
+            "sheet_context_available": True,
+        }):
+            decision = plan_finance_message(
+                "beli semen 100rb dan ongkir 100rb projek workshop",
+                "Naufal",
+                llm_call=lambda _messages: FakeResponse(),
+            )
+
+        self.assertTrue(decision.accepted())
+
+    def test_llm_agent_rejects_impossible_calendar_date(self):
+        class FakeMessage:
+            content = json.dumps({
+                "action": "PROCESS",
+                "confidence": 1.0,
+                "transactions": [{
+                    "tanggal": "2026-02-31",
+                    "kategori": "Bahan Alat",
+                    "keterangan": "beli semen",
+                    "jumlah": 100000,
+                    "tipe": "Pengeluaran",
+                    "nama_projek": "workshop",
+                }],
+                "missing_fields": [],
+            })
+
+        class FakeChoice:
+            message = FakeMessage()
+
+        class FakeResponse:
+            choices = [FakeChoice()]
+
+        with patch("services.finance_agent._safe_sheet_context", return_value={
+            "wallets": [],
+            "known_projects": ["workshop"],
+            "sheet_context_available": True,
+        }):
+            decision = plan_finance_message(
+                "beli semen 100rb projek workshop",
+                "Naufal",
+                llm_call=lambda _messages: FakeResponse(),
+            )
         self.assertFalse(decision.accepted())
 
 

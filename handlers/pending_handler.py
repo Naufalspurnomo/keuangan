@@ -464,7 +464,7 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
         total_amount = sum(int(t.get('jumlah', 0) or 0) for t in transactions)
         if total_amount > 0:
             debt_desc = f"Hutang ke dompet {dompet_sheet}"
-            append_project_transaction(
+            debt_tx_result = append_project_transaction(
                 transaction={
                     'jumlah': total_amount,
                     'keterangan': debt_desc,
@@ -476,13 +476,23 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
                 dompet_sheet=debt_source,
                 project_name="Saldo Umum"
             )
-            append_hutang_entry(
+            if not isinstance(debt_tx_result, dict) or not debt_tx_result.get('success'):
+                return {
+                    'response': '❌ Transaksi sumber dana belum dikonfirmasi tersimpan. Coba lagi setelah koneksi stabil.',
+                    'completed': False,
+                }
+            debt_entry_result = append_hutang_entry(
                 amount=total_amount,
                 keterangan=transactions[0].get('keterangan', '') if transactions else '',
                 yang_hutang=dompet_sheet,
                 yang_dihutangi=debt_source,
                 message_id=f"{event_id}|HUTANG"
             )
+            if not isinstance(debt_entry_result, dict) or not debt_entry_result.get('success'):
+                return {
+                    'response': '❌ Register hutang belum dikonfirmasi tersimpan. Coba lagi setelah koneksi stabil.',
+                    'completed': False,
+                }
 
     # If this is a revision move, delete old rows after re-save
     if pending_data.get('revision_delete'):
@@ -518,7 +528,7 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
                 dompet_sheet=dompet_sheet,
                 company=company,
                 actor=sender_name,
-                source=source,
+                source=pending_data.get('source', 'WhatsApp'),
                 status='finished' if has_finish_marker(pname) else 'active',
             )
 
@@ -1792,7 +1802,7 @@ Atau ketik /cancel untuk batal total"""
                 kategori = category or _detect_operational_category(tx.get('keterangan', ''))
 
                 # 1) Save to Operasional sheet
-                append_operational_transaction(
+                save_result = append_operational_transaction(
                     transaction={
                         'jumlah': tx['jumlah'],
                         'keterangan': tx['keterangan'],
@@ -1803,6 +1813,19 @@ Atau ketik /cancel untuk batal total"""
                     source_wallet=dompet_sheet,
                     category=kategori
                 )
+                if not isinstance(save_result, dict) or not save_result.get('success'):
+                    error_msg = (
+                        save_result.get('error', 'provider tidak mengonfirmasi penyimpanan')
+                        if isinstance(save_result, dict)
+                        else 'provider tidak mengonfirmasi penyimpanan'
+                    )
+                    return {
+                        'response': (
+                            "❌ Transaksi operasional belum dikonfirmasi tersimpan. "
+                            f"Penyebab: {str(error_msg)[:150]}"
+                        ),
+                        'completed': False,
+                    }
 
             # If this is a revision move, delete old rows after re-save
             if pending_data.get('revision_delete'):

@@ -3,6 +3,7 @@ import base64
 import time
 import requests
 import mimetypes
+from urllib.parse import urlsplit
 from typing import Dict, Optional, Any
 from security import log_timing, secure_log
 
@@ -300,24 +301,61 @@ def get_clean_jid(sender_jid: str) -> str:
 def download_wuzapi_media(media_url: str) -> Optional[str]:
     """Download media from WuzAPI or direct URL."""
     import tempfile
+    if not media_url:
+        return None
+    parsed = urlsplit(str(media_url))
+    provider = urlsplit(WUZAPI_DOMAIN)
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.hostname.lower().rstrip(".") != (provider.hostname or "").lower().rstrip(".")
+    ):
+        secure_log("WARNING", "WuzAPI media URL rejected: unexpected host or scheme")
+        return None
+
+    max_size = 10 * 1024 * 1024
+    response = None
+    temp_path = None
+    completed = False
     try:
         session = get_wuzapi_session()
-        response = session.get(media_url, stream=True, timeout=30)
+        response = session.get(media_url, stream=True, timeout=30, allow_redirects=False)
         
         if response.status_code == 200:
+            content_length = response.headers.get("content-length")
+            if content_length and int(content_length) > max_size:
+                secure_log("WARNING", "WuzAPI media download rejected: file too large")
+                return None
             content_type = response.headers.get('content-type', '')
             ext = mimetypes.guess_extension(content_type) or '.bin'
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                temp_path = tmp.name
+                downloaded = 0
                 for chunk in response.iter_content(chunk_size=8192):
+                    downloaded += len(chunk)
+                    if downloaded > max_size:
+                        secure_log("WARNING", "WuzAPI media download rejected: file too large")
+                        return None
                     tmp.write(chunk)
-                return tmp.name
+                completed = True
+                return temp_path
         else:
             secure_log("ERROR", f"WuzAPI Media Download Failed: {response.status_code}")
             return None
     except Exception as e:
         secure_log("ERROR", f"WuzAPI Media Except: {str(e)}")
         return None
+    finally:
+        if response is not None:
+            response.close()
+        if temp_path and not completed:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
 
 
 def download_wuzapi_image(message_id: str, chat_jid: str) -> Optional[str]:
@@ -333,6 +371,7 @@ def download_wuzapi_image(message_id: str, chat_jid: str) -> Optional[str]:
         secure_log("ERROR", "WuzAPI params missing for image download")
         return None
     
+    response = None
     try:
         session = get_wuzapi_session()
         
@@ -356,7 +395,10 @@ def download_wuzapi_image(message_id: str, chat_jid: str) -> Optional[str]:
                 if isinstance(image_data, str):
                     try:
                         # Decode base64
-                        img_bytes = base64.b64decode(image_data)
+                        img_bytes = base64.b64decode(image_data, validate=True)
+                        if len(img_bytes) > 10 * 1024 * 1024:
+                            secure_log("WARNING", "WuzAPI image rejected: file too large")
+                            return None
                         
                         # Save to temp file
                         with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
@@ -380,6 +422,9 @@ def download_wuzapi_image(message_id: str, chat_jid: str) -> Optional[str]:
     except Exception as e:
         secure_log("ERROR", f"WuzAPI Download Image Except: {type(e).__name__}: {str(e)}")
         return None
+    finally:
+        if response is not None:
+            response.close()
 
 def send_wuzapi_document(to: str, file_path: str, caption: str = None) -> Optional[Dict]:
     """Send document/media via WuzAPI (Base64 method)."""
@@ -394,7 +439,8 @@ def send_wuzapi_document(to: str, file_path: str, caption: str = None) -> Option
 
         # Check file size (max 10MB approx for safety)
         if os.path.getsize(file_path) > 10 * 1024 * 1024:
-             secure_log("WARNING", "File too large for WuzAPI base64 send")
+            secure_log("WARNING", "File too large for WuzAPI base64 send")
+            return None
         
         with open(file_path, "rb") as f:
             b64_data = base64.b64encode(f.read()).decode('utf-8')

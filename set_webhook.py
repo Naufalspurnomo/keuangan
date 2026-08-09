@@ -14,7 +14,7 @@ def set_webhook():
         return
 
     url = f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={WEBHOOK_URL}"
-    response = requests.get(url)
+    response = requests.get(url, timeout=15)
     print(f"Setting webhook to: {WEBHOOK_URL}")
     print(response.json())
 

@@ -17,8 +17,10 @@ from ai_helper import call_groq_api
 from agent_core.audit_log import log_event
 from agent_core.query_engine import execute, parse_ast, select_rows
 from config.wallets import resolve_dompet_from_text
-from security import log_timing
+from security import detect_prompt_injection, log_timing
 from sheets_helper import find_open_hutang, get_all_data, get_hutang_summary, get_wallet_balances
+from utils.amounts import parse_money_token
+from utils.parsers import parse_revision_amount
 
 
 logger = logging.getLogger(__name__)
@@ -37,9 +39,20 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
 
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
+        text = str(value or "").strip()
+        if text and any(token in text.casefold() for token in ("rb", "ribu", "jt", "juta", "perak")):
+            return parse_revision_amount(text)
+        parsed = parse_money_token(text)
+        if parsed:
+            return parsed
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _safe_text(value: Any, limit: int, *, fallback: str = "") -> str:
+    raw_text = str(value or "")
+    return fallback if detect_prompt_injection(raw_text)[0] else raw_text[:limit]
 
 
 def _ask_llm_for_plan(question: str, default_days: Optional[int]) -> Dict[str, Any]:
@@ -108,7 +121,14 @@ def _normalize_plan(raw: Dict[str, Any], default_days: Optional[int]) -> Dict[st
     try:
         ast = parse_ast(ast)
     except ValueError:
-        ast = {"metric": "sum", "filters": {}, "group_by": None}
+        # Never broaden a malformed model plan into an unfiltered financial
+        # query. Let the legacy deterministic router handle it instead.
+        return {
+            "intent": "unknown",
+            "ast": {"metric": "sum", "filters": {}, "group_by": None},
+            "period_days": default_days,
+            "detail": bool(raw.get("detail")),
+        }
 
     if intent == "project_activity":
         ast["metric"] = "count"
@@ -134,14 +154,19 @@ def _is_real_project(row: Dict[str, Any]) -> bool:
 
 def _safe_row(row: Dict[str, Any]) -> Dict[str, Any]:
     """Keep only finance evidence needed by the answer model."""
+    row = row if isinstance(row, dict) else {}
     return {
-        "tanggal": str(row.get("tanggal") or ""),
+        "tanggal": _safe_text(row.get("tanggal"), 32, fallback="[tanggal disensor]"),
         "jumlah": _safe_int(row.get("jumlah")),
-        "tipe": str(row.get("tipe") or ""),
-        "keterangan": str(row.get("keterangan") or "")[:180],
-        "project": str(row.get("nama_projek") or "")[:120],
-        "dompet": str(row.get("company_sheet") or row.get("sheet_name") or "")[:80],
-        "kategori": str(row.get("kategori") or "")[:80],
+        "tipe": _safe_text(row.get("tipe"), 24, fallback="[tipe disensor]"),
+        "keterangan": _safe_text(row.get("keterangan"), 180, fallback="[deskripsi disensor]"),
+        "project": _safe_text(row.get("nama_projek"), 120, fallback="[project disensor]"),
+        "dompet": _safe_text(
+            row.get("company_sheet") or row.get("sheet_name"),
+            80,
+            fallback="[dompet disensor]",
+        ),
+        "kategori": _safe_text(row.get("kategori"), 80, fallback="[kategori disensor]"),
     }
 
 
@@ -151,18 +176,21 @@ def _safe_wallet_balances(balances: Dict[str, Any], requested_dompet: Optional[s
     for name, info in (balances or {}).items():
         if requested_dompet and name != requested_dompet:
             continue
-        safe[str(name)] = {field: _safe_int((info or {}).get(field)) for field in fields}
+        info_dict = info if isinstance(info, dict) else {}
+        safe_name = _safe_text(name, 80, fallback="[dompet disensor]")
+        safe[safe_name] = {field: _safe_int(info_dict.get(field)) for field in fields}
     return safe
 
 
 def _safe_hutang_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    row = row if isinstance(row, dict) else {}
     return {
-        "tanggal": str(row.get("tanggal") or ""),
+        "tanggal": _safe_text(row.get("tanggal"), 32, fallback="[tanggal disensor]"),
         "amount": _safe_int(row.get("amount")),
-        "keterangan": str(row.get("keterangan") or "")[:180],
-        "yang_hutang": str(row.get("yang_hutang") or "")[:80],
-        "yang_dihutangi": str(row.get("yang_dihutangi") or "")[:80],
-        "status": str(row.get("status") or "")[:20],
+        "keterangan": _safe_text(row.get("keterangan"), 180, fallback="[deskripsi disensor]"),
+        "yang_hutang": _safe_text(row.get("yang_hutang"), 80, fallback="[dompet disensor]"),
+        "yang_dihutangi": _safe_text(row.get("yang_dihutangi"), 80, fallback="[dompet disensor]"),
+        "status": _safe_text(row.get("status"), 20, fallback="[status disensor]"),
     }
 
 
@@ -273,6 +301,9 @@ def handle_nl_query(
     default_days: Optional[int] = 30,
 ) -> Optional[str]:
     """Plan -> retrieve -> calculate -> answer, with safe fallback to legacy routing."""
+    if detect_prompt_injection(question or "")[0]:
+        logger.warning("Query agent rejected prompt-injection input")
+        return None
     plan_started = time.perf_counter()
     try:
         raw_plan = _ask_llm_for_plan(question, default_days)

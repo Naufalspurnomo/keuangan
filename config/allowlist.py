@@ -30,6 +30,21 @@ def parse_allowed_sender_ids(env_value: str | None) -> Set[str]:
     return _split_allowlist(env_value)
 
 
+def allowlist_required() -> bool:
+    """Require an explicit sender allowlist in production-like deployments."""
+    configured = os.getenv("ALLOWLIST_REQUIRED")
+    if configured is not None:
+        return configured.strip().lower() in {"1", "true", "yes", "on", "required"}
+    production_like = (
+        os.getenv("FLASK_ENV", "").strip().lower() == "production"
+        and os.getenv("FLASK_DEBUG", "0").strip() != "1"
+    )
+    durable_state_mode = str(
+        os.getenv("STATE_STORE_REQUIRED") or os.getenv("DURABLE_INBOX_REQUIRED") or ""
+    ).strip().lower() in {"1", "true", "yes", "on", "required"}
+    return production_like or durable_state_mode
+
+
 ALLOWED_SENDER_IDS = parse_allowed_sender_ids(os.getenv("ALLOWED_SENDER_IDS"))
 SESSION_DELEGATE_IDS = parse_allowed_sender_ids(os.getenv("SESSION_DELEGATE_IDS"))
 
@@ -54,7 +69,7 @@ def _build_variants(identifier: str) -> Set[str]:
 def is_sender_allowed(identifiers: Iterable[str | None]) -> bool:
     """Return True if allowlist is empty or any identifier is in allowlist."""
     if not ALLOWED_SENDER_IDS:
-        return True
+        return not allowlist_required()
 
     for identifier in identifiers:
         if not identifier:

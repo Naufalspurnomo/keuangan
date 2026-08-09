@@ -24,6 +24,7 @@ _PROJECT_RE = re.compile(
     r"\b(?:projek|project|proyek|prj)\b\s+(.+)",
     re.IGNORECASE,
 )
+_DATE_LABEL_RE = re.compile(r"\b(?:tanggal|date)\s*[:\-]\s*([^\s,;]+)", re.IGNORECASE)
 
 
 def extract_single_text_amount(text: str) -> int:
@@ -55,6 +56,20 @@ def _explicit_project(text: str) -> str:
     )[0]
     value = re.sub(r"\s+", " ", value).strip(" ,.;:-")
     return value[:100]
+
+
+def _fallback_date(text: str) -> str:
+    """Use an explicit date when present; never silently replace an invalid one."""
+    match = _DATE_LABEL_RE.search(text or "")
+    if not match:
+        return datetime.now().strftime("%Y-%m-%d")
+    raw = match.group(1).strip().strip(".")
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y"):
+        try:
+            return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return ""
 
 
 def build_text_transaction_fallback(text: str, amount: int) -> dict:
@@ -90,7 +105,7 @@ def build_text_transaction_fallback(text: str, amount: int) -> dict:
     )
     project = "" if operational else _explicit_project(text)
     transaction = {
-        "tanggal": datetime.now().strftime("%Y-%m-%d"),
+        "tanggal": _fallback_date(text),
         "kategori": "Lain-lain",
         "keterangan": description[:200],
         "jumlah": amount,
@@ -98,6 +113,8 @@ def build_text_transaction_fallback(text: str, amount: int) -> dict:
         "nama_projek": project,
         "company": None,
     }
+    if not transaction["tanggal"]:
+        return {}
     if not operational and not project:
         transaction["needs_project"] = True
 

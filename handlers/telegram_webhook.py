@@ -6,7 +6,7 @@ from typing import Callable
 from flask import jsonify
 
 from config.allowlist import is_sender_allowed
-from security import secure_log
+from security import secure_log, verify_webhook_secret
 from services.state_manager import is_message_duplicate
 from services.telegram_gateway import (
     get_telegram_file_url,
@@ -18,6 +18,13 @@ from utils.formatters import format_reply_message
 
 def handle_telegram_webhook(flask_request, process_message: Callable):
     try:
+        if not verify_webhook_secret(
+            flask_request,
+            "TELEGRAM_WEBHOOK_SECRET",
+            ("X-Telegram-Bot-Api-Secret-Token",),
+        ):
+            secure_log("WARNING", "Telegram webhook secret rejected")
+            return jsonify({'status': 'unauthorized'}), 401
         update = flask_request.get_json(silent=True) or {}
         message = update.get('message') or update.get('edited_message')
         if not message:

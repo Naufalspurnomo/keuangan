@@ -15,9 +15,12 @@ CRITICAL: This module protects against malicious input attempts.
 import re
 import time
 import hashlib
+import hmac
 import logging
 import os
 import sys
+import threading
+from urllib.parse import urlsplit
 from typing import Optional, Tuple, Dict, List
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -218,6 +221,7 @@ RATE_LIMIT_WINDOW = 60  # seconds
 
 # Store: {user_id: [(timestamp1), (timestamp2), ...]}
 _rate_limit_store: Dict[str, List[float]] = {}
+_rate_limit_lock = threading.Lock()
 
 
 # ===================== INPUT VALIDATION =====================
@@ -313,7 +317,7 @@ def validate_category(category: str) -> str:
         return "Lain-lain"  # Default to Lain-lain
     
     # Normalize: strip
-    normalized = category.strip()
+    normalized = str(category).strip()
     
     # Check if in allowed list (case-insensitive)
     for allowed in ALLOWED_CATEGORIES:
@@ -387,17 +391,18 @@ def validate_media_url(url: str) -> Tuple[bool, Optional[str]]:
 
     ]
     
-    # Parse URL
+    parsed = urlsplit(url)
     url_lower = url.lower()
-    
-    # Must be HTTPS (except for telegram file API)
-    if not url_lower.startswith(('https://', 'http://api.telegram.org', 'http://file.telegram.org')):
-        return False, "URL must use HTTPS"
-    
-    # Check domain
-    domain_valid = any(domain in url_lower for domain in ALLOWED_DOMAINS)
-    if not domain_valid:
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    allowed_hosts = set(ALLOWED_DOMAINS)
+    if parsed.username or parsed.password or hostname not in allowed_hosts:
         return False, "Domain not allowed"
+
+    # Must be HTTPS (except for Telegram's legacy HTTP file endpoint).
+    if parsed.scheme.lower() != "https" and not (
+        parsed.scheme.lower() == "http" and hostname in allowed_hosts
+    ):
+        return False, "URL must use HTTPS"
     
     # Check for suspicious patterns in URL
     suspicious_url_patterns = [
@@ -429,37 +434,65 @@ def rate_limit_check(user_id: str) -> Tuple[bool, int]:
     current_time = time.time()
     user_id = str(user_id)
     
-    # Clean old entries
-    if user_id in _rate_limit_store:
-        _rate_limit_store[user_id] = [
-            ts for ts in _rate_limit_store[user_id]
-            if current_time - ts < RATE_LIMIT_WINDOW
-        ]
-    else:
-        _rate_limit_store[user_id] = []
-    
-    # Check limit
-    request_count = len(_rate_limit_store[user_id])
-    
-    if request_count >= RATE_LIMIT_REQUESTS:
-        # Calculate time until oldest request expires
-        oldest = min(_rate_limit_store[user_id])
-        seconds_until_reset = int(RATE_LIMIT_WINDOW - (current_time - oldest))
-        return False, max(1, seconds_until_reset)
-    
-    # Record this request
-    _rate_limit_store[user_id].append(current_time)
-    
-    # Cleanup: remove users with no recent activity (memory management)
-    if len(_rate_limit_store) > 1000:
-        cutoff = current_time - RATE_LIMIT_WINDOW * 2
-        _rate_limit_store = {
-            uid: timestamps 
-            for uid, timestamps in _rate_limit_store.items()
-            if timestamps and max(timestamps) > cutoff
-        }
-    
-    return True, 0
+    with _rate_limit_lock:
+        # Clean old entries
+        if user_id in _rate_limit_store:
+            _rate_limit_store[user_id] = [
+                ts for ts in _rate_limit_store[user_id]
+                if current_time - ts < RATE_LIMIT_WINDOW
+            ]
+        else:
+            _rate_limit_store[user_id] = []
+
+        # Check limit
+        request_count = len(_rate_limit_store[user_id])
+
+        if request_count >= RATE_LIMIT_REQUESTS:
+            # Calculate time until oldest request expires
+            oldest = min(_rate_limit_store[user_id])
+            seconds_until_reset = int(RATE_LIMIT_WINDOW - (current_time - oldest))
+            return False, max(1, seconds_until_reset)
+
+        # Record this request
+        _rate_limit_store[user_id].append(current_time)
+
+        # Cleanup: remove users with no recent activity (memory management)
+        if len(_rate_limit_store) > 1000:
+            cutoff = current_time - RATE_LIMIT_WINDOW * 2
+            _rate_limit_store = {
+                uid: timestamps
+                for uid, timestamps in _rate_limit_store.items()
+                if timestamps and max(timestamps) > cutoff
+            }
+
+        return True, 0
+
+
+def webhook_secret_required() -> bool:
+    """Require inbound webhook authentication in production-like mode."""
+    configured = os.getenv("WEBHOOK_SECRET_REQUIRED")
+    if configured is not None:
+        return configured.strip().lower() in {"1", "true", "yes", "on", "required"}
+    production_like = (
+        os.getenv("FLASK_ENV", "").strip().lower() == "production"
+        and os.getenv("FLASK_DEBUG", "0").strip() != "1"
+    )
+    durable_state_mode = str(
+        os.getenv("STATE_STORE_REQUIRED") or os.getenv("DURABLE_INBOX_REQUIRED") or ""
+    ).strip().lower() in {"1", "true", "yes", "on", "required"}
+    return production_like or durable_state_mode
+
+
+def verify_webhook_secret(flask_request, env_name: str, header_names: tuple[str, ...]) -> bool:
+    """Validate a configured provider secret without logging its value."""
+    expected = str(os.getenv(env_name) or "").strip()
+    if not expected:
+        return not webhook_secret_required()
+    for header_name in header_names:
+        supplied = str(flask_request.headers.get(header_name) or "").strip()
+        if supplied and hmac.compare_digest(supplied, expected):
+            return True
+    return False
 
 
 def mask_sensitive_data(text: str) -> str:
@@ -490,14 +523,15 @@ def validate_transaction_data(transaction: Dict) -> Tuple[bool, Optional[str], D
 
     # tanggal
     tanggal = transaction.get("tanggal", "")
-    try:
-        if tanggal:
-            datetime.strptime(tanggal, "%Y-%m-%d")
-            sanitized["tanggal"] = tanggal
-        else:
-            sanitized["tanggal"] = datetime.now().strftime("%Y-%m-%d")
-    except ValueError:
+    if tanggal in (None, ""):
         sanitized["tanggal"] = datetime.now().strftime("%Y-%m-%d")
+    else:
+        try:
+            tanggal_text = str(tanggal).strip()
+            datetime.strptime(tanggal_text, "%Y-%m-%d")
+            sanitized["tanggal"] = tanggal_text
+        except (TypeError, ValueError):
+            return False, "Invalid date", {}
 
     # kategori
     kategori = transaction.get("kategori", "Lain-lain")
@@ -510,8 +544,14 @@ def validate_transaction_data(transaction: Dict) -> Tuple[bool, Optional[str], D
     jumlah = transaction.get("jumlah", 0)
     try:
         from utils.amounts import parse_money_token
+        from utils.parsers import parse_revision_amount
 
-        jumlah = abs(parse_money_token(str(jumlah)))
+        raw_amount = str(jumlah)
+        if re.search(r"(?:rb|ribu|k|jt|juta|perak)\b", raw_amount, re.IGNORECASE):
+            jumlah = parse_revision_amount(raw_amount)
+        else:
+            jumlah = parse_money_token(raw_amount)
+        jumlah = abs(jumlah)
         if jumlah > 999999999999:
             jumlah = 999999999999
         # Reject transactions with trivially small amounts (< Rp 100)

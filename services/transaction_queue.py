@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Tuple
 
 from config.wallets import strip_company_prefix
 from security import sanitize_input
+from utils.amounts import parse_money_token
 from utils.parsers import parse_revision_amount
 
 
@@ -22,7 +23,11 @@ def normalize_amount(value) -> int:
         raw = str(value).strip()
         if not raw:
             return 0
-        parsed = parse_revision_amount(raw)
+        if re.search(r"(?:rb|ribu|k|jt|juta|perak)\b", raw, re.IGNORECASE):
+            parsed = parse_revision_amount(raw)
+            if parsed > 0:
+                return parsed
+        parsed = parse_money_token(raw)
         if parsed > 0:
             return parsed
         raw = raw.replace("rp", "").replace("Rp", "").replace("RP", "")
@@ -79,29 +84,39 @@ def merge_transaction_queue(existing: list, incoming: list) -> Tuple[list, dict]
     """
     Merge queue safely:
     - normalize every tx
-    - drop exact duplicates
+    - drop exact duplicates already present in the existing queue
+    - preserve repeated rows inside one incoming extraction
     - prefer valid amount (>0) over zero for the same content
     """
     merged: List[dict] = []
-    identity_index: Dict[Tuple[str, str, str, str, int], int] = {}
-    content_index: Dict[Tuple[str, str, str, str], int] = {}
+    existing_identity_keys = set()
+    existing_content_index: Dict[Tuple[str, str, str, str], int] = {}
     meta = {"added": 0, "duplicates": 0, "upgraded": 0}
 
-    def _upsert(raw_tx, is_incoming: bool) -> None:
+    def _append_existing(raw_tx) -> None:
         tx = normalize_transaction(raw_tx)
         if not tx:
-            if is_incoming:
-                meta["duplicates"] += 1
             return
 
         identity = tx_identity_key(tx)
-        if identity in identity_index:
-            if is_incoming:
-                meta["duplicates"] += 1
+        content = tx_content_key(tx)
+        existing_identity_keys.add(identity)
+        existing_content_index.setdefault(content, len(merged))
+        merged.append(tx)
+
+    def _upsert_incoming(raw_tx) -> None:
+        tx = normalize_transaction(raw_tx)
+        if not tx:
+            meta["duplicates"] += 1
+            return
+
+        identity = tx_identity_key(tx)
+        if identity in existing_identity_keys:
+            meta["duplicates"] += 1
             return
 
         content = tx_content_key(tx)
-        prev_idx = content_index.get(content)
+        prev_idx = existing_content_index.get(content)
         if prev_idx is not None:
             prev_tx = merged[prev_idx]
             prev_amt = int(prev_tx.get("jumlah", 0) or 0)
@@ -110,28 +125,22 @@ def merge_transaction_queue(existing: list, incoming: list) -> Tuple[list, dict]
             if prev_amt <= 0 < new_amt:
                 prev_identity = tx_identity_key(prev_tx)
                 merged[prev_idx] = tx
-                identity_index.pop(prev_identity, None)
-                identity_index[identity] = prev_idx
-                if is_incoming:
-                    meta["upgraded"] += 1
+                existing_identity_keys.discard(prev_identity)
+                existing_identity_keys.add(identity)
+                meta["upgraded"] += 1
                 return
 
             if new_amt <= 0 < prev_amt:
-                if is_incoming:
-                    meta["duplicates"] += 1
+                meta["duplicates"] += 1
                 return
 
-        insert_idx = len(merged)
         merged.append(tx)
-        identity_index[identity] = insert_idx
-        content_index.setdefault(content, insert_idx)
-        if is_incoming:
-            meta["added"] += 1
+        meta["added"] += 1
 
     for old_tx in existing or []:
-        _upsert(old_tx, is_incoming=False)
+        _append_existing(old_tx)
     for new_tx in incoming or []:
-        _upsert(new_tx, is_incoming=True)
+        _upsert_incoming(new_tx)
 
     return merged, meta
 

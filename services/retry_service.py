@@ -55,34 +55,41 @@ def _ensure_db() -> bool:
     with _db_init_lock:
         if _db_initialized:
             return True
-        import psycopg
+        try:
+            import psycopg
 
-        with psycopg.connect(dsn, autocommit=True) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS transaction_retry_queue (
-                        id UUID PRIMARY KEY,
-                        dedup_key TEXT NOT NULL UNIQUE,
-                        transaction JSONB NOT NULL,
-                        metadata JSONB NOT NULL,
-                        status TEXT NOT NULL DEFAULT 'pending',
-                        attempts INTEGER NOT NULL DEFAULT 0,
-                        last_error TEXT,
-                        next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            with psycopg.connect(dsn, autocommit=True) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS transaction_retry_queue (
+                            id UUID PRIMARY KEY,
+                            dedup_key TEXT NOT NULL UNIQUE,
+                            transaction JSONB NOT NULL,
+                            metadata JSONB NOT NULL,
+                            status TEXT NOT NULL DEFAULT 'pending',
+                            attempts INTEGER NOT NULL DEFAULT 0,
+                            last_error TEXT,
+                            next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
                     )
-                    """
-                )
-                cur.execute(
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_transaction_retry_due
-                    ON transaction_retry_queue (status, next_attempt_at)
-                    """
-                )
-        _db_initialized = True
-        secure_log("INFO", "Durable Postgres retry queue ready")
+                    cur.execute(
+                        """
+                        CREATE INDEX IF NOT EXISTS idx_transaction_retry_due
+                        ON transaction_retry_queue (status, next_attempt_at)
+                        """
+                    )
+            _db_initialized = True
+            secure_log("INFO", "Durable Postgres retry queue ready")
+        except Exception as exc:
+            # A transient database outage must not discard the failed write. Fall
+            # back to the local queue; the caller still reports the original
+            # write failure and the worker will retry when the provider recovers.
+            secure_log("ERROR", f"Retry queue Postgres unavailable; using local fallback: {type(exc).__name__}")
+            return False
     return True
 
 

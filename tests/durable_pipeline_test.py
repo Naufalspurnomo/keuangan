@@ -78,6 +78,22 @@ class DurablePipelineTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(len(queue), 1)
 
+    def test_retry_queue_preserves_write_when_postgres_is_temporarily_unavailable(self):
+        with tempfile.TemporaryDirectory(dir=".") as temp_dir:
+            queue_file = os.path.join(temp_dir, "retry.json")
+            transaction = {"message_id": "msg-db-down", "jumlah": 450000}
+            metadata = {"dompet_sheet": "CV HB(101)", "nama_projek": "Bu Astri"}
+            with patch.object(retry_service, "QUEUE_FILE", queue_file), \
+                 patch.object(retry_service, "_database_url", return_value="postgresql://unavailable"), \
+                 patch.object(retry_service, "_db_initialized", False), \
+                 patch("psycopg.connect", side_effect=RuntimeError("db unavailable")):
+                queue_id = retry_service.add_to_retry_queue(transaction, metadata)
+                queue = retry_service.load_queue()
+
+            self.assertTrue(queue_id)
+            self.assertEqual(len(queue), 1)
+            self.assertEqual(queue[0]["transaction"], transaction)
+
     def test_image_is_buffered_before_pipeline_callback(self):
         app = Flask(__name__)
         payload = {
@@ -256,6 +272,55 @@ class DurablePipelineTests(unittest.TestCase):
         self.assertEqual(events[0], "ack")
         self.assertNotIn("classifier", events)
 
+    def test_fast_operational_flow_does_not_claim_saved_without_ack(self):
+        import main
+
+        events = []
+        transaction = {
+            "tanggal": "2026-08-09",
+            "kategori": "Gaji",
+            "keterangan": "gaji staff",
+            "jumlah": 100000,
+            "tipe": "Pengeluaran",
+            "nama_projek": "",
+            "detected_dompet": "CV HB(101)",
+        }
+        pkey = main.pending_key("628101", "628101@s.whatsapp.net")
+
+        with main.app.test_request_context("/"), \
+             patch.object(main, "FAST_MODE", True), \
+             patch.object(main, "rate_limit_check", return_value=(True, 0)), \
+             patch.object(main, "extract_financial_data", return_value=[transaction]), \
+             patch.object(main, "detect_transaction_context", return_value={
+                 "mode": "OPERATIONAL",
+                 "needs_wallet": False,
+                 "category": "Gaji",
+             }), \
+             patch.object(main, "append_operational_transaction", return_value={
+                 "success": False,
+                 "error": "Sheets timeout",
+             }) as append:
+            response, status_code = main.process_incoming_message(
+                sender_number="628101",
+                sender_name="Admin",
+                text="gaji staff 100rb kantor dompet cv hb",
+                input_type="text",
+                message_id="operational-save-fail-1",
+                is_group=False,
+                chat_jid="628101@s.whatsapp.net",
+                sender_jid="628101@s.whatsapp.net",
+                send_reply=lambda body, **_kwargs: events.append(body) or {"id": "reply-1"},
+                source_label="WhatsApp",
+                reply_to="628101@s.whatsapp.net",
+            )
+
+        self.assertEqual(status_code, 200)
+        self.assertEqual(response.get_json()["status"], "save_failed_operational")
+        append.assert_called_once()
+        self.assertTrue(any("Gagal menyimpan" in body for body in events))
+        self.assertIn(pkey, main._pending_transactions)
+        main._pending_transactions.pop(pkey, None)
+
     def test_split_text_waits_for_image_webhook_race(self):
         import main
 
@@ -310,6 +375,47 @@ class DurablePipelineTests(unittest.TestCase):
 
         self.assertEqual(status_code, 200)
         self.assertEqual(response.get_json()["status"], "degraded")
+        self.assertTrue(response.get_json()["security"]["ready"])
+
+    def test_health_fails_closed_when_production_security_is_missing(self):
+        import main
+
+        with main.app.test_request_context("/health"), \
+             patch.object(main, "inbox_health", return_value={"durable": True, "backend": "postgres"}), \
+             patch.object(main, "inbox_required", return_value=False), \
+             patch.object(main, "allowlist_required", return_value=True), \
+             patch.object(main, "webhook_secret_required", return_value=True), \
+             patch.object(main, "ALLOWED_SENDER_IDS", set()), \
+             patch.dict(os.environ, {
+                 "WUZAPI_WEBHOOK_SECRET": "",
+                 "TELEGRAM_WEBHOOK_SECRET": "",
+             }):
+            response, status_code = main.health_check()
+
+        body = response.get_json()
+        self.assertEqual(status_code, 503)
+        self.assertEqual(body["status"], "unhealthy")
+        self.assertEqual(
+            body["security"]["missing"],
+            [
+                "ALLOWED_SENDER_IDS",
+                "WUZAPI_WEBHOOK_SECRET",
+                "TELEGRAM_WEBHOOK_SECRET",
+            ],
+        )
+
+    def test_health_probe_exception_is_unhealthy_when_security_is_required(self):
+        import main
+
+        with main.app.test_request_context("/health"), \
+             patch.object(main, "inbox_health", side_effect=RuntimeError("probe failed")), \
+             patch.object(main, "inbox_required", return_value=False), \
+             patch.object(main, "allowlist_required", return_value=True), \
+             patch.object(main, "webhook_secret_required", return_value=False):
+            response, status_code = main.health_check()
+
+        self.assertEqual(status_code, 503)
+        self.assertEqual(response.get_json()["status"], "unhealthy")
 
     def test_review_alert_reposts_image_evidence(self):
         import main

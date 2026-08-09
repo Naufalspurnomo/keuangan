@@ -61,6 +61,39 @@ class PendingHandlerDebtTests(unittest.TestCase):
         self.assertFalse(result["completed"])
         self.assertIn("Dompet pemberi pinjaman", result["response"])
 
+    def test_operational_commit_does_not_claim_success_without_save_ack(self):
+        pending = {
+            "type": "confirm_commit_operational",
+            "transactions": [{
+                "jumlah": 450000,
+                "keterangan": "gaji tukang",
+                "tipe": "Pengeluaran",
+            }],
+            "source_wallet": "CV HB(101)",
+            "category": "Gaji",
+            "source": "WhatsApp",
+            "event_id": "evt-operational-fail",
+            "pending_key": "chat:user",
+        }
+
+        with patch(
+            "handlers.pending_handler.append_operational_transaction",
+            return_value={"success": False, "error": "sheet rejected"},
+        ), patch("handlers.pending_handler.clear_pending_confirmation") as clear_confirmation, \
+             patch("handlers.pending_handler.clear_pending_transaction") as clear_pending:
+            result = handle_pending_response(
+                "user",
+                "chat@g.us",
+                "1",
+                pending,
+                "Naufal",
+            )
+
+        self.assertFalse(result["completed"])
+        self.assertIn("belum dikonfirmasi tersimpan", result["response"])
+        clear_confirmation.assert_not_called()
+        clear_pending.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

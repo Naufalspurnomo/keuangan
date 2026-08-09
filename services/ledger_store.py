@@ -10,12 +10,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import threading
 from datetime import date, datetime
 from typing import Any, Dict, Iterable, List, Optional
 
 from security import secure_log
 from utils.amounts import parse_money_token
+from utils.parsers import parse_revision_amount
 
 
 _INIT_LOCK = threading.Lock()
@@ -52,6 +54,24 @@ def _clean(value: Any, limit: int = 500) -> str:
     return str(value or "").strip()[:limit]
 
 
+def _parse_amount(value: Any) -> int:
+    raw = str(value or "").strip()
+    if raw and re.search(r"(?:rb|ribu|k|jt|juta|perak)\b", raw, re.IGNORECASE):
+        try:
+            return abs(parse_revision_amount(raw))
+        except (TypeError, ValueError):
+            return 0
+    return abs(parse_money_token(value))
+
+
+def _source_row(value: Any) -> int:
+    try:
+        parsed = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return parsed if parsed > 0 else 0
+
+
 def _canonical_payload(row: Dict[str, Any]) -> Dict[str, Any]:
     """Keep the source evidence JSON serializable and bounded."""
     return {
@@ -71,7 +91,7 @@ def build_source_key(row: Dict[str, Any]) -> str:
 
     # Historic manual rows have no event id.  Row number keeps intentional
     # duplicates distinct while the content hash catches a changed import input.
-    source_row = int(row.get("sheet_row") or 0)
+    source_row = _source_row(row.get("sheet_row"))
     identity = {
         "sheet": sheet_name,
         "block": source_block,
@@ -91,13 +111,13 @@ def normalize_row(row: Dict[str, Any]) -> Dict[str, Any]:
     """Map the mixed Sheet layouts into one durable ledger record."""
     source_sheet = _clean(row.get("sheet_name") or row.get("dompet_sheet"), 160)
     source_block = _clean(row.get("source_block"), 40).lower() or "ledger"
-    amount = parse_money_token(row.get("jumlah", row.get("amount", 0)))
+    amount = _parse_amount(row.get("jumlah", row.get("amount", 0)))
     transaction_type = _clean(row.get("tipe"), 24) or "Pengeluaran"
     payload = _canonical_payload(row)
     normalized = {
         "source_key": build_source_key(row),
         "source_sheet": source_sheet,
-        "source_row": int(row.get("sheet_row") or 0) or None,
+        "source_row": _source_row(row.get("sheet_row")) or None,
         "source_block": source_block,
         "message_id": _clean(row.get("message_id"), 240) or None,
         "transaction_date": _parse_date(row.get("tanggal")),
@@ -212,24 +232,38 @@ def upsert_row(row: Dict[str, Any]) -> bool:
         from psycopg.types.json import Jsonb
 
         values = normalize_row(row)
-        columns = (
-            "source_key, source_sheet, source_row, source_block, message_id, transaction_date, amount, "
-            "transaction_type, company, wallet, project, category, description, recorded_by, input_source, "
-            "source_wallet, is_valid, payload"
-        )
-        placeholders = ", ".join(["%s"] * 18)
-        assignments = ", ".join(
-            f"{column} = EXCLUDED.{column}"
-            for column in columns.split(", ")
-            if column != "source_key"
-        )
         with psycopg.connect(_database_url(), autocommit=True) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"""
-                    INSERT INTO financial_ledger ({columns}) VALUES ({placeholders})
+                    """
+                    INSERT INTO financial_ledger (
+                        source_key, source_sheet, source_row, source_block, message_id,
+                        transaction_date, amount, transaction_type, company, wallet,
+                        project, category, description, recorded_by, input_source,
+                        source_wallet, is_valid, payload
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s
+                    )
                     ON CONFLICT (source_key) DO UPDATE SET
-                        {assignments}, updated_at = NOW()
+                        source_sheet = EXCLUDED.source_sheet,
+                        source_row = EXCLUDED.source_row,
+                        source_block = EXCLUDED.source_block,
+                        message_id = EXCLUDED.message_id,
+                        transaction_date = EXCLUDED.transaction_date,
+                        amount = EXCLUDED.amount,
+                        transaction_type = EXCLUDED.transaction_type,
+                        company = EXCLUDED.company,
+                        wallet = EXCLUDED.wallet,
+                        project = EXCLUDED.project,
+                        category = EXCLUDED.category,
+                        description = EXCLUDED.description,
+                        recorded_by = EXCLUDED.recorded_by,
+                        input_source = EXCLUDED.input_source,
+                        source_wallet = EXCLUDED.source_wallet,
+                        is_valid = EXCLUDED.is_valid,
+                        payload = EXCLUDED.payload,
+                        updated_at = NOW()
                     """,
                     (
                         values["source_key"], values["source_sheet"], values["source_row"], values["source_block"],

@@ -39,6 +39,37 @@ class TransactionQueueTest(unittest.TestCase):
         self.assertEqual(merged[0]["jumlah"], 175000)
         self.assertEqual(meta["upgraded"], 1)
 
+    def test_merge_does_not_readd_same_row_after_upgrade(self):
+        existing = {
+            "tipe": "Pengeluaran",
+            "keterangan": "Beli semen",
+            "nama_projek": "Project A",
+            "kategori": "Material",
+            "jumlah": 0,
+        }
+        incoming = dict(existing, jumlah=175000)
+
+        merged, meta = merge_transaction_queue([existing], [incoming, dict(incoming)])
+
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(meta["upgraded"], 1)
+        self.assertEqual(meta["duplicates"], 1)
+
+    def test_merge_preserves_repeated_rows_inside_one_extraction(self):
+        tx = {
+            "tipe": "Pengeluaran",
+            "keterangan": "Beli semen",
+            "nama_projek": "Project A",
+            "kategori": "Material",
+            "jumlah": 150000,
+        }
+
+        merged, meta = merge_transaction_queue([], [dict(tx), dict(tx)])
+
+        self.assertEqual(len(merged), 2)
+        self.assertEqual(meta["added"], 2)
+        self.assertEqual(meta["duplicates"], 0)
+
     def test_first_missing_amount_detects_flag_or_zero(self):
         txs = [
             {"keterangan": "valid", "jumlah": 1000},

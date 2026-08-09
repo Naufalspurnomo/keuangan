@@ -357,22 +357,24 @@ def parse_revision_amount(text: str) -> int:
     
     match_clean = re.search(r'\b(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?)\b', text)
     if match_clean:
-         num_str = match_clean.group(1)
-         # Verify it's not a date?
-         # Parse logic
-         sep_match = re.search(r'[.,](\d+)$', num_str)
-         if sep_match:
-             digits_after = len(sep_match.group(1))
-             if digits_after >= 3:
-                 # 3+ digits = thousand separator (509,500 -> 509500)
-                 cleaned = num_str.replace('.', '').replace(',', '')
-                 return int(cleaned)
-             else:
-                 # 1-2 digits = decimal separator
-                 num_str = num_str.replace(',', '.')
-                 return int(round(float(num_str)))
-         else:
-             return int(num_str.replace('.', '').replace(',', ''))
+        num_str = match_clean.group(1)
+        # Verify it's not a date.
+        sep_match = re.search(r'[.,](\d+)$', num_str)
+        if sep_match:
+            digits_after = len(sep_match.group(1))
+            if digits_after >= 3:
+                # 3+ digits = thousand separator (509,500 -> 509500)
+                cleaned = num_str.replace('.', '').replace(',', '')
+                return int(cleaned)
+            # 1-2 digits = decimal separator.
+            integer_part = num_str[:sep_match.start()].replace('.', '').replace(',', '')
+            if not integer_part:
+                return 0
+            try:
+                return int(round(float(f"{integer_part}.{sep_match.group(1)}")))
+            except ValueError:
+                return 0
+        return int(num_str.replace('.', '').replace(',', ''))
 
     
     # Try direct number (just digits after cleaning separators)

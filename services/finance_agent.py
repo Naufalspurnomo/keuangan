@@ -11,6 +11,7 @@ import json
 import os
 import re
 import time
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
@@ -34,13 +35,15 @@ FINANCE_AGENT_MODEL = os.getenv("FINANCE_AGENT_MODEL", "llama-3.1-8b-instant")
 VALID_AGENT_MODES = {"off", "deterministic", "hybrid", "shadow"}
 CRITICAL_MISSING_FIELDS = {"tanggal", "date", "jumlah", "amount", "nominal", "keterangan", "tipe"}
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+MAX_AGENT_TRANSACTIONS = 10
 SOURCE_LABELED_AMOUNT_RE = re.compile(
     r"(?:nominal|jumlah|amount|total(?:\s+(?:transfer|pembayaran|bayar))?|debit|kredit)"
-    r"\s*[:\-]?\s*(?:rp\.?|idr)?\s*(?P<amount>[0-9][0-9\.,\s]*[0-9]|[0-9])",
+    r"[ \t]*[:\-]?[ \t]*(?:rp\.?|idr)?[ \t]*"
+    r"(?P<amount>[0-9][0-9\., \t]*[0-9]|[0-9])",
     re.IGNORECASE,
 )
 SOURCE_CURRENCY_AMOUNT_RE = re.compile(
-    r"\b(?:rp\.?|idr)\s*(?P<amount>[0-9][0-9\.,\s]*[0-9]|[0-9])",
+    r"\b(?:rp\.?|idr)[ \t]*(?P<amount>[0-9][0-9\., \t]*[0-9]|[0-9])",
     re.IGNORECASE,
 )
 SOURCE_SEPARATED_AMOUNT_RE = re.compile(
@@ -92,11 +95,15 @@ def finance_agent_min_confidence() -> float:
 
 
 def _valid_agent_transaction(tx: "AgentTransaction") -> bool:
+    try:
+        parsed_date = datetime.strptime(tx.tanggal or "", "%Y-%m-%d")
+    except (TypeError, ValueError):
+        parsed_date = None
     return (
         tx.jumlah >= 100
         and bool(tx.keterangan)
         and tx.tipe in {"Pemasukan", "Pengeluaran"}
-        and bool(DATE_RE.match(tx.tanggal or ""))
+        and bool(parsed_date and DATE_RE.match(tx.tanggal or ""))
     )
 
 
@@ -146,8 +153,17 @@ class AgentDecision:
             for field_name in self.missing_fields
         } & CRITICAL_MISSING_FIELDS
         if self.source_amounts:
-            source_amounts = {int(amount) for amount in self.source_amounts if int(amount or 0) >= 100}
-            if any(int(tx.jumlah or 0) not in source_amounts for tx in self.transactions):
+            source_amounts = [
+                int(amount)
+                for amount in self.source_amounts
+                if int(amount or 0) >= 100
+            ]
+            transaction_amounts = [int(tx.jumlah or 0) for tx in self.transactions]
+            if any(amount not in source_amounts for amount in transaction_amounts):
+                return False
+            if len(transaction_amounts) < len(source_amounts):
+                return False
+            if Counter(transaction_amounts) != Counter(source_amounts):
                 return False
         return (
             self.action == "PROCESS"
@@ -176,22 +192,46 @@ def _line_map(text: str) -> Dict[str, str]:
 
 def _source_amounts(text: str) -> List[int]:
     amounts: List[int] = []
-    seen = set()
+    spans = []
 
-    def add(amount: int) -> None:
-        if amount < 100 or amount in seen:
+    def add(match: re.Match) -> None:
+        start, end = match.span()
+        if any(start < existing_end and end > existing_start for existing_start, existing_end in spans):
             return
-        seen.add(amount)
+        amount = parse_money_token(match.group("amount"))
+        if amount < 100:
+            return
+        spans.append((start, end))
         amounts.append(amount)
+
+    for match in SOURCE_SUFFIX_AMOUNT_RE.finditer(text or ""):
+        start, end = match.span()
+        if any(start < existing_end and end > existing_start for existing_start, existing_end in spans):
+            continue
+        try:
+            amount = parse_revision_amount(match.group("amount"))
+        except (TypeError, ValueError):
+            amount = 0
+        if amount >= 100:
+            spans.append((start, end))
+            amounts.append(amount)
 
     for regex in (SOURCE_LABELED_AMOUNT_RE, SOURCE_CURRENCY_AMOUNT_RE, SOURCE_SEPARATED_AMOUNT_RE):
         for match in regex.finditer(text or ""):
-            add(parse_money_token(match.group("amount")))
+            add(match)
 
-    for match in SOURCE_SUFFIX_AMOUNT_RE.finditer(text or ""):
-        add(parse_revision_amount(match.group("amount")))
+    return [amount for _, amount in sorted(zip(spans, amounts), key=lambda pair: pair[0][0])]
 
-    return amounts
+
+def _parse_agent_amount(value: Any) -> int:
+    """Parse model/structured amounts without losing Indonesian suffix scale."""
+    raw = str(value or "")
+    if re.search(r"(?:rb|ribu|k|jt|juta|perak)\b", raw, re.IGNORECASE):
+        try:
+            return parse_revision_amount(raw)
+        except (TypeError, ValueError):
+            return 0
+    return parse_money_token(value)
 
 
 def _parse_date(value: str) -> str:
@@ -254,7 +294,7 @@ def _deterministic_structured_decision(text: str) -> Optional[AgentDecision]:
         or fields.get("total")
         or ""
     )
-    amount = parse_money_token(amount_raw)
+    amount = _parse_agent_amount(amount_raw)
     date = _parse_date(fields.get("tanggal") or fields.get("date") or "")
     description = (
         fields.get("keterangan")
@@ -328,8 +368,15 @@ def _conversation_context(chat_id: str = None, user_id: str = None) -> str:
         return ""
     try:
         from agent_core.conversation_memory import get_recent, render_for_prompt
+        from security import detect_prompt_injection
 
-        return render_for_prompt(get_recent(chat_id, user_id, limit=6))
+        safe_messages = []
+        for item in get_recent(chat_id, user_id, limit=6):
+            text = str(item.get("text") or "")
+            is_injection, _ = detect_prompt_injection(text)
+            if not is_injection:
+                safe_messages.append(item)
+        return render_for_prompt(safe_messages)
     except Exception:
         return ""
 
@@ -397,7 +444,7 @@ def _coerce_agent_transaction(raw: Dict[str, Any]) -> AgentTransaction:
         tanggal=str(raw.get("tanggal") or "").strip(),
         kategori=category,
         keterangan=str(raw.get("keterangan") or "").strip()[:200],
-        jumlah=parse_money_token(raw.get("jumlah", 0)),
+        jumlah=_parse_agent_amount(raw.get("jumlah", 0)),
         tipe=tipe,
         nama_projek=str(raw.get("nama_projek") or "").strip(),
         company=raw.get("company"),
@@ -409,6 +456,8 @@ def _coerce_agent_transaction(raw: Dict[str, Any]) -> AgentTransaction:
 
 def _parse_agent_response(content: str, context: Dict[str, Any], source_text: str) -> AgentDecision:
     raw = json.loads(content)
+    if not isinstance(raw, dict):
+        raise ValueError("Finance agent response must be a JSON object")
     transactions = [
         _coerce_agent_transaction(item)
         for item in raw.get("transactions", [])
@@ -463,6 +512,11 @@ def plan_finance_message(
         response = llm_call(_agent_prompt(text, sender_name, context, conversation_context))
         content = response.choices[0].message.content.strip()
         decision = _parse_agent_response(content, context, text)
+        if len(decision.transactions) > MAX_AGENT_TRANSACTIONS:
+            decision.action = "FALLBACK"
+            decision.transactions = []
+            decision.reasoning = "Finance agent returned too many transactions."
+            return decision
         if deterministic and deterministic.confidence > decision.confidence:
             return deterministic
         return decision

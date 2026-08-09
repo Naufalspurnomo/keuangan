@@ -40,6 +40,7 @@ from .errors import (
 from .allowlist import (
     ALLOWED_SENDER_IDS,
     SESSION_DELEGATE_IDS,
+    allowlist_required,
     is_sender_allowed,
     is_session_delegate,
     parse_allowed_sender_ids,

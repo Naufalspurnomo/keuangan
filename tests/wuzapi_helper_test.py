@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -10,6 +12,7 @@ class FakeResponse:
         self.headers = {}
         self._payload = payload
         self._json_error = json_error
+        self.closed = False
 
     @property
     def text(self):
@@ -19,6 +22,9 @@ class FakeResponse:
         if self._json_error:
             raise ValueError("invalid json")
         return self._payload
+
+    def close(self):
+        self.closed = True
 
 
 class FakeSession:
@@ -68,6 +74,55 @@ class WuzApiSendAcknowledgementTests(unittest.TestCase):
 
         self.assertIsNone(self._send(session))
         self.assertEqual(len(session.calls), 1)
+
+    def test_oversized_document_is_rejected_before_reading(self):
+        with tempfile.NamedTemporaryFile(delete=False) as handle:
+            path = handle.name
+        try:
+            session = FakeSession([])
+            with patch.object(wuzapi_helper, "WUZAPI_DOMAIN", "https://wuzapi.test"), \
+                 patch.object(wuzapi_helper, "WUZAPI_TOKEN", "token"), \
+                 patch.object(wuzapi_helper, "get_wuzapi_session", return_value=session), \
+                 patch.object(wuzapi_helper.os.path, "getsize", return_value=10 * 1024 * 1024 + 1):
+                self.assertIsNone(wuzapi_helper.send_wuzapi_document("123", path))
+            self.assertEqual(session.calls, [])
+        finally:
+            os.unlink(path)
+
+    def test_media_download_disables_redirects_and_closes_response(self):
+        class MediaResponse:
+            status_code = 200
+            headers = {"content-type": "image/jpeg"}
+            closed = False
+
+            def iter_content(self, chunk_size=8192):
+                yield b"image"
+
+            def close(self):
+                self.closed = True
+
+        class MediaSession:
+            def __init__(self, response):
+                self.response = response
+                self.calls = []
+
+            def get(self, url, **kwargs):
+                self.calls.append((url, kwargs))
+                return self.response
+
+        response = MediaResponse()
+        session = MediaSession(response)
+        with patch.object(wuzapi_helper, "WUZAPI_DOMAIN", "https://wuzapi.test"), \
+             patch.object(wuzapi_helper, "get_wuzapi_session", return_value=session):
+            path = wuzapi_helper.download_wuzapi_media(
+                "https://wuzapi.test/media/image.jpg"
+            )
+        try:
+            self.assertTrue(os.path.isfile(path))
+            self.assertFalse(session.calls[0][1]["allow_redirects"])
+            self.assertTrue(response.closed)
+        finally:
+            os.unlink(path)
 
 
 if __name__ == "__main__":

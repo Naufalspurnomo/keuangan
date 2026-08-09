@@ -12,7 +12,7 @@ from flask import g, jsonify
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from config.allowlist import is_sender_allowed
-from security import log_timing, secure_log
+from security import log_timing, secure_log, verify_webhook_secret
 from services.state_manager import clear_message_duplicate, is_message_duplicate, store_visual_buffer
 from services.durable_inbox import InboxUnavailable, capture_event, mark_event, mark_source_event
 from wuzapi_helper import download_wuzapi_image, send_wuzapi_reply
@@ -115,6 +115,13 @@ def handle_wuzapi_webhook(
     message_id = ''
     inbox_event_key = ''
     try:
+        if not verify_webhook_secret(
+            flask_request,
+            "WUZAPI_WEBHOOK_SECRET",
+            ("X-WuzAPI-Webhook-Secret", "X-Webhook-Secret"),
+        ):
+            secure_log("WARNING", "WuzAPI webhook secret rejected")
+            return jsonify({'status': 'unauthorized'}), 401
         try:
             json_data_raw = flask_request.form.get('jsonData')
         except RequestEntityTooLarge:

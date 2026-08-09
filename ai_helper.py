@@ -147,20 +147,10 @@ def _dedupe_text_level_duplicates(transactions: List[Dict], source_text: str) ->
     normalized_source = _normalize_text_compare(source_text)
     source_tokens = set(normalized_source.split()) if normalized_source else set()
 
-    # Pass 1: exact dedupe on normalized fields.
-    exact_unique = []
-    seen = set()
-    for t in transactions:
-        key = (
-            str(t.get("tipe") or ""),
-            int(t.get("jumlah", 0) or 0),
-            (t.get("nama_projek") or "").strip().lower(),
-            _normalize_text_compare(t.get("keterangan", "")),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        exact_unique.append(t)
+    # Keep repeated identical rows: two equal payments can be legitimate.
+    # Only remove a row when it is demonstrably a generic model artifact
+    # shadowing a more specific row with the same type/amount/project.
+    exact_unique = list(transactions)
 
     if len(exact_unique) < 2 or not source_tokens:
         return exact_unique
@@ -1686,11 +1676,20 @@ class RateLimitException(Exception):
         self.wait_time = wait_time
         super().__init__(f"AI Rate Limit Reached. Wait: {wait_time}")
 
+def _groq_timeout_seconds() -> float:
+    """Return a bounded timeout so an unavailable model cannot stall the webhook."""
+    try:
+        configured = float(os.getenv("GROQ_TIMEOUT_SECONDS", "30"))
+    except (TypeError, ValueError):
+        configured = 30.0
+    return max(1.0, min(configured, 120.0))
+
 def call_groq_api(messages, **kwargs):
     """
     Wrapper for Groq API calls to handle Rate Limits gracefully.
     """
     try:
+        kwargs.setdefault("timeout", _groq_timeout_seconds())
         return groq_client.chat.completions.create(
             messages=messages,
             **kwargs
@@ -1956,7 +1955,9 @@ def split_ocr_user_text(original_text: str) -> tuple:
 
 _TEXT_LABELED_AMOUNT_RE = re.compile(
     r"(?:nominal|jumlah|amount|total(?:\s+(?:transfer|pembayaran|bayar))?|debit|kredit)"
-    r"\s*[:\-]?\s*(?:rp\.?|idr)?\s*(?P<amount>[0-9][0-9\.,\s]*[0-9]|[0-9])",
+    r"[ \t]*[:\-]?[ \t]*(?:rp\.?|idr)?[ \t]*"
+    r"(?P<amount>(?:[0-9][0-9\., \t]*[0-9]|[0-9])"
+    r"(?:[ \t]*(?:rb|ribu|k|jt|juta|perak)\b)?)",
     re.IGNORECASE,
 )
 
@@ -1966,7 +1967,14 @@ def _extract_labeled_amount_from_text(text: str) -> int:
     if not text:
         return 0
     for match in _TEXT_LABELED_AMOUNT_RE.finditer(text):
-        amount = parse_money_token(match.group("amount"))
+        raw_amount = match.group("amount")
+        if re.search(r"(?:rb|ribu|k|jt|juta|perak)\b", raw_amount, re.IGNORECASE):
+            try:
+                amount = parse_revision_amount(raw_amount)
+            except (TypeError, ValueError):
+                amount = 0
+        else:
+            amount = parse_money_token(raw_amount)
         if amount >= 100:
             return amount
     return 0
@@ -1985,6 +1993,11 @@ def extract_from_text(text: str, sender_name: str, chat_id: str = None, user_id:
             raise SecurityError("Input tidak valid. Mohon gunakan format yang benar.")
 
         wallet_update = _is_wallet_update_context(clean_text)
+        ocr_body = clean_text.split("Receipt/Struk content:", 1)[1] if "Receipt/Struk content:" in clean_text else ""
+        is_statement_ocr = bool(
+            re.search(r"\b(?:documentmode|documenttype)\s*:\s*statement_table\b", clean_text, re.IGNORECASE)
+            or detect_ocr_document_mode(ocr_body) == "STATEMENT_TABLE"
+        )
 
         if len(clean_text) > MAX_INPUT_LENGTH:
             clean_text = clean_text[:MAX_INPUT_LENGTH]
@@ -2040,44 +2053,72 @@ def extract_from_text(text: str, sender_name: str, chat_id: str = None, user_id:
             wrapped_input = get_safe_ai_prompt_wrapper(clean_text)
             system_prompt = get_extraction_prompt(sender_name)
 
-            response = call_groq_api(
-                model="llama-3.1-8b-instant",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": wrapped_input}
-                ],
-                temperature=0.0,
-                max_tokens=1024,
-                response_format={"type": "json_object"}
-            )
-
-            response_text = response.choices[0].message.content.strip()
-
             try:
-                result_json = json.loads(response_text)
-            except json.JSONDecodeError:
-                if response_text.startswith("```"):
-                    lines = response_text.split("\n")
-                    response_text = "\n".join(lines[1:-1])
-                result_json = json.loads(response_text)
+                response = call_groq_api(
+                    model="llama-3.1-8b-instant",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": wrapped_input}
+                    ],
+                    temperature=0.0,
+                    max_tokens=1024,
+                    response_format={"type": "json_object"}
+                )
 
-            if isinstance(result_json, dict):
-                transactions = result_json.get("transactions", [])
-                if not transactions and result_json:
-                    transactions = [result_json]
-            elif isinstance(result_json, list):
-                transactions = result_json
-            else:
-                transactions = []
+                response_text = response.choices[0].message.content.strip()
+
+                try:
+                    result_json = json.loads(response_text)
+                except json.JSONDecodeError:
+                    if response_text.startswith("```"):
+                        lines = response_text.split("\n")
+                        response_text = "\n".join(lines[1:-1])
+                    result_json = json.loads(response_text)
+
+                if isinstance(result_json, dict):
+                    transactions = result_json.get("transactions", [])
+                    if not transactions and result_json:
+                        transactions = [result_json]
+                elif isinstance(result_json, list):
+                    transactions = result_json
+                else:
+                    transactions = []
+            except Exception as exc:
+                # Provider outage should not turn an obvious one-line payment
+                # into a lost message. The local fallback is deliberately
+                # grounded to one explicit amount and action; ambiguous input
+                # still raises so the caller can retry or review it.
+                fallback_amount = extract_single_text_amount(clean_text)
+                fallback_transaction = build_text_transaction_fallback(
+                    clean_text,
+                    fallback_amount,
+                )
+                if not fallback_transaction:
+                    raise
+                transactions = [fallback_transaction]
+                secure_log(
+                    "WARNING",
+                    f"Groq unavailable; used grounded text fallback: {type(exc).__name__}",
+                )
 
         if not isinstance(transactions, list):
             transactions = [transactions]
 
-        if len(transactions) > MAX_TRANSACTIONS_PER_MESSAGE:
-            transactions = transactions[:MAX_TRANSACTIONS_PER_MESSAGE]
+        too_many_transactions = len(transactions) > MAX_TRANSACTIONS_PER_MESSAGE
+        if too_many_transactions:
+            # Never acknowledge a partial extraction: dropping rows would lose
+            # real company transactions. The caller can retry with smaller input.
+            secure_log(
+                "WARNING",
+                f"Rejected extraction with {len(transactions)} transactions; "
+                f"limit is {MAX_TRANSACTIONS_PER_MESSAGE}",
+            )
+            transactions = []
 
         validated_transactions = []
         rejection_reasons = []
+        if too_many_transactions:
+            rejection_reasons.append("too many transaction candidates")
         # Extract user note (caption) if present in clean_text
         user_note_global = ""
         if clean_text.lower().startswith("note:"):
@@ -2109,7 +2150,22 @@ def extract_from_text(text: str, sender_name: str, chat_id: str = None, user_id:
         )
 
         for t in transactions:
-            if labeled_amount_fallback and parse_money_token(str(t.get("jumlah", 0) or 0)) < 100:
+            if not isinstance(t, dict):
+                secure_log("WARNING", "Invalid transaction shape skipped: expected object")
+                rejection_reasons.append("transaction bukan object")
+                continue
+            if labeled_amount_fallback:
+                raw_tx_amount = str(t.get("jumlah", 0) or 0)
+                if re.search(r"(?:rb|ribu|k|jt|juta|perak)\b", raw_tx_amount, re.IGNORECASE):
+                    try:
+                        tx_amount = parse_revision_amount(raw_tx_amount)
+                    except (TypeError, ValueError):
+                        tx_amount = 0
+                else:
+                    tx_amount = parse_money_token(raw_tx_amount)
+            else:
+                tx_amount = 0
+            if labeled_amount_fallback and tx_amount < 100:
                 t = dict(t)
                 t["jumlah"] = labeled_amount_fallback
                 secure_log(
@@ -2254,7 +2310,7 @@ def extract_from_text(text: str, sender_name: str, chat_id: str = None, user_id:
             validated_transactions.append(sanitized)
 
         # De-duplicate identical OCR transactions (common when OCR repeats blocks)
-        if "Receipt/Struk content:" in clean_text and len(validated_transactions) > 1:
+        if "Receipt/Struk content:" in clean_text and not is_statement_ocr and len(validated_transactions) > 1:
             unique = []
             seen = set()
             for t in validated_transactions:
@@ -2430,7 +2486,7 @@ def extract_from_text(text: str, sender_name: str, chat_id: str = None, user_id:
             if "Receipt/Struk content:" in clean_text:
                 non_fee_txs = [t for t in validated_transactions if not _is_fee_tx(t)]
                 fee_txs = [t for t in validated_transactions if _is_fee_tx(t)]
-                if len(non_fee_txs) > 1:
+                if len(non_fee_txs) > 1 and not is_statement_ocr:
                     main_only = max(non_fee_txs, key=lambda t: int(t.get("jumlah", 0) or 0))
                     validated_transactions = [main_only] + fee_txs
 
@@ -2460,7 +2516,7 @@ def extract_from_text(text: str, sender_name: str, chat_id: str = None, user_id:
             # If caption exists, prefer a single main transaction (keep fee if any)
             if user_note_global:
                 non_fee = [t for t in validated_transactions if not _is_fee_tx(t)]
-                if len(non_fee) > 1:
+                if len(non_fee) > 1 and not is_statement_ocr:
                     main_tx = max(non_fee, key=lambda t: int(t.get("jumlah", 0) or 0))
                     main_tx["keterangan"] = user_note_global
                     kept = [main_tx]
@@ -3092,9 +3148,12 @@ def download_media(media_url: str, file_extension: str = None) -> str:
         secure_log("WARNING", f"Invalid media URL blocked: {error}")
         raise SecurityError(f"URL tidak valid: {error}")
     
+    response = None
+    temp_path = None
+    completed = False
     try:
         # Use timeout and size limit
-        response = requests.get(media_url, timeout=30, stream=True)
+        response = requests.get(media_url, timeout=30, stream=True, allow_redirects=False)
         response.raise_for_status()
         
         # Check content length (max 10MB)
@@ -3110,26 +3169,32 @@ def download_media(media_url: str, file_extension: str = None) -> str:
             }
             file_extension = extension_map.get(content_type, '')
         
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=file_extension)
-        
-        # Download with size limit
-        downloaded = 0
-        max_size = 10 * 1024 * 1024  # 10MB
-        for chunk in response.iter_content(chunk_size=8192):
-            downloaded += len(chunk)
-            if downloaded > max_size:
-                temp_file.close()
-                os.unlink(temp_file.name)
-                raise SecurityError("File terlalu besar (max 10MB)")
-            temp_file.write(chunk)
-        
-        temp_file.close()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+            temp_path = temp_file.name
+            # Download with size limit
+            downloaded = 0
+            max_size = 10 * 1024 * 1024  # 10MB
+            for chunk in response.iter_content(chunk_size=8192):
+                downloaded += len(chunk)
+                if downloaded > max_size:
+                    raise SecurityError("File terlalu besar (max 10MB)")
+                temp_file.write(chunk)
+
+        completed = True
         secure_log("INFO", "Media downloaded successfully")
-        return temp_file.name
+        return temp_path
         
     except requests.RequestException as e:
         secure_log("ERROR", f"Download failed: {type(e).__name__}")
         raise
+    finally:
+        if response is not None:
+            response.close()
+        if temp_path and not completed:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
 
 
 def transcribe_audio(audio_path: str) -> str:
@@ -3398,6 +3463,11 @@ def extract_financial_data(input_data: str, input_type: str, sender_name: str,
             
             else:
                 # Local file path input (legacy/testing)
+                if isinstance(input_data, str):
+                    temp_root = os.path.abspath(tempfile.gettempdir())
+                    input_path = os.path.abspath(input_data)
+                    if input_path.startswith(temp_root + os.sep):
+                        temp_files.append(input_data)
                 return extract_from_image(
                     input_data, sender_name, caption, chat_id=chat_id, user_id=user_id,
                     ocr_progress=ocr_progress,

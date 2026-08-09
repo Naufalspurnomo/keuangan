@@ -53,7 +53,7 @@ Admin memantau saldo dan hutang, menjaga penamaan project, memakai /audit setela
 
 Owner atau technical operator mengelola allowlist nomor, koneksi WuzAPI/WhatsApp, Google Sheets, Groq, database state, deployment, dan health check. Secret seperti token, password database, credentials.json, atau API key tidak boleh dikirim ke chat grup.
 
-Catatan akses: apabila ALLOWED_SENDER_IDS tidak diisi, bot mengizinkan semua pengirim. Pada produksi, isi allowlist dengan nomor atau user ID yang dipercaya. SESSION_DELEGATE_IDS hanya untuk admin yang boleh meneruskan sesi user lain di grup dengan cara reply ke prompt yang benar.
+Catatan akses: pada development lokal yang benar-benar memakai state non-durable, ALLOWED_SENDER_IDS yang kosong mengizinkan semua pengirim. Pada produksi, set ALLOWLIST_REQUIRED=1 dan isi allowlist dengan nomor atau user ID yang dipercaya; allowlist kosong akan fail-closed. STATE_STORE_REQUIRED=1 atau DURABLE_INBOX_REQUIRED=1 juga membuat allowlist kosong fail-closed meskipun FLASK_ENV masih development. SESSION_DELEGATE_IDS hanya untuk admin yang boleh meneruskan sesi user lain di grup dengan cara reply ke prompt yang benar.
 
 ## 3. Mulai dalam lima menit
 
@@ -506,7 +506,9 @@ Bagian ini untuk owner atau technical operator, bukan user biasa.
 - GOOGLE_SHEETS_ID dan akses service account ke spreadsheet.
 - WUZAPI_DOMAIN dan WUZAPI_TOKEN untuk WhatsApp.
 - GROQ_API_KEY atau GROQ_API_KEYS untuk pemahaman bahasa natural/OCR yang memakai model.
-- ALLOWED_SENDER_IDS untuk membatasi pengguna.
+- GROQ_TIMEOUT_SECONDS (default 30 detik, dibatasi 1-120 detik) agar kegagalan provider tidak menggantungkan webhook.
+- ALLOWED_SENDER_IDS untuk membatasi pengguna; ALLOWLIST_REQUIRED=1 wajib di produksi agar konfigurasi kosong tidak membuka bot ke semua pengirim. Mode state durable juga fail-closed bila allowlist kosong.
+- TELEGRAM_WEBHOOK_SECRET dan WUZAPI_WEBHOOK_SECRET untuk autentikasi inbound webhook; WEBHOOK_SECRET_REQUIRED=1 wajib di produksi. Mode state durable juga mewajibkan secret bila flag eksplisit tidak diberikan.
 - STATE_STORE_BACKEND=postgres dan STATE_DATABASE_URL untuk state transaksi yang tahan restart.
 - STATE_STORE_REQUIRED=1 dan DURABLE_INBOX_REQUIRED=1 bila produksi harus gagal tertutup ketika state durable tidak tersedia.
 
@@ -514,7 +516,7 @@ Simpan semua nilai tersebut hanya sebagai environment variable deployment. Janga
 
 ### Health check
 
-Endpoint GET /health melaporkan healthy, degraded, atau unhealthy serta status inbox transaksi. Pada konfigurasi durable wajib, status inbox yang tidak durable membuat layanan mengembalikan 503 agar webhook tidak dianggap aman saat data tidak bisa dipersistenkan.
+Endpoint GET /health melaporkan healthy, degraded, atau unhealthy serta status inbox transaksi dan security.missing. Pada konfigurasi durable wajib, status inbox yang tidak durable membuat layanan mengembalikan 503 agar webhook tidak dianggap aman saat data tidak bisa dipersistenkan. Di produksi, allowlist kosong atau secret webhook yang belum diisi juga mengembalikan 503 sampai konfigurasi dilengkapi.
 
 ### Keandalan transaksi
 

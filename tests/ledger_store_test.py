@@ -40,6 +40,30 @@ class LedgerStoreNormalizationTests(unittest.TestCase):
         self.assertIsNone(normalized["amount"])
         self.assertIsNone(normalized["transaction_date"])
 
+    def test_normalize_preserves_suffix_amount_scale(self):
+        normalized = normalize_row({
+            "sheet_name": "CV HB(101)",
+            "sheet_row": 12,
+            "source_block": "pengeluaran",
+            "tanggal": "2026-07-20",
+            "jumlah": "100rb",
+            "tipe": "Pengeluaran",
+        })
+
+        self.assertEqual(normalized["amount"], 100000)
+
+    def test_normalize_handles_malformed_source_row(self):
+        normalized = normalize_row({
+            "sheet_name": "CV HB(101)",
+            "sheet_row": "not-a-row",
+            "source_block": "pengeluaran",
+            "tanggal": "2026-07-20",
+            "jumlah": 100000,
+            "tipe": "Pengeluaran",
+        })
+
+        self.assertIsNone(normalized["source_row"])
+
 
 if __name__ == "__main__":
     unittest.main()

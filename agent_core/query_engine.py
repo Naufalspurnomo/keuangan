@@ -4,6 +4,9 @@ import re
 from datetime import datetime
 from typing import Any, Dict, Iterable, List
 
+from utils.amounts import parse_money_token
+from utils.parsers import parse_revision_amount
+
 
 ALLOWED_METRICS = {"sum", "count", "avg", "max", "min"}
 ALLOWED_FILTERS = {"project", "category", "tipe", "date_from", "date_to", "company", "dompet"}
@@ -61,6 +64,14 @@ def _amount(value: Any) -> int:
     text = str(value or "").strip()
     if not text:
         return 0
+    if re.search(r"(?:rb|ribu|k|jt|juta|perak)\b", text, re.IGNORECASE):
+        try:
+            return parse_revision_amount(text)
+        except (TypeError, ValueError):
+            return 0
+    parsed = parse_money_token(text)
+    if parsed:
+        return parsed
     digits = re.sub(r"[^\d-]", "", text)
     try:
         return int(digits or 0)

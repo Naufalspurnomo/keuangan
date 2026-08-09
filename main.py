@@ -72,6 +72,7 @@ from services.project_service import (
     add_new_project_to_cache,
     normalize_project_input,
 )
+from config.allowlist import ALLOWED_SENDER_IDS, allowlist_required
 from services.finance_decision import decide_project_resolution
 from services.group_reply_hints import should_send_group_reply_hint
 from services.hutang_flow import (
@@ -122,6 +123,7 @@ from security import (
     sanitize_input, detect_prompt_injection,
     rate_limit_check, secure_log,
     log_timing,
+    webhook_secret_required,
     SecurityError, RateLimitError,
     ALLOWED_CATEGORIES, now_wib,
 )
@@ -348,19 +350,36 @@ def health_check():
     try:
         inbox = inbox_health()
         durable = bool(inbox.get('durable'))
-        serving = durable or not inbox_required()
+        security_required = allowlist_required() or webhook_secret_required()
+        security_missing = []
+        if allowlist_required() and not ALLOWED_SENDER_IDS:
+            security_missing.append('ALLOWED_SENDER_IDS')
+        if webhook_secret_required():
+            if not os.getenv('WUZAPI_WEBHOOK_SECRET', '').strip():
+                security_missing.append('WUZAPI_WEBHOOK_SECRET')
+            if not os.getenv('TELEGRAM_WEBHOOK_SECRET', '').strip():
+                security_missing.append('TELEGRAM_WEBHOOK_SECRET')
+        security_ready = not security_missing
+        serving = (durable or not inbox_required()) and security_ready
         return jsonify({
-            'status': 'healthy' if durable else 'degraded',
+            'status': 'healthy' if durable and security_ready else ('degraded' if security_ready else 'unhealthy'),
             'timestamp': datetime.now().isoformat(),
             'transaction_inbox': inbox,
+            'security': {
+                'ready': security_ready,
+                'required': security_required,
+                'missing': security_missing,
+            },
         }), 200 if serving else 503
     except Exception as exc:
         secure_log("ERROR", f"Health durable inbox check failed: {type(exc).__name__}: {exc}")
+        required = inbox_required() or allowlist_required() or webhook_secret_required()
         return jsonify({
-            'status': 'unhealthy' if inbox_required() else 'degraded',
+            'status': 'unhealthy' if required else 'degraded',
             'timestamp': datetime.now().isoformat(),
             'transaction_inbox': {'durable': False, 'error': type(exc).__name__},
-        }), 503 if inbox_required() else 200
+            'security': {'ready': False, 'required': True, 'missing': ['health_check']},
+        }), 503 if required else 200
 
 
 # ===================== WUZAPI HANDLER =====================
@@ -1027,7 +1046,7 @@ Balas 1 atau 2"""
                     )
                     for tx in txs:
                         kategori = category or _detect_operational_category(tx.get('keterangan', ''))
-                        append_operational_transaction(
+                        save_result = append_operational_transaction(
                             transaction={
                                 'jumlah': tx['jumlah'],
                                 'keterangan': tx['keterangan'],
@@ -1038,6 +1057,13 @@ Balas 1 atau 2"""
                             source_wallet=source_wallet,
                             category=kategori
                         )
+                        if not isinstance(save_result, dict) or not save_result.get('success'):
+                            error_msg = (save_result or {}).get('error', 'Unknown error') if isinstance(save_result, dict) else 'Unknown error'
+                            send_reply(
+                                f'❌ Gagal menyimpan transaksi operasional. '
+                                f'Coba lagi setelah koneksi stabil. ({str(error_msg)[:120]})'
+                            )
+                            return jsonify({'status': 'save_failed_operational'}), 200
 
                     # Operational expenses can also be funded by another wallet.
                     # The expense belongs to the selected wallet; mirror the
@@ -1045,7 +1071,7 @@ Balas 1 atau 2"""
                     if debt_source_hint and source_wallet and debt_source_hint != source_wallet:
                         total_amount = sum(int(t.get('jumlah', 0) or 0) for t in txs)
                         if total_amount > 0:
-                            append_project_transaction(
+                            debt_tx_result = append_project_transaction(
                                 transaction={
                                     'jumlah': total_amount,
                                     'keterangan': f'Hutang ke dompet {source_wallet}',
@@ -1057,13 +1083,19 @@ Balas 1 atau 2"""
                                 dompet_sheet=debt_source_hint,
                                 project_name='Saldo Umum',
                             )
-                            append_hutang_entry(
+                            if not isinstance(debt_tx_result, dict) or not debt_tx_result.get('success'):
+                                send_reply('❌ Transaksi sumber dana belum dikonfirmasi tersimpan. Coba lagi setelah koneksi stabil.')
+                                return jsonify({'status': 'save_failed_debt_source'}), 200
+                            debt_entry_result = append_hutang_entry(
                                 amount=total_amount,
                                 keterangan=txs[0].get('keterangan', '') if txs else '',
                                 yang_hutang=source_wallet,
                                 yang_dihutangi=debt_source_hint,
                                 message_id=f'{event_id}|HUTANG',
                             )
+                            if not isinstance(debt_entry_result, dict) or not debt_entry_result.get('success'):
+                                send_reply('❌ Register hutang belum dikonfirmasi tersimpan. Coba lagi setelah koneksi stabil.')
+                                return jsonify({'status': 'save_failed_debt_register'}), 200
 
                     invalidate_dashboard_cache()
                     _pending_transactions.pop(pkey, None)
@@ -1100,7 +1132,7 @@ Balas 1 atau 2"""
                     }
                 )
                 draft_msg = format_draft_summary_operational(
-                    txs, source_wallet, context.get('category'), mention
+                    txs, source_wallet, context.get('category'), ""
                 )
                 send_reply(draft_msg)
                 return jsonify({'status': 'draft_operational'}), 200
@@ -1731,7 +1763,7 @@ Balas 1 atau 2"""
                     }
                 )
                 draft_msg = format_draft_summary_project(
-                    txs, dompet, detected_company, mention, debt_source or ""
+                    txs, dompet, detected_company, "", debt_source or ""
                 )
                 if wallet_set_note:
                     draft_msg += f"\n{wallet_set_note}"
@@ -3573,4 +3605,9 @@ def start_background_workers():
 
 if __name__ == '__main__':
     start_background_workers()
-    app.run(host='0.0.0.0', port=5000, debug=DEBUG, use_reloader=False)
+    app.run(
+        host=os.getenv("FLASK_HOST", "127.0.0.1"),
+        port=5000,
+        debug=DEBUG,
+        use_reloader=False,
+    )

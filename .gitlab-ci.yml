@@ -3,13 +3,26 @@ image: python:3.11-slim
 stages:
   - test
 
+variables:
+  # Tests must never load developer/prod .env state or contact external stores.
+  PYTHON_DOTENV_DISABLED: "1"
+  STATE_STORE_BACKEND: "local"
+  STATE_STORE_REQUIRED: "0"
+  DURABLE_INBOX_REQUIRED: "0"
+  LEDGER_STORE_BACKEND: "off"
+  LEDGER_READ_BACKEND: "off"
+
 agent-foundation-tests:
   stage: test
   before_script:
     - python -V
     - python -m pip install --upgrade pip
     - python -m pip install -r requirements.txt
+    - python -m pip install pip-audit bandit ruff
   script:
     - python -m py_compile agent_core/conversation_memory.py agent_core/audit_log.py agent_core/intent_router.py agent_core/query_engine.py agent_core/semantic_dedup.py handlers/nl_query_handler.py services/finance_agent.py main.py
     - python -m unittest discover -s tests -p "*_test.py"
+    - python -m pip_audit -r requirements.txt --progress-spinner off
+    - python -m bandit -r . -x archive,tests,output,tmp --severity-level medium --confidence-level medium
+    - python -m ruff check . --select F821,E9 --exclude archive --exclude tests --exclude output --exclude tmp
     - git diff --check
