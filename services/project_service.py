@@ -214,7 +214,7 @@ def resolve_project_name(candidate, dompet_sheet=None, company=None):
     if not candidate:
         return {'status': 'NEW', 'final_name': candidate}
     
-    candidate_clean = candidate.strip()
+    candidate_clean = normalize_project_input(candidate)
     candidate_lower = candidate_clean.lower()
     
     # =============== OPERATIONAL KEYWORD FILTER ===============
@@ -241,6 +241,7 @@ def resolve_project_name(candidate, dompet_sheet=None, company=None):
         company=company,
     )
     if knowledge:
+        knowledge['final_name'] = normalize_project_input(knowledge.get('final_name') or '') or knowledge.get('final_name')
         knowledge['original'] = candidate_clean
         return knowledge
     
@@ -264,6 +265,7 @@ def resolve_project_name(candidate, dompet_sheet=None, company=None):
     AMBIGUOUS_THRESHOLD = 0.8  # Mirip banget atau Substring
     
     for existing in existing_projects:
+        existing = normalize_project_input(existing)
         existing_base = strip_company_prefix(existing)
         existing_candidates = [existing]
         if existing_base and existing_base.lower() != existing.lower():
@@ -280,7 +282,11 @@ def resolve_project_name(candidate, dompet_sheet=None, company=None):
         # 2. SUBSTRING MATCH (Kasus "Vadim Purana" vs "Purana")
         # Jika salah satu nama ada di dalam nama yang lain
         if any(
-            candidate_clean.lower() in e.lower() or e.lower() in candidate_clean.lower()
+            candidate_clean.lower() in e.lower()
+            or (
+                e.lower() in candidate_clean.lower()
+                and len(candidate_clean) < len(e) + 6
+            )
             for e in existing_candidates
         ):
             # Tandai ini kandidat kuat untuk konfirmasi
@@ -465,3 +471,16 @@ def infer_project_from_text_context(text, dompet_sheet=None, company=None, debt_
         'match_count': 1,
         'source': 'text_project_scan',
     }
+def normalize_project_input(name: str) -> str:
+    """Normalize a user-entered project label without changing its meaning."""
+    candidate = _normalize_project_name(str(name or "").strip())
+    if not candidate:
+        return ""
+    # Users commonly reply with "Project Hojja - X". Keep the real name and
+    # let apply_company_prefix() canonicalize the company prefix later.
+    return re.sub(
+        r"^\s*(?:nama\s+)?(?:project|projek|proyek)\s*[:\-]?\s*",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    ).strip()

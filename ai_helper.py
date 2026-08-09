@@ -55,6 +55,11 @@ from services.finance_agent import (
     plan_finance_message,
 )
 
+from services.text_transaction_fallback import (
+    build_text_transaction_fallback,
+    extract_single_text_amount,
+)
+
 # OCR sanity limit (default 10B IDR) to avoid parsing long IDs as amounts
 OCR_MAX_AMOUNT = int(os.getenv('OCR_MAX_AMOUNT', '10000000000'))
 # OCR receipt sanity: amount > this triggers strict cross-validation against OCR text
@@ -463,6 +468,12 @@ def _enforce_transaction_type_semantics(tx: Dict, clean_text: str) -> None:
     # Only treat fee as expense-signal when the fee word is in transaction description itself.
     has_fee_signal = bool(re.search(r"\bfee\b", ket)) and not _bank_fee_pattern.search(ket)
 
+    has_project_completion_signal = bool(
+        re.search(r"\bpelunasan\b", text_lower)
+        and re.search(r"\b(projek|project|proyek|prj)\b", text_lower)
+        and not re.search(r"\b(bayar|dibayar|ke|vendor|hutang|utang|tagihan)\b", text_lower)
+    )
+
     has_income_hint = any(term in ket for term in _INCOME_HINT_TERMS) or any(
         term in text_lower for term in _INCOME_HINT_TERMS
     )
@@ -477,7 +488,7 @@ def _enforce_transaction_type_semantics(tx: Dict, clean_text: str) -> None:
             r")\b",
             text_lower,
         )
-    )
+    ) or has_project_completion_signal
     has_outgoing_cash_signal = bool(
         re.search(
             r"\b("
@@ -2507,6 +2518,16 @@ def extract_from_text(text: str, sender_name: str, chat_id: str = None, user_id:
                 clean_text,
             )
 
+
+        # Keep an obvious one-line message usable when the AI provider returns
+        # an empty/invalid payload. This fallback is deliberately grounded:
+        # exactly one amount, an explicit action, and local validation are required.
+        if not validated_transactions and "Receipt/Struk content:" not in clean_text:
+            fallback_amount = extract_single_text_amount(clean_text)
+            fallback_transaction = build_text_transaction_fallback(clean_text, fallback_amount)
+            if fallback_transaction:
+                validated_transactions.append(fallback_transaction)
+                secure_log("INFO", "Created grounded one-line text fallback transaction")
         if not validated_transactions and rejection_reasons:
             secure_log(
                 "WARNING",

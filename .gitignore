@@ -37,3 +37,7 @@ test_*.py
 # Local development
 ngrok.exe
 *.exe
+
+# Generated documentation and diagnostic artifacts
+output/
+tmp/

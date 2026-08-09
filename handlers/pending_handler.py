@@ -18,6 +18,7 @@ from utils.parsers import parse_revision_amount
 from utils.amounts import has_amount_pattern
 from services.project_service import (
     add_new_project_to_cache,
+    normalize_project_input,
     infer_project_from_text_context,
     resolve_project_name,
     resolve_project_name_for_context,
@@ -857,7 +858,7 @@ Atau ketik /cancel untuk batal total"""
                         )
                         return {'response': 'Nama projeknya belum valid. Ketik nama projek yang benar.', 'completed': False}
 
-                    if res.get('status') == 'AMBIGUOUS' and int(res.get('match_count', 2) or 2) != 1:
+                    if res.get('status') == 'AMBIGUOUS':
                         suggested = res.get('final_name')
                         if prefix:
                             suggested = f"{prefix} - {suggested}".strip()
@@ -1222,7 +1223,7 @@ Atau ketik /cancel untuk batal total"""
             debt_source_dompet=debt_source,
         )
 
-        decision = decide_project_resolution(res, auto_accept_unique_ambiguous=True)
+        decision = decide_project_resolution(res)
 
         if decision.action == 'missing':
             set_pending_confirmation(
@@ -1347,7 +1348,7 @@ Atau ketik /cancel untuk batal total"""
             return {'response': 'Nama projeknya belum valid. Ketik nama projek yang benar.', 'completed': False}
 
         # If ambiguous, ask confirmation
-        if res.get('status') == 'AMBIGUOUS' and int(res.get('match_count', 2) or 2) != 1:
+        if res.get('status') == 'AMBIGUOUS':
             suggested = res.get('final_name')
             if prefix:
                 suggested = f"{prefix} - {suggested}".strip()
@@ -1607,7 +1608,7 @@ Atau ketik /cancel untuk batal total"""
             return {'response': '📝 Nama projeknya apa?', 'completed': False}
 
         # Treat other input as new project name
-        new_name = text.strip()
+        new_name = normalize_project_input(text.strip())
         if not new_name:
             return {'response': '📝 Nama projeknya apa?', 'completed': False}
 
@@ -1637,7 +1638,7 @@ Atau ketik /cancel untuk batal total"""
             )
             return {'response': 'Nama projeknya belum valid. Ketik nama projek yang benar.', 'completed': False}
 
-        if res.get('status') == 'AMBIGUOUS' and int(res.get('match_count', 2) or 2) != 1:
+        if res.get('status') == 'AMBIGUOUS':
             suggested = res.get('final_name')
             if prefix:
                 suggested = f"{prefix} - {suggested}".strip()

@@ -78,9 +78,9 @@ def apply_lifecycle_markers(
     if is_new_project and allow_start:
         return f"{base_name} (Start)"
     if is_new_project and not allow_start:
-        return project_name
+        return base_name
 
     # Do not infer Start from cache misses. A missed lookup can happen because
     # of prefix/company ambiguity, sheet latency, or typo handling; Start must
     # mean "user confirmed this is the project's first entry."
-    return project_name
+    return base_name

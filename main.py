@@ -70,6 +70,7 @@ from services.project_service import (
     resolve_project_name_for_context,
     infer_project_from_text_context,
     add_new_project_to_cache,
+    normalize_project_input,
 )
 from services.finance_decision import decide_project_resolution
 from services.group_reply_hints import should_send_group_reply_hint
@@ -1143,6 +1144,19 @@ Balas 1 atau 2"""
                             pending['project_confirmed'] = True
                         continue
 
+                    # Prefer the complete explicit project phrase over a short
+                    # model token such as "Laundry" when the user said more.
+                    explicit_project = extract_project_name_from_text(validation_text_scope or original_text)
+                    raw_project_norm = re.sub(r"\s+", " ", str(p_name_raw or "").strip().lower())
+                    explicit_project_norm = re.sub(r"\s+", " ", str(explicit_project or "").strip().lower())
+                    if (
+                        explicit_project_norm
+                        and raw_project_norm
+                        and len(explicit_project_norm) >= len(raw_project_norm) + 6
+                        and re.search(rf"(?<!\w){re.escape(raw_project_norm)}(?!\w)", explicit_project_norm)
+                    ):
+                        p_name_raw = explicit_project
+                        t['nama_projek'] = explicit_project
                     # Resolve Name
                     lookup_name = strip_company_prefix(p_name_raw)
                     res = resolve_project_name_for_context(
@@ -1204,14 +1218,6 @@ Balas 1 atau 2"""
                                 t['nama_projek'] = prefixed_res.get('final_name') or prefixed_candidate
                                 pending['project_confirmed'] = True
                                 continue
-                        explicit_project_signal = bool(
-                            re.search(r"\b(projek|project|proyek|prj)\b", (original_text or "").lower())
-                        )
-                        unique_candidate = int(res.get('match_count', 2) or 2) == 1
-                        if FAST_MODE and explicit_project_signal and unique_candidate and res.get('final_name'):
-                            t['nama_projek'] = res.get('final_name')
-                            pending['project_confirmed'] = True
-                            continue
 
                         pending['pending_type'] = 'confirmation_project'
                         pending['suggested_project'] = res.get('final_name') or res.get('original') or lookup_name
@@ -2707,7 +2713,7 @@ Balas 1 atau 2"""
                     return jsonify({'status': 'asking'}), 200
                 else:
                     # Direct correction
-                    final_proj = sanitize_input(text.strip())
+                    final_proj = normalize_project_input(sanitize_input(text.strip()))
                     if len(final_proj) < 3:
                         send_reply("⚠️ Nama terlalu pendek.")
                         return jsonify({'status': 'invalid'}), 200
@@ -2749,7 +2755,7 @@ Balas 1 atau 2"""
                         send_reply("❌ Dibatalkan.")
                         return jsonify({'status': 'cancelled'}), 200
                     # Treat input as new project name
-                    final_proj = sanitize_input(text.strip())
+                    final_proj = normalize_project_input(sanitize_input(text.strip()))
                     if len(final_proj) < 3:
                         send_reply("⚠️ Nama terlalu pendek.")
                         return jsonify({'status': 'invalid'}), 200
@@ -2792,7 +2798,7 @@ Balas 1 atau 2"""
                     return jsonify({'status': 'asking'}), 200
                 else:
                     # Treat input as the CORRECT name (and implicitly NEW if not resolved previously)
-                    final_proj = sanitize_input(text.strip())
+                    final_proj = normalize_project_input(sanitize_input(text.strip()))
                     # Check if actually exists now
                     selected_scope = pending.get('selected_option') or {}
                     res_check = resolve_project_name_for_context(
@@ -2801,6 +2807,7 @@ Balas 1 atau 2"""
                         company=selected_scope.get('company'),
                         debt_source_dompet=pending.get('debt_source_dompet'),
                     )
+                    final_proj = res_check.get('final_name') or final_proj
                     if res_check.get('status') == 'INVALID':
                         send_pending_reply("Nama projeknya belum valid. Ketik nama projek yang benar.")
                         return jsonify({'status': 'asking_project_name'}), 200
@@ -2824,10 +2831,7 @@ Balas 1 atau 2"""
                     debt_source_dompet=pending.get('debt_source_dompet'),
                 )
 
-                project_decision = decide_project_resolution(
-                    res,
-                    auto_accept_unique_ambiguous=bool(FAST_MODE),
-                )
+                project_decision = decide_project_resolution(res)
 
                 if project_decision.should_accept:
                     final = project_decision.final_name
