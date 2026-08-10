@@ -129,6 +129,23 @@ class SecurityHardeningTests(unittest.TestCase):
             ):
                 self.assertTrue(verify_wuzapi_webhook_secret(request))
 
+    def test_wuzapi_query_token_is_accepted(self):
+        app = Flask(__name__)
+        with patch.dict(
+            os.environ,
+            {
+                "WEBHOOK_SECRET_REQUIRED": "1",
+                "WUZAPI_WEBHOOK_SECRET": "different-header-secret",
+                "WUZAPI_TOKEN": "query-token",
+            },
+        ):
+            with app.test_request_context(
+                "/webhook_wuzapi?token=query-token",
+                method="POST",
+                data={"jsonData": "{}"},
+            ):
+                self.assertTrue(verify_wuzapi_webhook_secret(request))
+
     def test_media_download_closes_response_and_removes_partial_file(self):
         import ai_helper
 
