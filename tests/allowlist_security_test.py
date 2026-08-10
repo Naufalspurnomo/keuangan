@@ -19,6 +19,12 @@ class AllowlistSecurityTests(unittest.TestCase):
         ):
             self.assertTrue(allowlist.is_sender_allowed(["628123456789"]))
 
+    def test_explicit_disable_opens_group_allowlist_even_when_configured(self):
+        with patch.object(allowlist, "ALLOWED_SENDER_IDS", {"6288808144798"}), patch.dict(
+            os.environ, {"ALLOWLIST_REQUIRED": "0"}
+        ):
+            self.assertTrue(allowlist.is_sender_allowed(["628123456789"]))
+
     def test_durable_state_mode_also_fails_closed_by_default(self):
         with patch.object(allowlist, "ALLOWED_SENDER_IDS", set()), patch.dict(
             os.environ,

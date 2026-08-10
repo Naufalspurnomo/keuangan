@@ -68,6 +68,8 @@ def _build_variants(identifier: str) -> Set[str]:
 
 def is_sender_allowed(identifiers: Iterable[str | None]) -> bool:
     """Return True if allowlist is empty or any identifier is in allowlist."""
+    if not allowlist_required():
+        return True
     if not ALLOWED_SENDER_IDS:
         return not allowlist_required()
 
