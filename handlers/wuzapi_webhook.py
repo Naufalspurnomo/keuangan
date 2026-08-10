@@ -12,7 +12,7 @@ from flask import g, jsonify
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from config.allowlist import is_sender_allowed
-from security import log_timing, secure_log, verify_webhook_secret
+from security import log_timing, secure_log, verify_wuzapi_webhook_secret
 from services.state_manager import clear_message_duplicate, is_message_duplicate, store_visual_buffer
 from services.durable_inbox import InboxUnavailable, capture_event, mark_event, mark_source_event
 from wuzapi_helper import download_wuzapi_image, send_wuzapi_reply
@@ -115,11 +115,7 @@ def handle_wuzapi_webhook(
     message_id = ''
     inbox_event_key = ''
     try:
-        if not verify_webhook_secret(
-            flask_request,
-            "WUZAPI_WEBHOOK_SECRET",
-            ("X-WuzAPI-Webhook-Secret", "X-Webhook-Secret"),
-        ):
+        if not verify_wuzapi_webhook_secret(flask_request):
             secure_log("WARNING", "WuzAPI webhook secret rejected")
             return jsonify({'status': 'unauthorized'}), 401
         try:
@@ -127,13 +123,20 @@ def handle_wuzapi_webhook(
         except RequestEntityTooLarge:
             secure_log("WARNING", f"Webhook payload too large while reading form (>{max_webhook_bytes} bytes)")
             return jsonify({'status': 'payload_too_large'}), 200
-        if not json_data_raw:
-            return jsonify({'status': 'no_data'}), 200
 
-        try:
-            event_data = json.loads(json_data_raw)
-        except json.JSONDecodeError:
-            return jsonify({'status': 'parse_error'}), 200
+        if json_data_raw:
+            try:
+                event_data = json.loads(json_data_raw)
+            except json.JSONDecodeError:
+                return jsonify({'status': 'parse_error'}), 200
+        else:
+            try:
+                event_data = flask_request.get_json(silent=True)
+            except RequestEntityTooLarge:
+                secure_log("WARNING", f"Webhook payload too large while reading JSON (>{max_webhook_bytes} bytes)")
+                return jsonify({'status': 'payload_too_large'}), 200
+            if not isinstance(event_data, dict):
+                return jsonify({'status': 'no_data'}), 200
 
         event = event_data.get('event', {})
         if not isinstance(event, dict):

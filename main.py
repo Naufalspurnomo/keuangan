@@ -355,7 +355,10 @@ def health_check():
         if allowlist_required() and not ALLOWED_SENDER_IDS:
             security_missing.append('ALLOWED_SENDER_IDS')
         if webhook_secret_required():
-            if not os.getenv('WUZAPI_WEBHOOK_SECRET', '').strip():
+            if not (
+                os.getenv('WUZAPI_WEBHOOK_SECRET', '').strip()
+                or os.getenv('WUZAPI_TOKEN', '').strip()
+            ):
                 security_missing.append('WUZAPI_WEBHOOK_SECRET')
             if not os.getenv('TELEGRAM_WEBHOOK_SECRET', '').strip():
                 security_missing.append('TELEGRAM_WEBHOOK_SECRET')

@@ -495,6 +495,54 @@ def verify_webhook_secret(flask_request, env_name: str, header_names: tuple[str,
     return False
 
 
+def verify_wuzapi_webhook_secret(flask_request) -> bool:
+    """Validate WuzAPI's native webhook token or an explicit secret header.
+
+    WuzAPI's default form webhook carries the user token in a ``token`` field;
+    JSON mode carries the same field in the JSON body.  Some deployments put a
+    separate secret in a custom header, so retain support for those headers as
+    well.  ``WUZAPI_WEBHOOK_SECRET`` takes precedence, while the existing
+    ``WUZAPI_TOKEN`` remains a backwards-compatible fallback.
+    """
+    expected = str(
+        os.getenv("WUZAPI_WEBHOOK_SECRET")
+        or os.getenv("WUZAPI_TOKEN")
+        or ""
+    ).strip()
+    if not expected:
+        return not webhook_secret_required()
+
+    candidates = []
+    for header_name in (
+        "X-WuzAPI-Webhook-Secret",
+        "X-Webhook-Secret",
+        "X-WuzAPI-Token",
+        "Token",
+        "Authorization",
+    ):
+        supplied = str(flask_request.headers.get(header_name) or "").strip()
+        if supplied:
+            candidates.append(supplied)
+
+    try:
+        form_token = str(flask_request.form.get("token") or "").strip()
+    except Exception:
+        form_token = ""
+    if form_token:
+        candidates.append(form_token)
+
+    try:
+        json_payload = flask_request.get_json(silent=True)
+    except Exception:
+        json_payload = None
+    if isinstance(json_payload, dict):
+        json_token = str(json_payload.get("token") or "").strip()
+        if json_token:
+            candidates.append(json_token)
+
+    return any(hmac.compare_digest(candidate, expected) for candidate in candidates)
+
+
 def mask_sensitive_data(text: str) -> str:
     """
     Mask sensitive data in text for safe logging.

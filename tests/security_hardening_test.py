@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from flask import Flask, request
 from security import rate_limit_check, validate_media_url, validate_transaction_data
-from security import verify_webhook_secret, webhook_secret_required
+from security import verify_webhook_secret, verify_wuzapi_webhook_secret, webhook_secret_required
 
 
 class SecurityHardeningTests(unittest.TestCase):
@@ -87,6 +87,47 @@ class SecurityHardeningTests(unittest.TestCase):
             clear=True,
         ):
             self.assertTrue(webhook_secret_required())
+
+    def test_wuzapi_native_form_token_is_accepted_with_existing_token_config(self):
+        app = Flask(__name__)
+        with patch.dict(
+            os.environ,
+            {
+                "WEBHOOK_SECRET_REQUIRED": "1",
+                "WUZAPI_WEBHOOK_SECRET": "",
+                "WUZAPI_TOKEN": "wuzapi-token",
+            },
+        ):
+            with app.test_request_context(
+                "/webhook_wuzapi",
+                method="POST",
+                data={"token": "wuzapi-token", "jsonData": "{}"},
+            ):
+                self.assertTrue(verify_wuzapi_webhook_secret(request))
+
+            with app.test_request_context(
+                "/webhook_wuzapi",
+                method="POST",
+                data={"token": "wrong-token", "jsonData": "{}"},
+            ):
+                self.assertFalse(verify_wuzapi_webhook_secret(request))
+
+    def test_wuzapi_json_token_is_accepted(self):
+        app = Flask(__name__)
+        with patch.dict(
+            os.environ,
+            {
+                "WEBHOOK_SECRET_REQUIRED": "1",
+                "WUZAPI_WEBHOOK_SECRET": "json-secret",
+                "WUZAPI_TOKEN": "",
+            },
+        ):
+            with app.test_request_context(
+                "/webhook_wuzapi",
+                method="POST",
+                json={"token": "json-secret", "type": "Message"},
+            ):
+                self.assertTrue(verify_wuzapi_webhook_secret(request))
 
     def test_media_download_closes_response_and_removes_partial_file(self):
         import ai_helper
