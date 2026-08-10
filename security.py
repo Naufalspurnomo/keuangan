@@ -503,6 +503,9 @@ def verify_wuzapi_webhook_secret(flask_request) -> bool:
     custom header, so retain support for those headers as well. Both explicit
     ``WUZAPI_WEBHOOK_SECRET`` and the existing ``WUZAPI_TOKEN`` are accepted.
     """
+    if not webhook_secret_required():
+        return True
+
     expected_values = list(dict.fromkeys(
         value.strip()
         for value in (

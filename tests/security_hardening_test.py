@@ -112,6 +112,22 @@ class SecurityHardeningTests(unittest.TestCase):
             ):
                 self.assertFalse(verify_wuzapi_webhook_secret(request))
 
+    def test_wuzapi_explicit_disable_overrides_outbound_token(self):
+        app = Flask(__name__)
+        with patch.dict(
+            os.environ,
+            {
+                "WEBHOOK_SECRET_REQUIRED": "0",
+                "WUZAPI_TOKEN": "outbound-token",
+            },
+        ):
+            with app.test_request_context(
+                "/webhook_wuzapi",
+                method="POST",
+                data={"jsonData": "{}"},
+            ):
+                self.assertTrue(verify_wuzapi_webhook_secret(request))
+
     def test_wuzapi_json_token_is_accepted(self):
         app = Flask(__name__)
         with patch.dict(
