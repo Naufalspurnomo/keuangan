@@ -10,7 +10,7 @@ The agent may:
 - read cached spreadsheet context such as known projects,
 - produce a structured transaction plan,
 - ask for fallback when confidence is low.
-
+......
 The agent may not:
 
 - write to Google Sheets directly,
