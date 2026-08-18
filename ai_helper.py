@@ -2040,6 +2040,16 @@ def extract_from_text(text: str, sender_name: str, chat_id: str = None, user_id:
                     f"tx_count={len(transactions)} "
                     f"missing={','.join(agent_decision.missing_fields) or '-'}"
                 )
+            elif agent_decision.action == "IGNORE":
+                # Agent explicitly decided this is not a transaction.
+                # Return empty list immediately - skip legacy fallback.
+                transactions = []
+                secure_log(
+                    "INFO",
+                    f"FinanceAgent ignore mode={finance_agent_mode()} "
+                    f"confidence={agent_decision.confidence:.2f} "
+                    f"reason={agent_decision.reasoning[:120]}"
+                )
             else:
                 secure_log(
                     "INFO",
