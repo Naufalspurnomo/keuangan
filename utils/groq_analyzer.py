@@ -121,7 +121,7 @@ def detect_operational_keyword(text: str) -> str:
 class GroqContextAnalyzer:
     def __init__(self, groq_client):
         self.client = groq_client
-        self.model = "llama-3.1-8b-instant"  # Fast & cheap
+        self.model = "openai/gpt-oss-20b"  # Fast & cheap
         self.context_detector = ContextDetector()  # Multi-layer context engine
 
     def analyze_message(self, message: dict, context: dict) -> dict:

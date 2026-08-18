@@ -41,7 +41,7 @@ wallet selection, duplicate checks, and Sheets append code.
   - `shadow`: agent plans/logs, but its output is not accepted for execution.
 - `FINANCE_AGENT_SHEET_CONTEXT=true` lets the agent read cached project context.
 - `FINANCE_AGENT_MIN_CONFIDENCE=0.78` controls acceptance threshold.
-- `FINANCE_AGENT_MODEL=llama-3.1-8b-instant` controls the planner model.
+- `FINANCE_AGENT_MODEL=openai/gpt-oss-20b` controls the planner model.
 
 ## Safety Gates
 

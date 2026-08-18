@@ -24,7 +24,7 @@ from utils.parsers import parse_revision_amount
 
 
 logger = logging.getLogger(__name__)
-QUERY_MODEL = os.getenv("QUERY_AGENT_MODEL", "llama-3.1-8b-instant")
+QUERY_MODEL = os.getenv("QUERY_AGENT_MODEL", "openai/gpt-oss-20b")
 MAX_EVIDENCE_ROWS = 60
 PROJECT_IGNORES = {"", "umum", "saldo umum", "operasional", "operasional kantor", "-"}
 

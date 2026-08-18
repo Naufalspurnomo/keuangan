@@ -2055,7 +2055,7 @@ def extract_from_text(text: str, sender_name: str, chat_id: str = None, user_id:
 
             try:
                 response = call_groq_api(
-                    model="llama-3.1-8b-instant",
+                    model="openai/gpt-oss-20b",
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": wrapped_input}
@@ -3529,7 +3529,7 @@ Jawab berdasarkan DATA KEUANGAN di atas saja. Jangan mengarang data."""
         
         # 5. Call AI
         response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}

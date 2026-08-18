@@ -1151,7 +1151,7 @@ def _fallback_ai(query: str, days: int) -> str:
         user_prompt = f"Pertanyaan: {query}\n\nDATA:\n{ctx}\n\nJawab secara langsung dengan rincian."
 
         response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},

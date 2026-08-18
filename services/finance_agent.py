@@ -31,7 +31,7 @@ ALLOWED_AGENT_CATEGORIES = {
 
 TEXT_TYPE_DEBIT = {"db", "debit", "keluar", "pengeluaran"}
 TEXT_TYPE_CREDIT = {"cr", "credit", "kredit", "masuk", "pemasukan"}
-FINANCE_AGENT_MODEL = os.getenv("FINANCE_AGENT_MODEL", "llama-3.1-8b-instant")
+FINANCE_AGENT_MODEL = os.getenv("FINANCE_AGENT_MODEL", "openai/gpt-oss-20b")
 VALID_AGENT_MODES = {"off", "deterministic", "hybrid", "shadow"}
 CRITICAL_MISSING_FIELDS = {"tanggal", "date", "jumlah", "amount", "nominal", "keterangan", "tipe"}
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
