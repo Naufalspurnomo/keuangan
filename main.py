@@ -10,8 +10,6 @@ Features:
 """
 
 import base64
-import hashlib
-import hmac
 import os
 import re
 import threading
@@ -120,7 +118,7 @@ USE_LAYERS = True # Enable SmartHandler logic by default
 from wuzapi_helper import (
     send_wuzapi_reply, format_mention_body,
     get_clean_jid, send_wuzapi_document,
-    get_wuzapi_qr_image, get_wuzapi_status, start_wuzapi_monitor,
+    get_wuzapi_status, start_wuzapi_monitor,
 )
 from security import (
     sanitize_input, detect_prompt_injection,
@@ -414,30 +412,6 @@ def health_check():
             'transaction_inbox': {'durable': False, 'error': type(exc).__name__},
             'security': {'ready': False, 'required': True, 'missing': ['health_check']},
         }), 503 if required else 200
-
-
-# Temporary recovery route. The random preimage is stored only on the operator
-# host; remove this route immediately after the WhatsApp device is paired.
-_RECOVERY_TOKEN_SHA256 = "b93b32b706cb920b247edd9d931590c451f633bf0149b64a234b1116e2144864"
-
-
-@app.route('/internal/recovery/whatsapp-qr', methods=['GET'])
-def whatsapp_recovery_qr():
-    supplied = request.headers.get('X-Recovery-Token', '')
-    supplied_hash = hashlib.sha256(supplied.encode('utf-8')).hexdigest()
-    if not supplied or not hmac.compare_digest(supplied_hash, _RECOVERY_TOKEN_SHA256):
-        return jsonify({'status': 'not_found'}), 404
-
-    image = get_wuzapi_qr_image()
-    if not image:
-        return jsonify({
-            'status': 'qr_unavailable',
-            'whatsapp_provider': get_wuzapi_status(force=True),
-        }), 409
-    response = app.response_class(image, mimetype='image/png')
-    response.headers['Cache-Control'] = 'no-store'
-    response.headers['Pragma'] = 'no-cache'
-    return response
 
 
 # ===================== WUZAPI HANDLER =====================

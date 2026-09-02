@@ -104,36 +104,6 @@ def _cache_status(status: dict) -> dict:
     return dict(status)
 
 
-def get_wuzapi_qr_image() -> Optional[bytes]:
-    """Fetch the current provider QR as validated PNG bytes."""
-    if not WUZAPI_DOMAIN or not WUZAPI_TOKEN:
-        return None
-    session = get_wuzapi_session()
-    timeout = _bounded_env_float("WUZAPI_STATUS_TIMEOUT_SECONDS", 3, 1, 5)
-    for url in _build_wuzapi_endpoints(_normalize_base(WUZAPI_DOMAIN), "session/qr"):
-        response = None
-        try:
-            response = session.get(url, timeout=timeout, allow_redirects=False)
-            if not 200 <= response.status_code < 300:
-                continue
-            objects = _wuzapi_response_objects(response.json())
-            encoded = _response_value(objects, ("QRCode", "qrcode", "qr_code"))
-            if not isinstance(encoded, str) or "," not in encoded:
-                continue
-            prefix, raw = encoded.split(",", 1)
-            if prefix.strip().lower() != "data:image/png;base64":
-                continue
-            image = base64.b64decode(raw, validate=True)
-            if image.startswith(b"\x89PNG\r\n\x1a\n") and len(image) <= 1024 * 1024:
-                return image
-        except Exception:
-            continue
-        finally:
-            if response is not None:
-                response.close()
-    return None
-
-
 def get_wuzapi_status(force: bool = False) -> dict:
     """Return a cached, sanitized WuzAPI session status."""
     global _status_cache
