@@ -89,6 +89,26 @@ class WuzApiHealthTests(unittest.TestCase):
         self.assertGreaterEqual(connect[2]["timeout"], 11)
         self.assertLessEqual(connect[2]["timeout"], 20)
 
+    def test_half_connected_session_is_disconnected_then_reconnected(self):
+        session = Session(
+            gets=[
+                Response(200, {"connected": True, "loggedIn": False}),
+                Response(200, {"connected": True, "loggedIn": True}),
+            ],
+            posts=[
+                Response(200, {"Details": "Disconnected"}),
+                Response(200, {"details": "Connected"}),
+            ],
+        )
+        with self.configured(session), patch.object(wuzapi_helper.time, "sleep"):
+            result = wuzapi_helper.ensure_wuzapi_connected(force=True)
+
+        self.assertTrue(result["connected"])
+        self.assertTrue(result["logged_in"])
+        post_paths = [call[1] for call in session.calls if call[0] == "POST"]
+        self.assertTrue(post_paths[0].endswith("/session/disconnect"))
+        self.assertTrue(post_paths[1].endswith("/session/connect"))
+
     def test_reconnect_cooldown_prevents_second_connect(self):
         session = Session(
             gets=[Response(200, {"connected": False})] * 3,

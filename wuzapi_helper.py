@@ -71,8 +71,9 @@ def _safe_provider_state(value: Any, connected: bool) -> str:
     state = str(value or ("connected" if connected else "disconnected")).strip().lower()
     state = re.sub(r"[^a-z0-9_. -]", "", state)[:64]
     allowed = {
-        "connected", "disconnected", "connecting", "reconnecting",
-        "logged_in", "logged_out", "online", "offline", "ready", "unknown",
+        "connected", "connected_not_logged_in", "disconnected", "connecting",
+        "reconnecting", "logged_in", "logged_out", "online", "offline",
+        "ready", "unknown",
     }
     return state if state in allowed else ("connected" if connected else "disconnected")
 
@@ -83,6 +84,8 @@ def _status_from_payload(payload: Any) -> dict:
     logged_in_value = _response_value(objects, ("logged_in", "loggedIn", "LoggedIn", "isLoggedIn", "IsLoggedIn"))
     logged_in = connected if logged_in_value is None else _as_bool(logged_in_value)
     state_value = _response_value(objects, ("state", "State", "status", "Status"))
+    if state_value is None and connected and not logged_in:
+        state_value = "connected_not_logged_in"
     return {
         "configured": True,
         "reachable": True,
@@ -156,13 +159,20 @@ def ensure_wuzapi_connected(force: bool = False) -> dict:
     global _last_reconnect_monotonic
     observed_reconnect = _last_reconnect_monotonic
     status = get_wuzapi_status(force=force)
-    if not status["configured"] or not status["reachable"] or status["connected"]:
+    if (
+        not status["configured"]
+        or not status["reachable"]
+        or (status["connected"] and status["logged_in"])
+    ):
         return status
 
     with _reconnect_lock:
         if _last_reconnect_monotonic != observed_reconnect:
             status = get_wuzapi_status(force=True)
-            if not status["reachable"] or status["connected"]:
+            if (
+                not status["reachable"]
+                or (status["connected"] and status["logged_in"])
+            ):
                 return status
         cooldown = _bounded_env_float("WUZAPI_RECONNECT_COOLDOWN_SECONDS", 60, 5, 600)
         if _last_reconnect_monotonic and time.monotonic() - _last_reconnect_monotonic < cooldown:
@@ -170,6 +180,29 @@ def ensure_wuzapi_connected(force: bool = False) -> dict:
 
         _last_reconnect_monotonic = time.monotonic()
         session = get_wuzapi_session()
+        base = _normalize_base(WUZAPI_DOMAIN)
+        if status["connected"] and not status["logged_in"]:
+            disconnect_timeout = _bounded_env_float(
+                "WUZAPI_DISCONNECT_TIMEOUT_SECONDS", 5, 1, 8
+            )
+            disconnected = False
+            for url in _build_wuzapi_endpoints(base, "session/disconnect"):
+                try:
+                    response = session.post(
+                        url,
+                        timeout=disconnect_timeout,
+                        allow_redirects=False,
+                    )
+                    if 200 <= response.status_code < 300:
+                        disconnected = True
+                        break
+                except Exception:
+                    continue
+            if not disconnected:
+                status["error"] = "stale_disconnect_failed"
+                return _cache_status(status)
+            _invalidate_status_cache()
+
         # WuzAPI waits about ten seconds when Immediate is false, so the client
         # timeout must exceed the server-side connection verification window.
         timeout = _bounded_env_float("WUZAPI_CONNECT_TIMEOUT_SECONDS", 15, 11, 20)
@@ -201,8 +234,8 @@ def ensure_wuzapi_connected(force: bool = False) -> dict:
             if poll_index:
                 time.sleep(poll_interval)
             status = get_wuzapi_status(force=True)
-            if status["connected"]:
-                secure_log("INFO", "WuzAPI session reconnected")
+            if status["connected"] and status["logged_in"]:
+                secure_log("INFO", "WuzAPI session reconnected and logged in")
                 return status
         status["error"] = "reconnect_pending"
         return _cache_status(status)
