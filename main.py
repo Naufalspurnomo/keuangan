@@ -117,7 +117,8 @@ USE_LAYERS = True # Enable SmartHandler logic by default
 # Utilities
 from wuzapi_helper import (
     send_wuzapi_reply, format_mention_body,
-    get_clean_jid, send_wuzapi_document
+    get_clean_jid, send_wuzapi_document,
+    get_wuzapi_status, start_wuzapi_monitor,
 )
 from security import (
     sanitize_input, detect_prompt_injection,
@@ -346,10 +347,31 @@ def _shadow_compare_narrow_resolver(original_text, pipeline_dompet,
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Health check including the transaction durability gate."""
+    """Report core readiness and sanitized WhatsApp provider health."""
     try:
         inbox = inbox_health()
         durable = bool(inbox.get('durable'))
+        try:
+            whatsapp_provider = get_wuzapi_status()
+        except Exception as exc:
+            secure_log("WARNING", f"WhatsApp provider health probe failed: {type(exc).__name__}")
+            whatsapp_provider = {
+                'configured': bool(os.getenv('WUZAPI_DOMAIN') and os.getenv('WUZAPI_TOKEN')),
+                'reachable': False,
+                'connected': False,
+                'logged_in': False,
+                'state': 'unreachable',
+                'error': f"probe_error:{type(exc).__name__}",
+                'checked_at': datetime.now().astimezone().isoformat(),
+            }
+        whatsapp_ready = (
+            not whatsapp_provider.get('configured')
+            or (
+                whatsapp_provider.get('reachable')
+                and whatsapp_provider.get('connected')
+                and whatsapp_provider.get('logged_in')
+            )
+        )
         security_required = allowlist_required() or webhook_secret_required()
         security_missing = []
         if allowlist_required() and not ALLOWED_SENDER_IDS:
@@ -364,10 +386,17 @@ def health_check():
                 security_missing.append('TELEGRAM_WEBHOOK_SECRET')
         security_ready = not security_missing
         serving = (durable or not inbox_required()) and security_ready
+        if not security_ready:
+            overall_status = 'unhealthy'
+        elif durable and whatsapp_ready:
+            overall_status = 'healthy'
+        else:
+            overall_status = 'degraded'
         return jsonify({
-            'status': 'healthy' if durable and security_ready else ('degraded' if security_ready else 'unhealthy'),
+            'status': overall_status,
             'timestamp': datetime.now().isoformat(),
             'transaction_inbox': inbox,
+            'whatsapp_provider': whatsapp_provider,
             'security': {
                 'ready': security_ready,
                 'required': security_required,
@@ -3591,6 +3620,7 @@ def start_background_workers():
         from services.ledger_bootstrap import start_ledger_bootstrap_if_requested
 
         start_ledger_bootstrap_if_requested()
+        start_wuzapi_monitor()
         retry_thread = threading.Thread(
             target=run_retry_service,
             daemon=True,

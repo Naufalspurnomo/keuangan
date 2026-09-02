@@ -3,6 +3,9 @@ import base64
 import time
 import requests
 import mimetypes
+import re
+import threading
+from datetime import datetime, timezone
 from urllib.parse import urlsplit
 from typing import Dict, Optional, Any
 from security import log_timing, secure_log
@@ -13,6 +16,234 @@ WUZAPI_TOKEN = (os.getenv('WUZAPI_TOKEN') or '').strip()    # e.g. keuanganpakev
 
 # Global session
 _wuzapi_session = None
+_status_lock = threading.Lock()
+_reconnect_lock = threading.Lock()
+_monitor_lock = threading.Lock()
+_status_cache = None
+_status_cache_monotonic = 0.0
+_last_reconnect_monotonic = 0.0
+_monitor_started = False
+
+
+def _bounded_env_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return min(max(value, minimum), maximum)
+
+
+def _env_enabled(name: str, default: bool = True) -> bool:
+    fallback = "true" if default else "false"
+    return os.getenv(name, fallback).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _empty_wuzapi_status(error: str = "") -> dict:
+    configured = bool(WUZAPI_DOMAIN and WUZAPI_TOKEN)
+    return {
+        "configured": configured,
+        "reachable": False,
+        "connected": False,
+        "logged_in": False,
+        "state": "unconfigured" if not configured else "unknown",
+        "error": error or ("not_configured" if not configured else ""),
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _response_value(objects: list[dict], names: tuple[str, ...]) -> Any:
+    for obj in reversed(objects):
+        for name in names:
+            if name in obj:
+                return obj[name]
+    return None
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value or "").strip().lower() in {"1", "true", "yes", "connected", "online", "logged_in"}
+
+
+def _safe_provider_state(value: Any, connected: bool) -> str:
+    state = str(value or ("connected" if connected else "disconnected")).strip().lower()
+    state = re.sub(r"[^a-z0-9_. -]", "", state)[:64]
+    allowed = {
+        "connected", "disconnected", "connecting", "reconnecting",
+        "logged_in", "logged_out", "online", "offline", "ready", "unknown",
+    }
+    return state if state in allowed else ("connected" if connected else "disconnected")
+
+
+def _status_from_payload(payload: Any) -> dict:
+    objects = _wuzapi_response_objects(payload)
+    connected = _as_bool(_response_value(objects, ("connected", "Connected", "isConnected", "IsConnected")))
+    logged_in_value = _response_value(objects, ("logged_in", "loggedIn", "LoggedIn", "isLoggedIn", "IsLoggedIn"))
+    logged_in = connected if logged_in_value is None else _as_bool(logged_in_value)
+    state_value = _response_value(objects, ("state", "State", "status", "Status"))
+    return {
+        "configured": True,
+        "reachable": True,
+        "connected": connected,
+        "logged_in": logged_in,
+        "state": _safe_provider_state(state_value, connected),
+        "error": "",
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _cache_status(status: dict) -> dict:
+    global _status_cache, _status_cache_monotonic
+    _status_cache = dict(status)
+    _status_cache_monotonic = time.monotonic()
+    return dict(status)
+
+
+def get_wuzapi_status(force: bool = False) -> dict:
+    """Return a cached, sanitized WuzAPI session status."""
+    global _status_cache
+    cache_seconds = _bounded_env_float("WUZAPI_STATUS_CACHE_SECONDS", 10, 1, 60)
+    with _status_lock:
+        if not force and _status_cache is not None:
+            if time.monotonic() - _status_cache_monotonic < cache_seconds:
+                return dict(_status_cache)
+        if not WUZAPI_DOMAIN or not WUZAPI_TOKEN:
+            return _cache_status(_empty_wuzapi_status())
+
+        try:
+            session = get_wuzapi_session()
+        except Exception as exc:
+            status = _empty_wuzapi_status(f"unreachable:{type(exc).__name__}")
+            status["state"] = "unreachable"
+            return _cache_status(status)
+        timeout = _bounded_env_float("WUZAPI_STATUS_TIMEOUT_SECONDS", 3, 1, 5)
+        last_status = None
+        last_error = "unreachable"
+        for url in _build_wuzapi_endpoints(_normalize_base(WUZAPI_DOMAIN), "session/status"):
+            try:
+                response = session.get(url, timeout=timeout, allow_redirects=False)
+                last_status = response.status_code
+                if 200 <= response.status_code < 300:
+                    try:
+                        return _cache_status(_status_from_payload(response.json()))
+                    except Exception:
+                        last_error = "invalid_json"
+                        break
+                last_error = f"http_{response.status_code}"
+            except Exception as exc:
+                last_error = f"unreachable:{type(exc).__name__}"
+                # Both candidates share one origin. Retrying the alternate path
+                # after a transport failure only doubles health-check latency.
+                break
+
+        status = _empty_wuzapi_status(last_error)
+        status["reachable"] = last_status is not None
+        status["state"] = "unknown" if last_status is not None else "unreachable"
+        return _cache_status(status)
+
+
+def _invalidate_status_cache() -> None:
+    global _status_cache, _status_cache_monotonic
+    with _status_lock:
+        _status_cache = None
+        _status_cache_monotonic = 0.0
+
+
+def ensure_wuzapi_connected(force: bool = False) -> dict:
+    """Reconnect one reachable, disconnected WuzAPI session with cooldown protection."""
+    global _last_reconnect_monotonic
+    observed_reconnect = _last_reconnect_monotonic
+    status = get_wuzapi_status(force=force)
+    if not status["configured"] or not status["reachable"] or status["connected"]:
+        return status
+
+    with _reconnect_lock:
+        if _last_reconnect_monotonic != observed_reconnect:
+            status = get_wuzapi_status(force=True)
+            if not status["reachable"] or status["connected"]:
+                return status
+        cooldown = _bounded_env_float("WUZAPI_RECONNECT_COOLDOWN_SECONDS", 60, 5, 600)
+        if _last_reconnect_monotonic and time.monotonic() - _last_reconnect_monotonic < cooldown:
+            return status
+
+        _last_reconnect_monotonic = time.monotonic()
+        session = get_wuzapi_session()
+        # WuzAPI waits about ten seconds when Immediate is false, so the client
+        # timeout must exceed the server-side connection verification window.
+        timeout = _bounded_env_float("WUZAPI_CONNECT_TIMEOUT_SECONDS", 15, 11, 20)
+        accepted = False
+        connect_error = "connect_failed"
+        payload = {"Subscribe": [], "Immediate": False}
+        for url in _build_wuzapi_endpoints(_normalize_base(WUZAPI_DOMAIN), "session/connect"):
+            try:
+                response = session.post(
+                    url,
+                    json=payload,
+                    timeout=timeout,
+                    allow_redirects=False,
+                )
+                if 200 <= response.status_code < 300:
+                    accepted = True
+                    break
+                connect_error = f"connect_http_{response.status_code}"
+            except Exception as exc:
+                connect_error = f"connect_error:{type(exc).__name__}"
+
+        if not accepted:
+            status["error"] = connect_error
+            return _cache_status(status)
+
+        poll_count = int(_bounded_env_float("WUZAPI_CONNECT_POLL_COUNT", 3, 1, 5))
+        poll_interval = _bounded_env_float("WUZAPI_CONNECT_POLL_INTERVAL_SECONDS", 1, 0.1, 2)
+        for poll_index in range(poll_count):
+            if poll_index:
+                time.sleep(poll_interval)
+            status = get_wuzapi_status(force=True)
+            if status["connected"]:
+                secure_log("INFO", "WuzAPI session reconnected")
+                return status
+        status["error"] = "reconnect_pending"
+        return _cache_status(status)
+
+
+def run_wuzapi_monitor(stop_event: Optional[threading.Event] = None) -> None:
+    """Periodically verify and heal the WuzAPI session."""
+    if not _env_enabled("WUZAPI_MONITOR_ENABLED", True):
+        return
+    stopper = stop_event or threading.Event()
+    interval = _bounded_env_float("WUZAPI_MONITOR_INTERVAL_SECONDS", 60, 15, 3600)
+    while not stopper.is_set():
+        try:
+            ensure_wuzapi_connected()
+        except Exception as exc:
+            secure_log("WARNING", f"WuzAPI monitor check failed: {type(exc).__name__}")
+        stopper.wait(interval)
+
+
+def start_wuzapi_monitor() -> bool:
+    """Start the WuzAPI monitor at most once per process."""
+    global _monitor_started
+    with _monitor_lock:
+        if _monitor_started or not _env_enabled("WUZAPI_MONITOR_ENABLED", True):
+            return False
+        thread = threading.Thread(
+            target=run_wuzapi_monitor,
+            daemon=True,
+            name="wuzapi-connection-monitor",
+        )
+        thread.start()
+        _monitor_started = True
+        return True
+
+
+def _reset_wuzapi_runtime_state_for_tests() -> None:
+    global _status_cache, _status_cache_monotonic, _last_reconnect_monotonic, _monitor_started
+    _status_cache = None
+    _status_cache_monotonic = 0.0
+    _last_reconnect_monotonic = 0.0
+    _monitor_started = False
 
 
 def get_wuzapi_session():
@@ -67,13 +298,36 @@ def _normalize_recipient_phone(to: str) -> str:
 
 
 def _is_wuzapi_not_started(resp: requests.Response) -> bool:
-    """Detect provider-level not-started responses."""
+    """Detect explicit provider-level not-started/disconnected responses."""
     try:
         body = (resp.text or "")[:500].lower()
     except Exception:
         body = ""
     location = (resp.headers.get("Location") or "").lower()
-    return ("errors/not-started" in body) or ("errors/not-started" in location)
+    markers = (
+        "errors/not-started",
+        "session not started",
+        "session is not started",
+        "session disconnected",
+        "session is disconnected",
+        "not connected",
+    )
+    return any(marker in body or marker in location for marker in markers)
+
+
+def _payload_reports_disconnected(payload: Any) -> bool:
+    """Recognize only explicit provider disconnected/not-started errors."""
+    for obj in _wuzapi_response_objects(payload):
+        values = [obj.get(key) for key in (
+            "error", "Error", "errors", "Errors", "message", "Message", "status", "Status"
+        )]
+        text = " ".join(str(value).lower() for value in values if value not in (None, ""))
+        if any(marker in text for marker in (
+            "errors/not-started", "session not started", "session is not started",
+            "session disconnected", "session is disconnected", "not connected",
+        )):
+            return True
+    return False
 
 
 def _safe_response_excerpt(resp: requests.Response, max_chars: int = 200) -> str:
@@ -157,11 +411,11 @@ def _wuzapi_send_ack(payload: Any) -> tuple[str, str, str]:
 
 def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[Dict]:
     """Send WhatsApp message via WuzAPI.
-    
+
     Standard endpoint: POST /chat/send/text with Token header.
     Payload: {"Phone":"62812xxxx","Body":"..."} for private
              {"JID":"xxx@g.us","Body":"..."} for groups
-             
+
     Args:
         to: Recipient phone/JID
         body: Message body
@@ -172,13 +426,15 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
             secure_log("ERROR", "WuzAPI params missing")
             return None
 
-        base = _normalize_base(WUZAPI_DOMAIN)
-        session = get_wuzapi_session()
         phone = _normalize_recipient_phone(to)
         if not phone:
             secure_log("ERROR", "WuzAPI send failed: empty recipient")
             return None
 
+        # Heal a known disconnected session before the first delivery attempt.
+        ensure_wuzapi_connected()
+        base = _normalize_base(WUZAPI_DOMAIN)
+        session = get_wuzapi_session()
         payload: Dict[str, Any] = {
             "Phone": phone,
             "Body": body,
@@ -186,14 +442,34 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
         if mention_jid:
             payload["ContextInfo"] = {"MentionedJID": [mention_jid]}
 
+        def post_once(url: str):
+            endpoint_started = time.perf_counter()
+            response = None
+            error = ""
+            try:
+                response = session.post(url, json=payload, timeout=8, allow_redirects=False)
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {str(exc)[:200]}"
+            finally:
+                log_timing(
+                    "wuzapi.send_text",
+                    endpoint_started,
+                    endpoint="chat/send/text",
+                    status=getattr(response, "status_code", "error"),
+                )
+            return response, error
+
         endpoints = _build_wuzapi_endpoints(base, "chat/send/text")
         last_err = ""
         for url in endpoints:
-            endpoint_started = time.perf_counter()
-            resp = None
-            try:
-                resp = session.post(url, json=payload, timeout=8, allow_redirects=False)
-                if resp.status_code in (200, 201, 202):
+            resp, request_error = post_once(url)
+            if resp is None:
+                last_err = request_error
+                continue
+
+            retried_after_reconnect = False
+            while True:
+                if 200 <= resp.status_code < 300:
                     try:
                         provider_payload = resp.json()
                     except Exception:
@@ -214,35 +490,51 @@ def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[D
                         f"{resp.status_code} on {url} provider_ack={ack_state}: {ack_reason}"
                     )
                     secure_log("WARNING", f"WuzAPI Send not acknowledged: {last_err}")
-                    # An explicit provider rejection is safe to try against the
-                    # supported fallback endpoint. Unknown outcomes are not
-                    # retried on the same endpoint because a send may already
-                    # have reached WhatsApp despite a malformed response.
+                    # Unknown 2xx responses may represent a delivered message.
+                    # Never retry them, including after a successful reconnect.
                     if ack_state == "unknown":
                         secure_log("ERROR", f"WuzAPI: send outcome unknown; not retrying: {last_err}")
                         return None
-                    continue
+                    if _payload_reports_disconnected(provider_payload) and not retried_after_reconnect:
+                        secure_log("WARNING", "WuzAPI rejected send because the session is disconnected; attempting reconnect")
+                        connected = ensure_wuzapi_connected(force=True)
+                        if not connected.get("connected"):
+                            return None
+                        retried_after_reconnect = True
+                        resp, request_error = post_once(url)
+                        if resp is None:
+                            secure_log("ERROR", f"WuzAPI reconnect retry outcome unknown: {request_error}")
+                            return None
+                        continue
+                    if retried_after_reconnect:
+                        secure_log("ERROR", f"WuzAPI: reconnect retry was rejected: {last_err}")
+                        return None
+                    break
 
                 loc = resp.headers.get("Location", "")
                 last_err = f"{resp.status_code} on {url} loc={loc}: {_safe_response_excerpt(resp)}"
+                if _is_wuzapi_not_started(resp) and not retried_after_reconnect:
+                    secure_log("WARNING", "WuzAPI session not started; attempting reconnect")
+                    connected = ensure_wuzapi_connected(force=True)
+                    if not connected.get("connected"):
+                        secure_log("ERROR", f"WuzAPI reconnect failed before send retry: {last_err}")
+                        return None
+                    retried_after_reconnect = True
+                    resp, request_error = post_once(url)
+                    if resp is None:
+                        secure_log(
+                            "ERROR",
+                            f"WuzAPI reconnect retry outcome unknown; not retrying: {request_error}",
+                        )
+                        return None
+                    continue
                 if resp.status_code in (401, 403):
                     secure_log("ERROR", f"WuzAPI Auth Error: {last_err}")
                     return None
-                if _is_wuzapi_not_started(resp):
-                    secure_log(
-                        "ERROR",
-                        "WuzAPI reports session not started for this token/instance. "
-                        "Please reconnect/start session from provider dashboard."
-                    )
-            except Exception as e:
-                last_err = f"{type(e).__name__}: {str(e)[:200]}"
-            finally:
-                log_timing(
-                    "wuzapi.send_text",
-                    endpoint_started,
-                    endpoint="chat/send/text",
-                    status=getattr(resp, "status_code", "error"),
-                )
+                if retried_after_reconnect:
+                    secure_log("ERROR", f"WuzAPI reconnect retry failed: {last_err}")
+                    return None
+                break
 
         secure_log("ERROR", f"WuzAPI: send text failed: {last_err}")
         return None

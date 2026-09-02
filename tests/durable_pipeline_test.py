@@ -377,6 +377,58 @@ class DurablePipelineTests(unittest.TestCase):
         self.assertEqual(response.get_json()["status"], "degraded")
         self.assertTrue(response.get_json()["security"]["ready"])
 
+    def test_health_reports_disconnected_whatsapp_as_degraded_without_503(self):
+        import main
+
+        provider = {
+            "configured": True, "reachable": True, "connected": False,
+            "logged_in": False, "state": "disconnected", "error": "",
+            "checked_at": "2026-09-02T00:00:00+00:00",
+        }
+        with main.app.test_request_context("/health"), \
+             patch.object(main, "inbox_health", return_value={"durable": True, "backend": "postgres"}), \
+             patch.object(main, "inbox_required", return_value=False), \
+             patch.object(main, "get_wuzapi_status", return_value=provider):
+            response, status_code = main.health_check()
+
+        body = response.get_json()
+        self.assertEqual(status_code, 200)
+        self.assertEqual(body["status"], "degraded")
+        self.assertEqual(body["whatsapp_provider"], provider)
+
+    def test_health_provider_probe_failure_degrades_without_503(self):
+        import main
+
+        with main.app.test_request_context("/health"), \
+             patch.object(main, "inbox_health", return_value={"durable": True, "backend": "postgres"}), \
+             patch.object(main, "inbox_required", return_value=False), \
+             patch.object(main, "get_wuzapi_status", side_effect=RuntimeError("provider timeout")), \
+             patch.dict(os.environ, {"WUZAPI_DOMAIN": "https://wuzapi.test", "WUZAPI_TOKEN": "token"}):
+            response, status_code = main.health_check()
+
+        body = response.get_json()
+        self.assertEqual(status_code, 200)
+        self.assertEqual(body["status"], "degraded")
+        self.assertEqual(body["whatsapp_provider"]["state"], "unreachable")
+        self.assertNotIn("token", str(body["whatsapp_provider"]).lower())
+
+    def test_health_keeps_core_503_semantics_when_whatsapp_is_connected(self):
+        import main
+
+        provider = {
+            "configured": True, "reachable": True, "connected": True,
+            "logged_in": True, "state": "connected", "error": "",
+            "checked_at": "2026-09-02T00:00:00+00:00",
+        }
+        with main.app.test_request_context("/health"), \
+             patch.object(main, "inbox_health", return_value={"durable": False, "backend": "memory"}), \
+             patch.object(main, "inbox_required", return_value=True), \
+             patch.object(main, "get_wuzapi_status", return_value=provider):
+            response, status_code = main.health_check()
+
+        self.assertEqual(status_code, 503)
+        self.assertEqual(response.get_json()["status"], "degraded")
+
     def test_health_fails_closed_when_production_security_is_missing(self):
         import main
 
