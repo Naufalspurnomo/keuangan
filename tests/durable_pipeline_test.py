@@ -412,6 +412,24 @@ class DurablePipelineTests(unittest.TestCase):
         self.assertEqual(body["whatsapp_provider"]["state"], "unreachable")
         self.assertNotIn("token", str(body["whatsapp_provider"]).lower())
 
+    def test_recovery_qr_requires_token_and_disables_caching(self):
+        import main
+
+        client = main.app.test_client()
+        response = client.get("/internal/recovery/whatsapp-qr")
+        self.assertEqual(response.status_code, 404)
+
+        with patch.object(main, "_RECOVERY_TOKEN_SHA256", __import__("hashlib").sha256(b"test-token").hexdigest()), \
+             patch.object(main, "get_wuzapi_qr_image", return_value=b"\x89PNG\r\n\x1a\nimage"):
+            response = client.get(
+                "/internal/recovery/whatsapp-qr",
+                headers={"X-Recovery-Token": "test-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "image/png")
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+
     def test_health_keeps_core_503_semantics_when_whatsapp_is_connected(self):
         import main
 
