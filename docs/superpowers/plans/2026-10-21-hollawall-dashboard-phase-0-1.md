@@ -199,24 +199,24 @@ git commit -m "feat: define dashboard metric contracts"
   - `DashboardRepository.fetch_freshness() -> dict`
   - `check_provider(dsn: str) -> ProviderReport`
 
-- [ ] **Step 1: Write repository tests with a fake cursor**
+- [x] **Step 1: Write repository tests with a fake cursor**
 
 Assert parameter binding, inclusive dates, stable `(transaction_date, id)` cursor pagination, `is_valid` handling, and zero string interpolation of user filters.
 
-- [ ] **Step 2: Run and verify failure**
+- [x] **Step 2: Run and verify failure**
 
 Run: `python -m unittest tests.dashboard_repository_test -v`
 Expected: FAIL because repository does not exist.
 
-- [ ] **Step 3: Implement repository and additive indexes**
+- [x] **Step 3: Implement repository and additive indexes**
 
 Repository uses the existing DSN and read-only SQL. Migration may add composite indexes but cannot alter or delete ledger columns.
 
-- [ ] **Step 4: Implement provider gate script**
+- [x] **Step 4: Implement provider gate script**
 
 Report only sanitized facts: connectivity, PostgreSQL version, schema/table access, SSL in use, available storage if provider exposes it, last import, ledger row count, invalid count, and whether a read-only role is available. Never print DSN or credentials.
 
-- [ ] **Step 5: Run tests and static SQL review**
+- [x] **Step 5: Run tests and static SQL review**
 
 Run: `python -m unittest tests.dashboard_repository_test -v`
 Expected: PASS.
@@ -224,7 +224,7 @@ Expected: PASS.
 Run: `python -m py_compile dashboard_api/repository.py scripts/check_dashboard_database.py`
 Expected: exit 0.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add dashboard_api/repository.py dashboard_api/migrations/001_dashboard_read_indexes.sql scripts/check_dashboard_database.py tests/dashboard_repository_test.py
