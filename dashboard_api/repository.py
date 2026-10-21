@@ -124,6 +124,32 @@ class DashboardRepository:
             next_cursor = encode_cursor(last["transaction_date"], last["id"])
         return Page(items=items, next_cursor=next_cursor)
 
+    def fetch_metric_rows(self, filters: DashboardFilters) -> list[dict[str, Any]]:
+        """Return the bounded normalized row set used by deterministic metrics."""
+
+        where = ["transaction_date >= %s", "transaction_date <= %s"]
+        params: list[Any] = [filters.date_from, filters.date_to]
+        if filters.wallet:
+            where.append("wallet = %s")
+            params.append(filters.wallet)
+        if filters.company:
+            where.append("company = %s")
+            params.append(filters.company)
+        if filters.project:
+            where.append("project = %s")
+            params.append(filters.project)
+        sql = f"""
+            SELECT {", ".join(_TRANSACTION_COLUMNS)}
+            FROM financial_ledger
+            WHERE {" AND ".join(where)}
+            ORDER BY transaction_date DESC NULLS LAST, id DESC
+        """
+        with self._connect() as connection:
+            with connection.cursor() as db_cursor:
+                db_cursor.execute(sql, tuple(params))
+                rows = db_cursor.fetchall()
+        return [dict(zip(_TRANSACTION_COLUMNS, row)) for row in rows]
+
     def fetch_filter_options(self) -> dict[str, list[str]]:
         sql = """
             SELECT DISTINCT wallet, company, project
