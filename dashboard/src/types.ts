@@ -2,6 +2,8 @@ export type Freshness = 'fresh' | 'aging' | 'stale'
 
 export interface DashboardMeta {
   as_of: string
+  data_through?: string | null
+  source?: string
   freshness: Freshness
   data_completeness: {
     valid_rows: number
@@ -19,6 +21,7 @@ export interface DashboardEnvelope<T> {
 
 export interface Transaction {
   id: number
+  source_key?: string
   transaction_date: string
   transaction_type: string
   amount: number

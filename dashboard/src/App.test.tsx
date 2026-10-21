@@ -67,6 +67,6 @@ describe('Hollawall command center', () => {
     }))
     renderApp()
     expect(await screen.findByText('PRATINJAU · DATA DEMO')).toBeTruthy()
-    expect(screen.getByText('Rp 868.900.000')).toBeTruthy()
+    expect(screen.getAllByText('Rp 868.900.000').length).toBeGreaterThan(0)
   })
 })

@@ -24,13 +24,15 @@ import {
 } from 'lucide-react'
 
 import { ApiError, dashboardApi, login } from './api'
+import { loadSnapshot } from './snapshot'
+import type { CashTrendPoint, DebtSnapshot, ProjectSummary, WalletSnapshot } from './snapshot'
 import type { DashboardMeta, Overview, Transaction } from './types'
 
 const FinancialChart = lazy(() => import('./FinancialChart'))
 const PREVIEW_MODE = import.meta.env.VITE_DEMO_PREVIEW === 'true'
+const SNAPSHOT_MODE = import.meta.env.VITE_SNAPSHOT_PREVIEW === 'true'
 
 const IDR = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })
-const COMPACT_IDR = new Intl.NumberFormat('id-ID', { notation: 'compact', compactDisplay: 'short', maximumFractionDigits: 1 })
 
 const demoTransactions: Transaction[] = [
   { id: 1, transaction_date: '2026-10-21', transaction_type: 'Pemasukan', amount: 125_000_000, wallet: 'TX SBY(216)', company: 'Hollawall', project: 'Surabaya Office', notes: 'Termin pekerjaan utama' },
@@ -68,10 +70,6 @@ const demoMeta: DashboardMeta = {
   data_completeness: { valid_rows: 148, invalid_rows: 2, completeness_pct: 98.7 },
 }
 
-const projectBars = [
-  { name: 'Surabaya Office', value: 146.2 }, { name: 'Grand Galaxy', value: 81.4 },
-  { name: 'Mawar Residence', value: 52.7 }, { name: 'Ruko Nirwana', value: 25.1 },
-]
 
 const pageMeta: Record<string, [string, string]> = {
   overview: ['Ringkasan keuangan', 'Ringkasan Perusahaan'],
@@ -133,7 +131,7 @@ function LoginScreen({ onDone }: { onDone: () => void }) {
   </main>
 }
 
-function Sidebar({ active, setActive, open, setOpen }: { active: string; setActive: (value: string) => void; open: boolean; setOpen: (value: boolean) => void }) {
+function Sidebar({ active, setActive, open, setOpen, transactionCount }: { active: string; setActive: (value: string) => void; open: boolean; setOpen: (value: boolean) => void; transactionCount: number }) {
   const navigation = [
     ['overview', 'Ringkasan', LayoutDashboard], ['cashflow', 'Arus Kas', BarChart3],
     ['wallets', 'Dompet', WalletCards], ['transactions', 'Transaksi', CreditCard],
@@ -145,7 +143,7 @@ function Sidebar({ active, setActive, open, setOpen }: { active: string; setActi
     <aside className={`sidebar ${open ? 'is-open' : ''}`}>
       <div className="sidebar-head"><div className="brand-lockup"><span className="brand-mark">H</span><span>HOLLAWALL</span></div><button className="icon-button mobile-only" onClick={() => setOpen(false)} aria-label="Tutup navigasi"><X size={20} /></button></div>
       <div className="workspace-switch"><Building2 size={18} /><span><small>Ruang kerja</small>Hollawall Group</span><ChevronDown size={16} /></div>
-      <nav>{navigation.map(([key, label, Icon]) => <button key={key} className={active === key ? 'active' : ''} onClick={() => { setActive(key); setOpen(false) }}><Icon size={19} strokeWidth={1.8} /><span>{label}</span>{key === 'transactions' && <b>6</b>}</button>)}</nav>
+      <nav>{navigation.map(([key, label, Icon]) => <button key={key} className={active === key ? 'active' : ''} onClick={() => { setActive(key); setOpen(false) }}><Icon size={19} strokeWidth={1.8} /><span>{label}</span>{key === 'transactions' && <b>{transactionCount}</b>}</button>)}</nav>
       <div className="sidebar-bottom"><div className="profile"><span>NS</span><div><strong>Naufal Spurnomo</strong><small>Owner</small></div></div></div>
     </aside>
   </>
@@ -157,9 +155,10 @@ function ThemeToggle({ theme, setTheme }: { theme: string; setTheme: (value: str
   </button>
 }
 
-function FilterBar() {
+function FilterBar({ dataThrough }: { dataThrough?: string | null }) {
+  const period = dataThrough ? `Semua data · s.d. ${new Date(`${dataThrough}T00:00:00`).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}` : 'Semua periode'
   return <div className="filter-bar">
-    <button><span><small>Periode</small>1–21 Oktober 2026</span><ChevronDown size={15} /></button>
+    <button><span><small>Periode</small>{period}</span><ChevronDown size={15} /></button>
     <button><span><small>Perusahaan</small>Semua perusahaan</span><ChevronDown size={15} /></button>
     <button><span><small>Dompet</small>Semua dompet</span><ChevronDown size={15} /></button>
     <button><span><small>Proyek</small>Semua proyek</span><ChevronDown size={15} /></button>
@@ -167,41 +166,42 @@ function FilterBar() {
   </div>
 }
 
-function MetricCard({ label, value, tone, trend }: { label: string; value: number; tone?: string; trend?: string }) {
+function MetricCard({ label, value, tone }: { label: string; value: number; tone?: string }) {
   return <article className={`metric-card ${tone ?? ''}`}>
     <div className="metric-top"><span>{label}</span><CircleDollarSign size={18} /></div>
     <strong>{formatAmount(value)}</strong>
-    <div className="metric-foot">{trend && <span className="positive"><ArrowUpRight size={14} />{trend}</span>}<small>Periode berjalan</small></div>
+    <div className="metric-foot"><small>Seluruh snapshot</small></div>
   </article>
 }
 
 function Freshness({ meta }: { meta: DashboardMeta }) {
   const date = new Date(meta.as_of)
-  return <div className={`freshness ${meta.freshness}`}><i></i><span>{meta.freshness === 'fresh' ? 'Data terkini' : meta.freshness === 'aging' ? 'Data mulai menua' : 'Data perlu diperbarui'}<small>{date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' })} WIB · {meta.data_completeness.completeness_pct}% lengkap</small></span></div>
+  const through = meta.data_through ? new Date(`${meta.data_through}T00:00:00`).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : 'tanggal tidak tersedia'
+  return <div className={`freshness ${meta.freshness}`}><i></i><span>{meta.freshness === 'fresh' ? 'Data terkini' : meta.freshness === 'aging' ? 'Data mulai menua' : 'Snapshot perlu diperbarui'}<small>Data s.d. {through} · file {date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} · {meta.data_completeness.completeness_pct}% valid</small></span></div>
 }
 
-function OverviewPage({ overview, transactions, meta, setActive }: { overview: Overview; transactions: Transaction[]; meta: DashboardMeta; setActive: (value: string) => void }) {
+function OverviewPage({ overview, transactions, meta, cashTrend, projects, setActive }: { overview: Overview; transactions: Transaction[]; meta: DashboardMeta; cashTrend: CashTrendPoint[]; projects: ProjectSummary[]; setActive: (value: string) => void }) {
   const metrics = overview.metrics
   return <>
     <section className="hero-balance">
-      <div><p className="eyebrow">TOTAL POSISI KAS</p><h2>{formatAmount(metrics.cash_balance)}</h2><p><span className="positive"><ArrowUpRight size={16} />12,4%</span> dibanding periode sebelumnya</p></div>
+      <div><p className="eyebrow">TOTAL POSISI KAS</p><h2>{formatAmount(metrics.cash_balance)}</h2><p>Saldo sistem dari seluruh dompet pada snapshot terakhir.</p></div>
       <Freshness meta={meta} />
     </section>
     <section className="metric-grid">
-      <MetricCard label={overview.labels.operating_inflow} value={metrics.operating_inflow} tone="income" trend="8,7%" />
+      <MetricCard label={overview.labels.operating_inflow} value={metrics.operating_inflow} tone="income" />
       <MetricCard label={overview.labels.operating_outflow} value={metrics.operating_outflow} tone="expense" />
-      <MetricCard label={overview.labels.net_operating_cashflow} value={metrics.net_operating_cashflow} tone="net" trend="14,2%" />
+      <MetricCard label={overview.labels.net_operating_cashflow} value={metrics.net_operating_cashflow} tone="net" />
       <MetricCard label={overview.labels.open_internal_debt} value={metrics.open_internal_debt} tone="debt" />
     </section>
     <section className="overview-grid">
       <article className="panel chart-panel">
         <div className="panel-head"><div><p className="eyebrow">POSISI KAS</p><h3>Pergerakan saldo kas</h3></div><button className="text-button">Lihat arus kas <ArrowRight size={15} /></button></div>
-        <div className="chart-value"><strong>Rp 868,9 jt</strong><span className="positive">+Rp 305,4 jt</span></div>
-        <div className="area-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="cash" /></Suspense></div>
+        <div className="chart-value"><strong>{formatAmount(metrics.cash_balance)}</strong><span className={metrics.net_operating_cashflow >= 0 ? 'positive' : 'negative'}>{formatAmount(metrics.net_operating_cashflow)} bersih</span></div>
+        <div className="area-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="cash" cashTrend={cashTrend} /></Suspense></div>
       </article>
       <article className="panel project-panel">
         <div className="panel-head"><div><p className="eyebrow">KINERJA PROYEK</p><h3>Arus kas proyek bersih</h3></div><button className="icon-button"><BarChart3 size={18} /></button></div>
-        <div className="bar-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="projects" /></Suspense></div>
+        <div className="bar-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="projects" projects={projects} /></Suspense></div>
       </article>
     </section>
     <section className="panel activity-panel">
@@ -215,19 +215,25 @@ function TransactionTable({ rows, compact = false }: { rows: Transaction[]; comp
   return <div className="table-wrap"><table className="transaction-table"><thead><tr><th>Tanggal</th><th>Keterangan</th><th>Proyek</th><th>Dompet</th><th>Jenis</th><th className="number">Jumlah</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td data-label="Tanggal">{new Date(row.transaction_date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}</td><td data-label="Keterangan"><strong>{row.notes || 'Transaksi operasional'}</strong>{!compact && <small>ID #{row.id}</small>}</td><td data-label="Proyek">{row.project}</td><td data-label="Dompet"><span className="wallet-chip">{row.wallet}</span></td><td data-label="Jenis"><span className={`type-chip ${row.transaction_type === 'Pemasukan' ? 'income' : 'expense'}`}>{row.transaction_type === 'Pemasukan' ? <ArrowDownRight size={13} /> : <ArrowUpRight size={13} />}{row.transaction_type}</span></td><td data-label="Jumlah" className={`number amount ${row.transaction_type === 'Pemasukan' ? 'positive' : ''}`}>{row.transaction_type === 'Pemasukan' ? '+' : '−'}{formatAmount(row.amount)}</td></tr>)}</tbody></table></div>
 }
 
-function DetailPage({ active, transactions, overview }: { active: string; transactions: Transaction[]; overview: Overview }) {
+function DetailPage({ active, transactions, overview, wallets, debts, projects, completeness }: { active: string; transactions: Transaction[]; overview: Overview; wallets: WalletSnapshot[]; debts: DebtSnapshot[]; projects: ProjectSummary[]; completeness: number }) {
   if (active === 'transactions') return <section className="panel detail-panel"><div className="detail-toolbar"><div className="search-field"><Search size={18} /><input placeholder="Cari transaksi, proyek, atau catatan…" /></div><button className="secondary-button"><ListFilter size={17} /> Filter</button><button className="secondary-button">Ekspor</button></div><TransactionTable rows={transactions} /></section>
   const content: Record<string, { stat: string; value: number; copy: string }> = {
     cashflow: { stat: 'Arus kas operasional bersih', value: overview.metrics.net_operating_cashflow, copy: 'Pemasukan dan pengeluaran operasional setelah pergerakan internal dieliminasi.' },
     wallets: { stat: 'Saldo kas terkonsolidasi', value: overview.metrics.cash_balance, copy: 'Posisi likuiditas perusahaan dari seluruh dompet dan rekening yang terhubung.' },
     projects: { stat: 'Arus kas proyek bersih', value: overview.metrics.project_cashflow, copy: 'Kontribusi kas proyek aktif pada periode yang dipilih.' },
     debts: { stat: 'Hutang antar-dompet terbuka', value: overview.metrics.open_internal_debt, copy: 'Kewajiban internal yang belum diselesaikan dan tidak masuk pendapatan atau beban.' },
-    reports: { stat: 'Kelengkapan data', value: 987, copy: 'Laporan manajemen yang dapat ditelusuri kembali ke transaksi penyusunnya.' },
+    reports: { stat: 'Kelengkapan data', value: completeness, copy: 'Persentase baris transaksi valid pada snapshot yang dapat ditelusuri ke source key.' },
   }
   const item = content[active]
+  const breakdownRows = active === 'wallets'
+    ? wallets.map((row) => ({ name: row.name, value: row.balance }))
+    : active === 'debts'
+      ? debts.filter((row) => row.status === 'OPEN').slice(0, 8).map((row) => ({ name: `${row.borrower} → ${row.lender}`, value: row.amount }))
+      : projects.slice(0, 8).map((row) => ({ name: row.name, value: row.net_cashflow }))
+  const maxValue = Math.max(...breakdownRows.map((row) => Math.abs(row.value)), 1)
   return <section className="detail-layout">
-    <article className="detail-hero"><p className="eyebrow">PANDANGAN EKSEKUTIF</p><h2>{item.stat}</h2><strong>{active === 'reports' ? '98,7%' : formatAmount(item.value)}</strong><p>{item.copy}</p><button className="primary-button">Buka rincian <ArrowRight size={17} /></button></article>
-    <article className="panel breakdown"><div className="panel-head"><div><p className="eyebrow">RINCIAN</p><h3>Komposisi periode berjalan</h3></div></div>{projectBars.map((row, index) => <div className="breakdown-row" key={row.name}><span><i style={{ background: index === 0 ? 'var(--chart-primary)' : 'var(--chart-secondary)' }}></i>{row.name}</span><strong>Rp {COMPACT_IDR.format(row.value * 1_000_000)}</strong><div><b style={{ width: `${(row.value / 146.2) * 100}%` }}></b></div></div>)}</article>
+    <article className="detail-hero"><p className="eyebrow">PANDANGAN EKSEKUTIF</p><h2>{item.stat}</h2><strong>{active === 'reports' ? `${item.value.toLocaleString('id-ID')}%` : formatAmount(item.value)}</strong><p>{item.copy}</p><button className="primary-button">Buka rincian <ArrowRight size={17} /></button></article>
+    <article className="panel breakdown"><div className="panel-head"><div><p className="eyebrow">RINCIAN</p><h3>Komposisi snapshot</h3></div></div>{breakdownRows.map((row, index) => <div className="breakdown-row" key={`${row.name}-${index}`}><span><i style={{ background: row.value < 0 ? 'var(--danger)' : index === 0 ? 'var(--chart-primary)' : 'var(--chart-secondary)' }}></i>{row.name}</span><strong>{formatAmount(row.value)}</strong><div><b style={{ width: `${(Math.abs(row.value) / maxValue) * 100}%` }}></b></div></div>)}</article>
   </section>
 }
 
@@ -235,34 +241,40 @@ function Dashboard() {
   const [active, setActive] = useState('overview')
   const [menuOpen, setMenuOpen] = useState(false)
   const [theme, setTheme] = useState(() => localStorage.getItem('hollawall-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
-  const overviewQuery = useQuery({ queryKey: ['overview'], queryFn: () => dashboardApi.overview(), retry: false, refetchInterval: 30_000 })
-  const transactionQuery = useQuery({ queryKey: ['transactions'], queryFn: () => dashboardApi.transactions('?limit=50'), retry: false, refetchInterval: 30_000 })
+  const snapshotQuery = useQuery({ queryKey: ['snapshot'], queryFn: loadSnapshot, retry: false, enabled: SNAPSHOT_MODE, refetchInterval: SNAPSHOT_MODE ? 300_000 : false })
+  const overviewQuery = useQuery({ queryKey: ['overview'], queryFn: () => dashboardApi.overview(), retry: false, refetchInterval: 30_000, enabled: !SNAPSHOT_MODE })
+  const transactionQuery = useQuery({ queryKey: ['transactions'], queryFn: () => dashboardApi.transactions('?limit=50'), retry: false, refetchInterval: 30_000, enabled: !SNAPSHOT_MODE })
 
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('hollawall-theme', theme) }, [theme])
   useEffect(() => { document.title = `${pageMeta[active][1]} — Hollawall` }, [active])
 
-  const overview = overviewQuery.data?.data ?? demoOverview
-  const meta = overviewQuery.data?.meta ?? demoMeta
-  const transactions = transactionQuery.data?.data.items ?? demoTransactions
-  const isDemo = overviewQuery.isError || transactionQuery.isError
+  const snapshot = snapshotQuery.data
+  const overview = snapshot?.overview ?? overviewQuery.data?.data ?? demoOverview
+  const meta = snapshot?.meta ?? overviewQuery.data?.meta ?? demoMeta
+  const transactions = snapshot?.transactions ?? transactionQuery.data?.data.items ?? demoTransactions
+  const wallets = snapshot?.wallets ?? []
+  const debts = snapshot?.debts ?? []
+  const projects = snapshot?.project_summaries ?? []
+  const cashTrend = snapshot?.cash_trend ?? []
+  const isDemo = !snapshot && (PREVIEW_MODE || overviewQuery.isError || transactionQuery.isError)
   const [eyebrow, title] = pageMeta[active]
 
   return <div className="app-shell">
-    <Sidebar active={active} setActive={setActive} open={menuOpen} setOpen={setMenuOpen} />
+    <Sidebar active={active} setActive={setActive} open={menuOpen} setOpen={setMenuOpen} transactionCount={transactions.length} />
     <main className="main-canvas">
-      <header className="topbar"><button className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi"><Menu size={21} /></button><div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{title}</strong></div><div className="topbar-actions"><button className="icon-button"><Search size={18} /></button><ThemeToggle theme={theme} setTheme={setTheme} /><button className="icon-button" onClick={() => { overviewQuery.refetch(); transactionQuery.refetch() }}><RefreshCcw size={17} /></button></div></header>
+      <header className="topbar"><button className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi"><Menu size={21} /></button><div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{title}</strong></div><div className="topbar-actions"><button className="icon-button"><Search size={18} /></button><ThemeToggle theme={theme} setTheme={setTheme} /><button className="icon-button" onClick={() => { snapshotQuery.refetch(); overviewQuery.refetch(); transactionQuery.refetch() }}><RefreshCcw size={17} /></button></div></header>
       <div className="content">
-        <section className="page-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>Pandangan terukur atas posisi keuangan Hollawall.</p></div>{isDemo && <div className="demo-badge">PRATINJAU · DATA DEMO</div>}</section>
-        <FilterBar />
-        {active === 'overview' ? <OverviewPage overview={overview} transactions={transactions} meta={meta} setActive={setActive} /> : <DetailPage active={active} transactions={transactions} overview={overview} />}
+        <section className="page-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>Pandangan terukur atas posisi keuangan Hollawall.</p></div>{snapshot ? <div className={`demo-badge ${meta.freshness}`}>SNAPSHOT PRODUKSI · {meta.freshness === 'stale' ? 'PERLU DIPERBARUI' : 'READ-ONLY'}</div> : isDemo && <div className="demo-badge">PRATINJAU · DATA DEMO</div>}</section>
+        <FilterBar dataThrough={meta.data_through} />
+        {active === 'overview' ? <OverviewPage overview={overview} transactions={transactions} meta={meta} cashTrend={cashTrend} projects={projects} setActive={setActive} /> : <DetailPage active={active} transactions={transactions} overview={overview} wallets={wallets} debts={debts} projects={projects} completeness={meta.data_completeness.completeness_pct} />}
       </div>
     </main>
   </div>
 }
 
 export default function App() {
-  const [authenticated, setAuthenticated] = useState<boolean | null>(PREVIEW_MODE ? true : null)
-  const identityQuery = useQuery({ queryKey: ['identity'], queryFn: dashboardApi.me, retry: false, enabled: !PREVIEW_MODE })
+  const [authenticated, setAuthenticated] = useState<boolean | null>(PREVIEW_MODE || SNAPSHOT_MODE ? true : null)
+  const identityQuery = useQuery({ queryKey: ['identity'], queryFn: dashboardApi.me, retry: false, enabled: !PREVIEW_MODE && !SNAPSHOT_MODE })
   useEffect(() => { if (identityQuery.isSuccess) setAuthenticated(true); if (identityQuery.isError) setAuthenticated(false) }, [identityQuery.isSuccess, identityQuery.isError])
   if (authenticated === null) return <div className="boot-screen"><span className="brand-mark">H</span><p>Menyiapkan pusat kendali…</p></div>
   return authenticated ? <Dashboard /> : <LoginScreen onDone={() => setAuthenticated(true)} />
