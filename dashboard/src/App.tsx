@@ -26,6 +26,8 @@ import {
 import { ApiError, dashboardApi, login } from './api'
 import { loadSnapshot } from './snapshot'
 import type { CashTrendPoint, DebtSnapshot, ProjectSummary, WalletSnapshot } from './snapshot'
+import { downloadTransactionsCsv, filterTransactions } from './transactions'
+import type { TransactionTypeFilter } from './transactions'
 import type { DashboardMeta, Overview, Transaction } from './types'
 
 const FinancialChart = lazy(() => import('./FinancialChart'))
@@ -216,7 +218,10 @@ function TransactionTable({ rows, compact = false }: { rows: Transaction[]; comp
 }
 
 function DetailPage({ active, transactions, overview, wallets, debts, projects, completeness }: { active: string; transactions: Transaction[]; overview: Overview; wallets: WalletSnapshot[]; debts: DebtSnapshot[]; projects: ProjectSummary[]; completeness: number }) {
-  if (active === 'transactions') return <section className="panel detail-panel"><div className="detail-toolbar"><div className="search-field"><Search size={18} /><input placeholder="Cari transaksi, proyek, atau catatan…" /></div><button className="secondary-button"><ListFilter size={17} /> Filter</button><button className="secondary-button">Ekspor</button></div><TransactionTable rows={transactions} /></section>
+  const [query, setQuery] = useState('')
+  const [typeFilter, setTypeFilter] = useState<TransactionTypeFilter>('all')
+  const filteredTransactions = filterTransactions(transactions, query, typeFilter)
+  if (active === 'transactions') return <section className="panel detail-panel"><div className="detail-toolbar"><div className="search-field"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari transaksi, proyek, dompet, atau source key…" /></div><label className="type-select"><ListFilter size={17} /><span className="sr-only">Filter jenis</span><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as TransactionTypeFilter)}><option value="all">Semua jenis</option><option value="Pemasukan">Pemasukan</option><option value="Pengeluaran">Pengeluaran</option></select></label><button className="secondary-button" onClick={() => downloadTransactionsCsv(filteredTransactions)}>Ekspor CSV</button><span className="result-count">{filteredTransactions.length.toLocaleString('id-ID')} transaksi</span></div><TransactionTable rows={filteredTransactions} /></section>
   const content: Record<string, { stat: string; value: number; copy: string }> = {
     cashflow: { stat: 'Arus kas operasional bersih', value: overview.metrics.net_operating_cashflow, copy: 'Pemasukan dan pengeluaran operasional setelah pergerakan internal dieliminasi.' },
     wallets: { stat: 'Saldo kas terkonsolidasi', value: overview.metrics.cash_balance, copy: 'Posisi likuiditas perusahaan dari seluruh dompet dan rekening yang terhubung.' },
