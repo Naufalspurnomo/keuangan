@@ -41,3 +41,8 @@ ngrok.exe
 # Generated documentation and diagnostic artifacts
 output/
 tmp/
+
+# Frontend dependencies and production build
+node_modules/
+dist/
+*.tsbuildinfo
