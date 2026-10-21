@@ -150,7 +150,7 @@ git commit -m "feat: prototype Hollawall financial command center"
   - `build_overview(rows: Sequence[Mapping], filters: DashboardFilters, now: datetime) -> dict`
   - `build_drilldown(filters: DashboardFilters, metric: str) -> dict`
 
-- [ ] **Step 1: Write failing contract tests**
+- [x] **Step 1: Write failing contract tests**
 
 Pin exact allowed values and defaults:
 - period default `this_month` in `Asia/Jakarta`;
@@ -160,20 +160,20 @@ Pin exact allowed values and defaults:
 - invalid rows count toward completeness issues only;
 - summary terms are `cash_position`, `inflow`, `outflow`, `net_movement`, `open_internal_debt`, `data_completeness`.
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `python -m unittest tests.dashboard_api_contract_test tests.dashboard_service_test -v`
 Expected: FAIL because modules do not exist.
 
-- [ ] **Step 3: Implement immutable filter/result dataclasses and pure calculations**
+- [x] **Step 3: Implement immutable filter/result dataclasses and pure calculations**
 
 Do not import Flask or `psycopg` in `contracts.py`/metric calculation functions. Centralize transaction classification constants; do not infer from description strings when normalized type fields exist.
 
-- [ ] **Step 4: Add edge-case tests from Review Focus items 1–3**
+- [x] **Step 4: Add edge-case tests from Review Focus items 1–3**
 
 Use synthetic rows for transfer pairs, malformed historic data, and mixed filters.
 
-- [ ] **Step 5: Run and commit**
+- [x] **Step 5: Run and commit**
 
 Run: `python -m unittest tests.dashboard_api_contract_test tests.dashboard_service_test -v`
 Expected: PASS.
