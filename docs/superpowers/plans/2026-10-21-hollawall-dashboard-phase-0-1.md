@@ -84,7 +84,7 @@
 - Consumes: synthetic `window.HOLLAWALL_FIXTURE` with `meta`, `summary`, `cashflow`, `wallets`, `projects`, `debts`, `transactions`.
 - Produces: a dependency-free prototype served by `python -m http.server`, with navigation and filters identifiable through stable `data-testid` attributes.
 
-- [ ] **Step 1: Write the failing Playwright smoke test**
+- [x] **Step 1: Write the failing Playwright smoke test**
 
 Assert:
 - page title is `Hollawall — Financial Command Center`;
@@ -96,16 +96,16 @@ Assert:
 - mobile width 390 has no horizontal overflow;
 - no console errors occur.
 
-- [ ] **Step 2: Run prototype test and verify it fails**
+- [x] **Step 2: Run prototype test and verify it fails**
 
 Run: `python -m unittest discover -s tests/browser -p 'financial_command_center_prototype_test.py' -v`
 Expected: FAIL because the prototype does not exist.
 
-- [ ] **Step 3: Implement the semantic prototype shell and fixture contract**
+- [x] **Step 3: Implement the semantic prototype shell and fixture contract**
 
 Use a charcoal/navy command-center shell, off-white data canvas, restrained green for healthy/inflow, amber for attention, red only for real risk/outflow. Use compact Indonesian number formatting and tabular numerals. Avoid decorative gradients, glass cards, oversized radii, and chart-only communication.
 
-- [ ] **Step 4: Implement interactions**
+- [x] **Step 4: Implement interactions**
 
 Exact behavior:
 - sidebar switches seven launch views without reload;
@@ -116,19 +116,19 @@ Exact behavior:
 - charts include textual summaries and tooltips;
 - stale banner fixture can be toggled with `?stale=1`.
 
-- [ ] **Step 5: Run browser acceptance**
+- [x] **Step 5: Run browser acceptance**
 
 Run: `python -m unittest discover -s tests/browser -p 'financial_command_center_prototype_test.py' -v`
 Expected: PASS.
 
-- [ ] **Step 6: Capture verification screenshots**
+- [x] **Step 6: Capture verification screenshots**
 
 Capture:
 - `artifacts/dashboard-prototype/overview-1440x900.png`
 - `artifacts/dashboard-prototype/transactions-1280x720.png`
 - `artifacts/dashboard-prototype/mobile-390x844.png`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add prototypes/financial-command-center tests/browser/financial_command_center_prototype_test.py artifacts/dashboard-prototype
