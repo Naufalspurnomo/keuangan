@@ -4,7 +4,7 @@
 
 **Goal:** Deliver a visually validated owner dashboard prototype and then a private, read-only Financial Command Center backed by Hollawall's existing deterministic finance core and PostgreSQL mirror.
 
-**Architecture:** Phase 0 is a dependency-free browser prototype under `prototypes/financial-command-center/`; it uses clearly labeled synthetic fixture data and never touches production. Phase 1 adds a versioned `/api/dashboard/v1` Flask blueprint that queries the existing `financial_ledger`, then a React/TypeScript/Vite PWA that consumes only that API. Google Sheets remains authoritative until parity gates pass; the dashboard cannot mutate financial state.
+**Architecture:** Phase 0 is a dependency-free browser prototype under `prototypes/financial-command-center/`; it uses clearly labeled synthetic fixture data and never touches production. Phase 1 adds a versioned `/api/dashboard/v1` Flask blueprint that queries the existing `financial_ledger`, then a React/TypeScript/Vite PWA hosted on Naufal's current VPS and consuming only that API. Google Sheets remains authoritative until parity gates pass; the dashboard cannot mutate financial state.
 
 **Tech Stack:** Existing Python 3.11/Flask 3.1/PostgreSQL/`psycopg`, React 18+, TypeScript 5+, Vite 5+, semantic HTML/CSS, Chart.js only if hand-written SVG becomes a maintenance burden, Python `unittest`, Vitest, Playwright.
 
@@ -25,6 +25,8 @@
 - Every summary value supports drill-down to the exact transaction filter that produced it.
 - Prototype data must be labeled `DATA DEMO`; no real transaction values enter repository fixtures or screenshots.
 - Preserve existing WhatsApp ingestion behavior and existing `financial_ledger` idempotency semantics.
+- Light and dark themes are equal release requirements: both pass contrast, chart, table, loading, empty, error, stale, focus, desktop, tablet, and mobile acceptance.
+- The frontend deploys to Naufal's current VPS; do not create Cloudflare Pages infrastructure.
 
 ## Review Focus
 
@@ -474,7 +476,7 @@ Required:
 
 - [ ] **Step 4: Deploy frontend/API privately**
 
-Use existing domain, Cloudflare static hosting if the account/session is available, and the existing Koyeb backend. Do not publish a public signup route. If an owner-only account cannot be provisioned without human authentication, stop at that exact owner-only boundary.
+Host the frontend on Naufal's current VPS behind its existing web server and retain the existing Koyeb backend. Do not publish a public signup route. If an owner-only account cannot be provisioned without human authentication, stop at that exact owner-only boundary.
 
 - [ ] **Step 5: Verify external state**
 

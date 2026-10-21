@@ -557,6 +557,12 @@ Google Drive
 - lightweight chart library selected during implementation after bundle and accessibility evaluation;
 - no global state library unless actual shared-client state requires it.
 
+The web application is hosted on Naufal's current VPS. The visual system
+ships first-class light and dark themes with equal contrast, readability,
+chart legibility, interaction states, and responsive coverage. The initial
+theme follows the operating-system preference; the owner's explicit choice
+is persisted locally.
+
 The browser reads finance data only through the authenticated Flask Finance API. It does not query raw finance tables directly. Realtime transports a version/invalidation signal; the frontend then refetches an authorized API resource. This keeps formulas, authorization, and data-shaping in one server-side boundary.
 
 ### Backend
@@ -676,7 +682,7 @@ Targets:
 
 Pilot recurring incremental cost target: **Rp0**.
 
-- Cloudflare Pages free: frontend and custom domain;
+- Naufal's existing VPS: static frontend hosting and private web entrypoint;
 - existing Koyeb free service: Flask API and WhatsApp bot;
 - existing external PostgreSQL where suitable; otherwise Supabase Free after the provider gate;
 - Supabase Free may provide Auth/Realtime without creating a second financial source of truth;
