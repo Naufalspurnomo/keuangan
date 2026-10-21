@@ -27,6 +27,7 @@ import { ApiError, dashboardApi, login } from './api'
 import type { DashboardMeta, Overview, Transaction } from './types'
 
 const FinancialChart = lazy(() => import('./FinancialChart'))
+const PREVIEW_MODE = import.meta.env.VITE_DEMO_PREVIEW === 'true'
 
 const IDR = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })
 const COMPACT_IDR = new Intl.NumberFormat('id-ID', { notation: 'compact', compactDisplay: 'short', maximumFractionDigits: 1 })
@@ -260,8 +261,8 @@ function Dashboard() {
 }
 
 export default function App() {
-  const [authenticated, setAuthenticated] = useState<boolean | null>(null)
-  const identityQuery = useQuery({ queryKey: ['identity'], queryFn: dashboardApi.me, retry: false })
+  const [authenticated, setAuthenticated] = useState<boolean | null>(PREVIEW_MODE ? true : null)
+  const identityQuery = useQuery({ queryKey: ['identity'], queryFn: dashboardApi.me, retry: false, enabled: !PREVIEW_MODE })
   useEffect(() => { if (identityQuery.isSuccess) setAuthenticated(true); if (identityQuery.isError) setAuthenticated(false) }, [identityQuery.isSuccess, identityQuery.isError])
   if (authenticated === null) return <div className="boot-screen"><span className="brand-mark">H</span><p>Menyiapkan pusat kendali…</p></div>
   return authenticated ? <Dashboard /> : <LoginScreen onDone={() => setAuthenticated(true)} />

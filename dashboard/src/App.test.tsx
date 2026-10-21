@@ -58,4 +58,15 @@ describe('Hollawall command center', () => {
     expect(await screen.findByRole('heading', { name: 'Semua Transaksi' })).toBeTruthy()
     expect(screen.getByPlaceholderText(/Cari transaksi/)).toBeTruthy()
   })
+
+  it('uses API-shaped demo fallback when dashboard resources are unavailable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/auth/me')) return new Response(JSON.stringify({ version: 'dashboard.v1', data: { identity: { email: 'naufalspurnomo@gmail.com', role: 'owner' } }, meta: overview.meta, error: null }), { status: 200 })
+      return new Response(JSON.stringify({ error: { code: 'unavailable', message: 'unavailable' } }), { status: 503 })
+    }))
+    renderApp()
+    expect(await screen.findByText('PRATINJAU · DATA DEMO')).toBeTruthy()
+    expect(screen.getByText('Rp 868.900.000')).toBeTruthy()
+  })
 })
