@@ -3,11 +3,12 @@ import functools
 import http.server
 import json
 from pathlib import Path
+import re
 import socketserver
 import threading
 import unittest
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, expect
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -54,9 +55,9 @@ SNAPSHOT = {
     "meta": {**META, "data_through": "2026-10-21", "source": "acceptance fixture"},
     "overview": OVERVIEW,
     "wallets": [
-        {"name": "CV HB(101)", "balance": 300_000_000},
-        {"name": "TX SBY(216)", "balance": 318_900_000},
-        {"name": "TX Bali(087)", "balance": 250_000_000},
+        {"source_key": "CV HB(101):wallet:summary", "name": "CV HB(101)", "balance": 300_000_000},
+        {"source_key": "TX SBY(216):wallet:summary", "name": "TX SBY(216)", "balance": 318_900_000},
+        {"source_key": "TX Bali(087):wallet:summary", "name": "TX Bali(087)", "balance": 250_000_000},
     ],
     "transactions": TRANSACTIONS,
     "debts": [{"source_key": "HUTANG:2", "date": "2026-10-20", "amount": 28_500_000, "notes": "Bridge", "borrower": "CV HB(101)", "lender": "TX SBY(216)", "status": "OPEN"}],
@@ -71,6 +72,20 @@ SNAPSHOT = {
         {"name": "Mawar Residence", "net_cashflow": 52_100_000},
     ],
 }
+
+
+UPDATED_SNAPSHOT = json.loads(json.dumps(SNAPSHOT))
+UPDATED_SNAPSHOT["overview"]["metrics"]["operating_inflow"] += 40_000_000
+UPDATED_SNAPSHOT["overview"]["metrics"]["operating_outflow"] += 5_000_000
+UPDATED_SNAPSHOT["overview"]["metrics"]["net_operating_cashflow"] += 35_000_000
+UPDATED_SNAPSHOT["overview"]["counts"]["valid_rows"] += 2
+UPDATED_SNAPSHOT["meta"]["as_of"] = "2026-10-22T08:10:00Z"
+UPDATED_SNAPSHOT["meta"]["data_through"] = "2026-10-22"
+UPDATED_SNAPSHOT["transactions"] = [
+    {"id": 7, "transaction_date": "2026-10-22", "transaction_type": "Pemasukan", "amount": 40_000_000, "wallet": "TX SBY(216)", "company": "Hollawall", "project": "Surabaya Office", "notes": "Termin baru proyek", "internal_movement": False, "transfer_scope": "external", "source_key": "TX SBY(216):pemasukan:217"},
+    {"id": 8, "transaction_date": "2026-10-22", "transaction_type": "Pengeluaran", "amount": 5_000_000, "wallet": "TX SBY(216)", "company": "Hollawall", "project": "Surabaya Office", "notes": "Reversal termin salah", "internal_movement": False, "transfer_scope": "external", "source_key": "TX SBY(216):pengeluaran:218"},
+    *UPDATED_SNAPSHOT["transactions"],
+]
 
 
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
@@ -126,6 +141,23 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         page.on("pageerror", lambda error: console_errors.append(str(error)))
         return context, page, console_errors
 
+    def new_dynamic_page(self, width, height, theme="light"):
+        context = self.browser.new_context(viewport={"width": width, "height": height}, color_scheme=theme)
+        context.add_init_script(f"localStorage.setItem('hollawall-theme', '{theme}')")
+        page = context.new_page()
+        page.clock.install()
+        console_errors = []
+        page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
+        page.on("pageerror", lambda error: console_errors.append(str(error)))
+        state = {"calls": 0}
+
+        def route_api(route):
+            state["calls"] += 1
+            route.fulfill(status=200, content_type="application/json", body=json.dumps(SNAPSHOT if state["calls"] == 1 else UPDATED_SNAPSHOT))
+
+        context.route("**/live-api/snapshot", route_api)
+        return context, page, console_errors, state
+
     def assert_clean_render(self, page, errors):
         page.goto(self.base_url, wait_until="networkidle")
         page.get_by_role("heading", name="Ringkasan Perusahaan").wait_for()
@@ -175,6 +207,25 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 self.assertFalse(overflow)
                 page.screenshot(path=str(ARTIFACTS / f"mobile-{theme}-390x844.png"), full_page=True)
                 context.close()
+
+
+    def test_live_refresh_shows_new_transaction_and_reversal_within_target(self):
+        context, page, errors, state = self.new_dynamic_page(1440, 1000)
+        page.goto(self.base_url, wait_until="networkidle")
+        page.get_by_role("heading", name="Ringkasan Perusahaan").wait_for()
+        page.get_by_role("button", name="Arus kas operasional bersih").click()
+        expect(page.get_by_text("Termin baru proyek")).to_be_hidden()
+        expect(page.get_by_text("Reversal termin salah")).to_be_hidden()
+
+        page.clock.run_for(10_000)
+
+        expect(page.get_by_text("Termin baru proyek")).to_be_visible()
+        expect(page.get_by_text("Reversal termin salah")).to_be_visible()
+        page.get_by_role("button", name="Ringkasan").click()
+        expect(page.get_by_role("button", name="Arus kas operasional bersih").locator("strong")).to_have_text(re.compile(r"340\.350\.000"))
+        self.assertGreaterEqual(state["calls"], 2)
+        self.assertEqual(errors, [])
+        context.close()
 
 
 if __name__ == "__main__":

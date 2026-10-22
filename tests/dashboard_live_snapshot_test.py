@@ -86,6 +86,25 @@ class DashboardLiveSnapshotTests(unittest.TestCase):
             {"name": "Operasional", "net_cashflow": -250_000},
         ])
         self.assertEqual(snapshot["cash_trend"][-1]["balance"], 9_000_000)
+        self.assertEqual(
+            [row["source_key"] for row in snapshot["wallets"]],
+            ["CV HB(101):wallet:summary", "TX SBY(216):wallet:summary", "TX Bali(087):wallet:summary"],
+        )
+        self.assertEqual(
+            snapshot["overview"]["drilldowns"],
+            {
+                "cash_balance": "wallets",
+                "operating_inflow": "transactions:external-income",
+                "operating_outflow": "transactions:external-expense",
+                "net_operating_cashflow": "transactions:external",
+                "open_internal_debt": "debts:open",
+                "project_cashflow": "transactions:projects",
+            },
+        )
+        self.assertEqual(
+            snapshot["quality_rows"],
+            [{"source_key": "TX SBY(216):pengeluaran:12", "invalid_reason": "invalid_date_or_amount"}],
+        )
 
     def test_stale_uses_latest_valid_transaction_not_request_time(self):
         snapshot = build_live_snapshot(

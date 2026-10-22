@@ -33,6 +33,35 @@ class DashboardLiveSourceTests(unittest.TestCase):
         self.assertEqual(projection.call_count, 1)
         balances.assert_called_once_with(force_refresh=False, strict=True, spreadsheet=_spreadsheet.return_value)
 
+    def test_cache_ttl_is_bounded_for_ten_second_end_to_end_refresh(self):
+        with patch.dict(live_source.os.environ, {"DASHBOARD_LIVE_CACHE_SECONDS": "999"}):
+            self.assertEqual(live_source._cache_seconds(), 5)
+        with patch.dict(live_source.os.environ, {"DASHBOARD_LIVE_CACHE_SECONDS": "0"}):
+            self.assertEqual(live_source._cache_seconds(), 1)
+        with patch.dict(live_source.os.environ, {"DASHBOARD_LIVE_CACHE_SECONDS": "invalid"}):
+            self.assertEqual(live_source._cache_seconds(), 5)
+
+    @patch("dashboard_api.live_source.time.monotonic", side_effect=[0.0, 4.0, 6.0])
+    @patch("dashboard_api.live_source.build_live_snapshot", side_effect=[{"version": "first"}, {"version": "second"}])
+    @patch("dashboard_api.live_source.get_wallet_balances", return_value={"CV HB(101)": {"saldo": 1}})
+    @patch("dashboard_api.live_source.get_raw_rows_for_audit", return_value=[])
+    @patch("dashboard_api.live_source._read_debts", return_value=[])
+    @patch("dashboard_api.live_source._verify_required_worksheets")
+    @patch("dashboard_api.live_source.get_spreadsheet", return_value=MagicMock())
+    def test_cache_expires_after_five_seconds(
+        self, _spreadsheet, _verify, _debts, raw_rows, _balances, projection, _monotonic
+    ):
+        with patch.dict(live_source.os.environ, {"DASHBOARD_LIVE_CACHE_SECONDS": "5"}):
+            first = live_source.load_live_snapshot()
+            cached = live_source.load_live_snapshot()
+            refreshed = live_source.load_live_snapshot()
+
+        self.assertEqual(first, {"version": "first"})
+        self.assertEqual(cached, first)
+        self.assertEqual(refreshed, {"version": "second"})
+        self.assertEqual(raw_rows.call_count, 2)
+        self.assertEqual(projection.call_count, 2)
+
     @patch("dashboard_api.live_source.get_wallet_balances", side_effect=RuntimeError("wallet balance read was partial"))
     @patch("dashboard_api.live_source.get_raw_rows_for_audit", return_value=[])
     @patch("dashboard_api.live_source._verify_required_worksheets")
