@@ -16,6 +16,7 @@
 .revenue-matrix > div:first-child { border-top: 0; }
 .revenue-matrix span, .revenue-matrix b, .revenue-matrix strong { min-width: 0; padding: 0 12px; font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
 .revenue-matrix span { text-align: left; color: var(--report-muted); font-weight: 700; }
+.revenue-matrix span small { display: block; margin-top: 1px; color: inherit; font-size: 8px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .revenue-matrix b { font-size: 10px; letter-spacing: .1em; }
 .revenue-matrix strong { font-family: 'Newsreader', serif; font-size: 15px; font-weight: 600; }
 .matrix-head { background: var(--report-ink); color: #fffdf8; }
@@ -29,6 +30,12 @@
 .vertical-project-section h3 { margin: 0; font-family: 'Newsreader', serif; font-size: 22px; font-weight: 600; }
 .new-project-button { min-height: 42px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--report-ink); background: transparent; color: var(--report-ink); padding: 0 12px; font: inherit; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; cursor: pointer; }
 .new-project-button:hover, .new-project-button:focus-visible { background: var(--report-ink); color: var(--report-sheet); }
+.project-lane-navigation { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -7px 0 8px; }
+.project-lane-navigation > span { color: var(--report-muted); font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.project-lane-navigation > div { display: flex; gap: 5px; }
+.project-lane-navigation button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--report-line); background: var(--report-sheet); color: var(--report-ink); cursor: pointer; }
+.project-lane-navigation button:hover:not(:disabled), .project-lane-navigation button:focus-visible { border-color: var(--report-ink); background: var(--report-ink); color: var(--report-sheet); }
+.project-lane-navigation button:disabled { opacity: .3; cursor: not-allowed; }
 
 .vertical-timeline-shell { position: relative; display: grid; grid-template-columns: 82px minmax(0, 1fr); min-height: 330px; border: 1px solid var(--report-line); background: color-mix(in srgb, var(--report-paper) 40%, var(--report-sheet)); overflow: hidden; }
 .vertical-month-axis { display: grid; grid-template-rows: repeat(3, 1fr); border-right: 1px solid var(--report-line); }
@@ -37,9 +44,10 @@
 .vertical-month-axis b { font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
 .vertical-month-axis i { position: absolute; top: 0; left: 100%; width: 100vw; border-top: 1px dashed color-mix(in srgb, var(--report-line) 70%, transparent); }
 .vertical-month-axis span:first-child i { display: none; }
-.vertical-project-lanes { position: relative; display: grid; grid-template-columns: repeat(auto-fit, minmax(46px, 1fr)); gap: 10px; padding: 0 14px; }
-.vertical-project-bar { position: relative; top: var(--project-top); align-self: start; height: var(--project-height); min-height: 42px; max-width: 78px; width: 100%; justify-self: center; border: 0; border-radius: 3px 3px 0 0; padding: 8px 6px; color: #272724; text-align: left; cursor: pointer; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(39,39,36,.08); }
-.vertical-project-bar strong { display: block; font-size: 9px; line-height: 1.15; overflow-wrap: anywhere; }
+.vertical-project-page { min-width: 0; overflow: hidden; }
+.vertical-project-lanes { position: relative; display: grid; grid-template-columns: repeat(var(--lane-count), minmax(0, 1fr)); gap: 12px; width: 100%; height: 100%; padding: 0 14px 12px; }
+.vertical-project-bar { position: relative; top: var(--project-top); align-self: start; height: var(--project-height); min-height: 46px; width: 100%; justify-self: stretch; border: 0; border-radius: 3px 3px 0 0; padding: 8px 7px; color: #272724; text-align: left; cursor: pointer; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(39,39,36,.08); }
+.vertical-project-bar strong { display: -webkit-box; font-size: 10px; line-height: 1.18; overflow: hidden; overflow-wrap: anywhere; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .vertical-project-bar small { display: block; margin-top: 4px; font-size: 8px; opacity: .65; }
 .vertical-project-bar.coral { background: #d88672; }
 .vertical-project-bar.teal { background: #70a7a0; }
@@ -87,9 +95,10 @@
   .revenue-matrix span, .revenue-matrix b, .revenue-matrix strong { padding-inline: 8px; }
   .vertical-project-section > header { align-items: flex-start; }
   .new-project-button { min-width: 44px; min-height: 44px; padding-inline: 9px; }
+  .project-lane-navigation button { width: 44px; height: 44px; }
   .vertical-timeline-shell { grid-template-columns: 68px minmax(0, 1fr); min-height: 310px; }
-  .vertical-project-lanes { gap: 7px; padding-inline: 9px; }
-  .vertical-project-bar { max-width: 65px; padding-inline: 4px; }
+  .vertical-project-lanes { gap: 8px; padding-inline: 9px; }
+  .vertical-project-bar { padding-inline: 6px; }
   .project-timeline-detail { margin-inline: 12px; padding: 16px; }
   .project-detail-dates, .project-detail-money { grid-template-columns: 1fr; }
 }

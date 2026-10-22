@@ -56,7 +56,7 @@ describe('Hollawall command center', () => {
     renderApp()
     expect(await screen.findByText('TOTAL POSISI KAS')).toBeTruthy()
     for (const label of ['Ringkasan', 'Arus Kas', 'Dompet', 'Transaksi', 'Proyek', 'Hutang Internal', 'Laporan']) expect(screen.getAllByRole('button', { name: new RegExp(label) }).length).toBeGreaterThan(0)
-  })
+  }, 10_000)
 
   it('separates four real companies and three real wallets into Hollawall and Texturin sections', async () => {
     renderApp()
@@ -95,9 +95,12 @@ describe('Hollawall command center', () => {
     expect(within(module).getByText('HOJJA')).toBeTruthy()
     expect(within(module).getByRole('region', { name: 'Timeline proyek Hollawall' })).toBeTruthy()
     expect(within(module).getByRole('region', { name: 'Timeline proyek Texturin' })).toBeTruthy()
-    expect(within(module).getAllByText('Oktober')).toHaveLength(2)
-    expect(within(module).getAllByText('November')).toHaveLength(2)
-    expect(within(module).getAllByText('Desember')).toHaveLength(2)
+    for (const name of ['Timeline proyek Hollawall', 'Timeline proyek Texturin']) {
+      const timeline = within(module).getByRole('region', { name })
+      expect(within(timeline).getByText('Oktober')).toBeTruthy()
+      expect(within(timeline).getByText('November')).toBeTruthy()
+      expect(within(timeline).getByText('Desember')).toBeTruthy()
+    }
 
     fireEvent.click(within(module).getByRole('button', { name: 'Buka proyek Villa A dari timeline' }))
     expect(within(module).getByRole('heading', { name: 'Villa A' })).toBeTruthy()

@@ -36,7 +36,14 @@ const compact = new Intl.NumberFormat('id-ID', { notation: 'compact', maximumFra
 
 function matches(unit: Unit, transaction: Transaction) {
   if (unit.mode === 'wallet') return transaction.wallet === unit.wallet
-  return transaction.company.trim().toLocaleLowerCase('id-ID') === unit.company?.toLocaleLowerCase('id-ID')
+  const company = transaction.company.trim().toLocaleLowerCase('id-ID')
+  const project = transaction.project.trim().toLocaleLowerCase('id-ID')
+  if (company === unit.company?.toLocaleLowerCase('id-ID')) return true
+  if (unit.key === 'holla') return project.startsWith('holla') || (company.startsWith('cv hb') && !project.startsWith('hojja'))
+  if (unit.key === 'hojja') return project.startsWith('hojja')
+  if (unit.key === 'tx-surabaya') return company.startsWith('tx sby') || company === 'texturin-surabaya'
+  if (unit.key === 'tx-bali') return company.startsWith('tx bali') || company === 'texturin-bali'
+  return transaction.company === unit.company
 }
 
 function UnitRail({ portfolio, mode, active, onSelect }: { portfolio: Portfolio; mode: Mode; active: string; onSelect: (unit: Unit) => void }) {
