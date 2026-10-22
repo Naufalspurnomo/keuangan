@@ -41,3 +41,13 @@ ngrok.exe
 # Generated documentation and diagnostic artifacts
 output/
 tmp/
+
+# Frontend dependencies and production build
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Owner financial source and generated private snapshots
+Keuangan.xlsx
+dashboard-snapshot.json
+production-snapshot-*.png

@@ -1,0 +1,45 @@
+import type { Transaction } from './types'
+
+export type TransactionTypeFilter = 'all' | 'Pemasukan' | 'Pengeluaran'
+
+export function filterTransactions(rows: Transaction[], query: string, type: TransactionTypeFilter): Transaction[] {
+  const needle = query.trim().toLocaleLowerCase('id-ID')
+  return rows.filter((row) => {
+    if (type !== 'all' && row.transaction_type !== type) return false
+    if (!needle) return true
+    return [row.notes, row.project, row.wallet, row.company, row.source_key]
+      .some((value) => String(value ?? '').toLocaleLowerCase('id-ID').includes(needle))
+  })
+}
+
+function safeCsvCell(value: unknown): string {
+  let text = String(value ?? '')
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`
+  if (/[;"\n\r]/.test(text)) text = `"${text.replaceAll('"', '""')}"`
+  return text
+}
+
+export function transactionsToCsv(rows: Transaction[]): string {
+  const header = ['Tanggal', 'Jenis', 'Jumlah', 'Dompet', 'Perusahaan', 'Proyek', 'Keterangan', 'Source Key']
+  const body = rows.map((row) => [
+    row.transaction_date,
+    row.transaction_type,
+    row.amount,
+    row.wallet,
+    row.company,
+    row.project,
+    row.notes,
+    row.source_key,
+  ].map(safeCsvCell).join(';'))
+  return `\uFEFF${[header.join(';'), ...body].join('\r\n')}\r\n`
+}
+
+export function downloadTransactionsCsv(rows: Transaction[]): void {
+  const blob = new Blob([transactionsToCsv(rows)], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `hollawall-transaksi-${new Date().toISOString().slice(0, 10)}.csv`
+  anchor.click()
+  URL.revokeObjectURL(url)
+}

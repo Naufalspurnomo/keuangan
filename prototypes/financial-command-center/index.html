@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101b22">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><rect width=%2232%22 height=%2232%22 fill=%22%23101b22%22/><text x=%2216%22 y=%2223%22 text-anchor=%22middle%22 fill=%22%23e3eee9%22 font-size=%2220%22>H</text></svg>">
+  <title>Hollawall — Financial Command Center</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="demo-ribbon" role="status">DATA DEMO · Bukan data perusahaan</div>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="Navigasi utama">
+      <div class="brand-block">
+        <div class="brand-mark" aria-hidden="true">H</div>
+        <div>
+          <strong>HOLLAWALL</strong>
+          <span>Financial Command Center</span>
+        </div>
+      </div>
+      <nav class="nav-list">
+        <button class="nav-item is-active" data-view="overview" data-testid="nav-overview"><span>01</span>Ringkasan</button>
+        <button class="nav-item" data-view="cashflow"><span>02</span>Arus Kas</button>
+        <button class="nav-item" data-view="wallets"><span>03</span>Dompet</button>
+        <button class="nav-item" data-view="transactions" data-testid="nav-transactions"><span>04</span>Transaksi</button>
+        <button class="nav-item" data-view="projects"><span>05</span>Proyek</button>
+        <button class="nav-item" data-view="debts"><span>06</span>Hutang Internal</button>
+        <button class="nav-item" data-view="reports"><span>07</span>Laporan</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="system-state"><i></i><span><b>Sistem tersinkron</b><small id="sidebarSync">21 Okt · 18.42 WIB</small></span></div>
+        <button class="identity"><span>NS</span><span><b>Naufal Spurnomo</b><small>Owner</small></span></button>
+      </div>
+    </aside>
+
+    <main class="main-panel">
+      <header class="topbar">
+        <button class="menu-button" id="menuButton" aria-label="Buka navigasi" aria-expanded="false">☰</button>
+        <div class="page-heading">
+          <p id="pageEyebrow">Ikhtisar keuangan</p>
+          <h1 id="pageTitle">Ringkasan Perusahaan</h1>
+        </div>
+        <div class="topbar-actions">
+          <button class="icon-button" aria-label="3 perhatian aktif" title="3 perhatian aktif">3<span class="notification-dot"></span></button>
+          <button class="ask-button" id="askButton"><span>⌘</span>Analisis AI</button>
+        </div>
+      </header>
+
+      <section class="control-strip" aria-label="Filter global">
+        <label>Periode
+          <select id="periodFilter" data-testid="period-filter">
+            <option value="october">1–21 Oktober 2026</option>
+            <option value="week">7 hari terakhir</option>
+            <option value="today">Hari ini</option>
+          </select>
+        </label>
+        <label>Perusahaan
+          <select id="companyFilter" data-testid="company-filter"><option value="all">Semua perusahaan</option></select>
+        </label>
+        <label>Dompet
+          <select id="walletFilter" data-testid="wallet-filter"><option value="all">Semua dompet</option></select>
+        </label>
+        <label>Proyek
+          <select id="projectFilter" data-testid="project-filter"><option value="all">Semua proyek</option></select>
+        </label>
+        <div class="sync-pill"><i></i><span>Terakhir sinkron<b id="syncTime">18.42 WIB</b></span></div>
+      </section>
+
+      <div id="staleBanner" class="stale-banner" hidden>
+        <strong>Data terlambat diperbarui.</strong> Angka terakhir yang tervalidasi tetap ditampilkan. Sinkronisasi terakhir 47 menit lalu.
+      </div>
+
+      <div id="viewRoot" class="view-root" aria-live="polite"></div>
+    </main>
+  </div>
+
+  <div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
+  <dialog id="aiDialog" class="ai-dialog">
+    <form method="dialog"><button aria-label="Tutup">×</button></form>
+    <p class="eyebrow">Hollawall AI · Preview</p>
+    <h2>Tanya kondisi keuangan</h2>
+    <p>AI akan membaca angka melalui Finance API, bukan menebak atau menghitung ulang nominal.</p>
+    <div class="prompt-list">
+      <button>Kenapa pengeluaran bulan ini naik?</button>
+      <button>Project mana paling banyak memakai kas?</button>
+      <button>Transaksi mana yang belum punya bukti?</button>
+    </div>
+    <div class="fake-input"><span>Tulis pertanyaan keuangan…</span><b>↵</b></div>
+  </dialog>
+
+  <script src="fixture.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

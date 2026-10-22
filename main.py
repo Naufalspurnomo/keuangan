@@ -21,6 +21,8 @@ from typing import Optional
 
 from flask import Flask, g, request, jsonify
 from dotenv import load_dotenv
+
+from dashboard_api import register_dashboard
 from werkzeug.exceptions import RequestEntityTooLarge
 
 # Load environment variables
@@ -180,6 +182,11 @@ from config.wallets import (
 
 # Initialize Flask app
 app = Flask(__name__)
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY') or os.getenv('SECRET_KEY') or os.urandom(32)
+
+# Register the optional private dashboard only when its database is configured.
+# This does not alter /health, /webhook_wuzapi, or /telegram behavior.
+register_dashboard(app)
 
 # Configuration Flags
 DEBUG = os.getenv('FLASK_DEBUG', '0') == '1'
