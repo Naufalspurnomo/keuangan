@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react-swc'
 
 export default defineConfig({
   plugins: [react()],
-  build: { outDir: 'dist', sourcemap: true },
+  build: { outDir: 'dist', sourcemap: false, chunkSizeWarningLimit: 900 },
   test: { environment: 'jsdom', globals: true },
   server: {
     proxy: {

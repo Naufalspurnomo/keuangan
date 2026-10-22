@@ -152,7 +152,7 @@ function Freshness({ meta }: { meta: DashboardMeta }) {
   return <div className={`freshness ${meta.freshness}`}><i></i><span>{meta.freshness === 'fresh' ? 'Data terkini' : meta.freshness === 'aging' ? 'Data mulai menua' : 'Snapshot perlu diperbarui'}<small>Data s.d. {through} · file {date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} · {meta.data_completeness.completeness_pct}% valid</small></span></div>
 }
 
-function OverviewPage({ overview, transactions, meta, cashTrend, projects, setActive, setTransactionFilter }: { overview: Overview; transactions: Transaction[]; meta: DashboardMeta; cashTrend: CashTrendPoint[]; projects: ProjectSummary[]; setActive: (value: string) => void; setTransactionFilter: (value: TransactionTypeFilter) => void }) {
+function OverviewPage({ overview, transactions, meta, cashTrend, projects, walletSnapshots, setActive, setTransactionFilter }: { overview: Overview; transactions: Transaction[]; meta: DashboardMeta; cashTrend: CashTrendPoint[]; projects: ProjectSummary[]; walletSnapshots: WalletSnapshot[]; setActive: (value: string) => void; setTransactionFilter: (value: TransactionTypeFilter) => void }) {
   const metrics = overview.metrics
   const drilldown = (metric: keyof Overview['metrics']) => {
     const target = overview.drilldowns?.[metric] ?? 'transactions'
@@ -166,13 +166,16 @@ function OverviewPage({ overview, transactions, meta, cashTrend, projects, setAc
         <p className="eyebrow">TOTAL POSISI KAS</p><h2>{formatAmount(metrics.cash_balance)}</h2><p>Saldo sistem dari seluruh dompet pada snapshot terakhir. Klik untuk rincian.</p>
       </button>
       <Freshness meta={meta} />
+      <button type="button" className="hero-stat" aria-label="Kelengkapan data" onClick={() => setActive('reports')}>
+        <small>Kelengkapan data</small>
+        <strong>{meta.data_completeness.completeness_pct.toLocaleString('id-ID')}%</strong>
+      </button>
     </section>
     <section className="metric-grid">
       <MetricCard label={overview.labels.operating_inflow} value={metrics.operating_inflow} tone="income" onClick={() => drilldown('operating_inflow')} />
       <MetricCard label={overview.labels.operating_outflow} value={metrics.operating_outflow} tone="expense" onClick={() => drilldown('operating_outflow')} />
       <MetricCard label={overview.labels.net_operating_cashflow} value={metrics.net_operating_cashflow} tone="net" onClick={() => drilldown('net_operating_cashflow')} />
       <MetricCard label={overview.labels.open_internal_debt} value={metrics.open_internal_debt} tone="debt" onClick={() => drilldown('open_internal_debt')} />
-      <MetricCard label={overview.labels.data_completeness ?? 'Kelengkapan data'} value={meta.data_completeness.completeness_pct} valueText={`${meta.data_completeness.completeness_pct.toLocaleString('id-ID')}%`} onClick={() => setActive('reports')} />
     </section>
     <section className="overview-grid">
       <article className="panel chart-panel">
@@ -183,6 +186,17 @@ function OverviewPage({ overview, transactions, meta, cashTrend, projects, setAc
       <article className="panel project-panel">
         <div className="panel-head"><div><p className="eyebrow">KINERJA PROYEK</p><h3>Arus kas proyek bersih</h3></div><button className="icon-button" onClick={() => { setActive('transactions'); setTransactionFilter('projects') }}><BarChart3 size={18} /></button></div>
         <div className="bar-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="projects" projects={projects} /></Suspense></div>
+      </article>
+    </section>
+    <section className="overview-grid overview-grid-secondary">
+      <article className="panel chart-panel">
+        <div className="panel-head"><div><p className="eyebrow">ARUS KAS BULANAN</p><h3>Pemasukan dan pengeluaran</h3></div><button className="text-button" onClick={() => { setActive('cashflow'); setTransactionFilter('all') }}>Detail arus kas <ArrowRight size={15} /></button></div>
+        <div className="chart-value"><strong>{formatAmount(metrics.operating_inflow)}</strong><span className="text-secondary">masuk · {formatAmount(metrics.operating_outflow)} keluar</span></div>
+        <div className="area-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="monthly" transactions={transactions} /></Suspense></div>
+      </article>
+      <article className="panel chart-panel">
+        <div className="panel-head"><div><p className="eyebrow">KOMPOSISI DOMPET</p><h3>Sebaran saldo rekening</h3></div><button className="text-button" onClick={() => setActive('wallets')}>Semua dompet <ArrowRight size={15} /></button></div>
+        <div className="area-chart donut-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="wallets" wallets={walletSnapshots} /></Suspense></div>
       </article>
     </section>
     <section className="panel activity-panel">
@@ -221,7 +235,9 @@ function DetailPage({ active, transactions, overview, wallets, debts, projects, 
         : projects.slice(0, 8).map((row) => ({ name: row.name, value: row.net_cashflow }))
   const maxValue = Math.max(...breakdownRows.map((row) => Math.abs(row.value)), 1)
   return <section className="detail-layout">
-    <article className="detail-hero"><p className="eyebrow">PANDANGAN EKSEKUTIF</p><h2>{item.stat}</h2><strong>{active === 'reports' ? `${item.value.toLocaleString('id-ID')}%` : formatAmount(item.value)}</strong><p>{item.copy}</p></article>
+    <article className="detail-hero"><p className="eyebrow">PANDANGAN EKSEKUTIF</p><h2>{item.stat}</h2><strong>{active === 'reports' ? `${item.value.toLocaleString('id-ID')}%` : formatAmount(item.value)}</strong><p>{item.copy}</p>
+      {(active === 'cashflow' || active === 'wallets' || active === 'debts') && <div className="detail-hero-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind={active === 'cashflow' ? 'waterfall' : active === 'wallets' ? 'wallets' : 'debts'} transactions={transactions} wallets={wallets} debts={debts} /></Suspense></div>}
+    </article>
     <article className="panel breakdown"><div className="panel-head"><div><p className="eyebrow">RINCIAN</p><h3>{active === 'reports' ? 'Baris ditolak' : 'Komposisi snapshot'}</h3></div></div>{breakdownRows.length ? breakdownRows.map((row, index) => <div className="breakdown-row" key={`${row.name}-${index}`}><span><i style={{ background: row.value < 0 ? 'var(--danger)' : index === 0 ? 'var(--chart-primary)' : 'var(--chart-secondary)' }}></i>{row.name}</span><strong>{active === 'reports' ? 'Perlu tinjau' : formatAmount(row.value)}</strong><div><b style={{ width: `${(Math.abs(row.value) / maxValue) * 100}%` }}></b></div></div>) : <p className="empty-note">Tidak ada baris ditolak pada snapshot ini.</p>}</article>
   </section>
 }
@@ -283,7 +299,7 @@ function Dashboard() {
     : coldError
       ? <section className="inline-state error-state" role="alert"><div><p className="eyebrow">SUMBER DATA TERGANGGU</p><h2>Dashboard belum bisa mengambil data</h2><p>Ini bukan masalah HP atau login. Coba lagi—halaman tidak akan mengunci layar.</p></div><button className="primary-button" onClick={() => snapshotQuery.refetch()}>Coba lagi</button></section>
       : active === 'overview'
-        ? <OverviewPage overview={overview} transactions={transactions} meta={meta} cashTrend={cashTrend} projects={projects} setActive={setActive} setTransactionFilter={setTransactionFilter} />
+        ? <OverviewPage overview={overview} transactions={transactions} meta={meta} cashTrend={cashTrend} projects={projects} walletSnapshots={wallets} setActive={setActive} setTransactionFilter={setTransactionFilter} />
         : <DetailPage active={active} transactions={transactions} overview={overview} wallets={wallets} debts={debts} projects={projects} completeness={meta.data_completeness.completeness_pct} qualityRows={qualityRows} initialFilter={transactionFilter} initialQuery={selectedProject} onOpenProject={openProject} />
 
   return <div className="app-shell">

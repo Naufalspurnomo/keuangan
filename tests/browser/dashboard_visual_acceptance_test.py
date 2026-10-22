@@ -173,7 +173,10 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         })""")
         self.assertLessEqual(metrics["document"], metrics["viewport"])
         self.assertLessEqual(metrics["body"], metrics["viewport"])
-        self.assertEqual(metrics["chartCount"], 2)
+        # Overview renders multiple independent charts: cash area, project bars,
+        # monthly flow, wallet composition. Lock the contract, not an exact count,
+        # so adding a panel does not silently drop an existing one.
+        self.assertGreaterEqual(metrics["chartCount"], 4)
         self.assertGreater(metrics["visibleButtons"], 8)
         return metrics
 
