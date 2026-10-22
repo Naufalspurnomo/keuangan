@@ -1,0 +1,209 @@
+/* Calm financial ledger palette.
+   One brand accent (oxblood), neutral categorical data, semantic color only for money/status. */
+:root {
+  --bg: #e7e4dd;
+  --surface: #f8f7f3;
+  --surface-raised: #ffffff;
+  --surface-muted: #e2dfd8;
+  --sidebar: #242321;
+  --sidebar-2: #34312d;
+  --text: #292825;
+  --text-secondary: #4f4b45;
+  --text-tertiary: #615c55;
+  --on-dark: #f5f2eb;
+  --border: #aaa398;
+  --border-subtle: #c8c2b8;
+  --brand: #7a3033;
+  --primary: #4b4842;
+  --primary-2: #34322e;
+  --accent: #4b4842;
+  --positive: #316b55;
+  --negative: #9a4341;
+  --warning: #74634d;
+  --chart-primary: #4b4842;
+  --chart-secondary: #aaa298;
+  --chart-tertiary: #746e66;
+  --chart-neutral-1: #938b81;
+  --chart-neutral-2: #b7afa4;
+  --chart-neutral-3: #655f59;
+  --chart-neutral-4: #c9c2b8;
+  --chart-neutral-5: #817971;
+  --shadow: 0 1px 2px rgba(41, 40, 37, .05), 0 12px 30px rgba(41, 40, 37, .045);
+
+  --report-paper: #e4e0d7;
+  --report-sheet: #fffefa;
+  --report-ink: #292825;
+  --report-muted: #514c45;
+  --report-line: #b4ada2;
+  --report-frame: #857e74;
+  --report-accent: #4b4842;
+  --report-positive: #316b55;
+  --report-negative: #9a4341;
+  --report-tone-1: #c9c0b5;
+  --report-tone-2: #aaa197;
+  --report-tone-3: #d7d0c6;
+  --report-tone-4: #928a82;
+  --report-tone-5: #bbb2a8;
+  --report-tone-6: #7f7871;
+
+  /* Backward-compatible report tokens now collapse into one restrained system. */
+  --report-coral: var(--report-accent);
+  --report-gold: var(--report-tone-2);
+  --report-teal: var(--report-tone-4);
+  --report-violet: var(--report-tone-5);
+}
+
+html[data-theme='dark'] {
+  --bg: #181715;
+  --surface: #22211e;
+  --surface-raised: #292723;
+  --surface-muted: #302e29;
+  --sidebar: #11110f;
+  --sidebar-2: #2a2723;
+  --text: #f0ede6;
+  --text-secondary: #c5beb3;
+  --text-tertiary: #b0a99d;
+  --on-dark: #f6f2ea;
+  --border: #756f65;
+  --border-subtle: #504b44;
+  --brand: #c17b79;
+  --primary: #b8b0a6;
+  --primary-2: #d1c9be;
+  --accent: #b8b0a6;
+  --positive: #70a98d;
+  --negative: #d6817c;
+  --warning: #b79a69;
+  --chart-primary: #b8b0a6;
+  --chart-secondary: #8f877e;
+  --chart-tertiary: #b0a79c;
+  --chart-neutral-1: #9f968c;
+  --chart-neutral-2: #746e67;
+  --chart-neutral-3: #c0b7ab;
+  --chart-neutral-4: #5f5a54;
+  --chart-neutral-5: #aaa197;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .22), 0 18px 40px rgba(0, 0, 0, .13);
+
+  --report-paper: #1d1c19;
+  --report-sheet: #26241f;
+  --report-ink: #eee9df;
+  --report-muted: #c0b9ae;
+  --report-line: #5c574f;
+  --report-frame: #817a70;
+  --report-accent: #b8b0a6;
+  --report-positive: #70a98d;
+  --report-negative: #d6817c;
+  --report-tone-1: #746c64;
+  --report-tone-2: #948b80;
+  --report-tone-3: #625d57;
+  --report-tone-4: #aaa095;
+  --report-tone-5: #817970;
+  --report-tone-6: #bab0a5;
+}
+
+/* Remove the old teal/gold brand field. */
+.brand-mark { background: var(--brand); }
+.sidebar nav button { color: #b8b2a8; }
+.sidebar nav button:hover { color: var(--on-dark); }
+.sidebar nav button.active {
+  color: var(--on-dark);
+  background: var(--sidebar-2);
+  box-shadow: inset 3px 0 #9f978d;
+}
+.sidebar nav button b {
+  background: rgba(255, 255, 255, .09);
+  color: #d7d1c7;
+}
+
+.hero-balance,
+.detail-hero,
+.login-story {
+  background: #2b2926;
+}
+.hero-balance .eyebrow,
+.hero-balance p,
+.freshness small,
+.detail-hero > p:not(.eyebrow),
+.login-footnote { color: #bdb6aa; }
+.hero-balance .positive { color: #92c0a8 !important; }
+.freshness i { background: #78a88f; box-shadow: 0 0 0 4px rgba(120, 168, 143, .12); }
+.freshness.aging i { background: #b79a69; }
+.freshness.stale i { background: #d6817c; }
+.detail-hero .primary-button { background: var(--primary); color: #fff; }
+
+/* Categorical items use neutral tones. Selection carries the brand accent. */
+.business-unit-mark,
+.business-unit-mark.gold,
+.business-unit-mark.teal,
+.business-unit-mark.violet { background: var(--report-tone-2); }
+.business-unit.is-active .business-unit-mark { background: var(--report-accent); }
+.business-live-dot { color: var(--report-ink); }
+.business-ledger-row > span { color: var(--report-negative); }
+.business-ledger-row > span.income { color: var(--report-positive); }
+
+.vertical-project-bar.coral { background: var(--report-tone-1); }
+.vertical-project-bar.teal { background: var(--report-tone-2); }
+.vertical-project-bar.gold { background: var(--report-tone-3); }
+.vertical-project-bar.violet { background: var(--report-tone-4); }
+.vertical-project-bar.blue { background: var(--report-tone-5); }
+.vertical-project-bar.rose { background: var(--report-tone-6); color: var(--report-sheet); }
+.vertical-project-bar:hover,
+.vertical-project-bar:focus-visible,
+.vertical-project-bar.is-selected { outline-color: var(--report-accent); }
+
+/* Give each information layer a distinct luminance instead of cream-on-cream haze. */
+.business-report { background: var(--report-paper); }
+.portfolio-section { background: #efebe3; opacity: 1; }
+.portfolio-section.is-focused { background: var(--report-sheet); }
+.business-chart-card,
+.business-ledger-card { background: var(--report-sheet); }
+.business-unit:hover { background: #e8e3da; }
+.business-unit.is-active { background: #f8f5ee; }
+.revenue-matrix,
+.vertical-timeline-shell { background: #efebe3; }
+.business-report,
+.portfolio-sections,
+.business-report-detail,
+.project-report-module,
+.revenue-matrix,
+.vertical-timeline-shell,
+.project-timeline-detail { border-color: var(--report-frame); }
+
+/* Dense finance labels stay above AA contrast while rules remain visually secondary. */
+.business-report small,
+.business-report p,
+.project-report-module small,
+.project-report-module header p,
+.chart-legend-label,
+.chart-note,
+.chart-caption { color: var(--report-muted); }
+.recharts-cartesian-axis-tick text { fill: var(--text-secondary); }
+
+/* Debt is a separate category, not another urgent chromatic alarm. */
+.metric-card.debt strong { color: var(--warning); }
+
+/* Profile identity is neutral; status color remains available to actual status dots. */
+.profile > span,
+.profile-avatar,
+.user-avatar,
+.avatar { background: #625d55 !important; color: #fff !important; }
+
+[data-theme='dark'] .business-report {
+  --report-paper: #1d1c19;
+  --report-sheet: #26241f;
+  --report-ink: #eee9df;
+  --report-muted: #c0b9ae;
+  --report-line: #5c574f;
+  --report-frame: #817a70;
+}
+[data-theme='dark'] .portfolio-section { background: #211f1b; }
+[data-theme='dark'] .portfolio-section.is-focused,
+[data-theme='dark'] .business-chart-card,
+[data-theme='dark'] .business-ledger-card { background: var(--report-sheet); }
+[data-theme='dark'] .business-unit:hover { background: #302d28; }
+[data-theme='dark'] .business-unit.is-active,
+[data-theme='dark'] .revenue-matrix,
+[data-theme='dark'] .vertical-timeline-shell { background: #2c2924; }
+[data-theme='dark'] .business-mode-switch button.is-active {
+  background: var(--report-ink);
+  color: var(--report-sheet);
+}

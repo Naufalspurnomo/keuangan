@@ -85,7 +85,7 @@ export default function FinancialChart({ kind, cashTrend = [], projects = [], wa
           signed: remainder.reduce((sum, row) => sum + row.balance, 0),
           full: `${remainder.length} dompet lainnya`,
         }]
-    const COLORS = ['var(--chart-primary)', 'var(--chart-secondary)', 'var(--accent)', 'var(--positive)', 'var(--warning)', 'var(--negative)']
+    const COLORS = ['var(--chart-primary)', 'var(--chart-neutral-1)', 'var(--chart-neutral-2)', 'var(--chart-neutral-3)', 'var(--chart-neutral-4)', 'var(--chart-neutral-5)']
     return <div className="donut-with-legend">
       <div className="donut-chart-figure">
         <ResponsiveContainer width="100%" height="100%">
@@ -126,13 +126,19 @@ export default function FinancialChart({ kind, cashTrend = [], projects = [], wa
     return <div className="monthly-chart-wrap">
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={monthly} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+          <defs>
+            <pattern id="expenseHatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <rect width="6" height="6" fill="var(--negative)" />
+              <line x1="0" y1="0" x2="0" y2="6" stroke="var(--surface)" strokeOpacity=".38" strokeWidth="2" />
+            </pattern>
+          </defs>
           <CartesianGrid stroke="var(--border-subtle)" vertical={false} />
           <XAxis dataKey="month" tickFormatter={monthLabel} axisLine={false} tickLine={false} tick={{ fill: 'var(--text-secondary)', fontSize: 11 }} />
           <YAxis width={58} axisLine={false} tickLine={false} tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} tickFormatter={(value) => compact.format(value)} />
           <Tooltip cursor={{ fill: 'var(--surface-muted)' }} content={<ChartTooltip />} />
           <Legend verticalAlign="top" align="right" height={26} iconType="circle" iconSize={8} formatter={(value: unknown) => <span className="chart-legend-label">{String(value)}</span>} />
           <Bar dataKey="masuk" name="Pemasukan" fill="var(--positive)" radius={[3, 3, 0, 0]} barSize={18} />
-          <Bar dataKey="keluar" name="Pengeluaran" fill="var(--negative)" radius={[3, 3, 0, 0]} barSize={18} />
+          <Bar dataKey="keluar" name="Pengeluaran" fill="url(#expenseHatch)" radius={[3, 3, 0, 0]} barSize={18} />
         </ComposedChart>
       </ResponsiveContainer>
       {hasGap && <p className="chart-note">Beberapa periode belum memiliki transaksi tercatat pada snapshot.</p>}
