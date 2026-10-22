@@ -5,6 +5,7 @@ import App from './App'
 import './styles.css'
 import './dashboard-enhancements.css'
 import './dashboard-redesign.css'
+import './business-report.css'
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 20_000 } } })
 
