@@ -10,7 +10,7 @@
 - Mode: read-only; no dashboard route writes to Google Sheets, PostgreSQL, or bot state
 - Existing `/health`, `/webhook_wuzapi`, and `/telegram`: unchanged
 
-Live promotion completed on 2026-10-22. GitHub `main` commit `22497305673d769479e5f47df3c5280193e94a6b` and Koyeb deployment `7241468302` were verified `success`; the VPS serves the live frontend without a bundled snapshot JSON.
+Live promotion completed on 2026-10-22. Application logic is promoted by PR #36 at commit `2ef50e53ed7a4b796d2b5a9cca2279ffdb15cb46`; PR #37 refreshes the six responsive acceptance screenshots. The current provider deployment ID is intentionally not asserted because Koyeb provider records were unavailable during final readback. Production itself was re-verified directly: `/health` returned `200` with `healthy`, authenticated snapshot returned `200` with `dashboard.snapshot.v1`, unauthenticated paths returned `401`, mutation methods returned `405`, and all live parity deltas were `Rp0`. The VPS serves the live frontend without a bundled snapshot JSON.
 
 ## Live data provenance
 
