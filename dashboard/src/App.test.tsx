@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 vi.mock('./FinancialChart', () => ({
   default: ({ kind }: { kind: string }) => <div data-testid={`chart-${kind}`} />,
@@ -19,11 +19,18 @@ const snapshot = {
     },
   },
   meta: { as_of: '2026-10-21T12:00:00Z', data_through: '2026-10-21', source: 'test', freshness: 'fresh', data_completeness: { valid_rows: 3, invalid_rows: 1, completeness_pct: 75 } },
-  wallets: [{ source_key: 'CV HB(101):wallet:summary', name: 'CV HB(101)', balance: 868900000 }],
+  wallets: [
+    { source_key: 'CV HB(101):wallet:summary', name: 'CV HB(101)', balance: 868900000 },
+    { source_key: 'TX SBY(216):wallet:summary', name: 'TX SBY(216)', balance: 120000000 },
+    { source_key: 'TX BALI(087):wallet:summary', name: 'TX BALI(087)', balance: 80000000 },
+  ],
   transactions: [
-    { id: 1, source_key: 'CV HB(101):pemasukan:9', transaction_date: '2026-10-21', transaction_type: 'Pemasukan', amount: 497500000, wallet: 'CV HB(101)', company: 'HOLLA', project: 'Villa A', notes: 'Termin eksternal', internal_movement: false },
+    { id: 1, source_key: 'CV HB(101):pemasukan:9', transaction_date: '2026-10-21', transaction_type: 'Pemasukan', amount: 497500000, wallet: 'CV HB(101)', company: 'HOLLA', project: 'Villa A', notes: 'Termin Holla', internal_movement: false },
     { id: 2, source_key: 'CV HB(101):pemasukan:10', transaction_date: '2026-10-21', transaction_type: 'Pemasukan', amount: 28500000, wallet: 'CV HB(101)', company: 'HOLLA', project: 'Saldo Umum', notes: 'Terima pelunasan hutang', internal_movement: true },
-    { id: 3, source_key: 'CV HB(101):pengeluaran:11', transaction_date: '2026-10-20', transaction_type: 'Pengeluaran', amount: 192150000, wallet: 'CV HB(101)', company: 'HOLLA', project: 'Villa A', notes: 'Vendor eksternal', internal_movement: false },
+    { id: 3, source_key: 'CV HB(101):pengeluaran:11', transaction_date: '2026-10-20', transaction_type: 'Pengeluaran', amount: 192150000, wallet: 'CV HB(101)', company: 'HOLLA', project: 'Villa A', notes: 'Vendor Holla', internal_movement: false },
+    { id: 4, source_key: 'CV HB(101):pemasukan:12', transaction_date: '2026-10-19', transaction_type: 'Pemasukan', amount: 72000000, wallet: 'CV HB(101)', company: 'HOJJA', project: 'Woodtopics', notes: 'Termin Hojja', internal_movement: false },
+    { id: 5, source_key: 'TX SBY(216):pemasukan:20', transaction_date: '2026-10-18', transaction_type: 'Pemasukan', amount: 44000000, wallet: 'TX SBY(216)', company: 'TEXTURIN-Surabaya', project: 'Pizza A', notes: 'Termin Texturin SBY', internal_movement: false },
+    { id: 6, source_key: 'TX BALI(087):pengeluaran:21', transaction_date: '2026-10-17', transaction_type: 'Pengeluaran', amount: 13000000, wallet: 'TX BALI(087)', company: 'TEXTURIN-Bali', project: 'Lobby Bali', notes: 'Vendor Texturin Bali', internal_movement: false },
   ],
   debts: [{ source_key: 'HUTANG:2', date: '2026-10-20', amount: 28500000, notes: 'Bridge', borrower: 'CV HB(101)', lender: 'TX SBY(216)', status: 'OPEN' }],
   quality_rows: [{ source_key: 'TX SBY(216):pengeluaran:12', invalid_reason: 'invalid_date_or_amount' }],
@@ -49,6 +56,60 @@ describe('Hollawall command center', () => {
     renderApp()
     expect(await screen.findByText('TOTAL POSISI KAS')).toBeTruthy()
     for (const label of ['Ringkasan', 'Arus Kas', 'Dompet', 'Transaksi', 'Proyek', 'Hutang Internal', 'Laporan']) expect(screen.getAllByRole('button', { name: new RegExp(label) }).length).toBeGreaterThan(0)
+  }, 10_000)
+
+  it('separates four real companies and three real wallets into Hollawall and Texturin sections', async () => {
+    renderApp()
+    const report = await screen.findByRole('region', { name: 'Laporan unit usaha' })
+
+    expect(within(report).getByRole('heading', { name: 'Hollawall Section' })).toBeTruthy()
+    expect(within(report).getByRole('heading', { name: 'Texturin Section' })).toBeTruthy()
+    for (const company of ['Holla', 'Hojja', 'TX Surabaya', 'TX Bali']) {
+      expect(within(report).getByRole('button', { name: new RegExp(`Pilih perusahaan ${company}`) })).toBeTruthy()
+    }
+
+    fireEvent.click(within(report).getByRole('button', { name: /Pilih perusahaan Hojja/ }))
+    expect(within(report).getByRole('heading', { name: 'Hojja' })).toBeTruthy()
+    expect(within(report).getByText(/Termin Hojja/)).toBeTruthy()
+    expect(within(report).queryByText(/Termin Holla/)).toBeNull()
+
+    fireEvent.click(within(report).getByRole('button', { name: 'Lihat berdasarkan dompet' }))
+    for (const wallet of ['CV HB (101)', 'TX SBY (216)', 'TX BALI (087)']) {
+      expect(within(report).getByRole('button', { name: new RegExp(`Pilih dompet ${wallet.replace(/[()]/g, '\\$&')}`) })).toBeTruthy()
+    }
+    fireEvent.click(within(report).getByRole('button', { name: /Pilih dompet TX BALI \(087\)/ }))
+    expect(within(report).getByRole('heading', { name: 'TX BALI (087)' })).toBeTruthy()
+    expect(within(report).getByText(/Vendor Texturin Bali/)).toBeTruthy()
+    expect(within(report).queryByText(/Termin Texturin SBY/)).toBeNull()
+  })
+
+  it('renders the sketched monthly report matrix and separate project timelines', async () => {
+    renderApp()
+    const module = await screen.findByRole('region', { name: 'Laporan omzet dan timeline proyek' })
+
+    expect(within(module).getByText('HOLLA REPORT')).toBeTruthy()
+    expect(within(module).getByText('Bulan ini')).toBeTruthy()
+    expect(within(module).getByText('Bulan lalu')).toBeTruthy()
+    expect(within(module).getByText('HOLLA')).toBeTruthy()
+    expect(within(module).getByText('TX')).toBeTruthy()
+    expect(within(module).getByText('HOJJA')).toBeTruthy()
+    expect(within(module).getByRole('region', { name: 'Timeline proyek Hollawall' })).toBeTruthy()
+    expect(within(module).getByRole('region', { name: 'Timeline proyek Texturin' })).toBeTruthy()
+    for (const name of ['Timeline proyek Hollawall', 'Timeline proyek Texturin']) {
+      const timeline = within(module).getByRole('region', { name })
+      expect(within(timeline).getByText('Oktober')).toBeTruthy()
+      expect(within(timeline).getByText('November')).toBeTruthy()
+      expect(within(timeline).getByText('Desember')).toBeTruthy()
+    }
+
+    fireEvent.click(within(module).getByRole('button', { name: 'Buka proyek Villa A dari timeline' }))
+    expect(within(module).getByRole('heading', { name: 'Villa A' })).toBeTruthy()
+    expect(within(module).getByText('Mulai')).toBeTruthy()
+    expect(within(module).getByText('1 Sep 2026')).toBeTruthy()
+
+    fireEvent.click(within(module).getByRole('button', { name: 'Tambah proyek Hollawall' }))
+    expect(within(module).getByRole('dialog', { name: 'Dashboard read-only' })).toBeTruthy()
+    expect(within(module).getByText(/kelola proyek dari sumber data/)).toBeTruthy()
   })
 
   it('persists explicit dark mode choice', async () => {
@@ -69,12 +130,13 @@ describe('Hollawall command center', () => {
 
   it('drills an operating KPI into exact external transactions', async () => {
     renderApp()
-    fireEvent.click(await screen.findByRole('button', { name: /Pemasukan operasional/ }))
+    await screen.findByText('TOTAL POSISI KAS', {}, { timeout: 4_000 })
+    fireEvent.click(screen.getByRole('button', { name: /Pemasukan operasional/ }))
     expect(await screen.findByRole('heading', { name: 'Semua Transaksi' })).toBeTruthy()
-    expect(screen.getByText('Termin eksternal')).toBeTruthy()
+    expect(screen.getByText('Termin Holla')).toBeTruthy()
     expect(screen.getByText('CV HB(101):pemasukan:9')).toBeTruthy()
     expect(screen.queryByText('Terima pelunasan hutang')).toBeNull()
-    expect(screen.getByText('1 transaksi')).toBeTruthy()
+    expect(screen.getByText('3 transaksi')).toBeTruthy()
   })
 
   it('drills the cash headline into wallet source keys', async () => {

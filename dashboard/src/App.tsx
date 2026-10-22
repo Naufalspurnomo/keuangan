@@ -28,6 +28,8 @@ import type { CashTrendPoint, DebtSnapshot, ProjectSummary, WalletSnapshot } fro
 import { downloadTransactionsCsv, filterTransactions } from './transactions'
 import type { TransactionTypeFilter } from './transactions'
 import type { DashboardMeta, Overview, QualityRow, Transaction } from './types'
+import BusinessSectionReport from './BusinessSectionReport'
+import ProjectReportTimeline from './ProjectReportTimeline'
 
 const FinancialChart = lazy(() => import('./FinancialChart'))
 const PREVIEW_MODE = import.meta.env.VITE_DEMO_PREVIEW === 'true'
@@ -183,6 +185,8 @@ function OverviewPage({ overview, transactions, meta, cashTrend, projects, walle
       <MetricCard label={labels.net_operating_cashflow} value={metrics.net_operating_cashflow} tone="net" onClick={() => drilldown('net_operating_cashflow')} />
       <MetricCard label={labels.open_internal_debt} value={metrics.open_internal_debt} tone="debt" onClick={() => drilldown('open_internal_debt')} />
     </section>
+    <BusinessSectionReport transactions={transactions} wallets={walletSnapshots} />
+    <ProjectReportTimeline transactions={transactions} projects={projects} asOf={meta.as_of} dataThrough={meta.data_through} />
     <section className="overview-grid">
       <article className="panel chart-panel">
         <div className="panel-head"><div><p className="eyebrow">POSISI KAS</p><h3>Pergerakan saldo kas</h3></div><button className="text-button" onClick={() => { setActive('transactions'); setTransactionFilter('external') }}>Lihat arus kas <ArrowRight size={15} /></button></div>
