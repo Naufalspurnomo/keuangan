@@ -1,23 +1,17 @@
-import type { Overview, Transaction } from './types'
+import type { DashboardMeta, Overview, QualityRow, Transaction } from './types'
 
-export interface WalletSnapshot { name: string; balance: number }
+export interface WalletSnapshot { source_key: string; name: string; balance: number }
 export interface DebtSnapshot { source_key: string; date: string | null; amount: number; notes: string; borrower: string; lender: string; status: string }
 export interface CashTrendPoint { month: string; balance: number; net_movement: number }
 export interface ProjectSummary { name: string; net_cashflow: number }
-export interface SnapshotMeta {
-  as_of: string
-  data_through: string | null
-  freshness: 'fresh' | 'aging' | 'stale'
-  source: string
-  data_completeness: { valid_rows: number; invalid_rows: number; completeness_pct: number }
-}
 export interface DashboardSnapshot {
-  version: 'dashboard.snapshot.v1'
-  meta: SnapshotMeta
+  version: string
+  meta: DashboardMeta
   overview: Overview
   wallets: WalletSnapshot[]
   transactions: Transaction[]
   debts: DebtSnapshot[]
+  quality_rows?: QualityRow[]
   cash_trend: CashTrendPoint[]
   project_summaries: ProjectSummary[]
 }

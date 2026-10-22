@@ -65,7 +65,7 @@ def build_live_snapshot(
 
     observed_at = now or datetime.now(timezone.utc)
     valid_rows: list[dict[str, Any]] = []
-    invalid_rows = 0
+    quality_rows: list[dict[str, str]] = []
     seen_keys: set[str] = set()
 
     for raw in raw_rows:
@@ -79,7 +79,7 @@ def build_live_snapshot(
         transaction_type = str(raw.get("tipe") or raw.get("transaction_type") or "").strip()
         direction = transaction_type.casefold()
         if transaction_date is None or amount <= 0 or direction not in (_INCOME_TYPES | _EXPENSE_TYPES):
-            invalid_rows += 1
+            quality_rows.append({"source_key": source_key, "invalid_reason": "invalid_date_or_amount"})
             continue
         valid_rows.append(
             {
@@ -92,6 +92,7 @@ def build_live_snapshot(
                 "project": str(raw.get("nama_projek") or raw.get("project") or "").strip(),
                 "notes": str(raw.get("keterangan") or raw.get("notes") or "").strip(),
                 "internal_movement": bool(raw.get("internal_movement")),
+                "transfer_scope": "internal" if bool(raw.get("internal_movement")) else "external",
             }
         )
 
@@ -102,7 +103,11 @@ def build_live_snapshot(
     ]
 
     wallets = [
-        {"name": str(name), "balance": _balance(value)}
+        {
+            "source_key": f"{str(name).strip()}:wallet:summary",
+            "name": str(name),
+            "balance": _balance(value),
+        }
         for name, value in wallet_balances.items()
     ]
     cash_balance = sum(item["balance"] for item in wallets)
@@ -150,6 +155,7 @@ def build_live_snapshot(
         cash_trend.append({"month": month, "balance": running, "net_movement": movement})
 
     data_through = max((row["transaction_date"] for row in valid_rows), default=None)
+    invalid_rows = len(quality_rows)
     total_rows = len(valid_rows) + invalid_rows
     completeness = round((len(valid_rows) / total_rows) * 100, 1) if total_rows else 0.0
     project_cashflow = sum(
@@ -179,8 +185,16 @@ def build_live_snapshot(
             },
             "counts": {"valid_rows": len(valid_rows), "invalid_rows": invalid_rows},
             "labels": {},
-            "drilldowns": {},
+            "drilldowns": {
+                "cash_balance": "wallets",
+                "operating_inflow": "transactions:external-income",
+                "operating_outflow": "transactions:external-expense",
+                "net_operating_cashflow": "transactions:external",
+                "open_internal_debt": "debts:open",
+                "project_cashflow": "transactions:projects",
+            },
         },
+        "quality_rows": quality_rows,
         "wallets": wallets,
         "transactions": transactions,
         "debts": normalized_debts,

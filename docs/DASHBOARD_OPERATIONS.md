@@ -32,9 +32,10 @@ Accounting boundary:
 - source rows: existing wallet and `Operasional Ktr` sheets;
 - invalid rows: counted and excluded, never coerced into financial values;
 - freshness: newest valid transaction date, not request time;
-- traceability: every row has a stable sheet/block/row source key;
+- traceability: every transaction, debt, KPI drill-down, and rejected row preserves a stable sheet/block/row source key;
 - trend: ends at current authoritative cash balance;
-- cached projection: 60 seconds by default, bounded to 1–120 seconds.
+- browser refresh: every 5 seconds in live mode; an open dashboard shows new transactions and reversal rows within the 10-second target without reload;
+- cached projection: 5 seconds by default and maximum, bounded below at 1 second.
 
 `get_raw_rows_for_audit()` and strict wallet reads are lookup-only. Every required worksheet is verified first. Missing/partial sources return sanitized HTTP `503`; they do not create sheets, return partial zero balances, or fall back to demo figures.
 

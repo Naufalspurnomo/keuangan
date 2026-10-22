@@ -29,6 +29,16 @@ from utils.amounts import parse_money_token
 _cache_lock = threading.Lock()
 _cached_at = 0.0
 _cached_snapshot: dict[str, Any] | None = None
+_DEFAULT_CACHE_SECONDS = 5
+_MAX_CACHE_SECONDS = 5
+
+
+def _cache_seconds() -> int:
+    try:
+        configured = int(os.getenv("DASHBOARD_LIVE_CACHE_SECONDS", str(_DEFAULT_CACHE_SECONDS)))
+    except ValueError:
+        configured = _DEFAULT_CACHE_SECONDS
+    return max(1, min(configured, _MAX_CACHE_SECONDS))
 
 
 def _required_worksheets() -> list[str]:
@@ -78,7 +88,7 @@ def load_live_snapshot(*, force_refresh: bool = False) -> dict[str, Any]:
     """Return one cached immutable projection; never writes to Sheets."""
     global _cached_at, _cached_snapshot
 
-    ttl = max(1, min(int(os.getenv("DASHBOARD_LIVE_CACHE_SECONDS", "60")), 120))
+    ttl = _cache_seconds()
     with _cache_lock:
         now_monotonic = time.monotonic()
         if not force_refresh and _cached_snapshot is not None and now_monotonic - _cached_at < ttl:

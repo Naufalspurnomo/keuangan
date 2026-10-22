@@ -23,8 +23,14 @@ export interface Transaction {
   project: string
   notes?: string
   internal_movement?: boolean
+  transfer_scope?: 'internal' | 'external'
   invalid_reason?: string
   updated_at?: string
+}
+
+export interface QualityRow {
+  source_key: string
+  invalid_reason: string
 }
 
 export interface Overview {

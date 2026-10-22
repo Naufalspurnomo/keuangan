@@ -1,11 +1,17 @@
 import type { Transaction } from './types'
 
-export type TransactionTypeFilter = 'all' | 'Pemasukan' | 'Pengeluaran'
+export type TransactionTypeFilter = 'all' | 'Pemasukan' | 'Pengeluaran' | 'external-income' | 'external-expense' | 'external' | 'projects'
+
+const isInternal = (row: Transaction) => (row.transfer_scope ?? (row.internal_movement ? 'internal' : 'external')) === 'internal'
 
 export function filterTransactions(rows: Transaction[], query: string, type: TransactionTypeFilter): Transaction[] {
   const needle = query.trim().toLocaleLowerCase('id-ID')
   return rows.filter((row) => {
-    if (type !== 'all' && row.transaction_type !== type) return false
+    if (type === 'external-income' && (isInternal(row) || row.transaction_type !== 'Pemasukan')) return false
+    if (type === 'external-expense' && (isInternal(row) || row.transaction_type !== 'Pengeluaran')) return false
+    if (type === 'external' && isInternal(row)) return false
+    if (type === 'projects' && (isInternal(row) || !row.project || ['saldo umum', 'umum'].includes(row.project.trim().toLocaleLowerCase('id-ID')))) return false
+    if ((type === 'Pemasukan' || type === 'Pengeluaran') && row.transaction_type !== type) return false
     if (!needle) return true
     return [row.notes, row.project, row.wallet, row.company, row.source_key]
       .some((value) => String(value ?? '').toLocaleLowerCase('id-ID').includes(needle))

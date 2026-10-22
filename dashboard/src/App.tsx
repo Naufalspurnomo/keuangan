@@ -27,7 +27,7 @@ import { loadSnapshot } from './snapshot'
 import type { CashTrendPoint, DebtSnapshot, ProjectSummary, WalletSnapshot } from './snapshot'
 import { downloadTransactionsCsv, filterTransactions } from './transactions'
 import type { TransactionTypeFilter } from './transactions'
-import type { DashboardMeta, Overview, Transaction } from './types'
+import type { DashboardMeta, Overview, QualityRow, Transaction } from './types'
 
 const FinancialChart = lazy(() => import('./FinancialChart'))
 const PREVIEW_MODE = import.meta.env.VITE_DEMO_PREVIEW === 'true'
@@ -110,22 +110,24 @@ function ThemeToggle({ theme, setTheme }: { theme: string; setTheme: (value: str
   </button>
 }
 
-function FilterBar({ dataThrough }: { dataThrough?: string | null }) {
+function SnapshotContext({ dataThrough }: { dataThrough?: string | null }) {
   const period = dataThrough ? `Semua data · s.d. ${new Date(`${dataThrough}T00:00:00`).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}` : 'Semua periode'
-  return <div className="filter-bar">
-    <button><span><small>Periode</small>{period}</span><ChevronDown size={15} /></button>
-    <button><span><small>Perusahaan</small>Semua perusahaan</span><ChevronDown size={15} /></button>
-    <button><span><small>Dompet</small>Semua dompet</span><ChevronDown size={15} /></button>
-    <button><span><small>Proyek</small>Semua proyek</span><ChevronDown size={15} /></button>
-    <button className="filter-action" aria-label="Filter tambahan"><ListFilter size={18} /></button>
+  return <div className="filter-bar" aria-label="Konteks snapshot">
+    <div><span><small>Periode</small>{period}</span></div>
+    <div><span><small>Perusahaan</small>Semua perusahaan</span></div>
+    <div><span><small>Dompet</small>Semua dompet</span></div>
+    <div><span><small>Proyek</small>Semua proyek</span></div>
   </div>
 }
 
-function MetricCard({ label, value, tone }: { label: string; value: number; tone?: string }) {
+function MetricCard({ label, value, tone, valueText, onClick }: { label: string; value: number; tone?: string; valueText?: string; onClick?: () => void }) {
+  const shownValue = valueText ?? formatAmount(value)
   return <article className={`metric-card ${tone ?? ''}`}>
-    <div className="metric-top"><span>{label}</span><CircleDollarSign size={18} /></div>
-    <strong>{formatAmount(value)}</strong>
-    <div className="metric-foot"><small>Seluruh snapshot</small></div>
+    <button type="button" aria-label={`${label}: ${shownValue}`} onClick={onClick}>
+      <span className="metric-top"><span>{label}</span><CircleDollarSign size={18} /></span>
+      <strong>{shownValue}</strong>
+      <small>Klik untuk rincian</small>
+    </button>
   </article>
 }
 
@@ -135,46 +137,56 @@ function Freshness({ meta }: { meta: DashboardMeta }) {
   return <div className={`freshness ${meta.freshness}`}><i></i><span>{meta.freshness === 'fresh' ? 'Data terkini' : meta.freshness === 'aging' ? 'Data mulai menua' : 'Snapshot perlu diperbarui'}<small>Data s.d. {through} · file {date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} · {meta.data_completeness.completeness_pct}% valid</small></span></div>
 }
 
-function OverviewPage({ overview, transactions, meta, cashTrend, projects, setActive }: { overview: Overview; transactions: Transaction[]; meta: DashboardMeta; cashTrend: CashTrendPoint[]; projects: ProjectSummary[]; setActive: (value: string) => void }) {
+function OverviewPage({ overview, transactions, meta, cashTrend, projects, setActive, setTransactionFilter }: { overview: Overview; transactions: Transaction[]; meta: DashboardMeta; cashTrend: CashTrendPoint[]; projects: ProjectSummary[]; setActive: (value: string) => void; setTransactionFilter: (value: TransactionTypeFilter) => void }) {
   const metrics = overview.metrics
+  const drilldown = (metric: keyof Overview['metrics']) => {
+    const target = overview.drilldowns?.[metric] ?? 'transactions'
+    const [view, filter] = target.split(':')
+    setActive(view)
+    setTransactionFilter((filter ?? 'all') as TransactionTypeFilter)
+  }
   return <>
     <section className="hero-balance">
-      <div><p className="eyebrow">TOTAL POSISI KAS</p><h2>{formatAmount(metrics.cash_balance)}</h2><p>Saldo sistem dari seluruh dompet pada snapshot terakhir.</p></div>
+      <button type="button" className="hero-balance-action" aria-label={overview.labels.cash_balance ?? 'Saldo kas'} onClick={() => drilldown('cash_balance')}>
+        <p className="eyebrow">TOTAL POSISI KAS</p><h2>{formatAmount(metrics.cash_balance)}</h2><p>Saldo sistem dari seluruh dompet pada snapshot terakhir. Klik untuk rincian.</p>
+      </button>
       <Freshness meta={meta} />
     </section>
     <section className="metric-grid">
-      <MetricCard label={overview.labels.operating_inflow} value={metrics.operating_inflow} tone="income" />
-      <MetricCard label={overview.labels.operating_outflow} value={metrics.operating_outflow} tone="expense" />
-      <MetricCard label={overview.labels.net_operating_cashflow} value={metrics.net_operating_cashflow} tone="net" />
-      <MetricCard label={overview.labels.open_internal_debt} value={metrics.open_internal_debt} tone="debt" />
+      <MetricCard label={overview.labels.operating_inflow} value={metrics.operating_inflow} tone="income" onClick={() => drilldown('operating_inflow')} />
+      <MetricCard label={overview.labels.operating_outflow} value={metrics.operating_outflow} tone="expense" onClick={() => drilldown('operating_outflow')} />
+      <MetricCard label={overview.labels.net_operating_cashflow} value={metrics.net_operating_cashflow} tone="net" onClick={() => drilldown('net_operating_cashflow')} />
+      <MetricCard label={overview.labels.open_internal_debt} value={metrics.open_internal_debt} tone="debt" onClick={() => drilldown('open_internal_debt')} />
+      <MetricCard label={overview.labels.data_completeness ?? 'Kelengkapan data'} value={meta.data_completeness.completeness_pct} valueText={`${meta.data_completeness.completeness_pct.toLocaleString('id-ID')}%`} onClick={() => setActive('reports')} />
     </section>
     <section className="overview-grid">
       <article className="panel chart-panel">
-        <div className="panel-head"><div><p className="eyebrow">POSISI KAS</p><h3>Pergerakan saldo kas</h3></div><button className="text-button">Lihat arus kas <ArrowRight size={15} /></button></div>
+        <div className="panel-head"><div><p className="eyebrow">POSISI KAS</p><h3>Pergerakan saldo kas</h3></div><button className="text-button" onClick={() => { setActive('transactions'); setTransactionFilter('external') }}>Lihat arus kas <ArrowRight size={15} /></button></div>
         <div className="chart-value"><strong>{formatAmount(metrics.cash_balance)}</strong><span className={metrics.net_operating_cashflow >= 0 ? 'positive' : 'negative'}>{formatAmount(metrics.net_operating_cashflow)} bersih</span></div>
         <div className="area-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="cash" cashTrend={cashTrend} /></Suspense></div>
       </article>
       <article className="panel project-panel">
-        <div className="panel-head"><div><p className="eyebrow">KINERJA PROYEK</p><h3>Arus kas proyek bersih</h3></div><button className="icon-button"><BarChart3 size={18} /></button></div>
+        <div className="panel-head"><div><p className="eyebrow">KINERJA PROYEK</p><h3>Arus kas proyek bersih</h3></div><button className="icon-button" onClick={() => { setActive('transactions'); setTransactionFilter('projects') }}><BarChart3 size={18} /></button></div>
         <div className="bar-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="projects" projects={projects} /></Suspense></div>
       </article>
     </section>
     <section className="panel activity-panel">
-      <div className="panel-head"><div><p className="eyebrow">AKTIVITAS TERBARU</p><h3>Transaksi terbaru</h3></div><button className="text-button" onClick={() => setActive('transactions')}>Semua transaksi <ArrowRight size={15} /></button></div>
+      <div className="panel-head"><div><p className="eyebrow">AKTIVITAS TERBARU</p><h3>Transaksi terbaru</h3></div><button className="text-button" onClick={() => { setActive('transactions'); setTransactionFilter('all') }}>Semua transaksi <ArrowRight size={15} /></button></div>
       <TransactionTable rows={transactions.slice(0, 5)} compact />
     </section>
   </>
 }
 
 function TransactionTable({ rows, compact = false }: { rows: Transaction[]; compact?: boolean }) {
-  return <div className="table-wrap"><table className="transaction-table"><thead><tr><th>Tanggal</th><th>Keterangan</th><th>Proyek</th><th>Dompet</th><th>Jenis</th><th className="number">Jumlah</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td data-label="Tanggal">{new Date(row.transaction_date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}</td><td data-label="Keterangan"><strong>{row.notes || 'Transaksi operasional'}</strong>{!compact && <small>ID #{row.id}</small>}</td><td data-label="Proyek">{row.project}</td><td data-label="Dompet"><span className="wallet-chip">{row.wallet}</span></td><td data-label="Jenis"><span className={`type-chip ${row.transaction_type === 'Pemasukan' ? 'income' : 'expense'}`}>{row.transaction_type === 'Pemasukan' ? <ArrowDownRight size={13} /> : <ArrowUpRight size={13} />}{row.transaction_type}</span></td><td data-label="Jumlah" className={`number amount ${row.transaction_type === 'Pemasukan' ? 'positive' : ''}`}>{row.transaction_type === 'Pemasukan' ? '+' : '−'}{formatAmount(row.amount)}</td></tr>)}</tbody></table></div>
+  return <div className="table-wrap"><table className="transaction-table"><thead><tr><th>Tanggal</th><th>Keterangan</th><th>Proyek</th><th>Dompet</th><th>Jenis</th><th className="number">Jumlah</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td data-label="Tanggal">{new Date(row.transaction_date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}</td><td data-label="Keterangan"><strong>{row.notes || 'Transaksi operasional'}</strong>{!compact && <small>{row.source_key ?? `ID #${row.id}`}</small>}</td><td data-label="Proyek">{row.project}</td><td data-label="Dompet"><span className="wallet-chip">{row.wallet}</span></td><td data-label="Jenis"><span className={`type-chip ${row.transaction_type === 'Pemasukan' ? 'income' : 'expense'}`}>{row.transaction_type === 'Pemasukan' ? <ArrowDownRight size={13} /> : <ArrowUpRight size={13} />}{row.transaction_type}</span></td><td data-label="Jumlah" className={`number amount ${row.transaction_type === 'Pemasukan' ? 'positive' : ''}`}>{row.transaction_type === 'Pemasukan' ? '+' : '−'}{formatAmount(row.amount)}</td></tr>)}</tbody></table></div>
 }
 
-function DetailPage({ active, transactions, overview, wallets, debts, projects, completeness }: { active: string; transactions: Transaction[]; overview: Overview; wallets: WalletSnapshot[]; debts: DebtSnapshot[]; projects: ProjectSummary[]; completeness: number }) {
+function DetailPage({ active, transactions, overview, wallets, debts, projects, completeness, qualityRows, initialFilter }: { active: string; transactions: Transaction[]; overview: Overview; wallets: WalletSnapshot[]; debts: DebtSnapshot[]; projects: ProjectSummary[]; completeness: number; qualityRows: QualityRow[]; initialFilter: TransactionTypeFilter }) {
   const [query, setQuery] = useState('')
-  const [typeFilter, setTypeFilter] = useState<TransactionTypeFilter>('all')
+  const [typeFilter, setTypeFilter] = useState<TransactionTypeFilter>(initialFilter)
+  useEffect(() => setTypeFilter(initialFilter), [initialFilter])
   const filteredTransactions = filterTransactions(transactions, query, typeFilter)
-  if (active === 'transactions') return <section className="panel detail-panel"><div className="detail-toolbar"><div className="search-field"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari transaksi, proyek, dompet, atau source key…" /></div><label className="type-select"><ListFilter size={17} /><span className="sr-only">Filter jenis</span><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as TransactionTypeFilter)}><option value="all">Semua jenis</option><option value="Pemasukan">Pemasukan</option><option value="Pengeluaran">Pengeluaran</option></select></label><button className="secondary-button" onClick={() => downloadTransactionsCsv(filteredTransactions)}>Ekspor CSV</button><span className="result-count">{filteredTransactions.length.toLocaleString('id-ID')} transaksi</span></div><TransactionTable rows={filteredTransactions} /></section>
+  if (active === 'transactions') return <section className="panel detail-panel"><div className="detail-toolbar"><div className="search-field"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari transaksi, proyek, dompet, atau source key…" /></div><label className="type-select"><ListFilter size={17} /><span className="sr-only">Filter jenis</span><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as TransactionTypeFilter)}><option value="all">Semua jenis</option><option value="Pemasukan">Pemasukan</option><option value="Pengeluaran">Pengeluaran</option><option value="external-income">Pemasukan eksternal</option><option value="external-expense">Pengeluaran eksternal</option><option value="external">Eksternal</option><option value="projects">Proyek</option></select></label><button className="secondary-button" onClick={() => downloadTransactionsCsv(filteredTransactions)}>Ekspor CSV</button><span className="result-count">{filteredTransactions.length.toLocaleString('id-ID')} transaksi</span></div><TransactionTable rows={filteredTransactions} /></section>
   const content: Record<string, { stat: string; value: number; copy: string }> = {
     cashflow: { stat: 'Arus kas operasional bersih', value: overview.metrics.net_operating_cashflow, copy: 'Pemasukan dan pengeluaran operasional setelah pergerakan internal dieliminasi.' },
     wallets: { stat: 'Saldo kas terkonsolidasi', value: overview.metrics.cash_balance, copy: 'Posisi likuiditas perusahaan dari seluruh dompet dan rekening yang terhubung.' },
@@ -184,19 +196,22 @@ function DetailPage({ active, transactions, overview, wallets, debts, projects, 
   }
   const item = content[active]
   const breakdownRows = active === 'wallets'
-    ? wallets.map((row) => ({ name: row.name, value: row.balance }))
+    ? wallets.map((row) => ({ name: `${row.name} · ${row.source_key}`, value: row.balance }))
     : active === 'debts'
-      ? debts.filter((row) => row.status === 'OPEN').slice(0, 8).map((row) => ({ name: `${row.borrower} → ${row.lender}`, value: row.amount }))
-      : projects.slice(0, 8).map((row) => ({ name: row.name, value: row.net_cashflow }))
+      ? debts.filter((row) => row.status === 'OPEN').slice(0, 8).map((row) => ({ name: `${row.borrower} → ${row.lender} · ${row.source_key}`, value: row.amount }))
+      : active === 'reports'
+        ? qualityRows.map((row) => ({ name: `${row.source_key} — ${row.invalid_reason}`, value: row.source_key.length }))
+        : projects.slice(0, 8).map((row) => ({ name: row.name, value: row.net_cashflow }))
   const maxValue = Math.max(...breakdownRows.map((row) => Math.abs(row.value)), 1)
   return <section className="detail-layout">
-    <article className="detail-hero"><p className="eyebrow">PANDANGAN EKSEKUTIF</p><h2>{item.stat}</h2><strong>{active === 'reports' ? `${item.value.toLocaleString('id-ID')}%` : formatAmount(item.value)}</strong><p>{item.copy}</p><button className="primary-button">Buka rincian <ArrowRight size={17} /></button></article>
-    <article className="panel breakdown"><div className="panel-head"><div><p className="eyebrow">RINCIAN</p><h3>Komposisi snapshot</h3></div></div>{breakdownRows.map((row, index) => <div className="breakdown-row" key={`${row.name}-${index}`}><span><i style={{ background: row.value < 0 ? 'var(--danger)' : index === 0 ? 'var(--chart-primary)' : 'var(--chart-secondary)' }}></i>{row.name}</span><strong>{formatAmount(row.value)}</strong><div><b style={{ width: `${(Math.abs(row.value) / maxValue) * 100}%` }}></b></div></div>)}</article>
+    <article className="detail-hero"><p className="eyebrow">PANDANGAN EKSEKUTIF</p><h2>{item.stat}</h2><strong>{active === 'reports' ? `${item.value.toLocaleString('id-ID')}%` : formatAmount(item.value)}</strong><p>{item.copy}</p></article>
+    <article className="panel breakdown"><div className="panel-head"><div><p className="eyebrow">RINCIAN</p><h3>{active === 'reports' ? 'Baris ditolak' : 'Komposisi snapshot'}</h3></div></div>{breakdownRows.length ? breakdownRows.map((row, index) => <div className="breakdown-row" key={`${row.name}-${index}`}><span><i style={{ background: row.value < 0 ? 'var(--danger)' : index === 0 ? 'var(--chart-primary)' : 'var(--chart-secondary)' }}></i>{row.name}</span><strong>{active === 'reports' ? 'Perlu tinjau' : formatAmount(row.value)}</strong><div><b style={{ width: `${(Math.abs(row.value) / maxValue) * 100}%` }}></b></div></div>) : <p className="empty-note">Tidak ada baris ditolak pada snapshot ini.</p>}</article>
   </section>
 }
 
 function Dashboard() {
   const [active, setActive] = useState('overview')
+  const [transactionFilter, setTransactionFilter] = useState<TransactionTypeFilter>('all')
   const [menuOpen, setMenuOpen] = useState(false)
   const [theme, setTheme] = useState(() => localStorage.getItem('hollawall-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
   const queryEnabled = !PREVIEW_MODE || SNAPSHOT_MODE
@@ -205,7 +220,7 @@ function Dashboard() {
     queryFn: () => loadSnapshot(SNAPSHOT_MODE),
     retry: false,
     enabled: queryEnabled,
-    refetchInterval: SNAPSHOT_MODE ? 300_000 : 30_000,
+    refetchInterval: SNAPSHOT_MODE ? 300_000 : 5_000,
   })
 
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('hollawall-theme', theme) }, [theme])
@@ -226,17 +241,18 @@ function Dashboard() {
   const debts = snapshot?.debts ?? []
   const projects = snapshot?.project_summaries ?? []
   const cashTrend = snapshot?.cash_trend ?? []
+  const qualityRows = snapshot?.quality_rows ?? []
   const isDemo = !snapshot && (PREVIEW_MODE || snapshotQuery.isError)
   const [eyebrow, title] = pageMeta[active]
 
   return <div className="app-shell">
     <Sidebar active={active} setActive={setActive} open={menuOpen} setOpen={setMenuOpen} transactionCount={transactions.length} />
     <main className="main-canvas">
-      <header className="topbar"><button className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi"><Menu size={21} /></button><div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{title}</strong></div><div className="topbar-actions"><button className="icon-button"><Search size={18} /></button><ThemeToggle theme={theme} setTheme={setTheme} /><button className="icon-button" onClick={() => snapshotQuery.refetch()}><RefreshCcw size={17} /></button></div></header>
+      <header className="topbar"><button className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi"><Menu size={21} /></button><div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{title}</strong></div><div className="topbar-actions"><ThemeToggle theme={theme} setTheme={setTheme} /><button className="icon-button" aria-label="Segarkan snapshot" onClick={() => snapshotQuery.refetch()}><RefreshCcw size={17} /></button></div></header>
       <div className="content">
         <section className="page-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>Pandangan terukur atas posisi keuangan Hollawall.</p></div>{snapshot ? <div className={`demo-badge ${meta.freshness}`}>SNAPSHOT PRODUKSI · {meta.freshness === 'stale' ? 'PERLU DIPERBARUI' : 'READ-ONLY'}</div> : isDemo && <div className="demo-badge">PRATINJAU · DATA DEMO</div>}</section>
-        <FilterBar dataThrough={meta.data_through} />
-        {active === 'overview' ? <OverviewPage overview={overview} transactions={transactions} meta={meta} cashTrend={cashTrend} projects={projects} setActive={setActive} /> : <DetailPage active={active} transactions={transactions} overview={overview} wallets={wallets} debts={debts} projects={projects} completeness={meta.data_completeness.completeness_pct} />}
+        <SnapshotContext dataThrough={meta.data_through} />
+        {active === 'overview' ? <OverviewPage overview={overview} transactions={transactions} meta={meta} cashTrend={cashTrend} projects={projects} setActive={setActive} setTransactionFilter={setTransactionFilter} /> : <DetailPage active={active} transactions={transactions} overview={overview} wallets={wallets} debts={debts} projects={projects} completeness={meta.data_completeness.completeness_pct} qualityRows={qualityRows} initialFilter={transactionFilter} />}
       </div>
     </main>
   </div>
