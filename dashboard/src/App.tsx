@@ -181,6 +181,7 @@ function OverviewPage({ overview, transactions, meta, cashTrend, projects, walle
       <article className="panel chart-panel">
         <div className="panel-head"><div><p className="eyebrow">POSISI KAS</p><h3>Pergerakan saldo kas</h3></div><button className="text-button" onClick={() => { setActive('transactions'); setTransactionFilter('external') }}>Lihat arus kas <ArrowRight size={15} /></button></div>
         <div className="chart-value"><strong>{formatAmount(metrics.cash_balance)}</strong><span className={metrics.net_operating_cashflow >= 0 ? 'positive' : 'negative'}>{formatAmount(metrics.net_operating_cashflow)} bersih</span></div>
+        <div className="chart-caption"><i></i><span>Saldo kas per bulan · {cashTrend.length} titik snapshot</span></div>
         <div className="area-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="cash" cashTrend={cashTrend} /></Suspense></div>
       </article>
       <article className="panel project-panel">

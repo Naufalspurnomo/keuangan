@@ -45,7 +45,7 @@ export default function FinancialChart({ kind, cashTrend = [], projects = [], wa
         <XAxis dataKey="month" tickFormatter={monthLabel} axisLine={false} tickLine={false} tick={{ fill: 'var(--text-secondary)', fontSize: 11 }} />
         <YAxis width={58} axisLine={false} tickLine={false} tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} tickFormatter={(value) => compact.format(value)} />
         <Tooltip content={<ChartTooltip />} />
-        <Area type="monotone" dataKey="balance" name="Saldo" stroke="var(--chart-primary)" strokeWidth={2.5} fill="url(#cashGradient)" dot={{ r: 3, fill: 'var(--surface)', stroke: 'var(--chart-primary)', strokeWidth: 2 }} activeDot={{ r: 5 }} />
+        <Area type="monotone" dataKey="balance" name="Saldo kas" connectNulls dot={{ r: 3, fill: 'var(--surface)', stroke: 'var(--chart-primary)', strokeWidth: 2 }} activeDot={{ r: 5 }} stroke="var(--chart-primary)" strokeWidth={2.5} fill="url(#cashGradient)" />
       </AreaChart>
     </ResponsiveContainer>
   }
