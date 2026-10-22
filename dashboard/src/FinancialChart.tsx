@@ -68,8 +68,12 @@ export default function FinancialChart({ kind, cashTrend = [], projects = [], wa
 
   if (kind === 'wallets') {
     const sorted = [...wallets].sort((a, b) => b.balance - a.balance)
-    const rows = sorted.slice(0, 6).map((row) => ({ name: row.name.length > 20 ? `${row.name.slice(0, 18)}…` : row.name, value: row.balance, full: row.name }))
-    const total = rows.reduce((sum, row) => sum + row.value, 0)
+    const total = sorted.reduce((sum, row) => sum + row.balance, 0)
+    const leading = sorted.slice(0, 5).map((row) => ({ name: row.name.length > 20 ? `${row.name.slice(0, 18)}…` : row.name, value: row.balance, full: row.name }))
+    const remainder = sorted.slice(5).reduce((sum, row) => sum + row.balance, 0)
+    const rows = remainder === 0
+      ? leading
+      : [...leading, { name: 'Lainnya', value: remainder, full: `${sorted.length - 5} dompet lainnya` }]
     const COLORS = ['var(--chart-primary)', 'var(--chart-secondary)', 'var(--accent)', 'var(--positive)', 'var(--warning)', 'var(--negative)']
     return <div className="donut-with-legend">
       <div className="donut-chart-figure">
