@@ -7,6 +7,7 @@ import './dashboard-enhancements.css'
 import './dashboard-redesign.css'
 import './business-report.css'
 import './project-report-timeline.css'
+import './calm-financial-palette.css'
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 20_000 } } })
 
