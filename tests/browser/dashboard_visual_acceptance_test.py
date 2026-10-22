@@ -58,6 +58,10 @@ SNAPSHOT = {
         {"source_key": "CV HB(101):wallet:summary", "name": "CV HB(101)", "balance": 300_000_000},
         {"source_key": "TX SBY(216):wallet:summary", "name": "TX SBY(216)", "balance": 318_900_000},
         {"source_key": "TX Bali(087):wallet:summary", "name": "TX Bali(087)", "balance": 250_000_000},
+        {"source_key": "BCA(056):wallet:summary", "name": "BCA(056)", "balance": 40_000_000},
+        {"source_key": "BRI(031):wallet:summary", "name": "BRI(031)", "balance": 30_000_000},
+        {"source_key": "CASH:wallet:summary", "name": "Kas Operasional", "balance": 20_000_000},
+        {"source_key": "PETTY:wallet:summary", "name": "Kas Kecil", "balance": 10_000_000},
     ],
     "transactions": TRANSACTIONS,
     "debts": [{"source_key": "HUTANG:2", "date": "2026-10-20", "amount": 28_500_000, "notes": "Bridge", "borrower": "CV HB(101)", "lender": "TX SBY(216)", "status": "OPEN"}],
@@ -169,11 +173,20 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
           body: document.body.scrollWidth,
           theme: document.documentElement.dataset.theme,
           chartCount: document.querySelectorAll('.recharts-responsive-container').length,
-          visibleButtons: [...document.querySelectorAll('button')].filter(el => el.offsetParent !== null).length
+          visibleButtons: [...document.querySelectorAll('button')].filter(el => el.offsetParent !== null).length,
+          metricColors: [...document.querySelectorAll('.metric-card strong')].map(el => getComputedStyle(el).color),
+          walletLegend: [...document.querySelectorAll('.donut-legend li')].map(el => el.textContent),
+          walletTotal: document.querySelector('.donut-center strong')?.textContent
         })""")
+        self.assertIn("Lainnya", " ".join(metrics["walletLegend"]))
+        self.assertEqual(metrics["walletTotal"], "968,9 jt")
         self.assertLessEqual(metrics["document"], metrics["viewport"])
         self.assertLessEqual(metrics["body"], metrics["viewport"])
-        self.assertEqual(metrics["chartCount"], 2)
+        # Overview renders multiple independent charts: cash area, project bars,
+        # monthly flow, wallet composition. Lock the contract, not an exact count,
+        # so adding a panel does not silently drop an existing one.
+        self.assertGreaterEqual(metrics["chartCount"], 4)
+        self.assertEqual(len(set(metrics["metricColors"])), 4)
         self.assertGreater(metrics["visibleButtons"], 8)
         return metrics
 
