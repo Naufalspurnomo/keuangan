@@ -67,13 +67,24 @@ export default function FinancialChart({ kind, cashTrend = [], projects = [], wa
   }
 
   if (kind === 'wallets') {
-    const sorted = [...wallets].sort((a, b) => b.balance - a.balance)
+    const sorted = [...wallets].sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance))
     const total = sorted.reduce((sum, row) => sum + row.balance, 0)
-    const leading = sorted.slice(0, 5).map((row) => ({ name: row.name.length > 20 ? `${row.name.slice(0, 18)}…` : row.name, value: row.balance, full: row.name }))
-    const remainder = sorted.slice(5).reduce((sum, row) => sum + row.balance, 0)
-    const rows = remainder === 0
+    const gross = sorted.reduce((sum, row) => sum + Math.abs(row.balance), 0)
+    const leading = sorted.slice(0, 5).map((row) => ({
+      name: row.name.length > 20 ? `${row.name.slice(0, 18)}…` : row.name,
+      value: Math.abs(row.balance),
+      signed: row.balance,
+      full: row.name,
+    }))
+    const remainder = sorted.slice(5)
+    const rows = remainder.length === 0
       ? leading
-      : [...leading, { name: 'Lainnya', value: remainder, full: `${sorted.length - 5} dompet lainnya` }]
+      : [...leading, {
+          name: 'Lainnya',
+          value: remainder.reduce((sum, row) => sum + Math.abs(row.balance), 0),
+          signed: remainder.reduce((sum, row) => sum + row.balance, 0),
+          full: `${remainder.length} dompet lainnya`,
+        }]
     const COLORS = ['var(--chart-primary)', 'var(--chart-secondary)', 'var(--accent)', 'var(--positive)', 'var(--warning)', 'var(--negative)']
     return <div className="donut-with-legend">
       <div className="donut-chart-figure">
@@ -91,8 +102,8 @@ export default function FinancialChart({ kind, cashTrend = [], projects = [], wa
         {rows.map((row, index) => <li key={row.full}>
           <i style={{ background: COLORS[index % COLORS.length] }} />
           <span title={row.full}>{row.name}</span>
-          <b>{compact.format(row.value)}</b>
-          <small>{total > 0 ? `${((row.value / total) * 100).toLocaleString('id-ID', { maximumFractionDigits: 1 })}%` : '0%'}</small>
+          <b>{compact.format(row.signed)}</b>
+          <small>{gross > 0 ? `${((row.value / gross) * 100).toLocaleString('id-ID', { maximumFractionDigits: 1 })}%` : '0%'}</small>
         </li>)}
       </ul>
     </div>
