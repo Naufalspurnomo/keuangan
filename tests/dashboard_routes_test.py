@@ -1,5 +1,10 @@
+import hashlib
 import unittest
 from datetime import date, datetime, timezone
+from unittest.mock import patch
+
+PROXY_TOKEN = "proxy-test-token"
+PROXY_TOKEN_HASH = hashlib.sha256(PROXY_TOKEN.encode("utf-8")).hexdigest()
 
 from flask import Flask
 from werkzeug.security import generate_password_hash
@@ -78,6 +83,7 @@ class DashboardRouteTests(unittest.TestCase):
             SECRET_KEY="test-secret",
             DASHBOARD_OWNER_EMAIL="naufalspurnomo@gmail.com",
             DASHBOARD_OWNER_PASSWORD_HASH=generate_password_hash("boss-test-password"),
+            DASHBOARD_PROXY_TOKEN_HASH=PROXY_TOKEN_HASH,
         )
         register_dashboard(app, repository=FakeRepository())
         self.app = app
@@ -93,6 +99,79 @@ class DashboardRouteTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.get_json()["error"]["code"], "authentication_required")
+
+    def test_snapshot_route_returns_frontend_contract_via_proxy_token(self):
+        snapshot = {
+            "version": "dashboard.snapshot.v1",
+            "meta": {"as_of": "2026-10-21T00:00:00+00:00", "freshness": "fresh"},
+            "overview": {"metrics": {"cash_balance": 123}},
+            "wallets": [],
+            "transactions": [],
+            "debts": [],
+            "cash_trend": [],
+            "project_summaries": [],
+        }
+        with patch("dashboard_api.live_source.load_live_snapshot", return_value=snapshot):
+            response = self.client.get(
+                "/api/dashboard/v1/snapshot",
+                headers={"X-Hollawall-Proxy-Token": PROXY_TOKEN},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), snapshot)
+        self.assertIn("private", response.headers["Cache-Control"])
+
+    def test_snapshot_source_failure_is_sanitized(self):
+        with patch("dashboard_api.live_source.load_live_snapshot", side_effect=RuntimeError("credential leaked here")):
+            response = self.client.get(
+                "/api/dashboard/v1/snapshot",
+                headers={"X-Hollawall-Proxy-Token": PROXY_TOKEN},
+            )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["error"]["code"], "source_unavailable")
+        self.assertNotIn("credential leaked", response.get_data(as_text=True))
+
+    def test_valid_reverse_proxy_token_allows_read_only_access(self):
+        response = self.client.get(
+            "/api/dashboard/v1/overview",
+            headers={"X-Hollawall-Proxy-Token": PROXY_TOKEN},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["api_version"], "dashboard.v1")
+
+    def test_reverse_proxy_token_exposes_owner_identity(self):
+        response = self.client.get(
+            "/api/dashboard/v1/auth/me",
+            headers={"X-Hollawall-Proxy-Token": PROXY_TOKEN},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["data"], {"email": "naufalspurnomo@gmail.com", "role": "owner"})
+
+    def test_invalid_reverse_proxy_token_fails_closed(self):
+        response = self.client.get(
+            "/api/dashboard/v1/overview",
+            headers={"X-Hollawall-Proxy-Token": "wrong-token"},
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.get_json()["error"]["code"], "authentication_required")
+
+    def test_bearer_authorization_is_not_accepted_as_proxy_auth(self):
+        response = self.client.get(
+            "/api/dashboard/v1/overview",
+            headers={"Authorization": f"Bearer {PROXY_TOKEN}"},
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_malformed_reverse_proxy_hash_fails_closed(self):
+        self.app.config["DASHBOARD_PROXY_TOKEN_HASH"] = "not-a-sha256"
+        response = self.client.get(
+            "/api/dashboard/v1/overview",
+            headers={"X-Hollawall-Proxy-Token": PROXY_TOKEN},
+        )
+
+        self.assertEqual(response.status_code, 401)
 
     def test_non_owner_role_is_forbidden(self):
         self.login_session("viewer")
@@ -163,10 +242,11 @@ class DashboardRouteTests(unittest.TestCase):
 
     def test_finance_routes_are_get_only(self):
         self.login_session()
-        for method in ("post", "put", "patch", "delete"):
-            with self.subTest(method=method):
-                response = getattr(self.client, method)("/api/dashboard/v1/overview")
-                self.assertEqual(response.status_code, 405)
+        for path in ("overview", "snapshot"):
+            for method in ("post", "put", "patch", "delete"):
+                with self.subTest(path=path, method=method):
+                    response = getattr(self.client, method)(f"/api/dashboard/v1/{path}")
+                    self.assertEqual(response.status_code, 405)
 
     def test_conditional_request_returns_304(self):
         self.login_session()

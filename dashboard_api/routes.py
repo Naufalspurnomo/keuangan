@@ -7,16 +7,16 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from flask import Blueprint, Response, current_app, jsonify, make_response, request, session
+from flask import Blueprint, Response, jsonify, make_response, request
 
 from dashboard_api.auth import (
-    SESSION_ROLE_KEY,
-    SESSION_USER_KEY,
     authenticate_owner,
     clear_owner_session,
     establish_owner_session,
+    owner_identity,
     owner_required,
 )
+from dashboard_api import live_source
 from dashboard_api.contracts import DashboardContractError, parse_filters
 from dashboard_api.service import build_overview
 
@@ -147,12 +147,24 @@ def create_dashboard_blueprint(repository: Any) -> Blueprint:
     @blueprint.get("/auth/me")
     @owner_required
     def me():
+        email, role = owner_identity() or ("", "")
         return jsonify(
             {
                 "api_version": API_VERSION,
-                "data": {"email": session[SESSION_USER_KEY], "role": session[SESSION_ROLE_KEY]},
+                "data": {"email": email, "role": role},
             }
         )
+
+    @blueprint.get("/snapshot")
+    @owner_required
+    def snapshot():
+        try:
+            payload = live_source.load_live_snapshot()
+        except Exception:
+            return jsonify(
+                {"error": {"code": "source_unavailable", "message": "Dashboard source temporarily unavailable"}}
+            ), 503
+        return _respond(payload)
 
     @blueprint.get("/<view>")
     @owner_required

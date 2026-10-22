@@ -7,26 +7,21 @@ vi.mock('./FinancialChart', () => ({
 
 import App from './App'
 
-const overview = {
-  version: 'dashboard.v1',
-  data: {
+const snapshot = {
+  version: 'dashboard.snapshot.v1',
+  overview: {
     metrics: { cash_balance: 868900000, operating_inflow: 497500000, operating_outflow: 192150000, net_operating_cashflow: 305350000, open_internal_debt: 28500000, project_cashflow: 305350000 },
     counts: { valid_rows: 148, invalid_rows: 2 },
     labels: { cash_balance: 'Saldo kas', operating_inflow: 'Pemasukan operasional', operating_outflow: 'Pengeluaran operasional', net_operating_cashflow: 'Arus kas operasional bersih', open_internal_debt: 'Hutang antar-dompet terbuka', project_cashflow: 'Arus kas proyek bersih' },
     drilldowns: {},
   },
-  meta: { as_of: '2026-10-21T12:00:00Z', freshness: 'fresh', data_completeness: { valid_rows: 148, invalid_rows: 2, completeness_pct: 98.7 } },
-  error: null,
+  meta: { as_of: '2026-10-21T12:00:00Z', data_through: '2026-10-21', source: 'test', freshness: 'fresh', data_completeness: { valid_rows: 148, invalid_rows: 2, completeness_pct: 98.7 } },
+  wallets: [], transactions: [], debts: [], cash_trend: [], project_summaries: [],
 }
 
 beforeEach(() => {
   vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-    const url = String(input)
-    if (url.endsWith('/auth/me')) return new Response(JSON.stringify({ version: 'dashboard.v1', data: { identity: { email: 'naufalspurnomo@gmail.com', role: 'owner' } }, meta: overview.meta, error: null }), { status: 200 })
-    if (url.includes('/overview')) return new Response(JSON.stringify(overview), { status: 200 })
-    return new Response(JSON.stringify({ ...overview, data: { items: [], next_cursor: null } }), { status: 200 })
-  }))
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(snapshot), { status: 200 })))
 })
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); localStorage.clear() })
@@ -59,14 +54,11 @@ describe('Hollawall command center', () => {
     expect(screen.getByPlaceholderText(/Cari transaksi/)).toBeTruthy()
   })
 
-  it('uses API-shaped demo fallback when dashboard resources are unavailable', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input)
-      if (url.endsWith('/auth/me')) return new Response(JSON.stringify({ version: 'dashboard.v1', data: { identity: { email: 'naufalspurnomo@gmail.com', role: 'owner' } }, meta: overview.meta, error: null }), { status: 200 })
-      return new Response(JSON.stringify({ error: { code: 'unavailable', message: 'unavailable' } }), { status: 503 })
-    }))
+  it('fails closed without showing demo values when live data is unavailable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { code: 'unavailable' } }), { status: 503 })))
     renderApp()
-    expect(await screen.findByText('PRATINJAU · DATA DEMO')).toBeTruthy()
-    expect(screen.getAllByText('Rp 868.900.000').length).toBeGreaterThan(0)
+    expect(await screen.findByRole('heading', { name: 'Data keuangan tidak tersedia' })).toBeTruthy()
+    expect(screen.queryByText('PRATINJAU · DATA DEMO')).toBeNull()
+    expect(screen.queryByText('Rp 868.900.000')).toBeNull()
   })
 })

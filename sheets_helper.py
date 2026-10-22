@@ -1809,18 +1809,26 @@ def _parse_amount(amt_str):
     return parse_money_token(text)
 
 
-def _is_internal_transfer_tx(tx: Dict) -> bool:
-    """
-    Internal movements (saldo bootstrap/topup debt bridge) that should not
-    be treated as company/project business performance.
-    """
+def is_internal_transfer_transaction(tx: Dict) -> bool:
+    """Return whether a ledger row is an internal balance/debt movement."""
     proj = str(tx.get('nama_projek', '') or '').strip().lower()
     if proj in {'saldo umum', 'umum'}:
         return True
-    desc = str(tx.get('keterangan', '') or '').strip().lower()
-    if 'hutang ke dompet' in desc or 'memberi hutang ke' in desc:
+    message_id = str(tx.get('message_id', '') or '').strip().lower()
+    if any(marker in message_id for marker in ('|utang', '|terima', '|bayar', 'hutang_paid_')):
         return True
-    return False
+    desc = str(tx.get('keterangan', '') or '').strip().lower()
+    return any(marker in desc for marker in (
+        'hutang ke dompet',
+        'memberi hutang ke',
+        'terima pelunasan hutang',
+        'bayar hutang ke',
+    ))
+
+
+def _is_internal_transfer_tx(tx: Dict) -> bool:
+    """Backward-compatible private alias."""
+    return is_internal_transfer_transaction(tx)
 
 
 def get_raw_rows_for_audit() -> List[Dict]:
@@ -2524,7 +2532,7 @@ def format_report_message(report: Dict) -> str:
     return '\n'.join(lines)
 
 
-def get_wallet_balances(force_refresh: bool = False) -> Dict:
+def get_wallet_balances(force_refresh: bool = False, strict: bool = False, spreadsheet=None) -> Dict:
     """
     Calculate REAL wallet balances using Virtual Balance formula:
     
@@ -2551,11 +2559,12 @@ def get_wallet_balances(force_refresh: bool = False) -> Dict:
 
     balances = {}
     read_had_error = False
+    strict_spreadsheet = (spreadsheet or get_spreadsheet()) if strict else None
     
     # 1. Calculate base balance from each dompet sheet (Split Layout)
     for dompet in DOMPET_SHEETS:
         try:
-            sheet = get_dompet_sheet(dompet)
+            sheet = strict_spreadsheet.worksheet(dompet) if strict else get_dompet_sheet(dompet)
 
             # One row read replaces two column reads while preserving the
             # existing split-layout columns and balance formula.
@@ -2596,7 +2605,7 @@ def get_wallet_balances(force_refresh: bool = False) -> Dict:
     
     # 2. Parse Operasional Ktr sheet and debit from source wallets
     try:
-        op_sheet = get_or_create_operational_sheet()
+        op_sheet = strict_spreadsheet.worksheet(OPERASIONAL_SHEET_NAME) if strict else get_or_create_operational_sheet()
         all_rows = op_sheet.get_all_values()[OPERASIONAL_DATA_START - 1:]  # Skip header
         
         for row in all_rows:
@@ -2621,7 +2630,7 @@ def get_wallet_balances(force_refresh: bool = False) -> Dict:
 
     # 3. Parse Hutang sheet and adjust balances
     try:
-        h_sheet = get_or_create_hutang_sheet()
+        h_sheet = strict_spreadsheet.worksheet(HUTANG_SHEET_NAME) if strict else get_or_create_hutang_sheet()
         h_rows = h_sheet.get_all_values()[HUTANG_DATA_START - 1:]  # Skip header
         for row in h_rows:
             if len(row) < HUTANG_COLS['STATUS']:
@@ -2654,6 +2663,8 @@ def get_wallet_balances(force_refresh: bool = False) -> Dict:
         _set_wallet_balances_cache(balances)
     else:
         secure_log("WARNING", "Skipped wallet balance cache because Sheets read was partial")
+        if strict:
+            raise RuntimeError("wallet balance read was partial")
     log_timing("sheets.read.wallet_balances", started_at, partial=read_had_error)
     return balances
 

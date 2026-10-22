@@ -49,8 +49,28 @@ TRANSACTIONS = [
 ]
 
 
-def envelope(data):
-    return {"version": "dashboard.v1", "data": data, "meta": META, "error": None}
+SNAPSHOT = {
+    "version": "dashboard.snapshot.v1",
+    "meta": {**META, "data_through": "2026-10-21", "source": "acceptance fixture"},
+    "overview": OVERVIEW,
+    "wallets": [
+        {"name": "CV HB(101)", "balance": 300_000_000},
+        {"name": "TX SBY(216)", "balance": 318_900_000},
+        {"name": "TX Bali(087)", "balance": 250_000_000},
+    ],
+    "transactions": TRANSACTIONS,
+    "debts": [{"source_key": "HUTANG:2", "date": "2026-10-20", "amount": 28_500_000, "notes": "Bridge", "borrower": "CV HB(101)", "lender": "TX SBY(216)", "status": "OPEN"}],
+    "cash_trend": [
+        {"month": "2026-08", "balance": 220_000_000, "net_movement": 220_000_000},
+        {"month": "2026-09", "balance": 485_000_000, "net_movement": 265_000_000},
+        {"month": "2026-10", "balance": 790_350_000, "net_movement": 305_350_000},
+    ],
+    "project_summaries": [
+        {"name": "Surabaya Office", "net_cashflow": 98_250_000},
+        {"name": "Grand Galaxy", "net_cashflow": 51_600_000},
+        {"name": "Mawar Residence", "net_cashflow": 52_100_000},
+    ],
+}
 
 
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
@@ -97,18 +117,9 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         context.add_init_script(f"localStorage.setItem('hollawall-theme', '{theme}')")
 
         def route_api(route):
-            url = route.request.url
-            if url.endswith("/auth/me"):
-                payload = envelope({"identity": {"email": "naufalspurnomo@gmail.com", "role": "owner"}})
-            elif "/overview" in url:
-                payload = envelope(OVERVIEW)
-            elif "/transactions" in url:
-                payload = envelope({"items": TRANSACTIONS, "next_cursor": None})
-            else:
-                payload = envelope({"items": []})
-            route.fulfill(status=200, content_type="application/json", body=json.dumps(payload))
+            route.fulfill(status=200, content_type="application/json", body=json.dumps(SNAPSHOT))
 
-        context.route("**/api/dashboard/v1/**", route_api)
+        context.route("**/live-api/snapshot", route_api)
         page = context.new_page()
         console_errors = []
         page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)

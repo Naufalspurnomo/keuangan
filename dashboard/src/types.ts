@@ -12,13 +12,6 @@ export interface DashboardMeta {
   }
 }
 
-export interface DashboardEnvelope<T> {
-  version: 'dashboard.v1'
-  data: T
-  meta: DashboardMeta
-  error: null | { code: string; message: string }
-}
-
 export interface Transaction {
   id: number
   source_key?: string
@@ -46,9 +39,4 @@ export interface Overview {
   counts: { valid_rows: number; invalid_rows: number }
   labels: Record<string, string>
   drilldowns: Record<string, string>
-}
-
-export interface TransactionPage {
-  items: Transaction[]
-  next_cursor: string | null
 }

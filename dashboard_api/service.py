@@ -84,7 +84,6 @@ def _is_internal(row: Mapping[str, Any]) -> bool:
     return (
         transaction_type in INTERNAL_TYPES
         or source_block in {"hutang", "debt", "internal_transfer", "transfer"}
-        or bool(row.get("source_wallet"))
     )
 
 

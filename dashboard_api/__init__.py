@@ -12,6 +12,11 @@ from dashboard_api.repository import DashboardRepository
 from dashboard_api.routes import create_dashboard_blueprint
 
 
+# SHA-256 verifier for the owner VPS reverse proxy. The 384-bit bearer token
+# remains owner-scoped outside Git and can be rotated through the environment.
+DEFAULT_DASHBOARD_PROXY_TOKEN_HASH = "4e27151b079d42b5347a988f0a4c24280bd38af3ff23f971a47e4e6a890cc26c"
+
+
 def register_dashboard(app: Flask, *, repository: Optional[Any] = None) -> None:
     """Register dashboard routes without modifying existing webhook behavior."""
 
@@ -19,6 +24,10 @@ def register_dashboard(app: Flask, *, repository: Optional[Any] = None) -> None:
     app.config.setdefault(
         "DASHBOARD_OWNER_PASSWORD_HASH",
         os.getenv("DASHBOARD_OWNER_PASSWORD_HASH", ""),
+    )
+    app.config.setdefault(
+        "DASHBOARD_PROXY_TOKEN_HASH",
+        os.getenv("DASHBOARD_PROXY_TOKEN_HASH", DEFAULT_DASHBOARD_PROXY_TOKEN_HASH),
     )
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
     app.config["SESSION_COOKIE_SECURE"] = True

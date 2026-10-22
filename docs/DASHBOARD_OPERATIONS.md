@@ -1,87 +1,106 @@
 # Hollawall Financial Command Center — Operations
 
-## Current state
+## Deployment state
 
 - Entrypoint: `https://hollawall.46.250.238.167.nip.io`
-- Hosting: Naufal VPS, Apache static site
-- Access: HTTPS + Apache Basic Auth, owner-only
-- Mode: owner Google Drive workbook snapshot, read-only
-- Data through: `2026-09-02`
-- Snapshot rows: 843 valid, 15 invalid
-- Freshness: deliberately `stale`; never rendered as current
-- Existing Koyeb bot/webhooks: unchanged
+- Frontend: static React on Naufal VPS, Apache HTTPS
+- Browser boundary: Apache Basic Auth, owner-only
+- Upstream: Koyeb app `renewed-loreen/keuangan`
+- API path: same-origin `GET /live-api/snapshot`
+- Mode: read-only; no dashboard route writes to Google Sheets, PostgreSQL, or bot state
+- Existing `/health`, `/webhook_wuzapi`, and `/telegram`: unchanged
 
-The site serves a sanitized JSON snapshot generated from Naufal's `Keuangan.xlsx` workbook. It does not write to the workbook, Google Drive, PostgreSQL, Koyeb, or the bot. The source workbook and generated JSON must never enter Git or public artifacts.
+Before live promotion completes, the VPS may still serve the previous private workbook snapshot. Never describe a static snapshot as a live dashboard.
 
-## Provenance
+## Live data provenance
 
 ```text
-naufal-drive:Keuangan.xlsx
-  -> owner-scoped rclone download
-  -> scripts/build_dashboard_snapshot.py
-  -> private dist/data/dashboard-snapshot.json
-  -> Apache Basic Auth + HTTPS
+existing Hollawall Google Sheets
+  -> existing canonical bot read helpers
+  -> strict read-only dashboard source
+  -> dashboard.snapshot.v1 projection
+  -> authenticated Koyeb GET /api/dashboard/v1/snapshot
+  -> Apache same-origin reverse proxy
+  -> owner browser
 ```
 
-The generator defines the accounting boundary:
+Accounting boundary:
 
-- cash balance: sum of the three `Saldo Sistem` wallet balances;
-- operating cash flow: transactions excluding internal debt movements;
-- open internal debt: only rows with `Status=OPEN` in `HUTANG`;
-- freshness: worst case of Drive file age and newest transaction date;
-- invalid rows: counted and excluded, never coerced to zero;
-- traceability: every transaction retains its source message ID as `source_key`.
+- cash balance: exact `get_wallet_balances(strict=True)` formula used by `/saldo`;
+- operating inflow/outflow: valid source transactions excluding internal transfers and debt settlements;
+- open internal debt: only `HUTANG` rows with `Status=OPEN`;
+- source rows: existing wallet and `Operasional Ktr` sheets;
+- invalid rows: counted and excluded, never coerced into financial values;
+- freshness: newest valid transaction date, not request time;
+- traceability: every row has a stable sheet/block/row source key;
+- trend: ends at current authoritative cash balance;
+- cached projection: 60 seconds by default, bounded to 1–120 seconds.
 
-## Files
+`get_raw_rows_for_audit()` and strict wallet reads are lookup-only. Every required worksheet is verified first. Missing/partial sources return sanitized HTTP `503`; they do not create sheets, return partial zero balances, or fall back to demo figures.
 
-- Source: `dashboard/`
-- Snapshot generator: `scripts/build_dashboard_snapshot.py`
-- Generator tests: `tests/dashboard_snapshot_test.py`
-- Build output: `dashboard/dist/` (ignored by Git)
-- Live root: `/var/www/hollawall-command-center`
-- Previous deployment: `/var/www/hollawall-command-center.previous`
-- Apache source: `deploy/hollawall-command-center*.conf`
-- Basic Auth file: `/etc/apache2/.htpasswd-hollawall-preview`
-- Owner credential: `/root/.hermes/profiles/naufal/vault/hollawall-preview-basic-auth`
-- TLS certificate: `/etc/letsencrypt/live/hollawall.46.250.238.167.nip.io/`
+## Authentication design
 
-Secrets and financial snapshot bytes must not enter Git, logs, screenshots, reports, or unencrypted cloud artifacts.
+Two independent boundaries apply:
 
-## Refresh snapshot
+1. Apache Basic Auth protects the browser-facing site.
+2. Apache removes incoming `Authorization` and `X-Hollawall-Proxy-Token`, then injects the owner proxy token from a root-only include before forwarding the one allowlisted snapshot path.
 
-1. Download the source through Naufal's profile-scoped rclone config:
+Koyeb stores only the SHA-256 verifier in source/config. The 384-bit plaintext token remains only in owner-scoped files:
 
-```bash
-rclone copyto 'naufal-drive:Keuangan.xlsx' /secure/path/Keuangan.xlsx \
-  --config /root/.hermes/profiles/naufal/cloud/rclone.conf
-```
+- `/root/.hermes/profiles/naufal/vault/hollawall-live-api-proxy-token`
+- `/etc/apache2/hollawall-live-api-secret.conf` (`0600`)
 
-2. Record the Drive modification timestamp.
-3. Build and test:
+The token must never enter Git, browser JavaScript, responses, screenshots, logs, reports, or cloud artifacts.
+
+## Relevant files
+
+- Frontend: `dashboard/`
+- Live projection: `dashboard_api/live_snapshot.py`
+- Strict live source: `dashboard_api/live_source.py`
+- Auth: `dashboard_api/auth.py`
+- Routes: `dashboard_api/routes.py`
+- Apache source: `deploy/hollawall-command-center-le-ssl.conf`
+- Live document root: `/var/www/hollawall-command-center`
+- Rollback document root: `/var/www/hollawall-command-center.previous`
+- Basic Auth: `/etc/apache2/.htpasswd-hollawall-preview`
+- TLS: `/etc/letsencrypt/live/hollawall.46.250.238.167.nip.io/`
+
+## Verification gates
 
 ```bash
 cd /root/workspaces/naufal/projects/keuangan-agent-evolution/worktrees/hollawall-command-center
-python -m unittest tests.dashboard_snapshot_test -v
-python scripts/build_dashboard_snapshot.py \
-  /secure/path/Keuangan.xlsx \
-  /tmp/hollawall-dashboard-snapshot.json \
-  --source-modified-at '<DRIVE_TIMESTAMP>'
+python -m unittest \
+  tests.dashboard_live_snapshot_test \
+  tests.dashboard_live_source_test \
+  tests.dashboard_routes_test \
+  tests.dashboard_service_test \
+  tests.sheets_cache_test -v
+
 cd dashboard
-npm ci
 npm test
-VITE_SNAPSHOT_PREVIEW=true npm run build
+npm run build
 npm audit --audit-level=high
-install -d -m 0750 dist/data
-install -o root -g root -m 0640 \
-  /tmp/hollawall-dashboard-snapshot.json \
-  dist/data/dashboard-snapshot.json
+cd ..
+python -m unittest tests.browser.dashboard_visual_acceptance_test -v
+GROQ_API_KEY=verification-only-not-a-live-key hermes verify --json
 ```
 
-4. Deploy atomically.
-5. Compare rendered KPI, all wallet balances, transaction count, freshness, and source period against the generated JSON.
-6. Remove the downloaded workbook and temporary JSON after verified deployment.
+Required evidence before promotion:
 
-## Atomic deployment
+- all tests/build/audit pass;
+- Apache candidate and active config both pass `apachectl configtest`;
+- plaintext token scan returns zero repository hits;
+- Koyeb deployment for merged commit reports success;
+- direct upstream without proxy token returns `401`;
+- same-origin path without Basic Auth returns `401`;
+- authenticated same-origin snapshot returns `200` and `dashboard.snapshot.v1`;
+- KPI and all wallet balances equal the authoritative source projection exactly;
+- stale/freshness date is visible and truthful;
+- seven views, search, type filter, CSV export, light/dark, mobile/tablet/desktop pass;
+- browser console is clean and no horizontal overflow exists;
+- bot health and webhook endpoints remain healthy.
+
+## Atomic frontend deployment
 
 ```bash
 rm -rf /var/www/hollawall-command-center.new
@@ -93,38 +112,40 @@ find /var/www/hollawall-command-center.new -type f -exec chmod 0640 {} +
 rm -rf /var/www/hollawall-command-center.previous
 mv /var/www/hollawall-command-center /var/www/hollawall-command-center.previous
 mv /var/www/hollawall-command-center.new /var/www/hollawall-command-center
+install -o root -g root -m 0644 \
+  deploy/hollawall-command-center-le-ssl.conf \
+  /etc/apache2/sites-available/hollawall-command-center-le-ssl.conf
 apachectl configtest
 systemctl reload apache2
 ```
 
+Do not include `data/dashboard-snapshot.json` in a live build.
+
 ## Rollback
+
+Frontend and Apache:
 
 ```bash
 mv /var/www/hollawall-command-center /var/www/hollawall-command-center.failed
 mv /var/www/hollawall-command-center.previous /var/www/hollawall-command-center
+# restore the pre-live Apache vhost from its verified backup
 apachectl configtest
 systemctl reload apache2
 ```
 
-## Acceptance
+Backend:
 
-Without credentials:
+- revert the merge commit on `main`;
+- wait for Koyeb deployment readback;
+- verify `/health`, `/webhook_wuzapi`, and `/telegram` behavior;
+- never rotate bot/webhook/Google credentials as a dashboard rollback.
 
-- HTTP `401`;
-- HSTS, CSP, noindex, DENY framing.
+## Token rotation
 
-Authenticated:
-
-- HTTP `200`;
-- snapshot JSON uses `Cache-Control: private, no-store`;
-- exact KPI and wallet parity with generated JSON;
-- all 843 transactions render;
-- stale badge and `data through` date remain visible;
-- no demo label, console error, or horizontal overflow;
-- all seven navigation views render.
-
-## Koyeb production boundary
-
-PR #32 must not merge into `main` yet. GitHub deployment metadata proves Koyeb deployment `renewed-loreen/keuangan` tracks `main`, so merging is production-affecting. The currently authenticated Koyeb organization `testttads` is not the organization owning that deployment.
-
-Future live API promotion requires access to the correct Koyeb organization, read-only database parity at Rp0, owner session secrets, and authenticated API readback. Until then, the owner snapshot is the truthful production-data view and the bot remains untouched.
+1. Generate a new random token with at least 384 bits.
+2. Write plaintext only to the two owner/root files above.
+3. Update the SHA-256 verifier via `DASHBOARD_PROXY_TOKEN_HASH` or source fallback.
+4. Deploy backend first; verify direct authenticated read.
+5. Reload Apache with the new include.
+6. Verify same-origin readback.
+7. Remove the old token from owner files; do not record it in history.

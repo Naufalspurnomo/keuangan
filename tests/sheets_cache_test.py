@@ -118,6 +118,16 @@ class SheetsCacheTests(unittest.TestCase):
         self.assertEqual(calls_after_second, calls_after_first)
         self.assertGreater(calls_after_invalidate, calls_after_second)
 
+    def test_strict_wallet_balances_use_existing_worksheets_only(self):
+        spreadsheet = _FakeSpreadsheet()
+        for name in [*sheets.DOMPET_SHEETS, sheets.OPERASIONAL_SHEET_NAME, sheets.HUTANG_SHEET_NAME]:
+            spreadsheet.worksheets[name] = _FakeWorksheet()
+        with patch.object(sheets, "get_dompet_sheet", side_effect=AssertionError("must not auto-create")), \
+             patch.object(sheets, "get_or_create_operational_sheet", side_effect=AssertionError("must not auto-create")), \
+             patch.object(sheets, "get_or_create_hutang_sheet", side_effect=AssertionError("must not auto-create")):
+            result = sheets.get_wallet_balances(force_refresh=True, strict=True, spreadsheet=spreadsheet)
+        self.assertEqual(set(result), set(sheets.DOMPET_SHEETS))
+
     def test_get_wallet_balances_does_not_cache_partial_reads(self):
         failing_dompet = sheets.DOMPET_SHEETS[0]
         dompet_sheets = {dompet: _FakeWorksheet() for dompet in sheets.DOMPET_SHEETS}

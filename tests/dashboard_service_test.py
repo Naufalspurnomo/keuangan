@@ -66,6 +66,31 @@ class DashboardMetricContractTests(unittest.TestCase):
         self.assertEqual(result["metrics"]["outflow"], 1_000_000)
         self.assertEqual(result["metrics"]["net_movement"], 7_000_000)
 
+    def test_office_operation_with_source_wallet_remains_external_expense(self):
+        rows = [
+            self.row(
+                "office-electricity",
+                750_000,
+                "Pengeluaran",
+                company="Operasional Kantor",
+                project="Operasional",
+                source_block="operasional",
+                source_wallet="CV HB(101)",
+            ),
+            self.row(
+                "wallet-transfer",
+                2_000_000,
+                "Transfer Internal",
+                source_block="transfer",
+                source_wallet="CV HB(101)",
+            ),
+        ]
+
+        result = build_overview(rows, self.filters, self.now)
+
+        self.assertEqual(result["metrics"]["outflow"], 750_000)
+        self.assertEqual(result["metrics"]["net_movement"], -750_000)
+
     def test_invalid_rows_only_reduce_completeness(self):
         rows = [
             self.row("good", 5_000_000, "Pemasukan"),

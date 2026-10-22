@@ -1,4 +1,4 @@
-import { FormEvent, lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   ArrowDownRight,
@@ -23,7 +23,6 @@ import {
   X,
 } from 'lucide-react'
 
-import { ApiError, dashboardApi, login } from './api'
 import { loadSnapshot } from './snapshot'
 import type { CashTrendPoint, DebtSnapshot, ProjectSummary, WalletSnapshot } from './snapshot'
 import { downloadTransactionsCsv, filterTransactions } from './transactions'
@@ -85,52 +84,6 @@ const pageMeta: Record<string, [string, string]> = {
 
 function formatAmount(value: number) {
   return IDR.format(value).replace('Rp', 'Rp ')
-}
-
-function LoginScreen({ onDone }: { onDone: () => void }) {
-  const [email, setEmail] = useState('naufalspurnomo@gmail.com')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [pending, setPending] = useState(false)
-
-  async function submit(event: FormEvent) {
-    event.preventDefault()
-    setPending(true)
-    setError('')
-    try {
-      await login(email, password)
-      onDone()
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'Login gagal. Coba lagi.')
-    } finally {
-      setPending(false)
-    }
-  }
-
-  return <main className="login-shell">
-    <section className="login-story">
-      <div className="brand-lockup"><span className="brand-mark">H</span><span>HOLLAWALL</span></div>
-      <div className="story-copy">
-        <p className="eyebrow">FINANCIAL COMMAND CENTER</p>
-        <h1>Keuangan perusahaan.<br /><em>Terlihat utuh.</em></h1>
-        <p>Satu ruang kerja privat untuk memahami kas, proyek, dompet, dan pergerakan operasional—tanpa mengubah ledger.</p>
-      </div>
-      <p className="login-footnote">Private access · Owner only · Read-only</p>
-    </section>
-    <section className="login-panel">
-      <form className="login-card" onSubmit={submit}>
-        <div className="mobile-brand"><span className="brand-mark">H</span> HOLLAWALL</div>
-        <p className="eyebrow">OWNER ACCESS</p>
-        <h2>Masuk ke pusat kendali</h2>
-        <p className="muted">Gunakan akun privat yang telah diundang.</p>
-        <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" /></label>
-        <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" /></label>
-        {error && <div className="form-error" role="alert">{error}</div>}
-        <button className="primary-button" disabled={pending}>{pending ? 'Memverifikasi…' : 'Masuk'} <ArrowRight size={18} /></button>
-        <p className="security-note">Sesi dilindungi cookie aman dan berakhir otomatis.</p>
-      </form>
-    </section>
-  </main>
 }
 
 function Sidebar({ active, setActive, open, setOpen, transactionCount }: { active: string; setActive: (value: string) => void; open: boolean; setOpen: (value: boolean) => void; transactionCount: number }) {
@@ -246,28 +199,40 @@ function Dashboard() {
   const [active, setActive] = useState('overview')
   const [menuOpen, setMenuOpen] = useState(false)
   const [theme, setTheme] = useState(() => localStorage.getItem('hollawall-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
-  const snapshotQuery = useQuery({ queryKey: ['snapshot'], queryFn: loadSnapshot, retry: false, enabled: SNAPSHOT_MODE, refetchInterval: SNAPSHOT_MODE ? 300_000 : false })
-  const overviewQuery = useQuery({ queryKey: ['overview'], queryFn: () => dashboardApi.overview(), retry: false, refetchInterval: 30_000, enabled: !SNAPSHOT_MODE })
-  const transactionQuery = useQuery({ queryKey: ['transactions'], queryFn: () => dashboardApi.transactions('?limit=50'), retry: false, refetchInterval: 30_000, enabled: !SNAPSHOT_MODE })
+  const queryEnabled = !PREVIEW_MODE || SNAPSHOT_MODE
+  const snapshotQuery = useQuery({
+    queryKey: ['snapshot', SNAPSHOT_MODE ? 'local' : 'live'],
+    queryFn: () => loadSnapshot(SNAPSHOT_MODE),
+    retry: false,
+    enabled: queryEnabled,
+    refetchInterval: SNAPSHOT_MODE ? 300_000 : 30_000,
+  })
 
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('hollawall-theme', theme) }, [theme])
   useEffect(() => { document.title = `${pageMeta[active][1]} — Hollawall` }, [active])
 
+  if (queryEnabled && snapshotQuery.isPending) {
+    return <div className="boot-screen"><span className="brand-mark">H</span><p>Menyiapkan pusat kendali…</p></div>
+  }
+  if (queryEnabled && snapshotQuery.isError) {
+    return <main className="boot-screen" role="alert"><span className="brand-mark">H</span><h1>Data keuangan tidak tersedia</h1><p>Dashboard berhenti fail-closed. Coba muat ulang setelah sumber data pulih.</p><button className="primary-button" onClick={() => snapshotQuery.refetch()}>Coba lagi</button></main>
+  }
+
   const snapshot = snapshotQuery.data
-  const overview = snapshot?.overview ?? overviewQuery.data?.data ?? demoOverview
-  const meta = snapshot?.meta ?? overviewQuery.data?.meta ?? demoMeta
-  const transactions = snapshot?.transactions ?? transactionQuery.data?.data.items ?? demoTransactions
+  const overview = snapshot?.overview ?? demoOverview
+  const meta = snapshot?.meta ?? demoMeta
+  const transactions = snapshot?.transactions ?? demoTransactions
   const wallets = snapshot?.wallets ?? []
   const debts = snapshot?.debts ?? []
   const projects = snapshot?.project_summaries ?? []
   const cashTrend = snapshot?.cash_trend ?? []
-  const isDemo = !snapshot && (PREVIEW_MODE || overviewQuery.isError || transactionQuery.isError)
+  const isDemo = !snapshot && (PREVIEW_MODE || snapshotQuery.isError)
   const [eyebrow, title] = pageMeta[active]
 
   return <div className="app-shell">
     <Sidebar active={active} setActive={setActive} open={menuOpen} setOpen={setMenuOpen} transactionCount={transactions.length} />
     <main className="main-canvas">
-      <header className="topbar"><button className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi"><Menu size={21} /></button><div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{title}</strong></div><div className="topbar-actions"><button className="icon-button"><Search size={18} /></button><ThemeToggle theme={theme} setTheme={setTheme} /><button className="icon-button" onClick={() => { snapshotQuery.refetch(); overviewQuery.refetch(); transactionQuery.refetch() }}><RefreshCcw size={17} /></button></div></header>
+      <header className="topbar"><button className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi"><Menu size={21} /></button><div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{title}</strong></div><div className="topbar-actions"><button className="icon-button"><Search size={18} /></button><ThemeToggle theme={theme} setTheme={setTheme} /><button className="icon-button" onClick={() => snapshotQuery.refetch()}><RefreshCcw size={17} /></button></div></header>
       <div className="content">
         <section className="page-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>Pandangan terukur atas posisi keuangan Hollawall.</p></div>{snapshot ? <div className={`demo-badge ${meta.freshness}`}>SNAPSHOT PRODUKSI · {meta.freshness === 'stale' ? 'PERLU DIPERBARUI' : 'READ-ONLY'}</div> : isDemo && <div className="demo-badge">PRATINJAU · DATA DEMO</div>}</section>
         <FilterBar dataThrough={meta.data_through} />
@@ -278,9 +243,5 @@ function Dashboard() {
 }
 
 export default function App() {
-  const [authenticated, setAuthenticated] = useState<boolean | null>(PREVIEW_MODE || SNAPSHOT_MODE ? true : null)
-  const identityQuery = useQuery({ queryKey: ['identity'], queryFn: dashboardApi.me, retry: false, enabled: !PREVIEW_MODE && !SNAPSHOT_MODE })
-  useEffect(() => { if (identityQuery.isSuccess) setAuthenticated(true); if (identityQuery.isError) setAuthenticated(false) }, [identityQuery.isSuccess, identityQuery.isError])
-  if (authenticated === null) return <div className="boot-screen"><span className="brand-mark">H</span><p>Menyiapkan pusat kendali…</p></div>
-  return authenticated ? <Dashboard /> : <LoginScreen onDone={() => setAuthenticated(true)} />
+  return <Dashboard />
 }

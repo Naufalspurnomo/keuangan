@@ -22,8 +22,9 @@ export interface DashboardSnapshot {
   project_summaries: ProjectSummary[]
 }
 
-export async function loadSnapshot(): Promise<DashboardSnapshot> {
-  const response = await fetch('/data/dashboard-snapshot.json', { credentials: 'same-origin', cache: 'no-store' })
+export async function loadSnapshot(local = false): Promise<DashboardSnapshot> {
+  const url = local ? '/data/dashboard-snapshot.json' : '/live-api/snapshot'
+  const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' })
   if (!response.ok) throw new Error(`Snapshot unavailable (${response.status})`)
   return response.json() as Promise<DashboardSnapshot>
 }

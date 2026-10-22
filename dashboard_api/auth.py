@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from functools import wraps
 from typing import Any, Callable, TypeVar, cast
 
-from flask import current_app, jsonify, session
+from flask import current_app, jsonify, request, session
 from werkzeug.security import check_password_hash
 
 
@@ -35,12 +37,35 @@ def clear_owner_session() -> None:
     session.clear()
 
 
+def _proxy_owner_authenticated() -> bool:
+    expected_hash = str(current_app.config.get("DASHBOARD_PROXY_TOKEN_HASH") or "").strip().casefold()
+    if len(expected_hash) != 64 or any(character not in "0123456789abcdef" for character in expected_hash):
+        return False
+    token = str(request.headers.get("X-Hollawall-Proxy-Token") or "").strip()
+    if not token:
+        return False
+    supplied_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(supplied_hash, expected_hash)
+
+
+def owner_identity() -> tuple[str, str] | None:
+    if _proxy_owner_authenticated():
+        email = str(current_app.config.get("DASHBOARD_OWNER_EMAIL") or "owner@proxy.local").strip().casefold()
+        return email, "owner"
+    email = session.get(SESSION_USER_KEY)
+    role = session.get(SESSION_ROLE_KEY)
+    if email and role:
+        return str(email), str(role)
+    return None
+
+
 def owner_required(function: F) -> F:
     @wraps(function)
     def wrapped(*args: Any, **kwargs: Any):
-        if not session.get(SESSION_USER_KEY):
+        identity = owner_identity()
+        if identity is None:
             return jsonify({"error": {"code": "authentication_required", "message": "Sign in required"}}), 401
-        if session.get(SESSION_ROLE_KEY) != "owner":
+        if identity[1] != "owner":
             return jsonify({"error": {"code": "owner_role_required", "message": "Owner access required"}}), 403
         return function(*args, **kwargs)
 
