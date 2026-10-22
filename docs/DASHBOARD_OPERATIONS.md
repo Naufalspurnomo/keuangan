@@ -10,7 +10,7 @@
 - Mode: read-only; no dashboard route writes to Google Sheets, PostgreSQL, or bot state
 - Existing `/health`, `/webhook_wuzapi`, and `/telegram`: unchanged
 
-Before live promotion completes, the VPS may still serve the previous private workbook snapshot. Never describe a static snapshot as a live dashboard.
+Live promotion completed on 2026-10-22. GitHub `main` commit `22497305673d769479e5f47df3c5280193e94a6b` and Koyeb deployment `7241468302` were verified `success`; the VPS serves the live frontend without a bundled snapshot JSON.
 
 ## Live data provenance
 
