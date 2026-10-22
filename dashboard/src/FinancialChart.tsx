@@ -1,4 +1,4 @@
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Area, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
 import type { CashTrendPoint, DebtSnapshot, ProjectSummary, WalletSnapshot } from './snapshot'
 import type { Transaction } from './types'
@@ -34,7 +34,7 @@ export default function FinancialChart({ kind, cashTrend = [], projects = [], wa
 }) {
   if (kind === 'cash') {
     return <ResponsiveContainer width="100%" height="100%">
-      <AreaChart data={cashTrend} margin={{ top: 18, right: 18, bottom: 0, left: 0 }}>
+      <ComposedChart data={cashTrend} margin={{ top: 18, right: 18, bottom: 0, left: 0 }}>
         <defs>
           <linearGradient id="cashGradient" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="var(--chart-primary)" stopOpacity={0.32} />
@@ -45,8 +45,9 @@ export default function FinancialChart({ kind, cashTrend = [], projects = [], wa
         <XAxis dataKey="month" tickFormatter={monthLabel} axisLine={false} tickLine={false} tick={{ fill: 'var(--text-secondary)', fontSize: 11 }} />
         <YAxis width={58} axisLine={false} tickLine={false} tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} tickFormatter={(value) => compact.format(value)} />
         <Tooltip content={<ChartTooltip />} />
-        <Area type="monotone" dataKey="balance" name="Saldo kas" connectNulls dot={{ r: 3, fill: 'var(--surface)', stroke: 'var(--chart-primary)', strokeWidth: 2 }} activeDot={{ r: 5 }} stroke="var(--chart-primary)" strokeWidth={2.5} fill="url(#cashGradient)" />
-      </AreaChart>
+        <Area type="monotone" dataKey="balance" name="Saldo kas" connectNulls isAnimationActive={false} stroke="none" fill="url(#cashGradient)" />
+        <Line type="monotone" dataKey="balance" name="Saldo kas" connectNulls isAnimationActive={false} dot={{ r: 3, fill: 'var(--surface)', stroke: 'var(--chart-primary)', strokeWidth: 2 }} activeDot={{ r: 5 }} stroke="var(--chart-primary)" strokeWidth={2.5} />
+      </ComposedChart>
     </ResponsiveContainer>
   }
 

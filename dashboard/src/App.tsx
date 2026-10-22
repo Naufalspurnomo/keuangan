@@ -154,6 +154,12 @@ function Freshness({ meta }: { meta: DashboardMeta }) {
 
 function OverviewPage({ overview, transactions, meta, cashTrend, projects, walletSnapshots, setActive, setTransactionFilter }: { overview: Overview; transactions: Transaction[]; meta: DashboardMeta; cashTrend: CashTrendPoint[]; projects: ProjectSummary[]; walletSnapshots: WalletSnapshot[]; setActive: (value: string) => void; setTransactionFilter: (value: TransactionTypeFilter) => void }) {
   const metrics = overview.metrics
+  const labels = {
+    operating_inflow: overview.labels.operating_inflow || 'Pemasukan operasional',
+    operating_outflow: overview.labels.operating_outflow || 'Pengeluaran operasional',
+    net_operating_cashflow: overview.labels.net_operating_cashflow || 'Arus kas operasional bersih',
+    open_internal_debt: overview.labels.open_internal_debt || 'Hutang antar-dompet terbuka',
+  }
   const drilldown = (metric: keyof Overview['metrics']) => {
     const target = overview.drilldowns?.[metric] ?? 'transactions'
     const [view, filter] = target.split(':')
@@ -172,10 +178,10 @@ function OverviewPage({ overview, transactions, meta, cashTrend, projects, walle
       </button>
     </section>
     <section className="metric-grid">
-      <MetricCard label={overview.labels.operating_inflow} value={metrics.operating_inflow} tone="income" onClick={() => drilldown('operating_inflow')} />
-      <MetricCard label={overview.labels.operating_outflow} value={metrics.operating_outflow} tone="expense" onClick={() => drilldown('operating_outflow')} />
-      <MetricCard label={overview.labels.net_operating_cashflow} value={metrics.net_operating_cashflow} tone="net" onClick={() => drilldown('net_operating_cashflow')} />
-      <MetricCard label={overview.labels.open_internal_debt} value={metrics.open_internal_debt} tone="debt" onClick={() => drilldown('open_internal_debt')} />
+      <MetricCard label={labels.operating_inflow} value={metrics.operating_inflow} tone="income" onClick={() => drilldown('operating_inflow')} />
+      <MetricCard label={labels.operating_outflow} value={metrics.operating_outflow} tone="expense" onClick={() => drilldown('operating_outflow')} />
+      <MetricCard label={labels.net_operating_cashflow} value={metrics.net_operating_cashflow} tone="net" onClick={() => drilldown('net_operating_cashflow')} />
+      <MetricCard label={labels.open_internal_debt} value={metrics.open_internal_debt} tone="debt" onClick={() => drilldown('open_internal_debt')} />
     </section>
     <section className="overview-grid">
       <article className="panel chart-panel">
