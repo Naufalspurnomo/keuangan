@@ -7,12 +7,116 @@ from datetime import date, datetime, timezone
 import re
 from typing import Any, Mapping, Sequence
 
+
 from utils.amounts import parse_money_token
 
 
 _DATE_FORMATS = ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y")
 _INCOME_TYPES = frozenset({"pemasukan", "income", "masuk", "credit"})
 _EXPENSE_TYPES = frozenset({"pengeluaran", "expense", "keluar", "debit"})
+_PROJECT_MARKER_RE = re.compile(r"\s*\((start|finish|selesai)\)\s*$", re.IGNORECASE)
+
+
+def _project_portfolio(wallet: Any) -> str:
+    name = str(wallet or "").strip().casefold()
+    if name.startswith("cv hb"):
+        return "Hollawall"
+    if name.startswith("tx sby") or name.startswith("tx bali"):
+        return "Texturin"
+    return "Operasional"
+
+
+def _project_identity(value: Any) -> tuple[str, str | None]:
+    raw = str(value or "").strip()
+    match = _PROJECT_MARKER_RE.search(raw)
+    marker = match.group(1).casefold() if match else None
+    name = _PROJECT_MARKER_RE.sub("", raw).strip() or "Tanpa Proyek"
+    return name, marker
+
+
+def _project_health(age_days: int | None, lifecycle_status: str) -> str:
+    if lifecycle_status == "completed":
+        return "completed"
+    if lifecycle_status != "active" or age_days is None:
+        return "unmarked"
+    if age_days <= 14:
+        return "healthy"
+    if age_days <= 30:
+        return "watch"
+    return "overdue"
+
+
+def _project_row_order(row: Mapping[str, Any]) -> tuple[date, int, str]:
+    source_key = str(row["source_key"])
+    match = re.search(r":(\d+)$", source_key)
+    return row["transaction_date"], int(match.group(1)) if match else 0, source_key
+
+
+def _build_project_summaries(rows: Sequence[Mapping[str, Any]], observed_at: datetime) -> list[dict[str, Any]]:
+    projects: dict[str, dict[str, Any]] = {}
+    for row in sorted(rows, key=_project_row_order):
+        if row["internal_movement"]:
+            continue
+        name, marker = _project_identity(row["project"])
+        if name.casefold() in {"operasional", "tanpa proyek"}:
+            continue
+        project = projects.setdefault(
+            name,
+            {
+                "name": name,
+                "net_cashflow": 0,
+                "transaction_count": 0,
+                "first_activity_on": row["transaction_date"],
+                "last_activity_on": row["transaction_date"],
+                "started_on": None,
+                "completed_on": None,
+                "lifecycle_status": "unmarked",
+                "_portfolios": set(),
+                "source_key_first": row["source_key"],
+                "source_key_latest": row["source_key"],
+            },
+        )
+        signed = row["amount"] if row["transaction_type"] == "Pemasukan" else -row["amount"]
+        project["net_cashflow"] += signed
+        project["transaction_count"] += 1
+        project["_portfolios"].add(_project_portfolio(row["wallet"]))
+        if row["transaction_date"] < project["first_activity_on"]:
+            project["first_activity_on"] = row["transaction_date"]
+            project["source_key_first"] = row["source_key"]
+        if row["transaction_date"] >= project["last_activity_on"]:
+            project["last_activity_on"] = row["transaction_date"]
+            project["source_key_latest"] = row["source_key"]
+        if marker == "start":
+            project["lifecycle_status"] = "active"
+            project["started_on"] = row["transaction_date"]
+            project["completed_on"] = None
+        elif marker in {"finish", "selesai"}:
+            project["lifecycle_status"] = "completed"
+            project["started_on"] = project["started_on"] or project["first_activity_on"]
+            project["completed_on"] = row["transaction_date"]
+
+    today = observed_at.astimezone(timezone.utc).date() if observed_at.tzinfo else observed_at.date()
+    result = []
+    for project in projects.values():
+        portfolios = project.pop("_portfolios")
+        portfolio = next(iter(portfolios)) if len(portfolios) == 1 else "Lintas portfolio"
+        started_on = project["started_on"]
+        end_date = project["completed_on"] if project["lifecycle_status"] == "completed" else today
+        age_days = max(0, (end_date - started_on).days) if started_on else None
+        result.append(
+            {
+                **project,
+                "portfolio": portfolio,
+                "first_activity_on": project["first_activity_on"].isoformat(),
+                "last_activity_on": project["last_activity_on"].isoformat(),
+                "started_on": started_on.isoformat() if started_on else None,
+                "completed_on": project["completed_on"].isoformat() if project["completed_on"] else None,
+                "age_days": age_days,
+                "health": _project_health(age_days, project["lifecycle_status"]),
+            }
+        )
+    priority = {"overdue": 0, "watch": 1, "healthy": 2, "unmarked": 3, "completed": 4}
+    return sorted(result, key=lambda item: (priority[item["health"]], -abs(item["net_cashflow"]), item["name"].casefold()))
 
 
 def _parse_date(value: Any) -> date | None:
@@ -135,19 +239,14 @@ def build_live_snapshot(
         )
     open_internal_debt = sum(row["amount"] for row in normalized_debts if row["status"] == "OPEN")
 
-    project_totals: dict[str, int] = defaultdict(int)
+    project_summaries = _build_project_summaries(valid_rows, observed_at)
+    project_totals = {row["name"]: row["net_cashflow"] for row in project_summaries}
     month_totals: dict[str, int] = defaultdict(int)
     for row in valid_rows:
         if row["internal_movement"]:
             continue
         signed = row["amount"] if row["transaction_type"] == "Pemasukan" else -row["amount"]
-        project = row["project"] or "Tanpa Proyek"
-        project_totals[project] += signed
         month_totals[row["transaction_date"].strftime("%Y-%m")] += signed
-    project_summaries = [
-        {"name": name, "net_cashflow": amount}
-        for name, amount in sorted(project_totals.items(), key=lambda item: item[1], reverse=True)
-    ]
     running = cash_balance - sum(month_totals.values())
     cash_trend = []
     for month, movement in sorted(month_totals.items()):

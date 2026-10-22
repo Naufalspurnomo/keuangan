@@ -7,7 +7,6 @@ import {
   BarChart3,
   BriefcaseBusiness,
   Building2,
-  ChevronDown,
   CircleDollarSign,
   CreditCard,
   FileBarChart,
@@ -23,6 +22,7 @@ import {
   X,
 } from 'lucide-react'
 
+import ProjectHealthBoard from './ProjectHealthBoard'
 import { loadSnapshot } from './snapshot'
 import type { CashTrendPoint, DebtSnapshot, ProjectSummary, WalletSnapshot } from './snapshot'
 import { downloadTransactionsCsv, filterTransactions } from './transactions'
@@ -71,6 +71,18 @@ const demoMeta: DashboardMeta = {
   data_completeness: { valid_rows: 148, invalid_rows: 2, completeness_pct: 98.7 },
 }
 
+const emptyOverview: Overview = {
+  metrics: { cash_balance: 0, operating_inflow: 0, operating_outflow: 0, net_operating_cashflow: 0, open_internal_debt: 0, project_cashflow: 0 },
+  counts: { valid_rows: 0, invalid_rows: 0 },
+  labels: demoOverview.labels,
+  drilldowns: demoOverview.drilldowns,
+}
+const emptyMeta: DashboardMeta = {
+  as_of: new Date().toISOString(),
+  freshness: 'stale',
+  source_status: 'degraded',
+  data_completeness: { valid_rows: 0, invalid_rows: 0, completeness_pct: 0 },
+}
 
 const pageMeta: Record<string, [string, string]> = {
   overview: ['Ringkasan keuangan', 'Ringkasan Perusahaan'],
@@ -97,7 +109,7 @@ function Sidebar({ active, setActive, open, setOpen, transactionCount }: { activ
     <div className={`mobile-overlay ${open ? 'is-open' : ''}`} onClick={() => setOpen(false)} />
     <aside className={`sidebar ${open ? 'is-open' : ''}`}>
       <div className="sidebar-head"><div className="brand-lockup"><span className="brand-mark">H</span><span>HOLLAWALL</span></div><button className="icon-button mobile-only" onClick={() => setOpen(false)} aria-label="Tutup navigasi"><X size={20} /></button></div>
-      <div className="workspace-switch"><Building2 size={18} /><span><small>Ruang kerja</small>Hollawall Group</span><ChevronDown size={16} /></div>
+      <div className="workspace-switch" aria-label="Ruang kerja aktif"><Building2 size={18} /><span><small>Ruang kerja aktif</small>Hollawall Group</span></div>
       <nav>{navigation.map(([key, label, Icon]) => <button key={key} className={active === key ? 'active' : ''} onClick={() => { setActive(key); setOpen(false) }}><Icon size={19} strokeWidth={1.8} /><span>{label}</span>{key === 'transactions' && <b>{transactionCount}</b>}</button>)}</nav>
       <div className="sidebar-bottom"><div className="profile"><span>NS</span><div><strong>Naufal Spurnomo</strong><small>Owner</small></div></div></div>
     </aside>
@@ -112,12 +124,15 @@ function ThemeToggle({ theme, setTheme }: { theme: string; setTheme: (value: str
 
 function SnapshotContext({ dataThrough }: { dataThrough?: string | null }) {
   const period = dataThrough ? `Semua data · s.d. ${new Date(`${dataThrough}T00:00:00`).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}` : 'Semua periode'
-  return <div className="filter-bar" aria-label="Konteks snapshot">
-    <div><span><small>Periode</small>{period}</span></div>
-    <div><span><small>Perusahaan</small>Semua perusahaan</span></div>
-    <div><span><small>Dompet</small>Semua dompet</span></div>
-    <div><span><small>Proyek</small>Semua proyek</span></div>
-  </div>
+  return <section className="snapshot-context" aria-label="Konteks snapshot baca-saja">
+    <p>KONTEKS DATA · TIDAK DAPAT DIUBAH</p>
+    <div className="filter-bar">
+      <div><span><small>Periode snapshot</small>{period}</span></div>
+      <div><span><small>Cakupan perusahaan</small>Semua perusahaan</span></div>
+      <div><span><small>Cakupan dompet</small>Semua dompet</span></div>
+      <div><span><small>Cakupan proyek</small>Semua proyek</span></div>
+    </div>
+  </section>
 }
 
 function MetricCard({ label, value, tone, valueText, onClick }: { label: string; value: number; tone?: string; valueText?: string; onClick?: () => void }) {
@@ -181,11 +196,13 @@ function TransactionTable({ rows, compact = false }: { rows: Transaction[]; comp
   return <div className="table-wrap"><table className="transaction-table"><thead><tr><th>Tanggal</th><th>Keterangan</th><th>Proyek</th><th>Dompet</th><th>Jenis</th><th className="number">Jumlah</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td data-label="Tanggal">{new Date(row.transaction_date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}</td><td data-label="Keterangan"><strong>{row.notes || 'Transaksi operasional'}</strong>{!compact && <small>{row.source_key ?? `ID #${row.id}`}</small>}</td><td data-label="Proyek">{row.project}</td><td data-label="Dompet"><span className="wallet-chip">{row.wallet}</span></td><td data-label="Jenis"><span className={`type-chip ${row.transaction_type === 'Pemasukan' ? 'income' : 'expense'}`}>{row.transaction_type === 'Pemasukan' ? <ArrowDownRight size={13} /> : <ArrowUpRight size={13} />}{row.transaction_type}</span></td><td data-label="Jumlah" className={`number amount ${row.transaction_type === 'Pemasukan' ? 'positive' : ''}`}>{row.transaction_type === 'Pemasukan' ? '+' : '−'}{formatAmount(row.amount)}</td></tr>)}</tbody></table></div>
 }
 
-function DetailPage({ active, transactions, overview, wallets, debts, projects, completeness, qualityRows, initialFilter }: { active: string; transactions: Transaction[]; overview: Overview; wallets: WalletSnapshot[]; debts: DebtSnapshot[]; projects: ProjectSummary[]; completeness: number; qualityRows: QualityRow[]; initialFilter: TransactionTypeFilter }) {
-  const [query, setQuery] = useState('')
+function DetailPage({ active, transactions, overview, wallets, debts, projects, completeness, qualityRows, initialFilter, initialQuery, onOpenProject }: { active: string; transactions: Transaction[]; overview: Overview; wallets: WalletSnapshot[]; debts: DebtSnapshot[]; projects: ProjectSummary[]; completeness: number; qualityRows: QualityRow[]; initialFilter: TransactionTypeFilter; initialQuery: string; onOpenProject: (name: string) => void }) {
+  const [query, setQuery] = useState(initialQuery)
   const [typeFilter, setTypeFilter] = useState<TransactionTypeFilter>(initialFilter)
   useEffect(() => setTypeFilter(initialFilter), [initialFilter])
+  useEffect(() => setQuery(initialQuery), [initialQuery])
   const filteredTransactions = filterTransactions(transactions, query, typeFilter)
+  if (active === 'projects') return <ProjectHealthBoard projects={projects} onOpen={onOpenProject} />
   if (active === 'transactions') return <section className="panel detail-panel"><div className="detail-toolbar"><div className="search-field"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari transaksi, proyek, dompet, atau source key…" /></div><label className="type-select"><ListFilter size={17} /><span className="sr-only">Filter jenis</span><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as TransactionTypeFilter)}><option value="all">Semua jenis</option><option value="Pemasukan">Pemasukan</option><option value="Pengeluaran">Pengeluaran</option><option value="external-income">Pemasukan eksternal</option><option value="external-expense">Pengeluaran eksternal</option><option value="external">Eksternal</option><option value="projects">Proyek</option></select></label><button className="secondary-button" onClick={() => downloadTransactionsCsv(filteredTransactions)}>Ekspor CSV</button><span className="result-count">{filteredTransactions.length.toLocaleString('id-ID')} transaksi</span></div><TransactionTable rows={filteredTransactions} /></section>
   const content: Record<string, { stat: string; value: number; copy: string }> = {
     cashflow: { stat: 'Arus kas operasional bersih', value: overview.metrics.net_operating_cashflow, copy: 'Pemasukan dan pengeluaran operasional setelah pergerakan internal dieliminasi.' },
@@ -212,47 +229,71 @@ function DetailPage({ active, transactions, overview, wallets, debts, projects, 
 function Dashboard() {
   const [active, setActive] = useState('overview')
   const [transactionFilter, setTransactionFilter] = useState<TransactionTypeFilter>('all')
+  const [selectedProject, setSelectedProject] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [theme, setTheme] = useState(() => localStorage.getItem('hollawall-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
   const queryEnabled = !PREVIEW_MODE || SNAPSHOT_MODE
   const snapshotQuery = useQuery({
     queryKey: ['snapshot', SNAPSHOT_MODE ? 'local' : 'live'],
     queryFn: () => loadSnapshot(SNAPSHOT_MODE),
-    retry: false,
+    retry: 1,
+    retryDelay: 1_000,
     enabled: queryEnabled,
     refetchInterval: SNAPSHOT_MODE ? 300_000 : 5_000,
+    refetchIntervalInBackground: false,
   })
 
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('hollawall-theme', theme) }, [theme])
   useEffect(() => { document.title = `${pageMeta[active][1]} — Hollawall` }, [active])
-
-  if (queryEnabled && snapshotQuery.isPending) {
-    return <div className="boot-screen"><span className="brand-mark">H</span><p>Menyiapkan pusat kendali…</p></div>
-  }
-  if (queryEnabled && snapshotQuery.isError) {
-    return <main className="boot-screen" role="alert"><span className="brand-mark">H</span><h1>Data keuangan tidak tersedia</h1><p>Dashboard berhenti fail-closed. Coba muat ulang setelah sumber data pulih.</p><button className="primary-button" onClick={() => snapshotQuery.refetch()}>Coba lagi</button></main>
-  }
+  useEffect(() => { if (active !== 'transactions') setSelectedProject('') }, [active])
 
   const snapshot = snapshotQuery.data
-  const overview = snapshot?.overview ?? demoOverview
-  const meta = snapshot?.meta ?? demoMeta
-  const transactions = snapshot?.transactions ?? demoTransactions
+  const coldLoading = queryEnabled && snapshotQuery.isPending && !snapshot
+  const coldError = queryEnabled && snapshotQuery.isError && !snapshot
+  const overview = snapshot?.overview ?? (PREVIEW_MODE ? demoOverview : emptyOverview)
+  const meta = snapshot?.meta ?? (PREVIEW_MODE ? demoMeta : emptyMeta)
+  const transactions = snapshot?.transactions ?? (PREVIEW_MODE ? demoTransactions : [])
   const wallets = snapshot?.wallets ?? []
   const debts = snapshot?.debts ?? []
   const projects = snapshot?.project_summaries ?? []
   const cashTrend = snapshot?.cash_trend ?? []
   const qualityRows = snapshot?.quality_rows ?? []
-  const isDemo = !snapshot && (PREVIEW_MODE || snapshotQuery.isError)
+  const isDemo = !snapshot && PREVIEW_MODE
   const [eyebrow, title] = pageMeta[active]
+  const sourceStatus = meta.source_status
+  const statusLabel = sourceStatus === 'refreshing'
+    ? 'MENYINKRONKAN DATA'
+    : sourceStatus === 'degraded' || sourceStatus === 'browser-cache'
+      ? 'MODE CADANGAN · DATA TERAKHIR'
+      : meta.freshness === 'stale'
+        ? 'DATA LAMA · READ-ONLY'
+        : 'SNAPSHOT PRODUKSI · READ-ONLY'
+  const navigate = (value: string) => {
+    setSelectedProject('')
+    setTransactionFilter('all')
+    setActive(value)
+  }
+  const openProject = (name: string) => {
+    setSelectedProject(name)
+    setTransactionFilter('projects')
+    setActive('transactions')
+  }
+  const content = coldLoading
+    ? <section className="inline-state loading-state" aria-live="polite" aria-busy="true"><span className="loading-pulse"></span><div><h2>Mengambil data keuangan</h2><p>Menu dan tampilan tetap bisa digunakan. Data akan muncul setelah sumber selesai merespons.</p></div></section>
+    : coldError
+      ? <section className="inline-state error-state" role="alert"><div><p className="eyebrow">SUMBER DATA TERGANGGU</p><h2>Dashboard belum bisa mengambil data</h2><p>Ini bukan masalah HP atau login. Coba lagi—halaman tidak akan mengunci layar.</p></div><button className="primary-button" onClick={() => snapshotQuery.refetch()}>Coba lagi</button></section>
+      : active === 'overview'
+        ? <OverviewPage overview={overview} transactions={transactions} meta={meta} cashTrend={cashTrend} projects={projects} setActive={setActive} setTransactionFilter={setTransactionFilter} />
+        : <DetailPage active={active} transactions={transactions} overview={overview} wallets={wallets} debts={debts} projects={projects} completeness={meta.data_completeness.completeness_pct} qualityRows={qualityRows} initialFilter={transactionFilter} initialQuery={selectedProject} onOpenProject={openProject} />
 
   return <div className="app-shell">
-    <Sidebar active={active} setActive={setActive} open={menuOpen} setOpen={setMenuOpen} transactionCount={transactions.length} />
+    <Sidebar active={active} setActive={navigate} open={menuOpen} setOpen={setMenuOpen} transactionCount={transactions.length} />
     <main className="main-canvas">
-      <header className="topbar"><button className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi"><Menu size={21} /></button><div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{title}</strong></div><div className="topbar-actions"><ThemeToggle theme={theme} setTheme={setTheme} /><button className="icon-button" aria-label="Segarkan snapshot" onClick={() => snapshotQuery.refetch()}><RefreshCcw size={17} /></button></div></header>
+      <header className="topbar"><button className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi"><Menu size={21} /></button><div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{title}</strong></div><div className="topbar-actions"><ThemeToggle theme={theme} setTheme={setTheme} /><button className={`icon-button ${snapshotQuery.isFetching ? 'is-spinning' : ''}`} aria-label="Segarkan snapshot" onClick={() => snapshotQuery.refetch()}><RefreshCcw size={17} /></button></div></header>
       <div className="content">
-        <section className="page-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>Pandangan terukur atas posisi keuangan Hollawall.</p></div>{snapshot ? <div className={`demo-badge ${meta.freshness}`}>SNAPSHOT PRODUKSI · {meta.freshness === 'stale' ? 'PERLU DIPERBARUI' : 'READ-ONLY'}</div> : isDemo && <div className="demo-badge">PRATINJAU · DATA DEMO</div>}</section>
-        <SnapshotContext dataThrough={meta.data_through} />
-        {active === 'overview' ? <OverviewPage overview={overview} transactions={transactions} meta={meta} cashTrend={cashTrend} projects={projects} setActive={setActive} setTransactionFilter={setTransactionFilter} /> : <DetailPage active={active} transactions={transactions} overview={overview} wallets={wallets} debts={debts} projects={projects} completeness={meta.data_completeness.completeness_pct} qualityRows={qualityRows} initialFilter={transactionFilter} />}
+        <section className="page-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>Pandangan terukur atas posisi keuangan Hollawall.</p></div>{snapshot ? <div className={`demo-badge ${meta.freshness}`}>{statusLabel}</div> : isDemo && <div className="demo-badge">PRATINJAU · DATA DEMO</div>}</section>
+        {!coldLoading && !coldError && <SnapshotContext dataThrough={meta.data_through} />}
+        {content}
       </div>
     </main>
   </div>
