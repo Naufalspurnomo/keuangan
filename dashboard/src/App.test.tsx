@@ -83,6 +83,32 @@ describe('Hollawall command center', () => {
     expect(within(report).queryByText(/Termin Texturin SBY/)).toBeNull()
   })
 
+  it('renders the sketched monthly report matrix and separate project timelines', async () => {
+    renderApp()
+    const module = await screen.findByRole('region', { name: 'Laporan omzet dan timeline proyek' })
+
+    expect(within(module).getByText('HOLLA REPORT')).toBeTruthy()
+    expect(within(module).getByText('Bulan ini')).toBeTruthy()
+    expect(within(module).getByText('Bulan lalu')).toBeTruthy()
+    expect(within(module).getByText('HOLLA')).toBeTruthy()
+    expect(within(module).getByText('TX')).toBeTruthy()
+    expect(within(module).getByText('HOJJA')).toBeTruthy()
+    expect(within(module).getByRole('region', { name: 'Timeline proyek Hollawall' })).toBeTruthy()
+    expect(within(module).getByRole('region', { name: 'Timeline proyek Texturin' })).toBeTruthy()
+    expect(within(module).getAllByText('Oktober')).toHaveLength(2)
+    expect(within(module).getAllByText('November')).toHaveLength(2)
+    expect(within(module).getAllByText('Desember')).toHaveLength(2)
+
+    fireEvent.click(within(module).getByRole('button', { name: 'Buka proyek Villa A dari timeline' }))
+    expect(within(module).getByRole('heading', { name: 'Villa A' })).toBeTruthy()
+    expect(within(module).getByText('Mulai')).toBeTruthy()
+    expect(within(module).getByText('1 Sep 2026')).toBeTruthy()
+
+    fireEvent.click(within(module).getByRole('button', { name: 'Tambah proyek Hollawall' }))
+    expect(within(module).getByRole('dialog', { name: 'Dashboard read-only' })).toBeTruthy()
+    expect(within(module).getByText(/kelola proyek dari sumber data/)).toBeTruthy()
+  })
+
   it('persists explicit dark mode choice', async () => {
     renderApp()
     await screen.findByRole('heading', { name: 'Ringkasan Perusahaan' })
