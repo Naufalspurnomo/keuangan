@@ -27,7 +27,10 @@ const snapshot = {
   ],
   debts: [{ source_key: 'HUTANG:2', date: '2026-10-20', amount: 28500000, notes: 'Bridge', borrower: 'CV HB(101)', lender: 'TX SBY(216)', status: 'OPEN' }],
   quality_rows: [{ source_key: 'TX SBY(216):pengeluaran:12', invalid_reason: 'invalid_date_or_amount' }],
-  cash_trend: [], project_summaries: [{ name: 'Villa A', net_cashflow: 305350000 }],
+  cash_trend: [], project_summaries: [
+    { name: 'Villa A', portfolio: 'Hollawall', net_cashflow: 305350000, transaction_count: 2, first_activity_on: '2026-09-01', last_activity_on: '2026-10-21', started_on: '2026-09-01', completed_on: null, age_days: 50, lifecycle_status: 'active', health: 'overdue', source_key_first: 'CV HB(101):pemasukan:9', source_key_latest: 'CV HB(101):pengeluaran:11' },
+    { name: 'Proyek Baru', portfolio: 'Texturin', net_cashflow: 12000000, transaction_count: 1, first_activity_on: '2026-10-17', last_activity_on: '2026-10-17', started_on: '2026-10-17', completed_on: null, age_days: 4, lifecycle_status: 'active', health: 'healthy', source_key_first: 'TX SBY(216):pemasukan:20', source_key_latest: 'TX SBY(216):pemasukan:20' },
+  ],
 }
 
 beforeEach(() => {
@@ -44,8 +47,7 @@ function renderApp() {
 describe('Hollawall command center', () => {
   it('renders owner financial overview and seven navigation views', async () => {
     renderApp()
-    expect(await screen.findByRole('heading', { name: 'Ringkasan Perusahaan' })).toBeTruthy()
-    expect(screen.getByText('TOTAL POSISI KAS')).toBeTruthy()
+    expect(await screen.findByText('TOTAL POSISI KAS')).toBeTruthy()
     for (const label of ['Ringkasan', 'Arus Kas', 'Dompet', 'Transaksi', 'Proyek', 'Hutang Internal', 'Laporan']) expect(screen.getAllByRole('button', { name: new RegExp(label) }).length).toBeGreaterThan(0)
   })
 
@@ -67,8 +69,7 @@ describe('Hollawall command center', () => {
 
   it('drills an operating KPI into exact external transactions', async () => {
     renderApp()
-    await screen.findByRole('heading', { name: 'Ringkasan Perusahaan' })
-    fireEvent.click(screen.getByRole('button', { name: /Pemasukan operasional/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Pemasukan operasional/ }))
     expect(await screen.findByRole('heading', { name: 'Semua Transaksi' })).toBeTruthy()
     expect(screen.getByText('Termin eksternal')).toBeTruthy()
     expect(screen.getByText('CV HB(101):pemasukan:9')).toBeTruthy()
@@ -78,34 +79,63 @@ describe('Hollawall command center', () => {
 
   it('drills the cash headline into wallet source keys', async () => {
     renderApp()
-    await screen.findByRole('heading', { name: 'Ringkasan Perusahaan' })
-    fireEvent.click(screen.getByRole('button', { name: 'Saldo kas' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Saldo kas' }))
     expect(await screen.findByRole('heading', { name: 'Dompet & Rekening' })).toBeTruthy()
     expect(screen.getByText(/CV HB\(101\):wallet:summary/)).toBeTruthy()
   })
 
   it('drills open debt into its source key', async () => {
     renderApp()
-    await screen.findByRole('heading', { name: 'Ringkasan Perusahaan' })
-    fireEvent.click(screen.getByRole('button', { name: /Hutang antar-dompet terbuka/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Hutang antar-dompet terbuka/ }))
     expect(await screen.findByRole('heading', { name: 'Hutang Antar-Dompet' })).toBeTruthy()
     expect(screen.getByText(/HUTANG:2/)).toBeTruthy()
   })
 
   it('drills completeness into invalid source keys', async () => {
     renderApp()
-    await screen.findByRole('heading', { name: 'Ringkasan Perusahaan' })
-    fireEvent.click(screen.getByRole('button', { name: /Kelengkapan data/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Kelengkapan data/ }, { timeout: 4_000 }))
     expect(await screen.findByRole('heading', { name: 'Laporan' })).toBeTruthy()
     expect(screen.getByText(/TX SBY\(216\):pengeluaran:12/)).toBeTruthy()
     expect(screen.getByText(/invalid_date_or_amount/)).toBeTruthy()
   })
 
-  it('fails closed without showing demo values when live data is unavailable', async () => {
+  it('keeps navigation usable while the first snapshot is loading', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})))
+    renderApp()
+    expect(await screen.findByRole('heading', { name: 'Ringkasan Perusahaan' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Buka navigasi' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Mengambil data keuangan' })).toBeTruthy()
+    expect(screen.queryByText('Menyiapkan pusat kendali…')).toBeNull()
+  })
+
+  it('fails closed inside the dashboard shell and offers retry', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { code: 'unavailable' } }), { status: 503 })))
     renderApp()
-    expect(await screen.findByRole('heading', { name: 'Data keuangan tidak tersedia' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Dashboard belum bisa mengambil data' }, { timeout: 4_000 })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Coba lagi' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Proyek/ })).toBeTruthy()
     expect(screen.queryByText('PRATINJAU · DATA DEMO')).toBeNull()
     expect(screen.queryByText('Rp 868.900.000')).toBeNull()
+  })
+
+  it('shows project health, age and opens the selected project transactions', async () => {
+    renderApp()
+    await screen.findByText('TOTAL POSISI KAS')
+    fireEvent.click(screen.getByRole('button', { name: 'Proyek' }))
+    expect(await screen.findByRole('heading', { name: 'Umur dan kesehatan proyek' })).toBeTruthy()
+    expect(screen.getByText('Lewat 30 hari')).toBeTruthy()
+    expect(screen.getByText('Baru · Sehat')).toBeTruthy()
+    expect(screen.getByText('50 hari')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Timeline 3 bulan' })).toBeTruthy()
+    expect(screen.getAllByText('Hollawall').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Texturin').length).toBeGreaterThan(0)
+    fireEvent.change(screen.getByLabelText('Filter portfolio'), { target: { value: 'Texturin' } })
+    expect(screen.queryByRole('button', { name: /Buka transaksi proyek Villa A/ })).toBeNull()
+    expect(screen.getAllByRole('button', { name: /Buka transaksi proyek Proyek Baru/ }).length).toBeGreaterThan(0)
+    fireEvent.change(screen.getByLabelText('Filter portfolio'), { target: { value: 'all' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Buka transaksi proyek Villa A,/ }))
+    expect(await screen.findByRole('heading', { name: 'Semua Transaksi' })).toBeTruthy()
+    expect(screen.getByDisplayValue('Villa A')).toBeTruthy()
+    expect(screen.getByText('2 transaksi')).toBeTruthy()
   })
 })

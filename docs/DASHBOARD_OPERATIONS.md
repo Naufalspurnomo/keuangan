@@ -34,10 +34,17 @@ Accounting boundary:
 - freshness: newest valid transaction date, not request time;
 - traceability: every transaction, debt, KPI drill-down, and rejected row preserves a stable sheet/block/row source key;
 - trend: ends at current authoritative cash balance;
-- browser refresh: every 5 seconds in live mode; an open dashboard shows new transactions and reversal rows within the 10-second target without reload;
-- cached projection: 5 seconds by default and maximum, bounded below at 1 second.
+- browser refresh: every 5 seconds in live mode;
+- cached projection: 5 seconds by default and maximum, bounded below at 1 second;
+- stale-while-revalidate: after the first valid snapshot, expired data is returned immediately while exactly one background refresh reads Sheets; transient source failure preserves and labels the last-good snapshot instead of blocking the UI;
+- cold start remains fail-closed: before any valid snapshot exists, missing/partial sources return sanitized HTTP `503` and the frontend shows a retry panel inside the usable dashboard shell;
+- project portfolio: `CV HB(101)` maps to Hollawall; `TX SBY(216)` and `TX BALI(087)` map to Texturin; operational rows remain separate;
+- project health: canonical `(Start)`, `(Finish)`, and `(Selesai)` markers determine lifecycle, with active age bands `0–14`, `15–30`, and `>30` days;
+- project timeline: a read-only three-month view derives bars from lifecycle markers or first/last source activity and links back to the exact transaction evidence.
 
-`get_raw_rows_for_audit()` and strict wallet reads are lookup-only. Every required worksheet is verified first. Missing/partial sources return sanitized HTTP `503`; they do not create sheets, return partial zero balances, or fall back to demo figures.
+`get_raw_rows_for_audit()` and strict wallet reads are lookup-only. Every required worksheet is verified first. Missing/partial sources never create sheets, return partial zero balances, or fall back to demo figures. They return `503` only during a true cold start; after a valid snapshot exists, the last-good snapshot remains available with a degraded source-status label.
+
+The Illustrator concept `Website Financial Hollawall.pdf` also sketches mutable project creation/completion and attendance capture (camera, location, WhatsApp/database delivery). Those controls are intentionally outside this read-only release. They require a separately authorized write model, audit trail, and acceptance criteria before implementation.
 
 ## Authentication design
 

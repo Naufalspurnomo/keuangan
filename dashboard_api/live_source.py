@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import os
 import threading
 import time
@@ -27,10 +28,16 @@ from utils.amounts import parse_money_token
 
 
 _cache_lock = threading.Lock()
+_cold_start_lock = threading.Lock()
+_source_lock = threading.Lock()
 _cached_at = 0.0
 _cached_snapshot: dict[str, Any] | None = None
+_refreshing = False
+_last_refresh_failed_at = 0.0
 _DEFAULT_CACHE_SECONDS = 5
 _MAX_CACHE_SECONDS = 5
+_REFRESH_RETRY_SECONDS = 30
+logger = logging.getLogger(__name__)
 
 
 def _cache_seconds() -> int:
@@ -84,16 +91,8 @@ def _read_debts(spreadsheet: Any) -> list[dict[str, Any]]:
     return debts
 
 
-def load_live_snapshot(*, force_refresh: bool = False) -> dict[str, Any]:
-    """Return one cached immutable projection; never writes to Sheets."""
-    global _cached_at, _cached_snapshot
-
-    ttl = _cache_seconds()
-    with _cache_lock:
-        now_monotonic = time.monotonic()
-        if not force_refresh and _cached_snapshot is not None and now_monotonic - _cached_at < ttl:
-            return copy.deepcopy(_cached_snapshot)
-
+def _read_fresh_snapshot(*, force_refresh: bool) -> dict[str, Any]:
+    with _source_lock:
         spreadsheet = get_spreadsheet()
         _verify_required_worksheets(spreadsheet)
         raw_rows = get_raw_rows_for_audit()
@@ -104,19 +103,83 @@ def load_live_snapshot(*, force_refresh: bool = False) -> dict[str, Any]:
             strict=True,
             spreadsheet=spreadsheet,
         )
-        snapshot = build_live_snapshot(
+        return build_live_snapshot(
             raw_rows,
             balances,
             _read_debts(spreadsheet),
             now=datetime.now(timezone.utc),
         )
-        _cached_snapshot = snapshot
-        _cached_at = now_monotonic
+
+
+def _annotate_cached(snapshot: dict[str, Any], source_status: str) -> dict[str, Any]:
+    result = copy.deepcopy(snapshot)
+    result.setdefault("meta", {})["source_status"] = source_status
+    return result
+
+
+def _refresh_cache_in_background() -> None:
+    global _cached_at, _cached_snapshot, _refreshing, _last_refresh_failed_at
+    try:
+        snapshot = _read_fresh_snapshot(force_refresh=True)
+        snapshot.setdefault("meta", {})["source_status"] = "live"
+        with _cache_lock:
+            _cached_snapshot = snapshot
+            _cached_at = time.monotonic()
+            _last_refresh_failed_at = 0.0
+    except Exception as exc:
+        logger.warning("Live dashboard background refresh failed: %s", type(exc).__name__)
+        with _cache_lock:
+            _last_refresh_failed_at = time.monotonic()
+    finally:
+        with _cache_lock:
+            _refreshing = False
+
+
+def load_live_snapshot(*, force_refresh: bool = False) -> dict[str, Any]:
+    """Return immediately from cache after cold start; refresh stale data asynchronously."""
+    global _cached_at, _cached_snapshot, _refreshing, _last_refresh_failed_at
+
+    if force_refresh:
+        snapshot = _read_fresh_snapshot(force_refresh=True)
+        snapshot.setdefault("meta", {})["source_status"] = "live"
+        with _cache_lock:
+            _cached_snapshot = snapshot
+            _cached_at = time.monotonic()
+            _last_refresh_failed_at = 0.0
+        return copy.deepcopy(snapshot)
+
+    now_monotonic = time.monotonic()
+    with _cache_lock:
+        if _cached_snapshot is not None:
+            age = now_monotonic - _cached_at
+            if age < _cache_seconds():
+                return _annotate_cached(_cached_snapshot, "live")
+            retry_ready = _last_refresh_failed_at == 0.0 or now_monotonic - _last_refresh_failed_at >= _REFRESH_RETRY_SECONDS
+            if not _refreshing and retry_ready:
+                _refreshing = True
+                threading.Thread(target=_refresh_cache_in_background, daemon=True).start()
+                status = "refreshing"
+            else:
+                status = "degraded" if _last_refresh_failed_at else "refreshing"
+            return _annotate_cached(_cached_snapshot, status)
+
+    with _cold_start_lock:
+        with _cache_lock:
+            if _cached_snapshot is not None:
+                return _annotate_cached(_cached_snapshot, "live")
+        snapshot = _read_fresh_snapshot(force_refresh=False)
+        snapshot.setdefault("meta", {})["source_status"] = "live"
+        with _cache_lock:
+            _cached_snapshot = snapshot
+            _cached_at = time.monotonic()
+            _last_refresh_failed_at = 0.0
         return copy.deepcopy(snapshot)
 
 
 def reset_live_snapshot_cache_for_tests() -> None:
-    global _cached_at, _cached_snapshot
+    global _cached_at, _cached_snapshot, _refreshing, _last_refresh_failed_at
     with _cache_lock:
         _cached_at = 0.0
         _cached_snapshot = None
+        _refreshing = False
+        _last_refresh_failed_at = 0.0

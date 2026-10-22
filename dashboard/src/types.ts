@@ -4,6 +4,7 @@ export interface DashboardMeta {
   as_of: string
   data_through?: string | null
   source?: string
+  source_status?: 'live' | 'refreshing' | 'degraded' | 'browser-cache'
   freshness: Freshness
   data_completeness: {
     valid_rows: number
