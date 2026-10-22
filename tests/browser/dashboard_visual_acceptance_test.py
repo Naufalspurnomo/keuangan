@@ -169,7 +169,8 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
           body: document.body.scrollWidth,
           theme: document.documentElement.dataset.theme,
           chartCount: document.querySelectorAll('.recharts-responsive-container').length,
-          visibleButtons: [...document.querySelectorAll('button')].filter(el => el.offsetParent !== null).length
+          visibleButtons: [...document.querySelectorAll('button')].filter(el => el.offsetParent !== null).length,
+          metricColors: [...document.querySelectorAll('.metric-card strong')].map(el => getComputedStyle(el).color)
         })""")
         self.assertLessEqual(metrics["document"], metrics["viewport"])
         self.assertLessEqual(metrics["body"], metrics["viewport"])
@@ -177,6 +178,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         # monthly flow, wallet composition. Lock the contract, not an exact count,
         # so adding a panel does not silently drop an existing one.
         self.assertGreaterEqual(metrics["chartCount"], 4)
+        self.assertEqual(len(set(metrics["metricColors"])), 4)
         self.assertGreater(metrics["visibleButtons"], 8)
         return metrics
 
