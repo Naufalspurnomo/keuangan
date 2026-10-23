@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { ArrowDownRight, ArrowUpRight, Building2, ChevronRight, WalletCards } from 'lucide-react'
+import { ArrowDownRight, ArrowUpRight, Building2, WalletCards } from 'lucide-react'
 
 const FinancialChart = lazy(() => import('./FinancialChart'))
 import type { WalletSnapshot } from './snapshot'
@@ -15,20 +15,19 @@ type Unit = {
   mode: Mode
   wallet?: string
   company?: string
-  accent: string
 }
 
 const COMPANY_UNITS: Unit[] = [
-  { key: 'holla', label: 'Holla', portfolio: 'Hollawall', mode: 'company', company: 'HOLLA', accent: 'coral' },
-  { key: 'hojja', label: 'Hojja', portfolio: 'Hollawall', mode: 'company', company: 'HOJJA', accent: 'gold' },
-  { key: 'tx-surabaya', label: 'TX Surabaya', portfolio: 'Texturin', mode: 'company', company: 'TEXTURIN-Surabaya', accent: 'teal' },
-  { key: 'tx-bali', label: 'TX Bali', portfolio: 'Texturin', mode: 'company', company: 'TEXTURIN-Bali', accent: 'violet' },
+  { key: 'holla', label: 'Holla', portfolio: 'Hollawall', mode: 'company', company: 'HOLLA' },
+  { key: 'hojja', label: 'Hojja', portfolio: 'Hollawall', mode: 'company', company: 'HOJJA' },
+  { key: 'tx-surabaya', label: 'TX Surabaya', portfolio: 'Texturin', mode: 'company', company: 'TEXTURIN-Surabaya' },
+  { key: 'tx-bali', label: 'TX Bali', portfolio: 'Texturin', mode: 'company', company: 'TEXTURIN-Bali' },
 ]
 
 const WALLET_UNITS: Unit[] = [
-  { key: 'cv-hb', label: 'CV HB (101)', portfolio: 'Hollawall', mode: 'wallet', wallet: 'CV HB(101)', accent: 'gold' },
-  { key: 'tx-sby', label: 'TX SBY (216)', portfolio: 'Texturin', mode: 'wallet', wallet: 'TX SBY(216)', accent: 'teal' },
-  { key: 'tx-bali-wallet', label: 'TX BALI (087)', portfolio: 'Texturin', mode: 'wallet', wallet: 'TX BALI(087)', accent: 'violet' },
+  { key: 'cv-hb', label: 'CV HB (101)', portfolio: 'Hollawall', mode: 'wallet', wallet: 'CV HB(101)' },
+  { key: 'tx-sby', label: 'TX SBY (216)', portfolio: 'Texturin', mode: 'wallet', wallet: 'TX SBY(216)' },
+  { key: 'tx-bali-wallet', label: 'TX BALI (087)', portfolio: 'Texturin', mode: 'wallet', wallet: 'TX BALI(087)' },
 ]
 
 const IDR = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })
@@ -46,21 +45,24 @@ function matches(unit: Unit, transaction: Transaction) {
   return transaction.company === unit.company
 }
 
-function UnitRail({ portfolio, mode, active, onSelect }: { portfolio: Portfolio; mode: Mode; active: string; onSelect: (unit: Unit) => void }) {
+function UnitGroup({ portfolio, mode, active, onSelect }: { portfolio: Portfolio; mode: Mode; active: string; onSelect: (unit: Unit) => void }) {
   const units = (mode === 'company' ? COMPANY_UNITS : WALLET_UNITS).filter((unit) => unit.portfolio === portfolio)
-  return <div className="business-unit-rail">
-    {units.map((unit) => <button
-      type="button"
-      key={unit.key}
-      className={`business-unit ${active === unit.key ? 'is-active' : ''}`}
-      aria-label={`Pilih ${mode === 'company' ? 'perusahaan' : 'dompet'} ${unit.label}`}
-      onClick={() => onSelect(unit)}
-    >
-      <i className={`business-unit-mark ${unit.accent}`} />
-      <span><small>{mode === 'company' ? 'Perusahaan' : 'Dompet'}</small><strong>{unit.label}</strong></span>
-      <ChevronRight size={16} />
-    </button>)}
-  </div>
+  return <section className="unit-group" aria-label={`${portfolio} ${mode === 'company' ? 'perusahaan' : 'dompet'}`}>
+    <div className="unit-group-label">
+      <h3>{portfolio} Section</h3>
+      <span>{units.length} {mode === 'company' ? 'perusahaan' : 'dompet'}</span>
+    </div>
+    <div className="unit-options">
+      {units.map((unit) => <button
+        type="button"
+        key={unit.key}
+        className={`unit-option ${active === unit.key ? 'is-active' : ''}`}
+        aria-pressed={active === unit.key}
+        aria-label={`Pilih ${mode === 'company' ? 'perusahaan' : 'dompet'} ${unit.label}`}
+        onClick={() => onSelect(unit)}
+      >{unit.label}</button>)}
+    </div>
+  </section>
 }
 
 export default function BusinessSectionReport({ transactions, wallets }: { transactions: Transaction[]; wallets: WalletSnapshot[] }) {
@@ -84,56 +86,73 @@ export default function BusinessSectionReport({ transactions, wallets }: { trans
   }
   const filtered = useMemo(() => transactions.filter((transaction) => matches(activeUnit, transaction)), [activeUnit, transactions])
   const wallet = activeUnit.wallet ? wallets.find((item) => item.name === activeUnit.wallet) : undefined
+  const unitDates = filtered.map((row) => row.transaction_date.slice(0, 10)).sort()
+  const firstDate = unitDates.length ? new Date(`${unitDates[0]}T00:00:00`) : null
+  const lastDate = unitDates.length ? new Date(`${unitDates.at(-1)}T00:00:00`) : null
+  const unitPeriod = firstDate && lastDate
+    ? `${firstDate.toLocaleDateString('id-ID', { month: 'short', year: 'numeric' })}–${lastDate.toLocaleDateString('id-ID', { month: 'short', year: 'numeric' })}`
+    : 'belum ada periode'
+  const chartStart = lastDate ? new Date(lastDate.getFullYear(), lastDate.getMonth() - 5, 1) : null
+  const chartPeriod = chartStart && lastDate
+    ? `${chartStart.toLocaleDateString('id-ID', { month: 'short' })}–${lastDate.toLocaleDateString('id-ID', { month: 'short', year: 'numeric' })}`
+    : 'belum ada periode'
   const incoming = filtered.filter((row) => row.transaction_type === 'Pemasukan').reduce((sum, row) => sum + row.amount, 0)
   const outgoing = filtered.filter((row) => row.transaction_type === 'Pengeluaran').reduce((sum, row) => sum + row.amount, 0)
   const net = incoming - outgoing
-  const portfolio = activeUnit.portfolio
+  const headlineValue = mode === 'wallet' && wallet ? wallet.balance : net
 
   return <section className="business-report" aria-label="Laporan unit usaha">
     <header className="business-report-head">
-      <div><p className="eyebrow">PORTFOLIO REPORT</p><h2>Bedah perusahaan dan dompet</h2><p>Pilih satu unit. Grafik, proyek, dan transaksi mengikuti konteks pilihan.</p></div>
+      <div>
+        <p className="eyebrow">UNIT USAHA</p>
+        <h2>Arus kas per unit</h2>
+        <p>Pilih perusahaan atau dompet untuk membaca satu konteks.</p>
+      </div>
       <div className="business-mode-switch" role="group" aria-label="Dasar laporan">
-        <button type="button" className={mode === 'company' ? 'is-active' : ''} onClick={() => setModeAndSelection('company')}><Building2 size={16} />4 Perusahaan</button>
-        <button type="button" aria-label="Lihat berdasarkan dompet" className={mode === 'wallet' ? 'is-active' : ''} onClick={() => setModeAndSelection('wallet')}><WalletCards size={16} />3 Dompet</button>
+        <button type="button" className={mode === 'company' ? 'is-active' : ''} onClick={() => setModeAndSelection('company')}><Building2 size={15} />Perusahaan</button>
+        <button type="button" aria-label="Lihat berdasarkan dompet" className={mode === 'wallet' ? 'is-active' : ''} onClick={() => setModeAndSelection('wallet')}><WalletCards size={15} />Dompet</button>
       </div>
     </header>
 
-    <div className="portfolio-sections">
-      {(['Hollawall', 'Texturin'] as Portfolio[]).map((section) => <article key={section} className={`portfolio-section ${portfolio === section ? 'is-focused' : ''}`}>
-        <div className="portfolio-section-head">
-          <span>{section === 'Hollawall' ? 'HW' : 'TX'}</span>
-          <div><p>{section.toUpperCase()}</p><h3>{section} Section</h3></div>
-          <small>{mode === 'company' ? COMPANY_UNITS.filter((unit) => unit.portfolio === section).length + ' perusahaan' : WALLET_UNITS.filter((unit) => unit.portfolio === section).length + ' dompet'}</small>
-        </div>
-        <UnitRail portfolio={section} mode={mode} active={selected[section]} onSelect={choose} />
-      </article>)}
-    </div>
+    <nav className="unit-navigator" aria-label="Pilih unit laporan">
+      <UnitGroup portfolio="Hollawall" mode={mode} active={selected.Hollawall} onSelect={choose} />
+      <UnitGroup portfolio="Texturin" mode={mode} active={selected.Texturin} onSelect={choose} />
+    </nav>
 
-    <div className="business-report-detail">
-      <article className="business-chart-card">
-        <div className="business-detail-title">
-          <div><p className="eyebrow">{portfolio.toUpperCase()} · {mode === 'company' ? 'PERUSAHAAN' : 'DOMPET'}</p><h3>{activeUnit.label}</h3><p>{filtered.length} transaksi dalam snapshot aktif</p></div>
-          <strong>{mode === 'wallet' && wallet ? IDR.format(wallet.balance) : IDR.format(net)}<small>{mode === 'wallet' ? 'saldo dompet' : 'arus kas bersih'}</small></strong>
-        </div>
-        <div className="business-stat-row">
-          <span><small>Masuk</small><b className="positive">{compact.format(incoming)}</b></span>
-          <span><small>Keluar</small><b className="negative">{compact.format(outgoing)}</b></span>
-          <span><small>Bersih</small><b>{compact.format(net)}</b></span>
-        </div>
+    <div className="unit-workspace">
+      <article className="unit-focus-canvas">
+        <header className="unit-focus-head">
+          <div>
+            <p className="unit-context">{activeUnit.portfolio} · {mode === 'company' ? 'Perusahaan' : 'Dompet'}</p>
+            <h3>{activeUnit.label}</h3>
+            <p>{filtered.length} transaksi · data {unitPeriod} · grafik {chartPeriod}</p>
+          </div>
+          <div className="unit-balance">
+            <small>{mode === 'wallet' ? 'Saldo dompet' : 'Arus kas bersih'}</small>
+            <strong>{IDR.format(headlineValue)}</strong>
+          </div>
+        </header>
+
+        <dl className="unit-metrics">
+          <div><dt>Masuk</dt><dd className="positive">{compact.format(incoming)}</dd></div>
+          <div><dt>Keluar</dt><dd className="negative">{compact.format(outgoing)}</dd></div>
+          <div><dt>Bersih</dt><dd>{compact.format(net)}</dd></div>
+        </dl>
+
         <div className="business-monthly-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="monthly" transactions={filtered} /></Suspense></div>
       </article>
 
-      <article className="business-ledger-card">
-        <div className="panel-head"><div><p className="eyebrow">RINCIAN TERPILIH</p><h3>Aktivitas {activeUnit.label}</h3></div><span className="business-live-dot">LIVE</span></div>
+      <aside className="activity-stream" aria-label={`Aktivitas ${activeUnit.label}`}>
+        <header><div><p className="eyebrow">AKTIVITAS</p><h3>Terbaru</h3></div><span>{filtered.length}</span></header>
         <div className="business-ledger-list">
           {filtered.slice(0, 6).map((row) => <div key={row.id} className="business-ledger-row">
-            <span className={row.transaction_type === 'Pemasukan' ? 'income' : 'expense'}>{row.transaction_type === 'Pemasukan' ? <ArrowDownRight size={16} /> : <ArrowUpRight size={16} />}</span>
+            <span className={row.transaction_type === 'Pemasukan' ? 'income' : 'expense'}>{row.transaction_type === 'Pemasukan' ? <ArrowDownRight size={15} /> : <ArrowUpRight size={15} />}</span>
             <div><strong>{row.project || row.notes || 'Transaksi'}</strong><small>{row.notes || row.wallet} · {new Date(row.transaction_date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}</small></div>
             <b className={row.transaction_type === 'Pemasukan' ? 'positive' : 'negative'}>{row.transaction_type === 'Pemasukan' ? '+' : '−'}{compact.format(row.amount)}</b>
           </div>)}
           {filtered.length === 0 && <div className="business-empty"><strong>Belum ada transaksi</strong><p>Unit ini belum memiliki aktivitas pada snapshot aktif.</p></div>}
         </div>
-      </article>
+      </aside>
     </div>
   </section>
 }

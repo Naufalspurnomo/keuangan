@@ -2,12 +2,10 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   ArrowDownRight,
-  ArrowRight,
   ArrowUpRight,
   BarChart3,
   BriefcaseBusiness,
   Building2,
-  CircleDollarSign,
   CreditCard,
   FileBarChart,
   Landmark,
@@ -24,7 +22,7 @@ import {
 
 import ProjectHealthBoard from './ProjectHealthBoard'
 import { loadSnapshot } from './snapshot'
-import type { CashTrendPoint, DebtSnapshot, ProjectSummary, WalletSnapshot } from './snapshot'
+import type { DebtSnapshot, ProjectSummary, WalletSnapshot } from './snapshot'
 import { downloadTransactionsCsv, filterTransactions } from './transactions'
 import type { TransactionTypeFilter } from './transactions'
 import type { DashboardMeta, Overview, QualityRow, Transaction } from './types'
@@ -125,37 +123,30 @@ function ThemeToggle({ theme, setTheme }: { theme: string; setTheme: (value: str
 }
 
 function SnapshotContext({ dataThrough }: { dataThrough?: string | null }) {
-  const period = dataThrough ? `Semua data · s.d. ${new Date(`${dataThrough}T00:00:00`).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}` : 'Semua periode'
+  const period = dataThrough ? new Date(`${dataThrough}T00:00:00`).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : 'periode tidak tersedia'
   return <section className="snapshot-context" aria-label="Konteks snapshot baca-saja">
-    <p>KONTEKS DATA · TIDAK DAPAT DIUBAH</p>
-    <div className="filter-bar">
-      <div><span><small>Periode snapshot</small>{period}</span></div>
-      <div><span><small>Cakupan perusahaan</small>Semua perusahaan</span></div>
-      <div><span><small>Cakupan dompet</small>Semua dompet</span></div>
-      <div><span><small>Cakupan proyek</small>Semua proyek</span></div>
-    </div>
+    <span>Hollawall Group · Naufal Spurnomo</span><i></i><span>Data s.d. {period}</span><i></i><span>Snapshot baca-saja</span>
   </section>
 }
 
-function MetricCard({ label, value, tone, valueText, onClick }: { label: string; value: number; tone?: string; valueText?: string; onClick?: () => void }) {
-  const shownValue = valueText ?? formatAmount(value)
-  return <article className={`metric-card ${tone ?? ''}`}>
-    <button type="button" aria-label={`${label}: ${shownValue}`} onClick={onClick}>
-      <span className="metric-top"><span>{label}</span><CircleDollarSign size={18} /></span>
-      <strong>{shownValue}</strong>
-      <small>Klik untuk rincian</small>
-    </button>
-  </article>
+function PulseMetric({ label, value, tone, onClick }: { label: string; value: number; tone?: string; onClick?: () => void }) {
+  const shownValue = formatAmount(value)
+  return <button type="button" className={`pulse-metric ${tone ?? ''}`} aria-label={`${label}: ${shownValue}`} onClick={onClick}>
+    <span>{label}</span><strong>{shownValue}</strong>
+  </button>
 }
 
 function Freshness({ meta }: { meta: DashboardMeta }) {
-  const date = new Date(meta.as_of)
+  const snapshotDate = new Date(meta.as_of)
   const through = meta.data_through ? new Date(`${meta.data_through}T00:00:00`).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : 'tanggal tidak tersedia'
-  return <div className={`freshness ${meta.freshness}`}><i></i><span>{meta.freshness === 'fresh' ? 'Data terkini' : meta.freshness === 'aging' ? 'Data mulai menua' : 'Snapshot perlu diperbarui'}<small>Data s.d. {through} · file {date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} · {meta.data_completeness.completeness_pct}% valid</small></span></div>
+  const totalRows = meta.data_completeness.valid_rows + meta.data_completeness.invalid_rows
+  return <div className="freshness neutral"><i></i><span>Transaksi tercatat sampai {through}<small>Snapshot dibuat {snapshotDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })} · {meta.data_completeness.valid_rows.toLocaleString('id-ID')} dari {totalRows.toLocaleString('id-ID')} baris impor valid</small></span></div>
 }
 
-function OverviewPage({ overview, transactions, meta, cashTrend, projects, walletSnapshots, setActive, setTransactionFilter }: { overview: Overview; transactions: Transaction[]; meta: DashboardMeta; cashTrend: CashTrendPoint[]; projects: ProjectSummary[]; walletSnapshots: WalletSnapshot[]; setActive: (value: string) => void; setTransactionFilter: (value: TransactionTypeFilter) => void }) {
+function OverviewPage({ overview, transactions, meta, projects, walletSnapshots, setActive, setTransactionFilter }: { overview: Overview; transactions: Transaction[]; meta: DashboardMeta; projects: ProjectSummary[]; walletSnapshots: WalletSnapshot[]; setActive: (value: string) => void; setTransactionFilter: (value: TransactionTypeFilter) => void }) {
   const metrics = overview.metrics
+  const openingPosition = metrics.cash_balance - metrics.net_operating_cashflow
+  const period = meta.data_through ? new Date(`${meta.data_through}T00:00:00`).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : 'tanggal tidak tersedia'
   const labels = {
     operating_inflow: overview.labels.operating_inflow || 'Pemasukan operasional',
     operating_outflow: overview.labels.operating_outflow || 'Pengeluaran operasional',
@@ -169,51 +160,28 @@ function OverviewPage({ overview, transactions, meta, cashTrend, projects, walle
     setTransactionFilter((filter ?? 'all') as TransactionTypeFilter)
   }
   return <>
-    <section className="hero-balance">
-      <button type="button" className="hero-balance-action" aria-label={overview.labels.cash_balance ?? 'Saldo kas'} onClick={() => drilldown('cash_balance')}>
-        <p className="eyebrow">TOTAL POSISI KAS</p><h2>{formatAmount(metrics.cash_balance)}</h2><p>Saldo sistem dari seluruh dompet pada snapshot terakhir. Klik untuk rincian.</p>
-      </button>
-      <Freshness meta={meta} />
-      <button type="button" className="hero-stat" aria-label="Kelengkapan data" onClick={() => setActive('reports')}>
-        <small>Kelengkapan data</small>
-        <strong>{meta.data_completeness.completeness_pct.toLocaleString('id-ID')}%</strong>
-      </button>
-    </section>
-    <section className="metric-grid">
-      <MetricCard label={labels.operating_inflow} value={metrics.operating_inflow} tone="income" onClick={() => drilldown('operating_inflow')} />
-      <MetricCard label={labels.operating_outflow} value={metrics.operating_outflow} tone="expense" onClick={() => drilldown('operating_outflow')} />
-      <MetricCard label={labels.net_operating_cashflow} value={metrics.net_operating_cashflow} tone="net" onClick={() => drilldown('net_operating_cashflow')} />
-      <MetricCard label={labels.open_internal_debt} value={metrics.open_internal_debt} tone="debt" onClick={() => drilldown('open_internal_debt')} />
+    <section className="position-stage" aria-label="Posisi keuangan utama">
+      <div className="position-primary">
+        <p className="eyebrow">TOTAL POSISI KAS</p>
+        <button type="button" aria-label={overview.labels.cash_balance ?? 'Saldo kas'} onClick={() => drilldown('cash_balance')}>
+          <strong>{formatAmount(metrics.cash_balance)}</strong>
+          <span>Semua dompet · per {period}</span>
+        </button>
+      </div>
+      <div className="position-status"><Freshness meta={meta} /></div>
     </section>
     <BusinessSectionReport transactions={transactions} wallets={walletSnapshots} />
+    <section className="operating-chapter" aria-label="Ringkasan arus kas">
+      <header><div><p className="eyebrow">ARUS KAS OPERASIONAL</p><h2>Semua unit · s.d. {period}</h2></div><button type="button" aria-label="Kelengkapan data" onClick={() => setActive('reports')}>Baris impor valid <strong>{meta.data_completeness.completeness_pct.toLocaleString('id-ID')}%</strong></button></header>
+      <p className="scope-bridge">Posisi awal {formatAmount(openingPosition)} + arus eksternal bersih {formatAmount(metrics.net_operating_cashflow)} = posisi kas {formatAmount(metrics.cash_balance)}. Transfer dan hutang internal tidak mengubah kas konsolidasi.</p>
+      <div className="operating-pulse">
+        <PulseMetric label={labels.operating_inflow} value={metrics.operating_inflow} tone="income" onClick={() => drilldown('operating_inflow')} />
+        <PulseMetric label={labels.operating_outflow} value={metrics.operating_outflow} tone="expense" onClick={() => drilldown('operating_outflow')} />
+        <PulseMetric label={labels.net_operating_cashflow} value={metrics.net_operating_cashflow} tone="net" onClick={() => drilldown('net_operating_cashflow')} />
+        <PulseMetric label={labels.open_internal_debt} value={metrics.open_internal_debt} tone="debt" onClick={() => drilldown('open_internal_debt')} />
+      </div>
+    </section>
     <ProjectReportTimeline transactions={transactions} projects={projects} asOf={meta.as_of} dataThrough={meta.data_through} />
-    <section className="overview-grid">
-      <article className="panel chart-panel">
-        <div className="panel-head"><div><p className="eyebrow">POSISI KAS</p><h3>Pergerakan saldo kas</h3></div><button className="text-button" onClick={() => { setActive('transactions'); setTransactionFilter('external') }}>Lihat arus kas <ArrowRight size={15} /></button></div>
-        <div className="chart-value"><strong>{formatAmount(metrics.cash_balance)}</strong><span className={metrics.net_operating_cashflow >= 0 ? 'positive' : 'negative'}>{formatAmount(metrics.net_operating_cashflow)} bersih</span></div>
-        <div className="chart-caption"><i></i><span>Saldo kas per bulan · {cashTrend.length} titik snapshot</span></div>
-        <div className="area-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="cash" cashTrend={cashTrend} /></Suspense></div>
-      </article>
-      <article className="panel project-panel">
-        <div className="panel-head"><div><p className="eyebrow">KINERJA PROYEK</p><h3>Arus kas proyek bersih</h3></div><button className="icon-button" onClick={() => { setActive('transactions'); setTransactionFilter('projects') }}><BarChart3 size={18} /></button></div>
-        <div className="bar-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="projects" projects={projects} /></Suspense></div>
-      </article>
-    </section>
-    <section className="overview-grid overview-grid-secondary">
-      <article className="panel chart-panel">
-        <div className="panel-head"><div><p className="eyebrow">ARUS KAS BULANAN</p><h3>Pemasukan dan pengeluaran</h3></div><button className="text-button" onClick={() => { setActive('cashflow'); setTransactionFilter('all') }}>Detail arus kas <ArrowRight size={15} /></button></div>
-        <div className="chart-value"><strong>{formatAmount(metrics.operating_inflow)}</strong><span className="text-secondary">masuk · {formatAmount(metrics.operating_outflow)} keluar</span></div>
-        <div className="area-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="monthly" transactions={transactions} /></Suspense></div>
-      </article>
-      <article className="panel chart-panel">
-        <div className="panel-head"><div><p className="eyebrow">KOMPOSISI DOMPET</p><h3>Sebaran saldo rekening</h3></div><button className="text-button" onClick={() => setActive('wallets')}>Semua dompet <ArrowRight size={15} /></button></div>
-        <div className="area-chart donut-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="wallets" wallets={walletSnapshots} /></Suspense></div>
-      </article>
-    </section>
-    <section className="panel activity-panel">
-      <div className="panel-head"><div><p className="eyebrow">AKTIVITAS TERBARU</p><h3>Transaksi terbaru</h3></div><button className="text-button" onClick={() => { setActive('transactions'); setTransactionFilter('all') }}>Semua transaksi <ArrowRight size={15} /></button></div>
-      <TransactionTable rows={transactions.slice(0, 5)} compact />
-    </section>
   </>
 }
 
@@ -283,18 +251,13 @@ function Dashboard() {
   const wallets = snapshot?.wallets ?? []
   const debts = snapshot?.debts ?? []
   const projects = snapshot?.project_summaries ?? []
-  const cashTrend = snapshot?.cash_trend ?? []
   const qualityRows = snapshot?.quality_rows ?? []
   const isDemo = !snapshot && PREVIEW_MODE
   const [eyebrow, title] = pageMeta[active]
   const sourceStatus = meta.source_status
-  const statusLabel = sourceStatus === 'refreshing'
-    ? 'MENYINKRONKAN DATA'
-    : sourceStatus === 'degraded' || sourceStatus === 'browser-cache'
-      ? 'MODE CADANGAN · DATA TERAKHIR'
-      : meta.freshness === 'stale'
-        ? 'DATA LAMA · READ-ONLY'
-        : 'SNAPSHOT PRODUKSI · READ-ONLY'
+  const statusLabel = sourceStatus === 'degraded' || sourceStatus === 'browser-cache'
+    ? 'SUMBER CADANGAN'
+    : 'SNAPSHOT PRODUKSI'
   const navigate = (value: string) => {
     setSelectedProject('')
     setTransactionFilter('all')
@@ -310,7 +273,7 @@ function Dashboard() {
     : coldError
       ? <section className="inline-state error-state" role="alert"><div><p className="eyebrow">SUMBER DATA TERGANGGU</p><h2>Dashboard belum bisa mengambil data</h2><p>Ini bukan masalah HP atau login. Coba lagi—halaman tidak akan mengunci layar.</p></div><button className="primary-button" onClick={() => snapshotQuery.refetch()}>Coba lagi</button></section>
       : active === 'overview'
-        ? <OverviewPage overview={overview} transactions={transactions} meta={meta} cashTrend={cashTrend} projects={projects} walletSnapshots={wallets} setActive={setActive} setTransactionFilter={setTransactionFilter} />
+        ? <OverviewPage overview={overview} transactions={transactions} meta={meta} projects={projects} walletSnapshots={wallets} setActive={setActive} setTransactionFilter={setTransactionFilter} />
         : <DetailPage active={active} transactions={transactions} overview={overview} wallets={wallets} debts={debts} projects={projects} completeness={meta.data_completeness.completeness_pct} qualityRows={qualityRows} initialFilter={transactionFilter} initialQuery={selectedProject} onOpenProject={openProject} />
 
   return <div className="app-shell">
@@ -318,8 +281,12 @@ function Dashboard() {
     <main className="main-canvas">
       <header className="topbar"><button className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi"><Menu size={21} /></button><div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{title}</strong></div><div className="topbar-actions"><ThemeToggle theme={theme} setTheme={setTheme} /><button className={`icon-button ${snapshotQuery.isFetching ? 'is-spinning' : ''}`} aria-label="Segarkan snapshot" onClick={() => snapshotQuery.refetch()}><RefreshCcw size={17} /></button></div></header>
       <div className="content">
-        <section className="page-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>Pandangan terukur atas posisi keuangan Hollawall.</p></div>{snapshot ? <div className={`demo-badge ${meta.freshness}`}>{statusLabel}</div> : isDemo && <div className="demo-badge">PRATINJAU · DATA DEMO</div>}</section>
-        {!coldLoading && !coldError && <SnapshotContext dataThrough={meta.data_through} />}
+        {active === 'overview'
+          ? <h1 className="sr-only">{title}</h1>
+          : <section className="page-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>Pandangan terukur atas posisi keuangan Hollawall.</p></div>{snapshot ? <div className={`demo-badge ${meta.freshness}`}>{statusLabel}</div> : isDemo && <div className="demo-badge">PRATINJAU · DATA DEMO</div>}</section>}
+        {!coldLoading && !coldError && (active === 'overview'
+          ? <div className="overview-provenance"><SnapshotContext dataThrough={meta.data_through} />{snapshot ? <span className="source-state">{statusLabel}</span> : isDemo && <span className="source-state">DATA DEMO</span>}</div>
+          : <SnapshotContext dataThrough={meta.data_through} />)}
         {content}
       </div>
     </main>

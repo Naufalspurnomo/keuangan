@@ -9,6 +9,9 @@ type MatrixUnit = 'HOLLA' | 'TX' | 'HOJJA'
 
 const IDR = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })
 const compact = new Intl.NumberFormat('id-ID', { notation: 'compact', maximumFractionDigits: 1 })
+const matrixLabel: Record<MatrixUnit, string> = { HOLLA: 'Holla', TX: 'Texturin', HOJJA: 'Hojja' }
+const matrixCode: Record<MatrixUnit, string> = { HOLLA: 'HOLLA', TX: 'TX', HOJJA: 'HOJJA' }
+const formatMatrixValue = (value: number) => value === 0 ? 'Rp 0' : `Rp ${compact.format(value)}`
 const accents = ['coral', 'teal', 'gold', 'violet', 'blue', 'rose']
 
 function parseDate(value?: string | null) {
@@ -78,6 +81,7 @@ function SectionTimeline({ portfolio, projects, window, selected, onSelect, onNe
   const [page, setPage] = useState(0)
   const items = projects
     .filter((project) => project.portfolio === portfolio)
+    .sort((left, right) => (parseDate(right.started_on ?? right.first_activity_on)?.getTime() ?? 0) - (parseDate(left.started_on ?? left.first_activity_on)?.getTime() ?? 0))
     .map((project, index) => ({ project, style: projectStyle(project, window.start, window.end, window.anchor), accent: accents[index % accents.length] }))
     .filter((item) => item.style)
   const pageSize = mobile ? 3 : 4
@@ -99,14 +103,26 @@ function SectionTimeline({ portfolio, projects, window, selected, onSelect, onNe
 
   return <section className={`vertical-project-section ${portfolio.toLocaleLowerCase('id-ID')}`} aria-label={`Timeline proyek ${portfolio}`}>
     <header>
-      <div><p>{portfolio.toUpperCase()} SECTION</p><h3>{portfolio} Project Timeline</h3></div>
+      <div><p>{portfolio.toUpperCase()} SECTION</p><h3>{mobile ? 'Proyek periode ini' : `Rentang proyek ${portfolio}`}</h3></div>
       <button type="button" className="new-project-button" aria-label={`Tambah proyek ${portfolio}`} onClick={onNew}><Plus size={15} />Proyek Baru</button>
     </header>
     {items.length > 0 && <div className="project-lane-navigation" aria-label={`Navigasi proyek ${portfolio}`}>
       <span>{visibleRange.start}–{Math.min(visibleRange.end, items.length)} dari {items.length} proyek</span>
       <div><button type="button" aria-label={`Proyek ${portfolio} sebelumnya`} onClick={() => scroll(-1)} disabled={safePage === 0}><ArrowLeft size={15} /></button><button type="button" aria-label={`Proyek ${portfolio} berikutnya`} onClick={() => scroll(1)} disabled={safePage >= pageCount - 1}><ArrowRight size={15} /></button></div>
     </div>}
-    <div className="vertical-timeline-shell">
+    {mobile ? <div className="mobile-project-list" aria-live="polite">
+      {visibleItems.map(({ project }) => <button
+        type="button"
+        key={project.name}
+        className={selected === project.name ? 'is-selected' : ''}
+        onClick={() => onSelect(project)}
+        aria-label={`Buka proyek ${project.name} dari timeline`}
+      >
+        <span><strong>{project.name}</strong><small>{dateLabel(project.started_on ?? project.first_activity_on)} — {project.lifecycle_status === 'active' ? 'aktif' : dateLabel(project.completed_on ?? project.last_activity_on)}</small></span>
+        <ArrowRight size={16} aria-hidden="true" />
+      </button>)}
+      {!items.length && <div className="vertical-timeline-empty"><strong>Belum ada proyek pada kuartal ini</strong><small>Timeline mengikuti marker Start/Selesai dan aktivitas sumber.</small></div>}
+    </div> : <div className="vertical-timeline-shell">
       <div className="vertical-month-axis" aria-hidden="true">
         {window.months.map((month) => <span key={month.name}><b>{month.name}</b><i /></span>)}
       </div>
@@ -123,7 +139,7 @@ function SectionTimeline({ portfolio, projects, window, selected, onSelect, onNe
         {!items.length && <div className="vertical-timeline-empty"><strong>Belum ada proyek pada kuartal ini</strong><small>Timeline mengikuti marker Start/Selesai dan aktivitas sumber.</small></div>}
         </div>
       </div>
-    </div>
+    </div>}
   </section>
 }
 
@@ -136,7 +152,7 @@ export default function ProjectReportTimeline({ transactions, projects, asOf, da
   const previous = new Date(revenueAnchor.getFullYear(), revenueAnchor.getMonth() - 1, 1)
   const previousKey = `${previous.getFullYear()}-${String(previous.getMonth() + 1).padStart(2, '0')}`
   const periodLabels = {
-    current: revenueAnchor.toLocaleDateString('id-ID', { month: 'long' }),
+    current: `${revenueAnchor.toLocaleDateString('id-ID', { month: 'long' })} · s.d. ${revenueAnchor.getDate()}`,
     previous: previous.toLocaleDateString('id-ID', { month: 'long' }),
   }
   const matrix = useMemo(() => {
@@ -163,10 +179,10 @@ export default function ProjectReportTimeline({ transactions, projects, asOf, da
 
   return <section className="project-report-module" aria-label="Laporan omzet dan timeline proyek">
     <div className="holla-report-head">
-      <div><p className="eyebrow">HOLLA REPORT</p><h2>Omzet dan rentang proyek</h2><span>Timeline {window.months.map((month) => month.short).join(' · ')} {window.anchor.getFullYear()} · omzet s.d. {dateLabel(dataThrough)}</span></div>
+      <div><p className="eyebrow">HOLLA REPORT</p><h2>Omzet dan rentang proyek</h2><span>Status proyek per {dateLabel(asOf)} · omzet transaksi s.d. {dateLabel(dataThrough)}</span></div>
       <div className="revenue-matrix" role="table" aria-label={`Omzet ${revenueAnchor.toLocaleDateString('id-ID', { month: 'long' })} dan ${previous.toLocaleDateString('id-ID', { month: 'long' })}`}>
-        <div role="row" className="matrix-head"><span role="columnheader">Periode</span>{(['HOLLA', 'TX', 'HOJJA'] as MatrixUnit[]).map((unit) => <b role="columnheader" key={unit}>{unit}</b>)}</div>
-        {([['current', 'Bulan ini'], ['previous', 'Bulan lalu']] as const).map(([period, label]) => <div role="row" key={period}><span role="rowheader">{label}<small>{periodLabels[period]}</small></span>{(['HOLLA', 'TX', 'HOJJA'] as MatrixUnit[]).map((unit) => <strong role="cell" key={unit}>{compact.format(matrix[period][unit])}</strong>)}</div>)}
+        <div role="row" className="matrix-head"><span role="columnheader">Periode</span>{(['HOLLA', 'TX', 'HOJJA'] as MatrixUnit[]).map((unit) => <b role="columnheader" key={unit} aria-label={matrixLabel[unit]}>{matrixCode[unit]}</b>)}</div>
+        {([['current', 'Bulan ini'], ['previous', 'Bulan lalu']] as const).map(([period, label]) => <div role="row" key={period}><span role="rowheader">{label}<small>{periodLabels[period]}</small></span>{(['HOLLA', 'TX', 'HOJJA'] as MatrixUnit[]).map((unit) => <strong role="cell" data-label={matrixLabel[unit]} key={unit}>{formatMatrixValue(matrix[period][unit])}</strong>)}</div>)}
       </div>
     </div>
 

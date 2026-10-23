@@ -62,6 +62,12 @@ describe('Hollawall command center', () => {
     renderApp()
     const report = await screen.findByRole('region', { name: 'Laporan unit usaha' })
 
+    expect(report.querySelector('.portfolio-section')).toBeNull()
+    expect(report.querySelector('.business-chart-card')).toBeNull()
+    expect(report.querySelector('.business-ledger-card')).toBeNull()
+    expect(report.querySelector('.unit-navigator')).toBeTruthy()
+    expect(report.querySelector('.unit-focus-canvas')).toBeTruthy()
+    expect(report.querySelector('.activity-stream')).toBeTruthy()
     expect(within(report).getByRole('heading', { name: 'Hollawall Section' })).toBeTruthy()
     expect(within(report).getByRole('heading', { name: 'Texturin Section' })).toBeTruthy()
     for (const company of ['Holla', 'Hojja', 'TX Surabaya', 'TX Bali']) {

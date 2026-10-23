@@ -174,19 +174,29 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
           theme: document.documentElement.dataset.theme,
           chartCount: document.querySelectorAll('.recharts-responsive-container').length,
           visibleButtons: [...document.querySelectorAll('button')].filter(el => el.offsetParent !== null).length,
-          metricColors: [...document.querySelectorAll('.metric-card strong')].map(el => getComputedStyle(el).color),
-          walletLegend: [...document.querySelectorAll('.donut-legend li')].map(el => el.textContent),
-          walletTotal: document.querySelector('.donut-center strong')?.textContent
+          unitNavigator: document.querySelectorAll('.unit-navigator').length,
+          unitCanvas: document.querySelectorAll('.unit-focus-canvas').length,
+          activityStream: document.querySelectorAll('.activity-stream').length,
+          legacyCards: ['.portfolio-section', '.business-chart-card', '.business-ledger-card', '.overview-grid', '.activity-panel']
+            .reduce((total, selector) => total + document.querySelectorAll(selector).length, 0),
+          desktopTimeline: document.querySelectorAll('.vertical-timeline-shell').length,
+          mobileProjectLists: document.querySelectorAll('.mobile-project-list').length,
+          mobileTargets: [...document.querySelectorAll('.business-mode-switch button, .mobile-project-list button, .project-lane-navigation button, .sidebar nav button')]
+            .map(el => el.getBoundingClientRect().height)
         })""")
-        self.assertIn("Lainnya", " ".join(metrics["walletLegend"]))
-        self.assertEqual(metrics["walletTotal"], "968,9 jt")
         self.assertLessEqual(metrics["document"], metrics["viewport"])
         self.assertLessEqual(metrics["body"], metrics["viewport"])
-        # Overview renders multiple independent charts: cash area, project bars,
-        # monthly flow, wallet composition. Lock the contract, not an exact count,
-        # so adding a panel does not silently drop an existing one.
-        self.assertGreaterEqual(metrics["chartCount"], 4)
-        self.assertEqual(len(set(metrics["metricColors"])), 4)
+        self.assertGreaterEqual(metrics["chartCount"], 1)
+        self.assertEqual(metrics["unitNavigator"], 1)
+        self.assertEqual(metrics["unitCanvas"], 1)
+        self.assertEqual(metrics["activityStream"], 1)
+        self.assertEqual(metrics["legacyCards"], 0)
+        if metrics["viewport"] <= 580:
+            self.assertEqual(metrics["desktopTimeline"], 0)
+            self.assertEqual(metrics["mobileProjectLists"], 2)
+            self.assertGreaterEqual(min(metrics["mobileTargets"]), 44)
+        else:
+            self.assertEqual(metrics["desktopTimeline"], 2)
         self.assertGreater(metrics["visibleButtons"], 8)
         return metrics
 
