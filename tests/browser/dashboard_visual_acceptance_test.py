@@ -71,10 +71,10 @@ SNAPSHOT = {
         {"month": "2026-10", "balance": 790_350_000, "net_movement": 305_350_000},
     ],
     "project_summaries": [
-        {"name": "Proyek Bola", "portfolio": "Hollawall", "net_cashflow": 98_250_000, "age_days": 4, "health": "healthy", "lifecycle_status": "active", "started_on": "2026-07-04", "transaction_count": 12, "last_activity_on": "2026-07-08"},
-        {"name": "Texturin Prima", "portfolio": "Texturin", "net_cashflow": 70_400_000, "age_days": 10, "health": "healthy", "lifecycle_status": "active", "started_on": "2026-06-28", "transaction_count": 14, "last_activity_on": "2026-07-07"},
-        {"name": "Hollawall Proyek", "portfolio": "Hollawall", "net_cashflow": 52_100_000, "age_days": 21, "health": "watch", "lifecycle_status": "active", "started_on": "2026-06-17", "transaction_count": 19, "last_activity_on": "2026-07-05"},
-        {"name": "Texturin Sisipan", "portfolio": "Texturin", "net_cashflow": 31_900_000, "age_days": 45, "health": "overdue", "lifecycle_status": "active", "started_on": "2026-05-24", "transaction_count": 21, "last_activity_on": "2026-07-03"},
+        {"name": "Proyek Bola", "portfolio": "Hollawall", "net_cashflow": 98_250_000, "age_days": 4, "health": "healthy", "lifecycle_status": "active", "started_on": "2026-10-17", "first_activity_on": "2026-10-17", "transaction_count": 12, "last_activity_on": "2026-10-21"},
+        {"name": "Texturin Prima", "portfolio": "Texturin", "net_cashflow": 70_400_000, "age_days": 10, "health": "healthy", "lifecycle_status": "active", "started_on": "2026-10-11", "first_activity_on": "2026-10-12", "transaction_count": 14, "last_activity_on": "2026-10-20"},
+        {"name": "Hollawall Proyek", "portfolio": "Hollawall", "net_cashflow": 52_100_000, "age_days": 21, "health": "watch", "lifecycle_status": "active", "started_on": "2026-09-30", "first_activity_on": "2026-10-01", "transaction_count": 19, "last_activity_on": "2026-10-19"},
+        {"name": "Texturin Sisipan", "portfolio": "Texturin", "net_cashflow": 31_900_000, "age_days": 45, "health": "overdue", "lifecycle_status": "active", "started_on": "2026-09-06", "first_activity_on": "2026-09-08", "transaction_count": 21, "last_activity_on": "2026-10-18"},
         {"name": "Proyek Selesai", "portfolio": "Hollawall", "net_cashflow": 12_500_000, "age_days": 999, "health": "completed", "lifecycle_status": "completed", "started_on": "2024-01-01", "transaction_count": 9, "last_activity_on": "2026-05-02"}
     ],
 }
@@ -249,7 +249,8 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                   const targets = [...document.querySelectorAll('.portfolio-switcher button, .project-filter-rail button, .project-ledger-row, .project-ledger-pagination button')]
                     .filter(visible)
                     .map(element => element.getBoundingClientRect().height);
-                  const bars = [...document.querySelectorAll('.active-age-bar')].filter(visible);
+                  const bars = [...document.querySelectorAll('.active-calendar-bar')].filter(visible);
+                  const viewports = [...document.querySelectorAll('.active-calendar-viewport')].filter(visible);
                   return {
                     viewport: document.documentElement.clientWidth,
                     document: document.documentElement.scrollWidth,
@@ -259,9 +260,14 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                     ageSections: [...document.querySelectorAll('.active-age-identity p')].map(element => element.textContent),
                     ageBars: bars.length,
                     ageColors: bars.map(element => element.className),
-                    ageHeights: bars.map(element => element.querySelector('.active-age-bar-fill').getBoundingClientRect().height),
-                    ageWidths: bars.map(element => element.querySelector('.active-age-bar-fill').getBoundingClientRect().width),
-                    ageNames: bars.map(element => element.querySelector('.active-age-mobile-copy strong')?.textContent || element.querySelector('.active-age-bar-fill strong')?.textContent || ''),
+                    ageHeights: bars.map(element => element.querySelector('.active-calendar-fill').getBoundingClientRect().height),
+                    ageNames: bars.map(element => element.querySelector('.active-calendar-fill strong')?.textContent || ''),
+                    months: [...document.querySelectorAll('.active-calendar-axis b')].map(element => element.textContent),
+                    starts: [...document.querySelectorAll('.active-calendar-start small')].map(element => element.textContent),
+                    activityWicks: document.querySelectorAll('.active-calendar-activity').length,
+                    viewportCount: viewports.length,
+                    internalHorizontalOverflow: viewports.every(element => element.scrollWidth > element.clientWidth),
+                    projectHeads: [...document.querySelectorAll('.active-calendar-project-heads strong')].map(element => element.textContent),
                     groups: [...document.querySelectorAll('.portfolio-project-group h3')].map(element => element.textContent),
                     rows: document.querySelectorAll('.project-ledger-row').length,
                     legacyTimeline: [...document.querySelectorAll('.portfolio-timeline .timeline-row')].filter(visible).length,
@@ -278,20 +284,34 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 self.assertLessEqual(metrics["rows"], 12)
                 self.assertTrue(metrics["ownership"])
                 self.assertEqual(metrics["legacyTimeline"], 0)
-                self.assertEqual(metrics["ageHeading"], "Durasi proyek berjalan")
+                self.assertEqual(metrics["ageHeading"], "Timeline kalender proyek aktif")
                 self.assertGreater(metrics["ageBars"], 0)
                 self.assertEqual(
                     sorted(set(re.findall(r"age-(?:new|growing|watch|overdue)", " ".join(metrics["ageColors"])))),
                     ["age-growing", "age-new", "age-overdue", "age-watch"],
                 )
                 self.assertNotIn("Proyek Selesai", metrics["ageNames"])
+                self.assertEqual(sorted(metrics["ageSections"]), ["Hollawall Section", "Texturin Section"])
+                self.assertGreaterEqual(metrics["viewportCount"], 2)
                 if width <= 760:
-                    self.assertEqual(sorted(metrics["ageSections"]), ["Hollawall Section", "Texturin Section"])
-                    self.assertTrue(all(width > height for width, height in zip(metrics["ageWidths"], metrics["ageHeights"])))
+                    self.assertTrue(metrics["internalHorizontalOverflow"], metrics)
+                self.assertGreater(len(set(metrics["months"])), 1)
+                self.assertTrue(all(label.startswith("Mulai ") for label in metrics["starts"]))
+                self.assertGreater(metrics["activityWicks"], 0)
+                self.assertEqual(sorted(metrics["projectHeads"]), sorted(metrics["ageNames"]))
+                self.assertGreater(max(metrics["ageHeights"]), min(metrics["ageHeights"]))
+                if width <= 760:
                     self.assertGreaterEqual(metrics["minTarget"], 44)
-                else:
-                    self.assertLessEqual(metrics["ageBars"], 16)
-                    self.assertGreater(max(metrics["ageHeights"]), min(metrics["ageHeights"]))
+                    first_frame = page.locator(".active-calendar-frame").first
+                    first_viewport = first_frame.locator(".active-calendar-viewport")
+                    first_cue = first_frame.locator(".active-calendar-pan-cue")
+                    expect(first_cue).to_be_visible()
+                    left_before = first_viewport.evaluate("element => element.scrollLeft")
+                    first_cue.click()
+                    page.wait_for_timeout(100)
+                    self.assertGreater(first_viewport.evaluate("element => element.scrollLeft"), left_before)
+                    first_viewport.evaluate("element => { element.scrollLeft = element.scrollWidth; element.dispatchEvent(new Event('scroll')); }")
+                    expect(first_cue).to_have_count(0)
                 page.get_by_role("button", name="Selesai", exact=True).click()
                 expect(page.locator(".active-project-age-report")).to_have_count(0)
                 context.close()

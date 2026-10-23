@@ -50,7 +50,7 @@ function portfolioClass(value?: string | null) {
   return `portfolio-${(value ?? 'unmapped').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
 }
 
-export default function ProjectHealthBoard({ projects, onOpen }: { projects: ProjectSummary[]; onOpen: (name: string) => void }) {
+export default function ProjectHealthBoard({ projects, asOf, onOpen }: { projects: ProjectSummary[]; asOf?: string | null; onOpen: (name: string) => void }) {
   const [filter, setFilter] = useState<Filter>('all')
   const [portfolio, setPortfolio] = useState<Portfolio>('all')
   const [query, setQuery] = useState('')
@@ -123,7 +123,7 @@ export default function ProjectHealthBoard({ projects, onOpen }: { projects: Pro
 
     </div>
 
-    {filter !== 'completed' && <ActiveProjectAgeChart projects={projects} portfolios={chartPortfolios} query={query} onOpen={onOpen} />}
+    {filter !== 'completed' && <ActiveProjectAgeChart projects={projects} portfolios={chartPortfolios} query={query} asOf={asOf} onOpen={onOpen} />}
 
     <div className="project-ledger-filter-block">
       <p>FILTER DAFTAR PROYEK</p>
