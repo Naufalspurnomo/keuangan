@@ -32,7 +32,7 @@ export interface DashboardSnapshot {
 }
 
 export async function loadSnapshot(local = false): Promise<DashboardSnapshot> {
-  const url = local ? '/data/dashboard-snapshot.json' : '/live-api/snapshot'
+  const url = local ? '/data/dashboard-snapshot.json' : (import.meta.env.VITE_SNAPSHOT_URL || '/live-api/snapshot')
   const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' })
   if (!response.ok) throw new Error(`Snapshot unavailable (${response.status})`)
   return response.json() as Promise<DashboardSnapshot>
