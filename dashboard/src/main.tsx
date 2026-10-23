@@ -11,6 +11,7 @@ import './calm-financial-palette.css'
 import './financial-operating-room.css'
 import './project-portfolio-ledger.css'
 import './active-project-age-chart.css'
+import './financial-operations-workspace.css'
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 20_000 } } })
 
