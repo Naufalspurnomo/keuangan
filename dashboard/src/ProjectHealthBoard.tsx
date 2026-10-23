@@ -1,9 +1,10 @@
-import { useMemo, useState, type CSSProperties } from 'react'
-import { Search } from 'lucide-react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { ArrowLeft, ArrowRight, Search } from 'lucide-react'
 
 import type { ProjectHealth, ProjectSummary } from './snapshot'
 
 const IDR = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })
+const PAGE_SIZE = 12
 
 type Filter = 'all' | 'active' | 'attention' | 'completed' | 'unmarked'
 type Portfolio = 'all' | NonNullable<ProjectSummary['portfolio']>
@@ -11,9 +12,16 @@ type Portfolio = 'all' | NonNullable<ProjectSummary['portfolio']>
 const healthMeta: Record<ProjectHealth, { label: string; copy: string }> = {
   healthy: { label: 'Baru · Sehat', copy: 'Berjalan 0–14 hari' },
   watch: { label: 'Pantau', copy: 'Berjalan 15–30 hari' },
-  overdue: { label: 'Lewat 30 hari', copy: 'Masih aktif dan perlu perhatian' },
+  overdue: { label: 'Lewat 30 hari', copy: 'Aktif dan perlu perhatian' },
   completed: { label: 'Selesai', copy: 'Lifecycle sudah ditutup' },
-  unmarked: { label: 'Belum ditandai', copy: 'Tidak ada marker Start/Selesai' },
+  unmarked: { label: 'Belum ditandai', copy: 'Marker Start/Selesai belum ada' },
+}
+
+const portfolioIdentity: Record<string, { mark: string; copy: string }> = {
+  Hollawall: { mark: 'H', copy: 'Produksi & aktivasi' },
+  Texturin: { mark: 'T', copy: 'Tekstur & finishing' },
+  Operasional: { mark: 'O', copy: 'Operasional bersama' },
+  'Lintas portfolio': { mark: 'L', copy: 'Lintas unit' },
 }
 
 function parseDate(value?: string | null) {
@@ -60,70 +68,117 @@ function timelineStyle(project: ProjectSummary, start: Date, end: Date): CSSProp
   return { '--timeline-left': `${left}%`, '--timeline-width': `${Math.min(width, 100 - left)}%` } as CSSProperties
 }
 
+function portfolioClass(value?: string | null) {
+  return `portfolio-${(value ?? 'unmapped').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+}
+
 export default function ProjectHealthBoard({ projects, onOpen }: { projects: ProjectSummary[]; onOpen: (name: string) => void }) {
   const [filter, setFilter] = useState<Filter>('all')
   const [portfolio, setPortfolio] = useState<Portfolio>('all')
   const [query, setQuery] = useState('')
+  const [page, setPage] = useState(0)
   const normalizedQuery = query.trim().toLocaleLowerCase('id-ID')
+  const portfolioOptions = useMemo(() => Array.from(new Set(projects.map((project) => project.portfolio).filter(Boolean))) as Portfolio[], [projects])
   const filtered = useMemo(
     () => projects.filter((project) => matchesFilter(project, filter)
       && (portfolio === 'all' || project.portfolio === portfolio)
-      && (!normalizedQuery || project.name.toLocaleLowerCase('id-ID').includes(normalizedQuery))),
+      && (!normalizedQuery || project.name.toLocaleLowerCase('id-ID').includes(normalizedQuery)))
+      .sort((left, right) => (parseDate(right.last_activity_on)?.getTime() ?? 0) - (parseDate(left.last_activity_on)?.getTime() ?? 0)),
     [filter, normalizedQuery, portfolio, projects],
   )
-  const portfolioOptions = Array.from(new Set(projects.map((project) => project.portfolio).filter(Boolean))) as Portfolio[]
+  const ordered = useMemo(() => {
+    if (portfolio !== 'all') return filtered
+    const buckets = portfolioOptions.map((name) => filtered.filter((project) => project.portfolio === name))
+    const unmapped = filtered.filter((project) => !project.portfolio)
+    const result: ProjectSummary[] = []
+    const length = Math.max(0, ...buckets.map((bucket) => bucket.length), unmapped.length)
+    for (let index = 0; index < length; index += 1) {
+      buckets.forEach((bucket) => { if (bucket[index]) result.push(bucket[index]) })
+      if (unmapped[index]) result.push(unmapped[index])
+    }
+    return result
+  }, [filtered, portfolio, portfolioOptions])
   const counts = Object.fromEntries(
     (['healthy', 'watch', 'overdue', 'completed', 'unmarked'] as ProjectHealth[])
       .map((health) => [health, projects.filter((project) => projectHealth(project) === health).length]),
   ) as Record<ProjectHealth, number>
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const visible = ordered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+  const groupedVisible = portfolioOptions.map((name) => ({ name, projects: visible.filter((project) => project.portfolio === name) })).filter((group) => group.projects.length)
+  const unmappedVisible = visible.filter((project) => !project.portfolio)
   const timeline = timelineWindow()
-  const timelineProjects = filtered.map((project) => ({ project, style: timelineStyle(project, timeline.start, timeline.end) })).filter((item) => item.style)
+  const timelineProjects = filtered.map((project) => ({ project, style: timelineStyle(project, timeline.start, timeline.end) })).filter((item) => item.style).slice(0, PAGE_SIZE)
 
-  return <section className="project-health-board">
-    <div className="project-health-summary">
-      <div><p className="eyebrow">PROJECT HEALTH BOARD</p><h2>Umur dan kesehatan proyek</h2><p>Status mengikuti marker Start/Selesai. Warna tidak dipakai sendirian—setiap kartu membawa label.</p></div>
+  useEffect(() => setPage(0), [filter, normalizedQuery, portfolio])
+  useEffect(() => { if (page >= pageCount) setPage(pageCount - 1) }, [page, pageCount])
+
+  return <section className="project-health-board project-portfolio-ledger">
+    <header className="project-register-head">
+      <div><p className="eyebrow">UNIT USAHA</p><h2>Hollawall &amp; Texturin</h2><p>Pilih unit usaha untuk melihat proyek, status, umur, dan arus kas dari sumber yang sama.</p></div>
       <div className="project-summary-stats" aria-label="Ringkasan kesehatan proyek">
-        <span className="healthy"><strong>{counts.healthy}</strong> baru/sehat</span>
-        <span className="watch"><strong>{counts.watch}</strong> pantau</span>
-        <span className="overdue"><strong>{counts.overdue}</strong> terlambat &gt;30 hari</span>
-        <span><strong>{counts.completed}</strong> selesai</span>
-        <span><strong>{counts.unmarked}</strong> belum ditandai</span>
+        {[
+          { key: 'healthy', count: counts.healthy, label: 'Baru · Sehat' },
+          { key: 'watch', count: counts.watch, label: 'Pantau' },
+          { key: 'overdue', count: counts.overdue, label: 'Lewat 30 hari' },
+          { key: 'completed', count: counts.completed, label: 'Selesai' },
+          { key: 'unmarked', count: counts.unmarked, label: 'Belum ditandai' },
+        ].filter((item) => item.count > 0).map((item) => <span className={item.key} key={item.key}><strong>{item.count}</strong>{item.label}</span>)}
       </div>
-    </div>
-    <div className="project-controls">
-      <label className="project-search"><Search size={18} /><span className="sr-only">Cari proyek</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari nama proyek…" /></label>
-      <label className="portfolio-select"><span>Portfolio</span><select aria-label="Filter portfolio" value={portfolio} onChange={(event) => setPortfolio(event.target.value as Portfolio)}><option value="all">Semua portfolio</option>{portfolioOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-      <div className="project-filters" role="group" aria-label="Filter kesehatan proyek">
+    </header>
+
+    <div className="project-explorer">
+      <div className="project-query-row">
+        <label className="project-search"><Search size={18} /><span className="sr-only">Cari proyek</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari nama proyek…" /></label>
+        <span className="result-count"><strong>{filtered.length.toLocaleString('id-ID')}</strong> proyek</span>
+      </div>
+
+      <div className="portfolio-switcher" role="group" aria-label="Filter portfolio">
+        <button type="button" className={portfolio === 'all' ? 'active portfolio-all' : 'portfolio-all'} onClick={() => setPortfolio('all')} aria-pressed={portfolio === 'all'} aria-label="Filter portfolio Semua portfolio">
+          <i>∑</i><span><strong>Semua unit</strong><small>{projects.length.toLocaleString('id-ID')} proyek</small></span>
+        </button>
+        {portfolioOptions.map((value) => {
+          const identity = portfolioIdentity[value] ?? { mark: value.charAt(0), copy: 'Portfolio' }
+          const count = projects.filter((project) => project.portfolio === value).length
+          return <button type="button" key={value} className={`${portfolio === value ? 'active ' : ''}${portfolioClass(value)}`} onClick={() => setPortfolio(value)} aria-pressed={portfolio === value} aria-label={`Filter portfolio ${value}`}>
+            <i>{identity.mark}</i><span><strong>{value}</strong><small>{count.toLocaleString('id-ID')} proyek · {identity.copy}</small></span>
+          </button>
+        })}
+      </div>
+
+      <div className="project-filter-rail" role="group" aria-label="Filter kesehatan proyek">
         {([
           ['all', 'Semua'], ['active', 'Aktif'], ['attention', 'Perlu perhatian'], ['completed', 'Selesai'], ['unmarked', 'Belum ditandai'],
-        ] as const).map(([value, label]) => <button key={value} type="button" className={filter === value ? 'active' : ''} onClick={() => setFilter(value)}>{label}</button>)}
+        ] as const).map(([value, label]) => <button key={value} type="button" className={filter === value ? 'active' : ''} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}
       </div>
-      <span className="result-count">{filtered.length.toLocaleString('id-ID')} proyek</span>
     </div>
-    <section className="project-timeline" aria-label="Timeline proyek tiga bulan">
-      <div className="timeline-heading"><div><p className="eyebrow">PORTFOLIO TIMELINE</p><h2>Timeline 3 bulan</h2></div><span>Marker lifecycle + aktivitas sumber</span></div>
-      <div className="timeline-months" aria-hidden="true">{timeline.months.map((month) => <span key={month}>{month}</span>)}</div>
-      {timelineProjects.length ? <div className="timeline-rows">{timelineProjects.map(({ project, style }) => <button key={project.name} type="button" className="timeline-row" onClick={() => onOpen(project.name)} aria-label={`Buka transaksi proyek ${project.name} dari timeline`}><span className="timeline-label"><strong>{project.name}</strong><small>{project.portfolio ?? 'Belum dipetakan'}</small></span><span className={`timeline-track ${projectHealth(project)}`}><i style={style ?? undefined}></i></span></button>)}</div> : <p className="timeline-empty">Tidak ada proyek pada jendela tiga bulan ini.</p>}
+
+    <section className="project-timeline portfolio-timeline" aria-label="Timeline proyek tiga bulan">
+      <div className="timeline-heading"><div><p className="eyebrow">RENTANG PROYEK</p><h2>Timeline 3 bulan</h2></div><span>Warna bar mengikuti unit usaha · marker lifecycle dari sumber</span></div>
+      <div className="timeline-months" aria-hidden="true"><span></span>{timeline.months.map((month) => <span key={month}>{month}</span>)}</div>
+      {timelineProjects.length ? <div className="timeline-rows">{timelineProjects.map(({ project, style }) => <button key={project.name} type="button" className={`timeline-row ${portfolioClass(project.portfolio)}`} onClick={() => onOpen(project.name)} aria-label={`Buka transaksi proyek ${project.name} dari timeline`}><span className="timeline-label"><i>{portfolioIdentity[project.portfolio ?? '']?.mark ?? '?'}</i><span><strong>{project.name}</strong><small>{project.portfolio ?? 'Belum dipetakan'}</small></span></span><span className={`timeline-track ${projectHealth(project)}`}><i style={style ?? undefined}></i></span></button>)}</div> : <p className="timeline-empty">Tidak ada proyek pada jendela tiga bulan ini.</p>}
     </section>
-    {filtered.length ? <div className="project-health-grid">
-      {filtered.map((project) => {
-        const health = projectHealth(project)
-        const meta = healthMeta[health]
-        const age = project.age_days
-        const progress = age === null || age === undefined ? 0 : Math.min(100, (age / 45) * 100)
-        return <button type="button" className={`project-health-card ${health}`} key={project.name} onClick={() => onOpen(project.name)} aria-label={`Buka transaksi proyek ${project.name}, ${meta.label}`}>
-          <div className="project-card-head"><span className={`health-badge ${health}`}>{meta.label}</span><span>{project.portfolio ?? 'Belum dipetakan'} · {project.transaction_count ?? 0} transaksi</span></div>
-          <h3>{project.name}</h3>
-          <p className="project-health-copy">{meta.copy}</p>
-          <div className="project-age-track" aria-label={age === null || age === undefined ? 'Umur proyek belum tersedia' : `${age} hari`}><span style={{ width: `${progress}%` }}></span><i className="threshold fourteen"></i><i className="threshold thirty"></i></div>
-          <div className="project-age-label"><strong>{age === null || age === undefined ? 'Umur belum tersedia' : `${age} hari`}</strong><span>{project.lifecycle_status === 'completed' ? `Selesai ${dateLabel(project.completed_on)}` : project.started_on ? `Mulai ${dateLabel(project.started_on)}` : 'Marker Start belum ada'}</span></div>
-          <dl>
-            <div><dt>Aktivitas terakhir</dt><dd>{dateLabel(project.last_activity_on)}</dd></div>
-            <div><dt>Arus kas bersih</dt><dd className={project.net_cashflow >= 0 ? 'positive' : 'negative'}>{IDR.format(project.net_cashflow)}</dd></div>
-          </dl>
-          <small>{project.source_key_latest ?? 'source key belum tersedia'}</small>
-        </button>
-      })}
-    </div> : <div className="project-empty"><strong>Proyek tidak ditemukan</strong><p>Ubah pencarian atau filter status.</p></div>}
+
+    {filtered.length ? <section className="project-ledger-results" aria-label="Daftar proyek per perusahaan">
+      <header><div><p className="eyebrow">DAFTAR PROYEK</p><h2>Proyek per unit usaha</h2></div><span>{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} dari {filtered.length.toLocaleString('id-ID')}</span></header>
+      <div className="portfolio-project-groups">
+        {[...groupedVisible, ...(unmappedVisible.length ? [{ name: 'Belum dipetakan' as Portfolio, projects: unmappedVisible }] : [])].map((group) => {
+          const identity = portfolioIdentity[group.name] ?? { mark: group.name.charAt(0), copy: 'Portfolio' }
+          return <section className={`portfolio-project-group ${portfolioClass(group.name)}`} key={group.name}>
+            <header><i>{identity.mark}</i><div><h3>{group.name}</h3><p>{identity.copy}</p></div><span>{group.projects.length} tampil</span></header>
+            <div className="project-ledger-rows">{group.projects.map((project) => {
+              const health = projectHealth(project)
+              const meta = healthMeta[health]
+              return <button type="button" className={`project-ledger-row ${health}`} key={project.name} onClick={() => onOpen(project.name)} aria-label={`Buka transaksi proyek ${project.name}, ${meta.label}`}>
+                <span className="project-ledger-main"><strong>{project.name}</strong><small>{project.portfolio ?? 'Belum dipetakan'} · {project.transaction_count ?? 0} transaksi · aktivitas {dateLabel(project.last_activity_on)}</small></span>
+                <span className={`health-label ${health}`}>{meta.label}</span>
+                <span className="project-ledger-age"><small>Umur</small><strong>{project.age_days === null || project.age_days === undefined ? '—' : `${project.age_days} hari`}</strong></span>
+                <span className={`project-ledger-money ${project.net_cashflow >= 0 ? 'positive' : 'negative'}`}><small>Arus kas</small><strong>{IDR.format(project.net_cashflow)}</strong></span>
+              </button>
+            })}</div>
+          </section>
+        })}
+      </div>
+      {pageCount > 1 && <nav className="project-ledger-pagination" aria-label="Pagination proyek"><button type="button" onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={page === 0}><ArrowLeft size={16} /> Sebelumnya</button><span>Halaman {page + 1} / {pageCount}</span><button type="button" onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))} disabled={page === pageCount - 1}>Berikutnya <ArrowRight size={16} /></button></nav>}
+    </section> : <div className="project-empty"><strong>Proyek tidak ditemukan</strong><p>Ubah pencarian, perusahaan, atau status.</p></div>}
   </section>
 }

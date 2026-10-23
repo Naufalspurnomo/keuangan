@@ -71,9 +71,9 @@ SNAPSHOT = {
         {"month": "2026-10", "balance": 790_350_000, "net_movement": 305_350_000},
     ],
     "project_summaries": [
-        {"name": "Surabaya Office", "net_cashflow": 98_250_000},
-        {"name": "Grand Galaxy", "net_cashflow": 51_600_000},
-        {"name": "Mawar Residence", "net_cashflow": 52_100_000},
+        {"name": "Surabaya Office", "portfolio": "Hollawall", "net_cashflow": 98_250_000},
+        {"name": "Grand Galaxy", "portfolio": "Texturin", "net_cashflow": 51_600_000},
+        {"name": "Mawar Residence", "portfolio": "Hollawall", "net_cashflow": 52_100_000},
     ],
 }
 
@@ -231,6 +231,50 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 page.screenshot(path=str(ARTIFACTS / f"mobile-{theme}-390x844.png"), full_page=True)
                 context.close()
 
+
+    def test_projects_route_uses_company_ledger_without_mobile_timeline(self):
+        for width, height in ((390, 844), (1440, 1000)):
+            with self.subTest(width=width):
+                context, page, errors = self.new_page(width, height, "dark")
+                page.goto(self.base_url, wait_until="networkidle")
+                page.get_by_role("heading", name="Ringkasan Perusahaan").wait_for()
+                if width <= 760:
+                    page.get_by_role("button", name="Buka navigasi").click()
+                page.locator(".sidebar nav button").filter(has_text="Proyek").click()
+                page.get_by_role("heading", name="Hollawall & Texturin").wait_for()
+                metrics = page.evaluate("""() => {
+                  const visible = element => element.offsetParent !== null;
+                  const targets = [...document.querySelectorAll('.portfolio-switcher button, .project-filter-rail button, .project-ledger-row, .project-ledger-pagination button')]
+                    .filter(visible)
+                    .map(element => element.getBoundingClientRect().height);
+                  return {
+                    viewport: document.documentElement.clientWidth,
+                    document: document.documentElement.scrollWidth,
+                    nativeSelect: document.querySelectorAll('select[aria-label="Filter portfolio"]').length,
+                    companySwitcher: document.querySelectorAll('.portfolio-switcher').length,
+                    groups: [...document.querySelectorAll('.portfolio-project-group h3')].map(element => element.textContent),
+                    rows: document.querySelectorAll('.project-ledger-row').length,
+                    visibleTimeline: [...document.querySelectorAll('.portfolio-timeline')].filter(visible).length,
+                    timelineRows: [...document.querySelectorAll('.portfolio-timeline .timeline-row')].filter(visible).length,
+                    minTarget: Math.min(...targets),
+                    ownership: [...document.querySelectorAll('.project-ledger-main small')].every(element => /Hollawall|Texturin/.test(element.textContent || '')),
+                  };
+                }""")
+                self.assertEqual(errors, [])
+                self.assertLessEqual(metrics["document"], metrics["viewport"])
+                self.assertEqual(metrics["nativeSelect"], 0)
+                self.assertEqual(metrics["companySwitcher"], 1)
+                self.assertEqual(sorted(metrics["groups"]), ["Hollawall", "Texturin"])
+                self.assertGreater(metrics["rows"], 0)
+                self.assertLessEqual(metrics["rows"], 12)
+                self.assertTrue(metrics["ownership"])
+                if width <= 760:
+                    self.assertEqual(metrics["visibleTimeline"], 0)
+                    self.assertGreaterEqual(metrics["minTarget"], 44)
+                else:
+                    self.assertEqual(metrics["visibleTimeline"], 1)
+                    self.assertLessEqual(metrics["timelineRows"], 12)
+                context.close()
 
     def test_live_refresh_shows_new_transaction_and_reversal_within_target(self):
         context, page, errors, state = self.new_dynamic_page(1440, 1000)
