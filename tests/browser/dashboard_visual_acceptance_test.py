@@ -355,6 +355,87 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         self.assertEqual(errors, [])
         context.close()
 
+    def test_dark_routes_keep_readable_text_contrast(self):
+        context, page, errors = self.new_page(1440, 1000, "dark")
+        page.goto(self.base_url, wait_until="networkidle")
+        page.get_by_role("heading", name="Ringkasan Perusahaan").wait_for()
+        routes = (
+            (None, ".executive-overview"),
+            ("Arus Kas", ".cashflow-workspace"),
+            ("Dompet", ".wallet-workspace"),
+            ("Proyek", ".project-portfolio-ledger"),
+        )
+        for route_name, selector in routes:
+            if route_name:
+                page.locator(".sidebar nav button").filter(has_text=route_name).click()
+                page.locator(selector).wait_for()
+            failures = page.evaluate("""() => {
+              const parse = value => {
+                const srgb = value.match(/color\\(srgb\\s+([\\d.]+)\\s+([\\d.]+)\\s+([\\d.]+)(?:\\s*\\/\\s*([\\d.]+))?/);
+                if (srgb) return [+srgb[1] * 255, +srgb[2] * 255, +srgb[3] * 255, srgb[4] ? +srgb[4] : 1];
+                const rgb = value.match(/rgba?\\(([^)]+)\\)/);
+                if (!rgb) return [0, 0, 0, 0];
+                const channels = rgb[1].split(/[ ,/]+/).map(Number);
+                return [channels[0], channels[1], channels[2], channels[3] ?? 1];
+              };
+              const blend = (foreground, background) => {
+                const alpha = foreground[3] ?? 1;
+                return [
+                  foreground[0] * alpha + background[0] * (1 - alpha),
+                  foreground[1] * alpha + background[1] * (1 - alpha),
+                  foreground[2] * alpha + background[2] * (1 - alpha),
+                  1,
+                ];
+              };
+              const backgroundFor = element => {
+                let result = [8, 10, 15, 1];
+                const layers = [];
+                for (let node = element; node; node = node.parentElement) layers.push(parse(getComputedStyle(node).backgroundColor));
+                for (let index = layers.length - 1; index >= 0; index -= 1) result = blend(layers[index], result);
+                return result;
+              };
+              const luminance = color => {
+                const channels = color.slice(0, 3).map(value => {
+                  const normalized = value / 255;
+                  return normalized <= .03928 ? normalized / 12.92 : Math.pow((normalized + .055) / 1.055, 2.4);
+                });
+                return .2126 * channels[0] + .7152 * channels[1] + .0722 * channels[2];
+              };
+              const ratio = (foreground, background) => {
+                const a = luminance(foreground);
+                const b = luminance(background);
+                return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+              };
+              return [...document.body.querySelectorAll('*')]
+                .filter(element => {
+                  const rect = element.getBoundingClientRect();
+                  const style = getComputedStyle(element);
+                  const ownsText = [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+                  return ownsText && rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                })
+                .map(element => {
+                  const style = getComputedStyle(element);
+                  const background = backgroundFor(element);
+                  const foreground = blend(parse(style.color), background);
+                  const fontSize = parseFloat(style.fontSize);
+                  const fontWeight = parseInt(style.fontWeight, 10) || 400;
+                  const minimum = fontSize >= 24 || (fontSize >= 18 && fontWeight >= 700) ? 3 : 4.5;
+                  return {
+                    text: [...element.childNodes].filter(node => node.nodeType === Node.TEXT_NODE).map(node => node.textContent.trim()).join(' ').slice(0, 80),
+                    contrast: ratio(foreground, background),
+                    minimum,
+                  };
+                })
+                .filter(item => item.contrast < item.minimum);
+            }""")
+            self.assertEqual(failures, [], {"route": route_name or "Ringkasan", "failures": failures})
+
+        titles = page.locator(".active-calendar-bar").evaluate_all("elements => elements.map(element => element.title)")
+        self.assertTrue(titles)
+        self.assertTrue(all(title and "mulai" in title and "hari" in title for title in titles))
+        self.assertEqual(errors, [])
+        context.close()
+
     def test_live_refresh_shows_new_transaction_and_reversal_within_target(self):
         context, page, errors, state = self.new_dynamic_page(1440, 1000)
         page.goto(self.base_url, wait_until="networkidle")

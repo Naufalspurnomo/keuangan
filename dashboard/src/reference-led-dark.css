@@ -1,0 +1,352 @@
+/* Reference-led dark treatment.
+   Quantico: density + ledger. Dark analytics: chart contrast. Stats: timeline hierarchy.
+   Dark-only by design; light mode remains the calm report system. */
+html[data-theme='dark'] {
+  --bg: #080a0f;
+  --surface: #0f141b;
+  --surface-raised: #151b22;
+  --surface-muted: #1a222a;
+  --sidebar: #070a0e;
+  --sidebar-2: #171d24;
+  --text: #f2f4ef;
+  --text-primary: #f2f4ef;
+  --text-secondary: #b9c1c5;
+  --text-tertiary: #929da2;
+  --on-dark: #f2f4ef;
+  --border: #394248;
+  --border-subtle: #252d32;
+  --brand: #f06a43;
+  --primary: #f06a43;
+  --primary-2: #ff805b;
+  --accent: #f06a43;
+  --positive: #45b884;
+  --negative: #e56b68;
+  --warning: #e2af42;
+  --chart-primary: #4a8ff5;
+  --chart-secondary: #7890a7;
+  --chart-tertiary: #e2af42;
+  --chart-neutral-1: #657789;
+  --chart-neutral-2: #82909c;
+  --chart-neutral-3: #506271;
+  --chart-neutral-4: #a0a9af;
+  --chart-neutral-5: #3e4d59;
+  --shadow: none;
+  --panel-glow: none;
+
+  --report-paper: #080a0f;
+  --report-sheet: #0f141b;
+  --report-ink: #f2f4ef;
+  --report-muted: #b9c1c5;
+  --report-line: #30383e;
+  --report-frame: #465057;
+  --report-accent: #f06a43;
+  --report-positive: #45b884;
+  --report-negative: #e56b68;
+  --report-tone-1: #30445a;
+  --report-tone-2: #285fae;
+  --report-tone-3: #4b5b68;
+  --report-tone-4: #2f6b60;
+  --report-tone-5: #303a43;
+  --report-tone-6: #61434b;
+}
+
+html[data-theme='dark'] body,
+html[data-theme='dark'] .main-canvas { background: var(--bg); }
+html[data-theme='dark'] body,
+html[data-theme='dark'] button,
+html[data-theme='dark'] input,
+html[data-theme='dark'] select,
+html[data-theme='dark'] textarea { color: var(--text); }
+html[data-theme='dark'] input::placeholder,
+html[data-theme='dark'] textarea::placeholder { color: var(--text-tertiary); opacity: 1; }
+html[data-theme='dark'] select option { background: var(--surface-raised); color: var(--text); }
+html[data-theme='dark'] button:disabled { color: var(--text-tertiary); }
+html[data-theme='dark'] button:focus-visible,
+html[data-theme='dark'] input:focus-visible,
+html[data-theme='dark'] select:focus-visible,
+html[data-theme='dark'] textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Shell: matte and ruled, never glassy. */
+html[data-theme='dark'] .sidebar { border-right: 1px solid var(--border-subtle); }
+html[data-theme='dark'] .topbar {
+  background: color-mix(in srgb, var(--bg) 96%, transparent);
+  border-color: var(--border-subtle);
+  backdrop-filter: none;
+}
+html[data-theme='dark'] .brand-mark {
+  border: 0;
+  clip-path: none;
+  border-radius: 6px;
+  background: var(--brand);
+  color: #190b06;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 17px;
+  font-weight: 800;
+}
+html[data-theme='dark'] .workspace-switch {
+  border-color: var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface);
+}
+html[data-theme='dark'] .workspace-switch small,
+html[data-theme='dark'] .profile small,
+html[data-theme='dark'] .breadcrumbs,
+html[data-theme='dark'] .breadcrumbs span { color: var(--text-secondary); }
+html[data-theme='dark'] .breadcrumbs b { color: var(--text-tertiary); }
+html[data-theme='dark'] .sidebar nav button {
+  min-height: 42px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+}
+html[data-theme='dark'] .sidebar nav button:hover { background: var(--surface); color: var(--text); }
+html[data-theme='dark'] .sidebar nav button.active {
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: inset 2px 0 var(--accent);
+}
+html[data-theme='dark'] .sidebar nav button b {
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+}
+html[data-theme='dark'] .sidebar-bottom { border-color: var(--border-subtle); }
+html[data-theme='dark'] .workspace-profile > span { border-radius: 5px !important; background: var(--surface-raised) !important; color: var(--text) !important; }
+html[data-theme='dark'] .icon-button { border-radius: 5px; border-color: var(--border); background: var(--surface); color: var(--text-secondary); }
+html[data-theme='dark'] .icon-button:hover { background: var(--surface-raised); color: var(--text); }
+html[data-theme='dark'] .theme-toggle { border-color: var(--border); background: var(--surface); }
+html[data-theme='dark'] .theme-toggle > span { background: var(--surface-muted); color: var(--text-secondary); }
+html[data-theme='dark'] .theme-toggle > span::after { background: var(--accent); }
+
+/* Typography: editorial signature only at page level; operations stay instrumental. */
+html[data-theme='dark'] .page-heading h1 { color: var(--text); }
+html[data-theme='dark'] .panel-head h3,
+html[data-theme='dark'] .ops-heading h2,
+html[data-theme='dark'] .ops-chart-panel h3,
+html[data-theme='dark'] .ops-ledger-section h3,
+html[data-theme='dark'] .ops-unit-section h3,
+html[data-theme='dark'] .ops-ratio-panel h3,
+html[data-theme='dark'] .wallet-source-panel h3,
+html[data-theme='dark'] .wallet-position h3,
+html[data-theme='dark'] .project-health-summary h2,
+html[data-theme='dark'] .project-health-card h3,
+html[data-theme='dark'] .timeline-heading h2,
+html[data-theme='dark'] .inline-state h2 {
+  font-family: 'DM Sans', sans-serif;
+  letter-spacing: -.02em;
+}
+html[data-theme='dark'] .metric-card > strong,
+html[data-theme='dark'] .metric-card button strong,
+html[data-theme='dark'] .chart-value strong,
+html[data-theme='dark'] .project-summary-stats strong,
+html[data-theme='dark'] .ops-metric-strip strong,
+html[data-theme='dark'] .ops-unit-list em,
+html[data-theme='dark'] .ops-ledger em,
+html[data-theme='dark'] .wallet-rail strong,
+html[data-theme='dark'] .wallet-position > div > strong {
+  font-family: 'DM Sans', sans-serif;
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: 'tnum' 1;
+}
+html[data-theme='dark'] .eyebrow { color: var(--accent); }
+html[data-theme='dark'] .text-secondary,
+html[data-theme='dark'] .chart-note,
+html[data-theme='dark'] .chart-caption,
+html[data-theme='dark'] .chart-legend-label { color: var(--text-secondary); }
+
+/* Surface hierarchy: no card soup, no glossy lift. */
+html[data-theme='dark'] .filter-bar > div,
+html[data-theme='dark'] .metric-card,
+html[data-theme='dark'] .panel,
+html[data-theme='dark'] .inline-state,
+html[data-theme='dark'] .project-health-summary,
+html[data-theme='dark'] .project-controls,
+html[data-theme='dark'] .project-health-card,
+html[data-theme='dark'] .project-empty,
+html[data-theme='dark'] .project-timeline,
+html[data-theme='dark'] .active-age-section,
+html[data-theme='dark'] .wallet-rail button {
+  border-color: var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: none;
+}
+html[data-theme='dark'] .metric-card:hover,
+html[data-theme='dark'] .project-health-card:hover { transform: none; border-color: var(--border); box-shadow: none; }
+html[data-theme='dark'] .filter-bar > div { background: var(--surface); }
+html[data-theme='dark'] .filter-bar small,
+html[data-theme='dark'] .metric-top,
+html[data-theme='dark'] th { color: var(--text-secondary); }
+html[data-theme='dark'] .inline-state { min-height: 150px; }
+html[data-theme='dark'] .loading-pulse { box-shadow: none; background: var(--accent); }
+html[data-theme='dark'] .hero-balance,
+html[data-theme='dark'] .detail-hero {
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+}
+html[data-theme='dark'] .hero-balance::after,
+html[data-theme='dark'] .detail-hero::after { display: none; }
+html[data-theme='dark'] .hero-balance .eyebrow,
+html[data-theme='dark'] .hero-balance p,
+html[data-theme='dark'] .freshness small,
+html[data-theme='dark'] .detail-hero > p:not(.eyebrow) { color: var(--text-secondary); }
+html[data-theme='dark'] .freshness,
+html[data-theme='dark'] .hero-stat {
+  border-color: var(--border);
+  border-radius: 5px;
+  background: var(--surface-raised);
+  color: var(--text);
+  backdrop-filter: none;
+  box-shadow: none;
+}
+html[data-theme='dark'] .hero-stat:hover { transform: none; background: var(--surface-muted); }
+
+/* Dense controls: selected states use fill + orange rule, not orange everywhere. */
+html[data-theme='dark'] .ops-filter-block button,
+html[data-theme='dark'] .ops-pagination button,
+html[data-theme='dark'] .movement-filters button,
+html[data-theme='dark'] .secondary-button,
+html[data-theme='dark'] .business-mode-switch,
+html[data-theme='dark'] .business-mode-switch button,
+html[data-theme='dark'] .portfolio-switcher button,
+html[data-theme='dark'] .project-ledger-pagination button,
+html[data-theme='dark'] .type-select,
+html[data-theme='dark'] .search-field,
+html[data-theme='dark'] .ops-search {
+  border-color: var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+}
+html[data-theme='dark'] .ops-filter-block button:hover,
+html[data-theme='dark'] .ops-pagination button:hover:not(:disabled),
+html[data-theme='dark'] .movement-filters button:hover,
+html[data-theme='dark'] .portfolio-switcher button:hover { background: var(--surface-raised); color: var(--text); }
+html[data-theme='dark'] .ops-filter-block button.active,
+html[data-theme='dark'] .movement-filters button.active,
+html[data-theme='dark'] .portfolio-switcher button.active,
+html[data-theme='dark'] .business-mode-switch button.is-active {
+  border-color: var(--accent);
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: inset 0 -2px var(--accent);
+}
+html[data-theme='dark'] .ops-scope,
+html[data-theme='dark'] .ops-asof span,
+html[data-theme='dark'] .ops-asof strong,
+html[data-theme='dark'] .ops-chart-panel > header > span,
+html[data-theme='dark'] .ops-ledger-section > header > span,
+html[data-theme='dark'] .ops-ledger time,
+html[data-theme='dark'] .ops-ledger article > div span,
+html[data-theme='dark'] .ops-ledger small,
+html[data-theme='dark'] .wallet-summary-line,
+html[data-theme='dark'] .wallet-rail-context,
+html[data-theme='dark'] .wallet-rail small,
+html[data-theme='dark'] .wallet-position > div > span,
+html[data-theme='dark'] .wallet-position dt,
+html[data-theme='dark'] .wallet-source-panel dt { color: var(--text-secondary); }
+
+/* Finance workspaces: compact vertical rhythm, ruled ledger, explicit selected wallet. */
+html[data-theme='dark'] .financial-ops { gap: 20px; }
+html[data-theme='dark'] .ops-heading { padding: 8px 0 17px; }
+html[data-theme='dark'] .ops-heading h2 { font-size: clamp(27px, 3vw, 36px); }
+html[data-theme='dark'] .ops-metric-strip { border-color: var(--border); }
+html[data-theme='dark'] .ops-metric-strip article { padding: 17px 16px; border-color: var(--border-subtle); }
+html[data-theme='dark'] .ops-metric-strip span { color: var(--text-secondary); }
+html[data-theme='dark'] .ops-analysis-grid,
+html[data-theme='dark'] .wallet-analysis-grid { gap: 14px; }
+html[data-theme='dark'] .ops-chart-panel,
+html[data-theme='dark'] .ops-ratio-panel,
+html[data-theme='dark'] .wallet-source-panel,
+html[data-theme='dark'] .ops-ledger-section { border-color: var(--border); }
+html[data-theme='dark'] .ops-unit-list button { min-height: 52px; border-color: var(--border-subtle); }
+html[data-theme='dark'] .ops-unit-list button:hover { background: var(--surface); }
+html[data-theme='dark'] .ops-unit-list i,
+html[data-theme='dark'] .ops-ratio-panel > div { border-radius: 2px; background: var(--surface-muted); }
+html[data-theme='dark'] .ops-ledger article { min-height: 60px; border-color: var(--border-subtle); }
+html[data-theme='dark'] .ops-ledger article:hover { background: color-mix(in srgb, var(--surface-raised) 72%, transparent); }
+html[data-theme='dark'] .ops-ledger article > div strong,
+html[data-theme='dark'] .ops-ledger em { color: var(--text); }
+html[data-theme='dark'] .ops-ledger article > button,
+html[data-theme='dark'] .ops-ledger article > span { color: var(--text-secondary); }
+html[data-theme='dark'] .wallet-rail { gap: 8px; }
+html[data-theme='dark'] .wallet-rail button { min-height: 104px; padding: 14px; }
+html[data-theme='dark'] .wallet-rail button.active {
+  border-color: var(--accent);
+  background: var(--surface-raised);
+  box-shadow: inset 2px 0 var(--accent);
+}
+html[data-theme='dark'] .wallet-position { gap: 32px; padding: 22px 0; }
+
+/* Chart language: quiet grid, blue analytical series, legible axes/tooltips. */
+html[data-theme='dark'] .chart-tooltip {
+  border-color: #4a555c;
+  border-radius: 4px;
+  background: #f2f4ef;
+  color: #283036;
+  box-shadow: 0 10px 28px rgba(0,0,0,.3);
+}
+html[data-theme='dark'] .chart-tooltip strong,
+html[data-theme='dark'] .chart-tooltip b { color: #10161b; }
+html[data-theme='dark'] .recharts-cartesian-axis-tick text { fill: var(--text-secondary); }
+html[data-theme='dark'] .recharts-cartesian-grid line { stroke: var(--border-subtle); }
+html[data-theme='dark'] .recharts-legend-item-text { color: var(--text-secondary) !important; }
+html[data-theme='dark'] .recharts-sector:focus,
+html[data-theme='dark'] .recharts-rectangle:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Projects: eliminate dark text on dark timeline bars. */
+html[data-theme='dark'] .revenue-matrix,
+html[data-theme='dark'] .vertical-timeline-shell { background: var(--surface); }
+html[data-theme='dark'] .project-report-module,
+html[data-theme='dark'] .revenue-matrix,
+html[data-theme='dark'] .vertical-timeline-shell,
+html[data-theme='dark'] .project-timeline-detail { border-color: var(--border); box-shadow: none; }
+html[data-theme='dark'] .vertical-project-bar {
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.12);
+}
+html[data-theme='dark'] .vertical-project-bar strong,
+html[data-theme='dark'] .vertical-project-bar small { color: #fff; opacity: 1; }
+html[data-theme='dark'] .active-calendar-bar.age-new,
+html[data-theme='dark'] .active-calendar-bar.age-new .active-calendar-fill { --bar-color: #285fae; }
+html[data-theme='dark'] .active-calendar-bar.age-growing,
+html[data-theme='dark'] .active-calendar-bar.age-growing .active-calendar-fill { --bar-color: #277356; }
+html[data-theme='dark'] .active-calendar-bar.age-watch,
+html[data-theme='dark'] .active-calendar-bar.age-watch .active-calendar-fill { --bar-color: #8a6411; }
+html[data-theme='dark'] .active-calendar-bar.age-overdue,
+html[data-theme='dark'] .active-calendar-bar.age-overdue .active-calendar-fill { --bar-color: #9a3b46; }
+html[data-theme='dark'] .active-calendar-fill,
+html[data-theme='dark'] .active-calendar-fill strong,
+html[data-theme='dark'] .active-calendar-fill small { color: #fff; }
+html[data-theme='dark'] .vertical-project-bar:hover,
+html[data-theme='dark'] .vertical-project-bar:focus-visible,
+html[data-theme='dark'] .vertical-project-bar.is-selected { outline-color: var(--accent); }
+html[data-theme='dark'] .matrix-head { background: var(--surface-raised); color: var(--text); }
+html[data-theme='dark'] .matrix-head span,
+html[data-theme='dark'] .project-report-module small,
+html[data-theme='dark'] .project-report-module header p,
+html[data-theme='dark'] .project-timeline-detail p { color: var(--text-secondary); }
+html[data-theme='dark'] .project-report-module .vertical-project-bar strong,
+html[data-theme='dark'] .project-report-module .vertical-project-bar small { color: #fff; }
+html[data-theme='dark'] .project-health-card dl div { border-radius: 3px; background: var(--surface-raised); }
+html[data-theme='dark'] .health-badge { border-radius: 3px; }
+html[data-theme='dark'] .active-calendar-project-heads { backdrop-filter: none; }
+html[data-theme='dark'] .active-calendar-pan-cue { box-shadow: none; }
+html[data-theme='dark'] .active-calendar-fill { box-shadow: none; }
+
+/* Small-screen dark mode keeps touch sizes while retaining the compact visual language. */
+@media (max-width: 760px) {
+  html[data-theme='dark'] .content { padding-top: 16px; }
+  html[data-theme='dark'] .sidebar nav button { min-height: 44px; }
+  html[data-theme='dark'] .page-heading h1 { font-size: 27px; }
+  html[data-theme='dark'] .financial-ops { gap: 18px; }
+  html[data-theme='dark'] .ops-heading { padding-top: 3px; }
+  html[data-theme='dark'] .ops-filter-block button,
+  html[data-theme='dark'] .ops-pagination button,
+  html[data-theme='dark'] .movement-filters button { min-height: 44px; }
+  html[data-theme='dark'] .ops-ledger article { min-height: 78px; }
+  html[data-theme='dark'] .wallet-rail button { min-height: 108px; }
+}

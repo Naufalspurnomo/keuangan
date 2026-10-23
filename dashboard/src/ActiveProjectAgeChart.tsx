@@ -159,7 +159,7 @@ function ActiveCalendarSection({ portfolio, projects, asOf, onOpen }: { portfoli
                 '--activity-top': `${Math.min(activityStart, activityEnd)}%`,
                 '--activity-span': `${Math.max(2, Math.abs(activityEnd - activityStart))}%`,
               } as CSSProperties
-              return <button type="button" key={project.name} className={`active-calendar-bar age-${ageBand(age)}`} style={{ '--project-calendar-span': calendar.spanFor(project.started_on) } as CSSProperties} onClick={() => { if (!drag.current.moved) onOpen(project.name) }} aria-label={`Buka proyek ${project.name}, mulai ${shortDate(project.started_on)}, aktif ${age} hari`}>
+              return <button type="button" key={project.name} className={`active-calendar-bar age-${ageBand(age)}`} style={{ '--project-calendar-span': calendar.spanFor(project.started_on) } as CSSProperties} onClick={() => { if (!drag.current.moved) onOpen(project.name) }} aria-label={`Buka proyek ${project.name}, mulai ${shortDate(project.started_on)}, aktif ${age} hari`} title={`${project.name} · mulai ${shortDate(project.started_on)} · ${age} hari`}>
                 {(project.first_activity_on || project.last_activity_on) && <span className="active-calendar-activity" style={activityStyle} title={`Aktivitas finansial ${shortDate(project.first_activity_on)}–${shortDate(project.last_activity_on)}`} />}
                 <span className="active-calendar-fill">
                   <small>{age} hari</small>
