@@ -130,16 +130,6 @@ html[data-theme='dark'] {
 .freshness.stale i { background: #d6817c; }
 .detail-hero .primary-button { background: var(--primary); color: #fff; }
 
-/* Categorical items use neutral tones. Selection carries the brand accent. */
-.business-unit-mark,
-.business-unit-mark.gold,
-.business-unit-mark.teal,
-.business-unit-mark.violet { background: var(--report-tone-2); }
-.business-unit.is-active .business-unit-mark { background: var(--report-accent); }
-.business-live-dot { color: var(--report-ink); }
-.business-ledger-row > span { color: var(--report-negative); }
-.business-ledger-row > span.income { color: var(--report-positive); }
-
 .vertical-project-bar.coral { background: var(--report-tone-1); }
 .vertical-project-bar.teal { background: var(--report-tone-2); }
 .vertical-project-bar.gold { background: var(--report-tone-3); }
@@ -150,27 +140,15 @@ html[data-theme='dark'] {
 .vertical-project-bar:focus-visible,
 .vertical-project-bar.is-selected { outline-color: var(--report-accent); }
 
-/* Give each information layer a distinct luminance instead of cream-on-cream haze. */
-.business-report { background: var(--report-paper); }
-.portfolio-section { background: #efebe3; opacity: 1; }
-.portfolio-section.is-focused { background: var(--report-sheet); }
-.business-chart-card,
-.business-ledger-card { background: var(--report-sheet); }
-.business-unit:hover { background: #e8e3da; }
-.business-unit.is-active { background: #f8f5ee; }
+/* Timeline keeps a quiet field; the unit workspace separates content with space. */
 .revenue-matrix,
 .vertical-timeline-shell { background: #efebe3; }
-.business-report,
-.portfolio-sections,
-.business-report-detail,
 .project-report-module,
 .revenue-matrix,
 .vertical-timeline-shell,
 .project-timeline-detail { border-color: var(--report-frame); }
 
 /* Dense finance labels stay above AA contrast while rules remain visually secondary. */
-.business-report small,
-.business-report p,
 .project-report-module small,
 .project-report-module header p,
 .chart-legend-label,
@@ -213,27 +191,8 @@ html[data-theme='dark'] {
 [data-theme='dark'] .hero-balance .positive { color: var(--positive) !important; }
 [data-theme='dark'] .detail-hero .primary-button { background: var(--accent); color: #17181c; }
 
-[data-theme='dark'] .business-report {
-  --report-paper: #111722;
-  --report-sheet: #171f2d;
-  --report-ink: #e1e7f0;
-  --report-muted: #aab5c4;
-  --report-line: #354155;
-  --report-frame: #596b87;
-}
-[data-theme='dark'] .portfolio-section { background: #141c29; }
-[data-theme='dark'] .portfolio-section.is-focused,
-[data-theme='dark'] .business-chart-card,
-[data-theme='dark'] .business-ledger-card { background: var(--report-sheet); }
-[data-theme='dark'] .business-unit:hover { background: var(--surface-raised); }
-[data-theme='dark'] .business-unit.is-active { background: var(--sidebar-2); }
 [data-theme='dark'] .revenue-matrix,
 [data-theme='dark'] .vertical-timeline-shell { background: #141c29; }
-[data-theme='dark'] .business-mode-switch button.is-active {
-  background: var(--sidebar-2);
-  box-shadow: inset 0 -2px var(--accent);
-  color: var(--text);
-}
 [data-theme='dark'] .new-project-button:hover,
 [data-theme='dark'] .new-project-button:focus-visible {
   background: var(--accent);
