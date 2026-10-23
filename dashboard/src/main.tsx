@@ -9,6 +9,7 @@ import './business-report.css'
 import './project-report-timeline.css'
 import './calm-financial-palette.css'
 import './financial-operating-room.css'
+import './project-portfolio-ledger.css'
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 20_000 } } })
 
