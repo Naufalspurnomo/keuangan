@@ -110,13 +110,20 @@ export default function FinancialChart({ kind, cashTrend = [], projects = [], wa
   }
 
   if (kind === 'monthly') {
+    const earliestTransaction = transactions.reduce<Date | null>((earliest, row) => {
+      const date = new Date(`${row.transaction_date.slice(0, 10)}T00:00:00`)
+      return !Number.isNaN(date.getTime()) && (!earliest || date < earliest) ? date : earliest
+    }, null)
     const latestTransaction = transactions.reduce<Date | null>((latest, row) => {
       const date = new Date(`${row.transaction_date.slice(0, 10)}T00:00:00`)
       return !Number.isNaN(date.getTime()) && (!latest || date > latest) ? date : latest
     }, null)
     const anchor = latestTransaction ?? new Date()
-    const monthly = Array.from({ length: 6 }, (_, i) => {
-      const date = new Date(anchor.getFullYear(), anchor.getMonth() - (5 - i), 1)
+    const coveredMonths = earliestTransaction
+      ? Math.min(6, Math.max(1, (anchor.getFullYear() - earliestTransaction.getFullYear()) * 12 + anchor.getMonth() - earliestTransaction.getMonth() + 1))
+      : 6
+    const monthly = Array.from({ length: coveredMonths }, (_, i) => {
+      const date = new Date(anchor.getFullYear(), anchor.getMonth() - (coveredMonths - 1 - i), 1)
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
       const rows = transactions.filter((t) => t.transaction_date.startsWith(key))
       return {

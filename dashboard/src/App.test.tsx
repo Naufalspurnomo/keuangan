@@ -134,6 +134,26 @@ describe('Hollawall command center', () => {
     expect(screen.getByPlaceholderText(/Cari transaksi/)).toBeTruthy()
   })
 
+  it('uses dedicated cashflow and wallet workspaces without exposing the owner name', async () => {
+    renderApp()
+    await screen.findByRole('heading', { name: 'Ringkasan Perusahaan' })
+    expect(screen.queryByText(/Naufalspurnomo|Naufal Spurnomo/i)).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Arus Kas$/ }))
+    expect(await screen.findByRole('heading', { name: 'Aliran operasi, bukan sekadar saldo' })).toBeTruthy()
+    expect(screen.getByText('Kas masuk eksternal')).toBeTruthy()
+    expect(screen.getByText('Transfer internal bruto')).toBeTruthy()
+    expect(screen.getByRole('navigation', { name: 'Periode arus kas' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Dompet$/ }))
+    expect(await screen.findByRole('heading', { name: 'Posisi kas per sumber' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /TX SBY\(216\)/ }))
+    expect(screen.getAllByRole('heading', { name: 'TX SBY(216)' }).length).toBeGreaterThan(0)
+    expect(screen.getByRole('navigation', { name: 'Filter mutasi' })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: 'Cari mutasi dompet' })).toBeTruthy()
+    expect(screen.queryByText(/Naufalspurnomo|Naufal Spurnomo/i)).toBeNull()
+  }, 15_000)
+
   it('drills an operating KPI into exact external transactions', async () => {
     renderApp()
     await screen.findByText('TOTAL POSISI KAS', {}, { timeout: 4_000 })
@@ -149,7 +169,7 @@ describe('Hollawall command center', () => {
     renderApp()
     fireEvent.click(await screen.findByRole('button', { name: 'Saldo kas' }))
     expect(await screen.findByRole('heading', { name: 'Dompet & Rekening' })).toBeTruthy()
-    expect(screen.getByText(/CV HB\(101\):wallet:summary/)).toBeTruthy()
+    expect(screen.getAllByText(/CV HB\(101\):wallet:summary/).length).toBeGreaterThan(0)
   })
 
   it('drills open debt into its source key', async () => {

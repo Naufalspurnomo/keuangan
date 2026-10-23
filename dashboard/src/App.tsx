@@ -11,6 +11,7 @@ import {
   Landmark,
   LayoutDashboard,
   ListFilter,
+  LockKeyhole,
   Menu,
   Moon,
   RefreshCcw,
@@ -27,6 +28,7 @@ import { downloadTransactionsCsv, filterTransactions } from './transactions'
 import type { TransactionTypeFilter } from './transactions'
 import type { DashboardMeta, Overview, QualityRow, Transaction } from './types'
 import BusinessSectionReport from './BusinessSectionReport'
+import { CashflowWorkspace, WalletWorkspace } from './FinancialOperationsWorkspace'
 import ProjectReportTimeline from './ProjectReportTimeline'
 
 const FinancialChart = lazy(() => import('./FinancialChart'))
@@ -111,7 +113,7 @@ function Sidebar({ active, setActive, open, setOpen, transactionCount }: { activ
       <div className="sidebar-head"><div className="brand-lockup"><span className="brand-mark">H</span><span>HOLLAWALL</span></div><button className="icon-button mobile-only" onClick={() => setOpen(false)} aria-label="Tutup navigasi"><X size={20} /></button></div>
       <div className="workspace-switch" aria-label="Ruang kerja aktif"><Building2 size={18} /><span><small>Ruang kerja aktif</small>Hollawall Group</span></div>
       <nav>{navigation.map(([key, label, Icon]) => <button key={key} className={active === key ? 'active' : ''} onClick={() => { setActive(key); setOpen(false) }}><Icon size={19} strokeWidth={1.8} /><span>{label}</span>{key === 'transactions' && <b>{transactionCount}</b>}</button>)}</nav>
-      <div className="sidebar-bottom"><div className="profile"><span>NS</span><div><strong>Naufal Spurnomo</strong><small>Owner</small></div></div></div>
+      <div className="sidebar-bottom"><div className="profile workspace-profile"><span><LockKeyhole size={15}/></span><div><strong>Workspace privat</strong><small>Read-only · Teraudit</small></div></div></div>
     </aside>
   </>
 }
@@ -125,7 +127,7 @@ function ThemeToggle({ theme, setTheme }: { theme: string; setTheme: (value: str
 function SnapshotContext({ dataThrough }: { dataThrough?: string | null }) {
   const period = dataThrough ? new Date(`${dataThrough}T00:00:00`).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : 'periode tidak tersedia'
   return <section className="snapshot-context" aria-label="Konteks snapshot baca-saja">
-    <span>Hollawall Group · Naufal Spurnomo</span><i></i><span>Data s.d. {period}</span><i></i><span>Snapshot baca-saja</span>
+    <span>Hollawall Group</span><i></i><span>Data s.d. {period}</span><i></i><span>Snapshot baca-saja</span>
   </section>
 }
 
@@ -195,6 +197,8 @@ function DetailPage({ active, transactions, overview, wallets, debts, projects, 
   useEffect(() => setTypeFilter(initialFilter), [initialFilter])
   useEffect(() => setQuery(initialQuery), [initialQuery])
   const filteredTransactions = filterTransactions(transactions, query, typeFilter)
+  if (active === 'cashflow') return <CashflowWorkspace transactions={transactions} dataThrough={dataThrough} onOpenProject={onOpenProject} />
+  if (active === 'wallets') return <WalletWorkspace transactions={transactions} wallets={wallets} dataThrough={dataThrough} onOpenProject={onOpenProject} />
   if (active === 'projects') return <ProjectHealthBoard projects={projects} asOf={dataThrough} onOpen={onOpenProject} />
   if (active === 'transactions') return <section className="panel detail-panel"><div className="detail-toolbar"><div className="search-field"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari transaksi, proyek, dompet, atau source key…" /></div><label className="type-select"><ListFilter size={17} /><span className="sr-only">Filter jenis</span><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as TransactionTypeFilter)}><option value="all">Semua jenis</option><option value="Pemasukan">Pemasukan</option><option value="Pengeluaran">Pengeluaran</option><option value="external-income">Pemasukan eksternal</option><option value="external-expense">Pengeluaran eksternal</option><option value="external">Eksternal</option><option value="projects">Proyek</option></select></label><button className="secondary-button" onClick={() => downloadTransactionsCsv(filteredTransactions)}>Ekspor CSV</button><span className="result-count">{filteredTransactions.length.toLocaleString('id-ID')} transaksi</span></div><TransactionTable rows={filteredTransactions} /></section>
   const content: Record<string, { stat: string; value: number; copy: string }> = {

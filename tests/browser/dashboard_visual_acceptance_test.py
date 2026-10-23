@@ -47,6 +47,10 @@ TRANSACTIONS = [
     {"id": 4, "transaction_date": "2026-10-18", "transaction_type": "Pengeluaran", "amount": 26_750_000, "wallet": "TX SBY(216)", "company": "Hollawall", "project": "Surabaya Office", "notes": "Operasional lapangan"},
     {"id": 5, "transaction_date": "2026-10-17", "transaction_type": "Pemasukan", "amount": 70_000_000, "wallet": "BCA(056)", "company": "Hollawall", "project": "Grand Galaxy", "notes": "Termin kedua"},
     {"id": 6, "transaction_date": "2026-10-16", "transaction_type": "Pengeluaran", "amount": 35_400_000, "wallet": "KPR BRI(031)", "company": "Hollawall", "project": "Mawar Residence", "notes": "Pembelian material"},
+    *[
+        {"id": 100 + index, "source_key": f"CV HB(101):acceptance:{100 + index}", "transaction_date": f"2026-10-{15 - index:02d}", "transaction_type": "Pemasukan" if index % 3 == 0 else "Pengeluaran", "amount": 1_000_000 + index * 125_000, "wallet": "CV HB(101)", "company": "Hollawall", "project": f"Audit Wallet {index + 1}", "notes": f"Mutasi acceptance {index + 1}", "internal_movement": index == 1, "transfer_scope": "internal" if index == 1 else "external"}
+        for index in range(10)
+    ],
 ]
 
 
@@ -315,6 +319,41 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 page.get_by_role("button", name="Selesai", exact=True).click()
                 expect(page.locator(".active-project-age-report")).to_have_count(0)
                 context.close()
+
+    def test_cashflow_and_wallet_routes_are_operational_and_paginated(self):
+        context, page, errors = self.new_page(390, 844, "light")
+        page.goto(self.base_url, wait_until="networkidle")
+        page.get_by_role("heading", name="Ringkasan Perusahaan").wait_for()
+        page.get_by_role("button", name="Buka navigasi").click()
+        page.locator(".sidebar nav button").filter(has_text="Arus Kas").click()
+        page.get_by_role("heading", name="Aliran operasi, bukan sekadar saldo").wait_for()
+        expect(page.locator(".cashflow-workspace")).to_have_count(1)
+        expect(page.get_by_text("Kas masuk eksternal")).to_be_visible()
+        expect(page.locator(".ops-metric-strip article").filter(has_text="Transfer internal bruto")).to_be_visible()
+        expect(page.get_by_text(re.compile(r"Naufalspurnomo|Naufal Spurnomo", re.I))).to_have_count(0)
+
+        page.get_by_role("button", name="Buka navigasi").click()
+        page.locator(".sidebar nav button").filter(has_text="Dompet").click()
+        page.get_by_role("heading", name="Posisi kas per sumber").wait_for()
+        expect(page.locator(".wallet-workspace")).to_have_count(1)
+        expect(page.get_by_text("Dompet 1 dari 7")).to_be_visible()
+        expect(page.get_by_role("navigation", name="Filter mutasi")).to_be_visible()
+
+        ledger = page.locator(".ops-ledger article")
+        self.assertEqual(ledger.count(), 8)
+        expect(page.get_by_text("Halaman 1 dari 2")).to_be_visible()
+        first_page = ledger.first.text_content()
+        page.get_by_role("button", name="Berikutnya").click()
+        expect(page.get_by_text("Halaman 2 dari 2")).to_be_visible()
+        self.assertNotEqual(ledger.first.text_content(), first_page)
+        self.assertEqual(ledger.count(), 2)
+
+        page.get_by_role("button", name="Internal", exact=True).click()
+        self.assertEqual(ledger.count(), 1)
+        expect(page.get_by_text(re.compile(r"Naufalspurnomo|Naufal Spurnomo", re.I))).to_have_count(0)
+        self.assertFalse(page.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth"))
+        self.assertEqual(errors, [])
+        context.close()
 
     def test_live_refresh_shows_new_transaction_and_reversal_within_target(self):
         context, page, errors, state = self.new_dynamic_page(1440, 1000)
