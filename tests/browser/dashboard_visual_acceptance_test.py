@@ -71,9 +71,11 @@ SNAPSHOT = {
         {"month": "2026-10", "balance": 790_350_000, "net_movement": 305_350_000},
     ],
     "project_summaries": [
-        {"name": "Surabaya Office", "portfolio": "Hollawall", "net_cashflow": 98_250_000},
-        {"name": "Grand Galaxy", "portfolio": "Texturin", "net_cashflow": 51_600_000},
-        {"name": "Mawar Residence", "portfolio": "Hollawall", "net_cashflow": 52_100_000},
+        {"name": "Proyek Bola", "portfolio": "Hollawall", "net_cashflow": 98_250_000, "age_days": 4, "health": "healthy", "lifecycle_status": "active", "started_on": "2026-07-04", "transaction_count": 12, "last_activity_on": "2026-07-08"},
+        {"name": "Texturin Prima", "portfolio": "Texturin", "net_cashflow": 70_400_000, "age_days": 10, "health": "healthy", "lifecycle_status": "active", "started_on": "2026-06-28", "transaction_count": 14, "last_activity_on": "2026-07-07"},
+        {"name": "Hollawall Proyek", "portfolio": "Hollawall", "net_cashflow": 52_100_000, "age_days": 21, "health": "watch", "lifecycle_status": "active", "started_on": "2026-06-17", "transaction_count": 19, "last_activity_on": "2026-07-05"},
+        {"name": "Texturin Sisipan", "portfolio": "Texturin", "net_cashflow": 31_900_000, "age_days": 45, "health": "overdue", "lifecycle_status": "active", "started_on": "2026-05-24", "transaction_count": 21, "last_activity_on": "2026-07-03"},
+        {"name": "Proyek Selesai", "portfolio": "Hollawall", "net_cashflow": 12_500_000, "age_days": 999, "health": "completed", "lifecycle_status": "completed", "started_on": "2024-01-01", "transaction_count": 9, "last_activity_on": "2026-05-02"}
     ],
 }
 
@@ -247,15 +249,22 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                   const targets = [...document.querySelectorAll('.portfolio-switcher button, .project-filter-rail button, .project-ledger-row, .project-ledger-pagination button')]
                     .filter(visible)
                     .map(element => element.getBoundingClientRect().height);
+                  const bars = [...document.querySelectorAll('.active-age-bar')].filter(visible);
                   return {
                     viewport: document.documentElement.clientWidth,
                     document: document.documentElement.scrollWidth,
                     nativeSelect: document.querySelectorAll('select[aria-label="Filter portfolio"]').length,
                     companySwitcher: document.querySelectorAll('.portfolio-switcher').length,
+                    ageHeading: document.querySelector('.active-project-age-report h2')?.textContent || '',
+                    ageSections: [...document.querySelectorAll('.active-age-identity p')].map(element => element.textContent),
+                    ageBars: bars.length,
+                    ageColors: bars.map(element => element.className),
+                    ageHeights: bars.map(element => element.querySelector('.active-age-bar-fill').getBoundingClientRect().height),
+                    ageWidths: bars.map(element => element.querySelector('.active-age-bar-fill').getBoundingClientRect().width),
+                    ageNames: bars.map(element => element.querySelector('.active-age-mobile-copy strong')?.textContent || element.querySelector('.active-age-bar-fill strong')?.textContent || ''),
                     groups: [...document.querySelectorAll('.portfolio-project-group h3')].map(element => element.textContent),
                     rows: document.querySelectorAll('.project-ledger-row').length,
-                    visibleTimeline: [...document.querySelectorAll('.portfolio-timeline')].filter(visible).length,
-                    timelineRows: [...document.querySelectorAll('.portfolio-timeline .timeline-row')].filter(visible).length,
+                    legacyTimeline: [...document.querySelectorAll('.portfolio-timeline .timeline-row')].filter(visible).length,
                     minTarget: Math.min(...targets),
                     ownership: [...document.querySelectorAll('.project-ledger-main small')].every(element => /Hollawall|Texturin/.test(element.textContent || '')),
                   };
@@ -268,12 +277,23 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 self.assertGreater(metrics["rows"], 0)
                 self.assertLessEqual(metrics["rows"], 12)
                 self.assertTrue(metrics["ownership"])
+                self.assertEqual(metrics["legacyTimeline"], 0)
+                self.assertEqual(metrics["ageHeading"], "Durasi proyek berjalan")
+                self.assertGreater(metrics["ageBars"], 0)
+                self.assertEqual(
+                    sorted(set(re.findall(r"age-(?:new|growing|watch|overdue)", " ".join(metrics["ageColors"])))),
+                    ["age-growing", "age-new", "age-overdue", "age-watch"],
+                )
+                self.assertNotIn("Proyek Selesai", metrics["ageNames"])
                 if width <= 760:
-                    self.assertEqual(metrics["visibleTimeline"], 0)
+                    self.assertEqual(sorted(metrics["ageSections"]), ["Hollawall Section", "Texturin Section"])
+                    self.assertTrue(all(width > height for width, height in zip(metrics["ageWidths"], metrics["ageHeights"])))
                     self.assertGreaterEqual(metrics["minTarget"], 44)
                 else:
-                    self.assertEqual(metrics["visibleTimeline"], 1)
-                    self.assertLessEqual(metrics["timelineRows"], 12)
+                    self.assertLessEqual(metrics["ageBars"], 16)
+                    self.assertGreater(max(metrics["ageHeights"]), min(metrics["ageHeights"]))
+                page.get_by_role("button", name="Selesai", exact=True).click()
+                expect(page.locator(".active-project-age-report")).to_have_count(0)
                 context.close()
 
     def test_live_refresh_shows_new_transaction_and_reversal_within_target(self):

@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, ArrowRight, Search } from 'lucide-react'
 
+import ActiveProjectAgeChart from './ActiveProjectAgeChart'
 import type { ProjectHealth, ProjectSummary } from './snapshot'
 
 const IDR = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })
 const PAGE_SIZE = 12
 
-type Filter = 'all' | 'active' | 'attention' | 'completed' | 'unmarked'
+type Filter = 'all' | 'active' | 'attention' | 'completed'
 type Portfolio = 'all' | NonNullable<ProjectSummary['portfolio']>
 
 const healthMeta: Record<ProjectHealth, { label: string; copy: string }> = {
@@ -45,29 +46,6 @@ function matchesFilter(project: ProjectSummary, filter: Filter) {
   return health === filter
 }
 
-function timelineWindow() {
-  const end = new Date()
-  const start = new Date(end.getFullYear(), end.getMonth() - 2, 1)
-  const windowEnd = new Date(end.getFullYear(), end.getMonth() + 1, 0)
-  const months = Array.from({ length: 3 }, (_, index) => {
-    const value = new Date(start.getFullYear(), start.getMonth() + index, 1)
-    return value.toLocaleDateString('id-ID', { month: 'long' })
-  })
-  return { start, end: windowEnd, months }
-}
-
-function timelineStyle(project: ProjectSummary, start: Date, end: Date): CSSProperties | null {
-  const rawStart = parseDate(project.started_on ?? project.first_activity_on)
-  const rawEnd = project.lifecycle_status === 'active' ? new Date() : parseDate(project.completed_on ?? project.last_activity_on)
-  if (!rawStart || !rawEnd || rawEnd < start || rawStart > end) return null
-  const duration = Math.max(1, end.getTime() - start.getTime())
-  const visibleStart = Math.max(start.getTime(), rawStart.getTime())
-  const visibleEnd = Math.min(end.getTime(), rawEnd.getTime())
-  const left = ((visibleStart - start.getTime()) / duration) * 100
-  const width = Math.max(3, ((visibleEnd - visibleStart) / duration) * 100)
-  return { '--timeline-left': `${left}%`, '--timeline-width': `${Math.min(width, 100 - left)}%` } as CSSProperties
-}
-
 function portfolioClass(value?: string | null) {
   return `portfolio-${(value ?? 'unmapped').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
 }
@@ -84,7 +62,7 @@ export default function ProjectHealthBoard({ projects, onOpen }: { projects: Pro
       && (portfolio === 'all' || project.portfolio === portfolio)
       && (!normalizedQuery || project.name.toLocaleLowerCase('id-ID').includes(normalizedQuery)))
       .sort((left, right) => (parseDate(right.last_activity_on)?.getTime() ?? 0) - (parseDate(left.last_activity_on)?.getTime() ?? 0)),
-    [filter, normalizedQuery, portfolio, projects],
+    [projects, filter, normalizedQuery, portfolio],
   )
   const ordered = useMemo(() => {
     if (portfolio !== 'all') return filtered
@@ -106,8 +84,7 @@ export default function ProjectHealthBoard({ projects, onOpen }: { projects: Pro
   const visible = ordered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
   const groupedVisible = portfolioOptions.map((name) => ({ name, projects: visible.filter((project) => project.portfolio === name) })).filter((group) => group.projects.length)
   const unmappedVisible = visible.filter((project) => !project.portfolio)
-  const timeline = timelineWindow()
-  const timelineProjects = filtered.map((project) => ({ project, style: timelineStyle(project, timeline.start, timeline.end) })).filter((item) => item.style).slice(0, PAGE_SIZE)
+  const chartPortfolios = (portfolio === 'all' ? portfolioOptions : [portfolio]).filter((value) => value === 'Hollawall' || value === 'Texturin') as NonNullable<ProjectSummary['portfolio']>[]
 
   useEffect(() => setPage(0), [filter, normalizedQuery, portfolio])
   useEffect(() => { if (page >= pageCount) setPage(pageCount - 1) }, [page, pageCount])
@@ -121,7 +98,6 @@ export default function ProjectHealthBoard({ projects, onOpen }: { projects: Pro
           { key: 'watch', count: counts.watch, label: 'Pantau' },
           { key: 'overdue', count: counts.overdue, label: 'Lewat 30 hari' },
           { key: 'completed', count: counts.completed, label: 'Selesai' },
-          { key: 'unmarked', count: counts.unmarked, label: 'Belum ditandai' },
         ].filter((item) => item.count > 0).map((item) => <span className={item.key} key={item.key}><strong>{item.count}</strong>{item.label}</span>)}
       </div>
     </header>
@@ -145,18 +121,18 @@ export default function ProjectHealthBoard({ projects, onOpen }: { projects: Pro
         })}
       </div>
 
-      <div className="project-filter-rail" role="group" aria-label="Filter kesehatan proyek">
+    </div>
+
+    {filter !== 'completed' && <ActiveProjectAgeChart projects={projects} portfolios={chartPortfolios} query={query} onOpen={onOpen} />}
+
+    <div className="project-ledger-filter-block">
+      <p>FILTER DAFTAR PROYEK</p>
+      <div className="project-filter-rail" role="group" aria-label="Filter daftar proyek">
         {([
-          ['all', 'Semua'], ['active', 'Aktif'], ['attention', 'Perlu perhatian'], ['completed', 'Selesai'], ['unmarked', 'Belum ditandai'],
+          ['all', 'Semua'], ['active', 'Aktif'], ['attention', 'Perlu perhatian'], ['completed', 'Selesai'],
         ] as const).map(([value, label]) => <button key={value} type="button" className={filter === value ? 'active' : ''} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}
       </div>
     </div>
-
-    <section className="project-timeline portfolio-timeline" aria-label="Timeline proyek tiga bulan">
-      <div className="timeline-heading"><div><p className="eyebrow">RENTANG PROYEK</p><h2>Timeline 3 bulan</h2></div><span>Warna bar mengikuti unit usaha · marker lifecycle dari sumber</span></div>
-      <div className="timeline-months" aria-hidden="true"><span></span>{timeline.months.map((month) => <span key={month}>{month}</span>)}</div>
-      {timelineProjects.length ? <div className="timeline-rows">{timelineProjects.map(({ project, style }) => <button key={project.name} type="button" className={`timeline-row ${portfolioClass(project.portfolio)}`} onClick={() => onOpen(project.name)} aria-label={`Buka transaksi proyek ${project.name} dari timeline`}><span className="timeline-label"><i>{portfolioIdentity[project.portfolio ?? '']?.mark ?? '?'}</i><span><strong>{project.name}</strong><small>{project.portfolio ?? 'Belum dipetakan'}</small></span></span><span className={`timeline-track ${projectHealth(project)}`}><i style={style ?? undefined}></i></span></button>)}</div> : <p className="timeline-empty">Tidak ada proyek pada jendela tiga bulan ini.</p>}
-    </section>
 
     {filtered.length ? <section className="project-ledger-results" aria-label="Daftar proyek per perusahaan">
       <header><div><p className="eyebrow">DAFTAR PROYEK</p><h2>Proyek per unit usaha</h2></div><span>{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} dari {filtered.length.toLocaleString('id-ID')}</span></header>
