@@ -338,7 +338,7 @@ html[data-theme='dark'] .active-calendar-pan-cue { box-shadow: none; }
 html[data-theme='dark'] .active-calendar-fill { box-shadow: none; }
 
 /* Small-screen dark mode keeps touch sizes while retaining the compact visual language. */
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   html[data-theme='dark'] .content { padding-top: 16px; }
   html[data-theme='dark'] .sidebar nav button { min-height: 44px; }
   html[data-theme='dark'] .page-heading h1 { font-size: 27px; }

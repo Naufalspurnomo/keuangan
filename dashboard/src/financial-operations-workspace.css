@@ -97,7 +97,7 @@
   .wallet-position { grid-template-columns: 1fr; gap: 24px; }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   .financial-ops { gap: 20px; }
   .ops-heading { align-items: flex-start; padding-top: 8px; }
   .ops-heading h2 { font-size: 30px; }
