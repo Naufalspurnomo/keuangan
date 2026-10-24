@@ -219,7 +219,7 @@
 .new-project-button:focus-visible { background: transparent; color: var(--chart-primary); }
 .mobile-project-list { display: none; }
 
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   .sidebar nav button { min-height: 44px; }
   .sidebar .icon-button.mobile-only { width: 44px; height: 44px; }
   .overview-provenance { min-height: 38px; gap: 10px; }

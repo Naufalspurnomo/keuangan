@@ -171,7 +171,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
     def assert_clean_render(self, page, errors):
         page.goto(self.base_url, wait_until="networkidle")
         page.get_by_role("heading", name="Ringkasan Perusahaan").wait_for()
-        page.locator(".recharts-responsive-container").first.wait_for()
+        page.locator(".recharts-responsive-container, .business-empty").first.wait_for()
         self.assertEqual(errors, [])
         metrics = page.evaluate("""() => ({
           viewport: document.documentElement.clientWidth,
@@ -179,6 +179,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
           body: document.body.scrollWidth,
           theme: document.documentElement.dataset.theme,
           chartCount: document.querySelectorAll('.recharts-responsive-container').length,
+          chartEmptyCount: document.querySelectorAll('.business-empty').length,
           visibleButtons: [...document.querySelectorAll('button')].filter(el => el.offsetParent !== null).length,
           unitNavigator: document.querySelectorAll('.unit-navigator').length,
           unitCanvas: document.querySelectorAll('.unit-focus-canvas').length,
@@ -192,7 +193,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         })""")
         self.assertLessEqual(metrics["document"], metrics["viewport"])
         self.assertLessEqual(metrics["body"], metrics["viewport"])
-        self.assertGreaterEqual(metrics["chartCount"], 1)
+        self.assertGreaterEqual(metrics["chartCount"] + metrics["chartEmptyCount"], 1)
         self.assertEqual(metrics["unitNavigator"], 1)
         self.assertEqual(metrics["unitCanvas"], 1)
         self.assertEqual(metrics["activityStream"], 1)
@@ -435,6 +436,67 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         self.assertTrue(all(title and "mulai" in title and "hari" in title for title in titles))
         self.assertEqual(errors, [])
         context.close()
+
+    def test_responsive_matrix_keeps_page_gutters_and_routes_inside_viewport(self):
+        viewports = (
+            (320, 720, "light"),
+            (390, 844, "dark"),
+            (844, 390, "light"),
+            (768, 1024, "dark"),
+            (1024, 768, "light"),
+            (1280, 720, "dark"),
+            (1440, 900, "light"),
+            (1920, 1080, "dark"),
+        )
+        routes = ("Ringkasan", "Arus Kas", "Dompet", "Transaksi", "Proyek", "Hutang Internal", "Laporan")
+        for width, height, theme in viewports:
+            with self.subTest(width=width, height=height, theme=theme):
+                context, page, errors = self.new_page(width, height, theme)
+                page.goto(self.base_url, wait_until="networkidle")
+                page.get_by_role("heading", name="Ringkasan Perusahaan").wait_for()
+                for route_name in routes:
+                    page.locator(".sidebar nav button").filter(has_text=route_name).dispatch_event("click")
+                    page.wait_for_timeout(25)
+                    metrics = page.evaluate("""() => {
+                      const content = document.querySelector('.content');
+                      const rect = content.getBoundingClientRect();
+                      const style = getComputedStyle(content);
+                      const visible = element => element.offsetParent !== null;
+                      const targets = [...document.querySelectorAll('.topbar button, .sidebar nav button, .unit-option')]
+                        .filter(visible)
+                        .map(element => ({ width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height }));
+                      return {
+                        viewport: innerWidth,
+                        document: document.documentElement.scrollWidth,
+                        body: document.body.scrollWidth,
+                        contentLeft: rect.left,
+                        contentRight: rect.right,
+                        paddingLeft: parseFloat(style.paddingLeft),
+                        paddingRight: parseFloat(style.paddingRight),
+                        mainMargin: parseFloat(getComputedStyle(document.querySelector('.main-canvas')).marginLeft),
+                        mobileMenu: getComputedStyle(document.querySelector('.mobile-only')).display !== 'none',
+                        targets,
+                      };
+                    }""")
+                    self.assertLessEqual(metrics["document"], metrics["viewport"], {"route": route_name, **metrics})
+                    self.assertLessEqual(metrics["body"], metrics["viewport"], {"route": route_name, **metrics})
+                    self.assertGreaterEqual(metrics["paddingLeft"], 12)
+                    self.assertGreaterEqual(metrics["paddingRight"], 12)
+                    self.assertGreaterEqual(metrics["contentLeft"], 0)
+                    self.assertLessEqual(metrics["contentRight"], width)
+                    if width <= 900:
+                        self.assertTrue(metrics["mobileMenu"])
+                        self.assertEqual(metrics["mainMargin"], 0)
+                        self.assertTrue(all(target["height"] >= 44 for target in metrics["targets"]), {"route": route_name, **metrics})
+                if width <= 900:
+                    page.get_by_role("button", name="Buka navigasi").click()
+                    nav = page.locator(".sidebar nav")
+                    scroll = nav.evaluate("element => ({client: element.clientHeight, scroll: element.scrollHeight})")
+                    if scroll["scroll"] > scroll["client"]:
+                        nav.evaluate("element => { element.scrollTop = element.scrollHeight }")
+                        self.assertGreater(nav.evaluate("element => element.scrollTop"), 0)
+                self.assertEqual(errors, [])
+                context.close()
 
     def test_live_refresh_shows_new_transaction_and_reversal_within_target(self):
         context, page, errors, state = self.new_dynamic_page(1440, 1000)
