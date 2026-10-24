@@ -23,7 +23,10 @@ class RumahwebAdminReleaseTests(unittest.TestCase):
     def test_release_has_login_and_read_only_proxy(self) -> None:
         login = (RELEASE / "index.php").read_text(encoding="utf-8")
         proxy = (RELEASE / "api" / "snapshot.php").read_text(encoding="utf-8")
-        self.assertIn("Masuk ke ruang kerja", login)
+        self.assertIn("Masuk ke dashboard", login)
+        self.assertIn("brand/hollawall-logo.png", login)
+        self.assertIn("brand/waves-background.svg", login)
+        self.assertNotIn('class="mark">H', login)
         self.assertIn("password_verify", login)
         self.assertIn("method_not_allowed", proxy)
         self.assertIn("X-Hollawall-Proxy-Token", proxy)

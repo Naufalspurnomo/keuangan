@@ -30,6 +30,7 @@ import type { DashboardMeta, Overview, QualityRow, Transaction } from './types'
 import BusinessSectionReport from './BusinessSectionReport'
 import { CashflowWorkspace, WalletWorkspace } from './FinancialOperationsWorkspace'
 import ProjectReportTimeline from './ProjectReportTimeline'
+import hollawallLogo from './assets/hollawall-logo.png'
 
 const FinancialChart = lazy(() => import('./FinancialChart'))
 const PREVIEW_MODE = import.meta.env.VITE_DEMO_PREVIEW === 'true'
@@ -110,7 +111,7 @@ function Sidebar({ active, setActive, open, setOpen, transactionCount }: { activ
   return <>
     <div className={`mobile-overlay ${open ? 'is-open' : ''}`} onClick={() => setOpen(false)} />
     <aside className={`sidebar ${open ? 'is-open' : ''}`}>
-      <div className="sidebar-head"><div className="brand-lockup"><span className="brand-mark">H</span><span>HOLLAWALL</span></div><button className="icon-button mobile-only" onClick={() => setOpen(false)} aria-label="Tutup navigasi"><X size={20} /></button></div>
+      <div className="sidebar-head"><div className="brand-lockup"><img src={hollawallLogo} alt="Hollawall" /></div><button className="icon-button mobile-only" onClick={() => setOpen(false)} aria-label="Tutup navigasi"><X size={20} /></button></div>
       <div className="workspace-switch" aria-label="Ruang kerja aktif"><Building2 size={18} /><span><small>Ruang kerja aktif</small>Hollawall Group</span></div>
       <nav>{navigation.map(([key, label, Icon]) => <button key={key} className={active === key ? 'active' : ''} onClick={() => { setActive(key); setOpen(false) }}><Icon size={19} strokeWidth={1.8} /><span>{label}</span>{key === 'transactions' && <b>{transactionCount}</b>}</button>)}</nav>
       <div className="sidebar-bottom"><div className="profile workspace-profile"><span><LockKeyhole size={15}/></span><div><strong>Workspace privat</strong><small>Read-only · Teraudit</small></div></div></div>
@@ -230,7 +231,7 @@ function Dashboard() {
   const [transactionFilter, setTransactionFilter] = useState<TransactionTypeFilter>('all')
   const [selectedProject, setSelectedProject] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
-  const [theme, setTheme] = useState(() => localStorage.getItem('hollawall-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
+  const [theme, setTheme] = useState(() => localStorage.getItem('hollawall-theme') || 'light')
   const queryEnabled = !PREVIEW_MODE || SNAPSHOT_MODE
   const snapshotQuery = useQuery({
     queryKey: ['snapshot', SNAPSHOT_MODE ? 'local' : 'live'],
@@ -283,7 +284,7 @@ function Dashboard() {
   return <div className="app-shell">
     <Sidebar active={active} setActive={navigate} open={menuOpen} setOpen={setMenuOpen} transactionCount={transactions.length} />
     <main className="main-canvas">
-      <header className="topbar"><button className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi"><Menu size={21} /></button><div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{title}</strong></div><div className="topbar-actions"><ThemeToggle theme={theme} setTheme={setTheme} /><button className={`icon-button ${snapshotQuery.isFetching ? 'is-spinning' : ''}`} aria-label="Segarkan snapshot" onClick={() => snapshotQuery.refetch()}><RefreshCcw size={17} /></button></div></header>
+      <header className="topbar"><button className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi"><Menu size={21} /></button><img className="mobile-header-logo" src={hollawallLogo} alt="Hollawall" /><div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{title}</strong></div><div className="topbar-actions"><ThemeToggle theme={theme} setTheme={setTheme} /><button className={`icon-button ${snapshotQuery.isFetching ? 'is-spinning' : ''}`} aria-label="Segarkan snapshot" onClick={() => snapshotQuery.refetch()}><RefreshCcw size={17} /></button></div></header>
       <div className="content">
         {active === 'overview'
           ? <h1 className="sr-only">{title}</h1>
