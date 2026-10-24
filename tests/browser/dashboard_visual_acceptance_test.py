@@ -437,6 +437,51 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         self.assertEqual(errors, [])
         context.close()
 
+    def test_light_filled_color_surfaces_use_white_text(self):
+        context, page, errors = self.new_page(1440, 1000, "light")
+        page.goto(self.base_url, wait_until="networkidle")
+        page.get_by_role("heading", name="Ringkasan Perusahaan").wait_for()
+        routes = (
+            (None, (
+                ".workspace-switch", ".sidebar nav button.active", ".sidebar nav button b",
+                ".business-mode-switch button.is-active", ".unit-option.is-active",
+                ".new-project-button", ".vertical-project-bar",
+            )),
+            ("Proyek", (
+                ".portfolio-switcher button.active", ".portfolio-switcher button > i",
+                ".project-summary-stats span", ".active-age-identity > i",
+                ".active-calendar-toolbar span", ".active-calendar-pan-cue", ".active-calendar-fill",
+            )),
+            ("Transaksi", (".type-chip",)),
+            ("Arus Kas", (".ops-filter-block button.active",)),
+            ("Dompet", (".wallet-rail button.active", ".movement-filters button.active")),
+        )
+        for route_name, selectors in routes:
+            if route_name:
+                page.locator(".sidebar nav button").filter(has_text=route_name).click()
+                page.wait_for_timeout(50)
+            failures = page.evaluate("""selectors => {
+              const visible = element => {
+                const rect = element.getBoundingClientRect();
+                const style = getComputedStyle(element);
+                return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+              };
+              return selectors.flatMap(selector => [...document.querySelectorAll(selector)])
+                .filter(visible)
+                .flatMap(root => [root, ...root.querySelectorAll('*')])
+                .filter(element => visible(element) && [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim()))
+                .map(element => ({
+                  text: element.textContent.trim().replace(/\\s+/g, ' ').slice(0, 80),
+                  selector: element.className || element.tagName,
+                  color: getComputedStyle(element).color,
+                }))
+                .filter(item => item.color !== 'rgb(255, 255, 255)');
+            }""", list(selectors))
+            self.assertEqual(failures, [], {"route": route_name or "Ringkasan", "failures": failures})
+
+        self.assertEqual(errors, [])
+        context.close()
+
     def test_responsive_matrix_keeps_page_gutters_and_routes_inside_viewport(self):
         viewports = (
             (320, 720, "light"),

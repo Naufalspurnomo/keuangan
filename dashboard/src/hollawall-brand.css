@@ -262,6 +262,125 @@ body,
 .demo-badge,
 .source-state { border-radius: 6px; }
 
+/* Light mode: a filled color surface always carries white text.
+   The fills are intentionally darker than the marketing accents so small labels stay readable. */
+html[data-theme='light'] .sidebar nav button b {
+  border-color: #176574;
+  background: #176574;
+  color: #fff;
+}
+html[data-theme='light'] .sidebar nav button.active,
+html[data-theme='light'] .business-mode-switch button.is-active,
+html[data-theme='light'] .unit-option.is-active,
+html[data-theme='light'] .ops-filter-block button.active,
+html[data-theme='light'] .movement-filters button.active,
+html[data-theme='light'] .project-filter-rail button.active {
+  border-color: #b85c00;
+  background: #b85c00;
+  color: #fff;
+  box-shadow: none;
+}
+html[data-theme='light'] .sidebar nav button.active svg,
+html[data-theme='light'] .business-mode-switch button.is-active *,
+html[data-theme='light'] .unit-option.is-active *,
+html[data-theme='light'] .ops-filter-block button.active *,
+html[data-theme='light'] .movement-filters button.active *,
+html[data-theme='light'] .project-filter-rail button.active * { color: #fff; }
+html[data-theme='light'] .sidebar nav button.active b { border-color: rgba(255,255,255,.4); background: rgba(255,255,255,.18); color: #fff; }
+
+html[data-theme='light'] .portfolio-all { --portfolio-fill: #087f8a; }
+html[data-theme='light'] .portfolio-hollawall { --portfolio-fill: #5f63b8; }
+html[data-theme='light'] .portfolio-texturin { --portfolio-fill: #6754b4; }
+html[data-theme='light'] .portfolio-operasional { --portfolio-fill: #8a5500; }
+html[data-theme='light'] .portfolio-lintas-portfolio { --portfolio-fill: #14735d; }
+html[data-theme='light'] .portfolio-belum-dipetakan,
+html[data-theme='light'] .portfolio-unmapped { --portfolio-fill: #526b76; }
+html[data-theme='light'] .portfolio-switcher button.active {
+  border-color: var(--portfolio-fill, #176574);
+  background: var(--portfolio-fill, #176574);
+  color: #fff;
+  box-shadow: none;
+}
+html[data-theme='light'] .portfolio-switcher button.active strong,
+html[data-theme='light'] .portfolio-switcher button.active small { color: #fff; }
+html[data-theme='light'] .portfolio-switcher button.active small { opacity: .82; }
+html[data-theme='light'] .portfolio-switcher button > i,
+html[data-theme='light'] .timeline-label > i,
+html[data-theme='light'] .portfolio-project-group > header > i,
+html[data-theme='light'] .active-age-identity > i {
+  border-color: var(--portfolio-fill, #176574);
+  background: var(--portfolio-fill, #176574);
+  color: #fff;
+}
+
+html[data-theme='light'] .primary-button,
+html[data-theme='light'] .new-project-button {
+  border-color: #b85c00;
+  background: #b85c00;
+  color: #fff;
+}
+html[data-theme='light'] .primary-button:hover,
+html[data-theme='light'] .new-project-button:hover,
+html[data-theme='light'] .new-project-button:focus-visible {
+  border-color: #087f8a;
+  background: #087f8a;
+  color: #fff;
+}
+html[data-theme='light'] .vertical-project-bar.coral { background: #087f8a; }
+html[data-theme='light'] .vertical-project-bar.teal { background: #b85c00; }
+html[data-theme='light'] .vertical-project-bar.gold { background: #2b7180; }
+html[data-theme='light'] .vertical-project-bar.violet { background: #5f63b8; }
+html[data-theme='light'] .vertical-project-bar.blue { background: #8a5500; }
+html[data-theme='light'] .vertical-project-bar.rose { background: #315765; }
+html[data-theme='light'] .vertical-project-bar,
+html[data-theme='light'] .vertical-project-bar strong,
+html[data-theme='light'] .vertical-project-bar small { color: #fff; }
+
+html[data-theme='light'] .type-chip.income,
+html[data-theme='light'] .health-badge.healthy { border-color: #14735d; background: #14735d; color: #fff; }
+html[data-theme='light'] .type-chip.expense,
+html[data-theme='light'] .health-badge.overdue { border-color: #a83e3a; background: #a83e3a; color: #fff; }
+html[data-theme='light'] .health-badge.watch,
+html[data-theme='light'] .demo-badge { border-color: #8a5500; background: #8a5500; color: #fff; }
+html[data-theme='light'] .health-badge.completed { border-color: #176574; background: #176574; color: #fff; }
+html[data-theme='light'] .health-badge.unmarked { border-color: #526b76; background: #526b76; color: #fff; }
+
+html[data-theme='light'] .wallet-rail button.active {
+  border-color: #176574;
+  background: #176574;
+  color: #fff;
+}
+html[data-theme='light'] .wallet-rail button.active * { color: #fff !important; }
+
+html[data-theme='light'] .workspace-switch {
+  border-color: #176574;
+  background: #176574;
+  color: #fff;
+}
+html[data-theme='light'] .workspace-switch * { color: #fff; }
+html[data-theme='light'] .project-summary-stats span { border-color: rgba(255,255,255,.28); color: #fff !important; }
+html[data-theme='light'] .project-summary-stats span * { color: #fff !important; }
+html[data-theme='light'] .project-summary-stats .healthy { background: #14735d; }
+html[data-theme='light'] .project-summary-stats .watch { background: #8a5500; }
+html[data-theme='light'] .project-summary-stats .overdue { background: #a83e3a; }
+html[data-theme='light'] .project-summary-stats .completed { background: #176574; }
+html[data-theme='light'] .project-summary-stats .unmarked { background: #526b76; }
+html[data-theme='light'] .active-calendar-toolbar span,
+html[data-theme='light'] .active-calendar-pan-cue {
+  border-color: var(--portfolio-fill, #176574);
+  background: var(--portfolio-fill, #176574);
+  color: #fff;
+  box-shadow: none;
+}
+html[data-theme='light'] .active-calendar-bar.age-new,
+html[data-theme='light'] .active-calendar-bar.age-new .active-calendar-fill { --bar-color: #176574; }
+html[data-theme='light'] .active-calendar-bar.age-growing,
+html[data-theme='light'] .active-calendar-bar.age-growing .active-calendar-fill { --bar-color: #14735d; }
+html[data-theme='light'] .active-calendar-bar.age-watch,
+html[data-theme='light'] .active-calendar-bar.age-watch .active-calendar-fill { --bar-color: #8a5500; }
+html[data-theme='light'] .active-calendar-bar.age-overdue,
+html[data-theme='light'] .active-calendar-bar.age-overdue .active-calendar-fill { --bar-color: #a83e3a; }
+
 html[data-theme='dark'] .sidebar { background: var(--sidebar); color: var(--text); }
 html[data-theme='dark'] .topbar { background: rgba(12,32,40,.96); }
 html[data-theme='dark'] .sidebar nav button:hover { background: var(--surface-raised); color: var(--text); }
