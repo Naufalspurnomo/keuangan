@@ -181,7 +181,6 @@ body,
   background: var(--holla-orange) url('./assets/waves-background.svg') center/cover no-repeat;
   color: #fff;
 }
-.position-stage::after { content: ''; display: block; position: absolute; right: 34px; bottom: 28px; width: 120px; height: 9px; border-radius: 999px; background: var(--holla-cyan); transform: rotate(-2deg); }
 .position-primary .eyebrow,
 .position-primary button strong,
 .position-primary button span { color: var(--holla-navy); }
@@ -288,6 +287,5 @@ html[data-theme='dark'] .matrix-head { background: #071920; }
   .breadcrumbs { margin-right: auto; }
   .content { padding: 20px 16px 40px; }
   .position-stage { border-radius: 14px; padding: 26px 22px; }
-  .position-stage::after { width: 72px; right: 20px; bottom: 18px; }
   .brand-lockup img { width: 58px; height: 58px; }
 }
