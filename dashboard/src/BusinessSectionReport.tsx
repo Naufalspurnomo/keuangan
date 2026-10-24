@@ -139,7 +139,10 @@ export default function BusinessSectionReport({ transactions, wallets }: { trans
           <div><dt>Bersih</dt><dd>{compact.format(net)}</dd></div>
         </dl>
 
-        <div className="business-monthly-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="monthly" transactions={filtered} /></Suspense></div>
+        <div className="business-monthly-chart">{filtered.length > 0
+          ? <Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="monthly" transactions={filtered} /></Suspense>
+          : <div className="business-chart-empty"><strong>Belum ada grafik</strong><span>Grafik muncul setelah unit ini memiliki transaksi.</span></div>}
+        </div>
       </article>
 
       <aside className="activity-stream" aria-label={`Aktivitas ${activeUnit.label}`}>

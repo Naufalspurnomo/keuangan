@@ -27,6 +27,10 @@ def main() -> None:
     shutil.copytree(TEMPLATE, admin)
     (admin / "config.example.php").unlink()
     shutil.copytree(DASHBOARD / "dist" / "assets", admin / "assets")
+    brand = admin / "brand"
+    brand.mkdir()
+    for asset in ("hollawall-logo.png", "waves-background.svg"):
+        shutil.copy2(DASHBOARD / "src" / "assets" / asset, brand / asset)
 
     shell = (DASHBOARD / "dist" / "index.html").read_text(encoding="utf-8")
     guarded = "<?php defined('HOLLAWALL_AUTHENTICATED') || exit; ?>\n" + shell
