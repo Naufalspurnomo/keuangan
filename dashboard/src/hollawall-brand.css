@@ -186,7 +186,11 @@ body,
 .position-primary .eyebrow,
 .position-primary button strong,
 .position-primary button span { color: var(--holla-navy); }
-.position-primary button strong { font-family: 'Montserrat', sans-serif; font-weight: 900; letter-spacing: -.055em; }
+.position-primary button strong { font-family: 'Montserrat', sans-serif; font-weight: 900; letter-spacing: -.055em; white-space: nowrap; font-size: clamp(26px, 4.2vw, 64px); }
+.unit-option { padding-inline: 12px; }
+@media (max-width: 900px) {
+  .position-primary button strong { font-size: clamp(25px, 7vw, 54px); }
+}
 .position-stage .freshness { border: 1px solid rgba(22,55,70,.24); background: var(--holla-navy); color: #fff; box-shadow: none; backdrop-filter: none; }
 .position-stage .freshness small { color: #d9edf0; }
 .position-stage .freshness i { background: var(--holla-cyan); box-shadow: 0 0 0 4px rgba(255,255,255,.18); }

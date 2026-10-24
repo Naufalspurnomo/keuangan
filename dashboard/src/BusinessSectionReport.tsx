@@ -106,7 +106,7 @@ export default function BusinessSectionReport({ transactions, wallets }: { trans
       <div>
         <p className="eyebrow">UNIT USAHA</p>
         <h2>Arus kas per unit</h2>
-        <p>Pilih perusahaan atau dompet untuk membaca satu konteks.</p>
+        <p>Lihat arus kas perusahaan atau dompet.</p>
       </div>
       <div className="business-mode-switch" role="group" aria-label="Dasar laporan">
         <button type="button" className={mode === 'company' ? 'is-active' : ''} onClick={() => setModeAndSelection('company')}><Building2 size={15} />Perusahaan</button>
