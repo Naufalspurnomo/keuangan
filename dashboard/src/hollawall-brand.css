@@ -180,18 +180,45 @@ body,
   border-radius: 20px;
   padding: 34px 38px;
   overflow: hidden;
-  background: var(--holla-orange) url('./assets/waves-background.svg') center/cover no-repeat;
+  background: #163746;
   color: #fff;
 }
 .position-primary .eyebrow,
 .position-primary button strong,
-.position-primary button span { color: var(--holla-navy); }
+.position-primary button span { color: #fff; }
 .position-primary button strong { font-family: 'Montserrat', sans-serif; font-weight: 900; letter-spacing: -.055em; white-space: nowrap; font-size: clamp(26px, 4.2vw, 64px); }
 .unit-option { padding-inline: 12px; }
+/* Interior spacing is independent from the page gutter. */
+.business-report,
+.unit-workspace,
+.project-report-module { padding: clamp(20px, 2.5vw, 32px); }
+.panel,
+.metric-card,
+.project-health-summary,
+.project-controls,
+.project-health-card { padding: clamp(18px, 2vw, 28px); }
+.position-stage { gap: 28px; align-items: center; border-top: 4px solid var(--holla-orange); }
+@media (max-width: 1200px) {
+  .position-stage { grid-template-columns: minmax(0, 1fr); }
+  .position-status { min-width: 0; width: 100%; }
+}
+.position-primary > .eyebrow { margin-bottom: 20px; }
+.position-primary > button { flex-direction: column; align-items: flex-start; gap: 18px; }
+.position-primary button span { line-height: 1.6; }
+.unit-focus-head p,
+.business-report-head p { line-height: 1.65; }
+@media (max-width: 900px) {
+  .position-stage { padding: 24px; min-height: 0; gap: 24px; }
+  .position-stage .freshness span { font-size: 12px; line-height: 1.6; }
+  .position-stage .freshness small { font-size: 11px; line-height: 1.6; }
+  .business-report,
+  .unit-workspace,
+  .project-report-module { padding: 22px 20px; }
+}
 @media (max-width: 900px) {
   .position-primary button strong { font-size: clamp(25px, 7vw, 54px); }
 }
-.position-stage .freshness { border: 1px solid rgba(22,55,70,.24); background: var(--holla-navy); color: #fff; box-shadow: none; backdrop-filter: none; }
+.position-stage .freshness { border: 1px solid #42616f; background: #163746; color: #fff; box-shadow: none; backdrop-filter: none; padding: 16px 18px; line-height: 1.65; }
 .position-stage .freshness small { color: #d9edf0; }
 .position-stage .freshness i { background: var(--holla-cyan); box-shadow: 0 0 0 4px rgba(255,255,255,.18); }
 
@@ -399,7 +426,7 @@ html[data-theme='dark'] .portfolio-switcher button.active,
 html[data-theme='dark'] .ops-filter-block button.active,
 html[data-theme='dark'] .movement-filters button.active { background: var(--surface-raised); color: var(--text); }
 html[data-theme='dark'] .matrix-head { background: #071920; }
-html[data-theme='dark'] .position-primary .eyebrow,
+html[data-theme='dark'] .position-primary .eyebrow { color: #fff; }
 html[data-theme='dark'] .new-project-button { color: #0c2028; }
 html[data-theme='dark'] .project-summary-stats .watch strong { color: #ffd189; }
 html[data-theme='dark'] .project-summary-stats .overdue strong { color: #ff9c98; }
