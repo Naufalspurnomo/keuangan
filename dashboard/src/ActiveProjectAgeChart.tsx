@@ -44,11 +44,18 @@ function snapshotLabel(date: Date) {
   return `SNAPSHOT ${new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short' }).format(date).toLocaleUpperCase('id-ID')}`
 }
 
-function ageBand(age: number) {
-  if (age <= 7) return 'new'
-  if (age <= 14) return 'growing'
-  if (age < 30) return 'watch'
-  return 'overdue'
+function ageColor(age: number) {
+  const progress = Math.max(0, Math.min(1, age / 75))
+  const hue = Math.round(138 * (1 - progress))
+  return `hsl(${hue} 64% 40%)`
+}
+
+function candleTone(age: number) {
+  return {
+    '--bar-color': ageColor(age),
+    '--bar-mid-color': ageColor(age / 2),
+    '--bar-start-color': ageColor(0),
+  } as CSSProperties
 }
 
 function calendarModel(projects: ProjectSummary[], asOfValue?: string | null) {
@@ -115,6 +122,7 @@ function ActiveCalendarSection({ portfolio, projects, asOf, onOpen }: { portfoli
 
   const startPan = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.pointerType !== 'mouse' || event.button !== 0 || !viewportRef.current) return
+    if ((event.target as HTMLElement).closest('button, a, input, select, textarea')) return
     drag.current = { active: true, moved: false, x: event.clientX, y: event.clientY, left: viewportRef.current.scrollLeft, top: viewportRef.current.scrollTop }
     viewportRef.current.setPointerCapture(event.pointerId)
     viewportRef.current.classList.add('is-panning')
@@ -130,7 +138,7 @@ function ActiveCalendarSection({ portfolio, projects, asOf, onOpen }: { portfoli
   const stopPan = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!drag.current.active || !viewportRef.current) return
     drag.current.active = false
-    viewportRef.current.releasePointerCapture(event.pointerId)
+    if (viewportRef.current.hasPointerCapture(event.pointerId)) viewportRef.current.releasePointerCapture(event.pointerId)
     viewportRef.current.classList.remove('is-panning')
   }
 
@@ -140,7 +148,7 @@ function ActiveCalendarSection({ portfolio, projects, asOf, onOpen }: { portfoli
       <div className="active-age-summary"><strong>{ordered.length}</strong><span>proyek aktif</span><em>Tertua {oldestAge} hari</em></div>
     </header>
     {visible.length ? <>
-      <div className="active-calendar-toolbar"><span><Move size={14} /> ← Geser chart →</span><b>Snapshot {calendar.snapshotLabel} · {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, ordered.length)} dari {ordered.length}</b></div>
+      <div className="active-calendar-toolbar"><span><Move size={14} /> Seret area kosong · klik candle untuk detail</span><b>Snapshot {calendar.snapshotLabel} · {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, ordered.length)} dari {ordered.length}</b></div>
       <div className={`active-calendar-frame ${canScrollRight ? 'has-more-right' : ''}`}>
         <div ref={viewportRef} className="active-calendar-viewport" onScroll={syncPanCue} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={stopPan} onPointerCancel={stopPan}>
           <div className="active-calendar" style={{ '--calendar-height': `${calendar.height}px`, '--project-columns': visible.length } as CSSProperties}>
@@ -159,8 +167,8 @@ function ActiveCalendarSection({ portfolio, projects, asOf, onOpen }: { portfoli
                 '--activity-top': `${Math.min(activityStart, activityEnd)}%`,
                 '--activity-span': `${Math.max(2, Math.abs(activityEnd - activityStart))}%`,
               } as CSSProperties
-              return <button type="button" key={project.name} className={`active-calendar-bar age-${ageBand(age)}`} style={{ '--project-calendar-span': calendar.spanFor(project.started_on) } as CSSProperties} onClick={() => { if (!drag.current.moved) onOpen(project.name) }} aria-label={`Buka proyek ${project.name}, mulai ${shortDate(project.started_on)}, aktif ${age} hari`} title={`${project.name} · mulai ${shortDate(project.started_on)} · ${age} hari`}>
-                {(project.first_activity_on || project.last_activity_on) && <span className="active-calendar-activity" style={activityStyle} title={`Aktivitas finansial ${shortDate(project.first_activity_on)}–${shortDate(project.last_activity_on)}`} />}
+              return <button type="button" key={project.name} data-project-candle={project.name} className="active-calendar-bar" style={{ '--project-calendar-span': calendar.spanFor(project.started_on), ...candleTone(age) } as CSSProperties} onPointerDown={() => { drag.current.moved = false }} onClick={() => { if (!drag.current.moved) onOpen(project.name) }} aria-label={`Buka detail proyek ${project.name}, mulai ${shortDate(project.started_on)}, umur ${age} hari`} title={`Klik untuk buka ${project.name} · mulai ${shortDate(project.started_on)} · umur ${age} hari`}>
+                {(project.first_activity_on || project.last_activity_on) && <span className="active-calendar-activity" style={activityStyle} title={`Rentang transaksi: pertama ${shortDate(project.first_activity_on)}, terakhir ${shortDate(project.last_activity_on)}`} />}
                 <span className="active-calendar-fill">
                   <small>{age} hari</small>
                   <strong>{project.name}</strong>
@@ -178,7 +186,10 @@ function ActiveCalendarSection({ portfolio, projects, asOf, onOpen }: { portfoli
         }}><ArrowRight size={18} /></button>}
       </div>
       <footer>
-        <p><b>Biru</b> 0–7 · <b>Hijau</b> 8–14 · <b>Kuning</b> 15–29 · <b>Merah</b> 30+ hari<br /><span>Garis putih: aktivitas finansial pertama–terakhir</span></p>
+        <div className="candle-legend" aria-label="Keterangan project candle">
+          <div><span className="age-gradient" aria-hidden="true" /><p><strong>Warna umur bergerak bertahap</strong><small>Hijau: baru · kuning/oranye: menua · merah: 75+ hari</small></p></div>
+          <div><span className="activity-key" aria-hidden="true" /><p><strong>Garis putih = rentang transaksi</strong><small>Titik bawah: transaksi pertama · titik atas: transaksi terakhir</small></p></div>
+        </div>
         {pageCount > 1 && <nav aria-label={`Pagination chart ${portfolio}`}><button type="button" onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={page === 0} aria-label={`Halaman sebelumnya ${portfolio}`}><ArrowLeft size={15} /></button><span>{page + 1} / {pageCount}</span><button type="button" onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))} disabled={page === pageCount - 1} aria-label={`Halaman berikutnya ${portfolio}`}><ArrowRight size={15} /></button></nav>}
       </footer>
     </> : <p className="active-age-empty">Tidak ada proyek aktif pada unit ini.</p>}

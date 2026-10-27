@@ -50,11 +50,38 @@ function portfolioClass(value?: string | null) {
   return `portfolio-${(value ?? 'unmapped').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
 }
 
+function isoDate(date: Date) {
+  return date.toISOString().slice(0, 10)
+}
+
+export function buildCandleDemo(projects: ProjectSummary[], asOfValue?: string | null) {
+  const asOf = parseDate(asOfValue) ?? new Date()
+  const demoProjects = projects.filter((project) => project.lifecycle_status === 'active' && (project.portfolio === 'Hollawall' || project.portfolio === 'Texturin'))
+  let demoIndex = 0
+  return projects.map((project) => {
+    if (project.lifecycle_status !== 'active' || (project.portfolio !== 'Hollawall' && project.portfolio !== 'Texturin')) return project
+    const age = demoProjects.length <= 1 ? 21 : Math.round(3 + (demoIndex / (demoProjects.length - 1)) * 87)
+    demoIndex += 1
+    const started = new Date(asOf.getTime() - age * 86_400_000)
+    const firstActivity = new Date(started.getTime() + Math.max(1, Math.round(age * .16)) * 86_400_000)
+    const lastActivity = new Date(asOf.getTime() - Math.max(1, Math.round(age * .08)) * 86_400_000)
+    return {
+      ...project,
+      age_days: age,
+      started_on: isoDate(started),
+      first_activity_on: isoDate(firstActivity),
+      last_activity_on: isoDate(lastActivity),
+      health: age <= 14 ? 'healthy' : age <= 30 ? 'watch' : 'overdue',
+    } as ProjectSummary
+  })
+}
+
 export default function ProjectHealthBoard({ projects, asOf, onOpen }: { projects: ProjectSummary[]; asOf?: string | null; onOpen: (name: string) => void }) {
   const [filter, setFilter] = useState<Filter>('all')
   const [portfolio, setPortfolio] = useState<Portfolio>('all')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(0)
+  const [candleMode, setCandleMode] = useState<'demo' | 'actual'>('demo')
   const normalizedQuery = query.trim().toLocaleLowerCase('id-ID')
   const portfolioOptions = useMemo(() => Array.from(new Set(projects.map((project) => project.portfolio).filter(Boolean))) as Portfolio[], [projects])
   const filtered = useMemo(
@@ -85,6 +112,7 @@ export default function ProjectHealthBoard({ projects, asOf, onOpen }: { project
   const groupedVisible = portfolioOptions.map((name) => ({ name, projects: visible.filter((project) => project.portfolio === name) })).filter((group) => group.projects.length)
   const unmappedVisible = visible.filter((project) => !project.portfolio)
   const chartPortfolios = (portfolio === 'all' ? portfolioOptions : [portfolio]).filter((value) => value === 'Hollawall' || value === 'Texturin') as NonNullable<ProjectSummary['portfolio']>[]
+  const candleProjects = useMemo(() => candleMode === 'demo' ? buildCandleDemo(projects, asOf) : projects, [asOf, candleMode, projects])
 
   useEffect(() => setPage(0), [filter, normalizedQuery, portfolio])
   useEffect(() => { if (page >= pageCount) setPage(pageCount - 1) }, [page, pageCount])
@@ -123,7 +151,13 @@ export default function ProjectHealthBoard({ projects, asOf, onOpen }: { project
 
     </div>
 
-    {filter !== 'completed' && <ActiveProjectAgeChart projects={projects} portfolios={chartPortfolios} query={query} asOf={asOf} onOpen={onOpen} />}
+    {filter !== 'completed' && <>
+      <section className="candle-demo-control" aria-label="Sumber umur project candle">
+        <div><p>{candleMode === 'demo' ? 'SIMULASI UMUR' : 'DATA AKTUAL'}</p><strong>{candleMode === 'demo' ? 'Variasi warna untuk uji visual' : 'Umur proyek dari snapshot'}</strong><span>{candleMode === 'demo' ? 'Nama proyek dan tujuan klik tetap asli. Hanya umur, tanggal, serta rentang garis pada candle yang dibuat bervariasi.' : 'Candle memakai umur dan tanggal aktual. Proyek lama dapat terlihat dominan merah.'}</span></div>
+        <div role="group" aria-label="Pilih sumber umur candle"><button type="button" className={candleMode === 'demo' ? 'active' : ''} aria-pressed={candleMode === 'demo'} onClick={() => setCandleMode('demo')}>Demo variasi</button><button type="button" className={candleMode === 'actual' ? 'active' : ''} aria-pressed={candleMode === 'actual'} onClick={() => setCandleMode('actual')}>Data aktual</button></div>
+      </section>
+      <ActiveProjectAgeChart projects={candleProjects} portfolios={chartPortfolios} query={query} asOf={asOf} onOpen={onOpen} />
+    </>}
 
     <div className="project-ledger-filter-block">
       <p>FILTER DAFTAR PROYEK</p>
@@ -135,17 +169,18 @@ export default function ProjectHealthBoard({ projects, asOf, onOpen }: { project
     </div>
 
     {filtered.length ? <section className="project-ledger-results" aria-label="Daftar proyek per perusahaan">
-      <header><div><p className="eyebrow">DAFTAR PROYEK</p><h2>Proyek per unit usaha</h2></div><span>{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} dari {filtered.length.toLocaleString('id-ID')}</span></header>
+      <header><div><p className="eyebrow">DAFTAR PROYEK · DATA AKTUAL</p><h2>Proyek per unit usaha</h2><p>Klik satu baris untuk membuka transaksi proyek. Umur dihitung sejak marker Mulai; arus kas bersih adalah pemasukan dikurangi pengeluaran proyek.</p></div><span>{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} dari {filtered.length.toLocaleString('id-ID')}</span></header>
       <div className="portfolio-project-groups">
         {[...groupedVisible, ...(unmappedVisible.length ? [{ name: 'Belum dipetakan' as Portfolio, projects: unmappedVisible }] : [])].map((group) => {
           const identity = portfolioIdentity[group.name] ?? { mark: group.name.charAt(0), copy: 'Portfolio' }
           return <section className={`portfolio-project-group ${portfolioClass(group.name)}`} key={group.name}>
             <header><i>{identity.mark}</i><div><h3>{group.name}</h3><p>{identity.copy}</p></div><span>{group.projects.length} tampil</span></header>
+            <div className="project-ledger-column-head" aria-hidden="true"><span>Proyek &amp; aktivitas terakhir</span><span>Status umur</span><span>Umur berjalan</span><span>Arus kas bersih</span></div>
             <div className="project-ledger-rows">{group.projects.map((project) => {
               const health = projectHealth(project)
               const meta = healthMeta[health]
               return <button type="button" className={`project-ledger-row ${health}`} key={project.name} onClick={() => onOpen(project.name)} aria-label={`Buka transaksi proyek ${project.name}, ${meta.label}`}>
-                <span className="project-ledger-main"><strong>{project.name}</strong><small>{project.portfolio ?? 'Belum dipetakan'} · {project.transaction_count ?? 0} transaksi · aktivitas {dateLabel(project.last_activity_on)}</small></span>
+                <span className="project-ledger-main"><strong>{project.name}</strong><small>{project.portfolio ?? 'Belum dipetakan'} · {project.transaction_count ?? 0} transaksi · aktivitas terakhir {dateLabel(project.last_activity_on)}</small></span>
                 <span className={`health-label ${health}`}>{meta.label}</span>
                 <span className="project-ledger-age"><small>Umur</small><strong>{project.age_days === null || project.age_days === undefined ? '—' : `${project.age_days} hari`}</strong></span>
                 <span className={`project-ledger-money ${project.net_cashflow >= 0 ? 'positive' : 'negative'}`}><small>Arus kas</small><strong>{IDR.format(project.net_cashflow)}</strong></span>

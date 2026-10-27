@@ -1,0 +1,44 @@
+{
+  "version": "qa-candle-demo",
+  "meta": {
+    "as_of": "2026-10-21T12:00:00Z",
+    "data_through": "2026-10-21",
+    "freshness": "fresh",
+    "data_completeness": { "valid_rows": 10, "invalid_rows": 0, "completeness_pct": 100 }
+  },
+  "overview": {
+    "metrics": {
+      "cash_balance": 100000000,
+      "operating_inflow": 150000000,
+      "operating_outflow": 50000000,
+      "net_operating_cashflow": 100000000,
+      "open_internal_debt": 0,
+      "project_cashflow": 100000000
+    },
+    "counts": { "valid_rows": 10, "invalid_rows": 0 },
+    "labels": {
+      "cash_balance": "Saldo kas",
+      "operating_inflow": "Pemasukan operasional",
+      "operating_outflow": "Pengeluaran operasional",
+      "net_operating_cashflow": "Arus kas operasional bersih",
+      "open_internal_debt": "Hutang antar-dompet terbuka",
+      "project_cashflow": "Arus kas proyek bersih"
+    },
+    "drilldowns": {}
+  },
+  "wallets": [],
+  "transactions": [
+    { "id": 1, "source_key": "QA:1", "transaction_date": "2026-10-20", "transaction_type": "Pemasukan", "amount": 10000000, "wallet": "CV HB(101)", "company": "HOLLA", "project": "Cendana House", "notes": "Termin QA", "internal_movement": false },
+    { "id": 2, "source_key": "QA:2", "transaction_date": "2026-10-19", "transaction_type": "Pemasukan", "amount": 12000000, "wallet": "CV HB(101)", "company": "HOLLA", "project": "Teras Senja", "notes": "Termin QA", "internal_movement": false }
+  ],
+  "debts": [],
+  "quality_rows": [],
+  "cash_trend": [],
+  "project_summaries": [
+    { "name": "Cendana House", "portfolio": "Hollawall", "net_cashflow": 10000000, "transaction_count": 1, "first_activity_on": "2026-05-10", "last_activity_on": "2026-10-20", "started_on": "2026-05-01", "completed_on": null, "age_days": 173, "lifecycle_status": "active", "health": "overdue" },
+    { "name": "Teras Senja", "portfolio": "Hollawall", "net_cashflow": 12000000, "transaction_count": 1, "first_activity_on": "2026-04-10", "last_activity_on": "2026-10-19", "started_on": "2026-04-01", "completed_on": null, "age_days": 203, "lifecycle_status": "active", "health": "overdue" },
+    { "name": "Kemang Loft", "portfolio": "Hollawall", "net_cashflow": -3000000, "transaction_count": 2, "first_activity_on": "2026-03-10", "last_activity_on": "2026-10-18", "started_on": "2026-03-01", "completed_on": null, "age_days": 234, "lifecycle_status": "active", "health": "overdue" },
+    { "name": "Lobby Aruna", "portfolio": "Texturin", "net_cashflow": 9000000, "transaction_count": 2, "first_activity_on": "2026-02-10", "last_activity_on": "2026-10-17", "started_on": "2026-02-01", "completed_on": null, "age_days": 262, "lifecycle_status": "active", "health": "overdue" },
+    { "name": "Ruang Nusa", "portfolio": "Texturin", "net_cashflow": 6000000, "transaction_count": 1, "first_activity_on": "2026-01-10", "last_activity_on": "2026-10-16", "started_on": "2026-01-01", "completed_on": null, "age_days": 293, "lifecycle_status": "active", "health": "overdue" }
+  ]
+}
