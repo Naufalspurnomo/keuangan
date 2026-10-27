@@ -162,7 +162,7 @@ body,
 .sidebar nav { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 
 .topbar { height: 72px; padding: 0 30px; background: rgba(255,255,255,.96); border-color: var(--border-subtle); backdrop-filter: none; }
-.breadcrumbs span { color: var(--holla-cyan); font-weight: 700; }
+.breadcrumbs span { color: #0f7f8b; font-weight: 700; }
 .breadcrumbs b { color: var(--holla-orange); }
 .breadcrumbs strong { color: var(--text); }
 .mobile-header-logo { display: none; width: 40px; height: 40px; object-fit: contain; }

@@ -51,17 +51,27 @@ function portfolioClass(value?: string | null) {
 }
 
 function isoDate(date: Date) {
-  return date.toISOString().slice(0, 10)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 export function buildCandleDemo(projects: ProjectSummary[], asOfValue?: string | null) {
   const asOf = parseDate(asOfValue) ?? new Date()
-  const demoProjects = projects.filter((project) => project.lifecycle_status === 'active' && (project.portfolio === 'Hollawall' || project.portfolio === 'Texturin'))
-  let demoIndex = 0
+  const demoCounts = new Map<string, number>()
+  const demoIndexes = new Map<string, number>()
+  projects.forEach((project) => {
+    if (project.lifecycle_status === 'active' && (project.portfolio === 'Hollawall' || project.portfolio === 'Texturin')) {
+      demoCounts.set(project.portfolio, (demoCounts.get(project.portfolio) ?? 0) + 1)
+    }
+  })
   return projects.map((project) => {
     if (project.lifecycle_status !== 'active' || (project.portfolio !== 'Hollawall' && project.portfolio !== 'Texturin')) return project
-    const age = demoProjects.length <= 1 ? 21 : Math.round(3 + (demoIndex / (demoProjects.length - 1)) * 87)
-    demoIndex += 1
+    const demoIndex = demoIndexes.get(project.portfolio) ?? 0
+    const demoCount = demoCounts.get(project.portfolio) ?? 1
+    const age = demoCount <= 1 ? 21 : Math.round(3 + (demoIndex / (demoCount - 1)) * 87)
+    demoIndexes.set(project.portfolio, demoIndex + 1)
     const started = new Date(asOf.getTime() - age * 86_400_000)
     const firstActivity = new Date(started.getTime() + Math.max(1, Math.round(age * .16)) * 86_400_000)
     const lastActivity = new Date(asOf.getTime() - Math.max(1, Math.round(age * .08)) * 86_400_000)

@@ -113,11 +113,19 @@ function ActiveCalendarSection({ portfolio, projects, asOf, onOpen }: { portfoli
   useEffect(() => setPage(0), [portfolio, projects, asOf])
   useEffect(() => { if (page >= pageCount) setPage(pageCount - 1) }, [page, pageCount])
   useEffect(() => {
-    if (!viewportRef.current) return
-    viewportRef.current.scrollLeft = 0
-    viewportRef.current.scrollTop = 0
+    const viewport = viewportRef.current
+    if (!viewport) return
+    viewport.scrollLeft = 0
+    viewport.scrollTop = 0
     const frame = requestAnimationFrame(syncPanCue)
-    return () => cancelAnimationFrame(frame)
+    window.addEventListener('resize', syncPanCue)
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(syncPanCue)
+    observer?.observe(viewport)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('resize', syncPanCue)
+      observer?.disconnect()
+    }
   }, [page, visible.length])
 
   const startPan = (event: ReactPointerEvent<HTMLDivElement>) => {

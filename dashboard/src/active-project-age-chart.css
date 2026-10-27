@@ -162,12 +162,13 @@
   font-weight: 700;
 }
 
-.active-calendar-frame { position: relative; min-width: 0; }
+.active-calendar-frame { position: relative; min-width: 0; box-sizing: border-box; }
+.active-calendar-frame.has-more-right { padding-right: 54px; }
 .active-calendar-frame.has-more-right::after {
   content: '';
   width: 54px;
   position: absolute;
-  inset: 0 0 12px auto;
+  inset: 0 54px 12px auto;
   z-index: 7;
   background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--surface) 94%, transparent));
   pointer-events: none;

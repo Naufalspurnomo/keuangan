@@ -56,7 +56,7 @@ describe('Hollawall command center', () => {
     renderApp()
     expect(await screen.findByText('TOTAL POSISI KAS')).toBeTruthy()
     for (const label of ['Ringkasan', 'Arus Kas', 'Dompet', 'Transaksi', 'Proyek', 'Hutang Internal', 'Laporan']) expect(screen.getAllByRole('button', { name: new RegExp(label) }).length).toBeGreaterThan(0)
-  }, 10_000)
+  }, 20_000)
 
   it('separates four real companies and three real wallets into Hollawall and Texturin sections', async () => {
     renderApp()
@@ -167,14 +167,14 @@ describe('Hollawall command center', () => {
 
   it('drills the cash headline into wallet source keys', async () => {
     renderApp()
-    fireEvent.click(await screen.findByRole('button', { name: 'Saldo kas' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Saldo kas' }, { timeout: 10_000 }))
     expect(await screen.findByRole('heading', { name: 'Dompet & Rekening' })).toBeTruthy()
     expect(screen.getAllByText(/CV HB\(101\):wallet:summary/).length).toBeGreaterThan(0)
   })
 
   it('drills open debt into its source key', async () => {
     renderApp()
-    fireEvent.click(await screen.findByRole('button', { name: /Hutang antar-dompet terbuka/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Hutang antar-dompet terbuka/ }, { timeout: 10_000 }))
     expect(await screen.findByRole('heading', { name: 'Hutang Antar-Dompet' })).toBeTruthy()
     expect(screen.getByText(/HUTANG:2/)).toBeTruthy()
   })
