@@ -25,7 +25,7 @@ import ProjectHealthBoard from './ProjectHealthBoard'
 import { loadSnapshot } from './snapshot'
 import type { DebtSnapshot, ProjectSummary, WalletSnapshot } from './snapshot'
 import { downloadTransactionsCsv, filterTransactions } from './transactions'
-import type { TransactionTypeFilter } from './transactions'
+import type { ProjectTransactionTarget, TransactionTypeFilter } from './transactions'
 import type { DashboardMeta, Overview, QualityRow, Transaction } from './types'
 import BusinessSectionReport from './BusinessSectionReport'
 import { CashflowWorkspace, WalletWorkspace } from './FinancialOperationsWorkspace'
@@ -192,12 +192,13 @@ function TransactionTable({ rows, compact = false }: { rows: Transaction[]; comp
   return <div className="table-wrap"><table className="transaction-table"><thead><tr><th>Tanggal</th><th>Keterangan</th><th>Proyek</th><th>Dompet</th><th>Jenis</th><th className="number">Jumlah</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td data-label="Tanggal">{new Date(row.transaction_date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}</td><td data-label="Keterangan"><strong>{row.notes || 'Transaksi operasional'}</strong>{!compact && <small>{row.source_key ?? `ID #${row.id}`}</small>}</td><td data-label="Proyek">{row.project}</td><td data-label="Dompet"><span className="wallet-chip">{row.wallet}</span></td><td data-label="Jenis"><span className={`type-chip ${row.transaction_type === 'Pemasukan' ? 'income' : 'expense'}`}>{row.transaction_type === 'Pemasukan' ? <ArrowDownRight size={13} /> : <ArrowUpRight size={13} />}{row.transaction_type}</span></td><td data-label="Jumlah" className={`number amount ${row.transaction_type === 'Pemasukan' ? 'positive' : ''}`}>{row.transaction_type === 'Pemasukan' ? '+' : '−'}{formatAmount(row.amount)}</td></tr>)}</tbody></table></div>
 }
 
-function DetailPage({ active, transactions, overview, wallets, debts, projects, dataThrough, completeness, qualityRows, initialFilter, initialQuery, onOpenProject }: { active: string; transactions: Transaction[]; overview: Overview; wallets: WalletSnapshot[]; debts: DebtSnapshot[]; projects: ProjectSummary[]; dataThrough?: string | null; completeness: number; qualityRows: QualityRow[]; initialFilter: TransactionTypeFilter; initialQuery: string; onOpenProject: (name: string) => void }) {
+function DetailPage({ active, transactions, overview, wallets, debts, projects, dataThrough, completeness, qualityRows, initialFilter, initialQuery, projectTarget, onOpenProject }: { active: string; transactions: Transaction[]; overview: Overview; wallets: WalletSnapshot[]; debts: DebtSnapshot[]; projects: ProjectSummary[]; dataThrough?: string | null; completeness: number; qualityRows: QualityRow[]; initialFilter: TransactionTypeFilter; initialQuery: string; projectTarget?: ProjectTransactionTarget | null; onOpenProject: (name: string, portfolio?: string) => void }) {
   const [query, setQuery] = useState(initialQuery)
   const [typeFilter, setTypeFilter] = useState<TransactionTypeFilter>(initialFilter)
   useEffect(() => setTypeFilter(initialFilter), [initialFilter])
   useEffect(() => setQuery(initialQuery), [initialQuery])
-  const filteredTransactions = filterTransactions(transactions, query, typeFilter)
+  const exactProjectTarget = query.trim().toLocaleLowerCase('id-ID') === initialQuery.trim().toLocaleLowerCase('id-ID') ? projectTarget : null
+  const filteredTransactions = filterTransactions(transactions, query, typeFilter, exactProjectTarget)
   if (active === 'cashflow') return <CashflowWorkspace transactions={transactions} dataThrough={dataThrough} onOpenProject={onOpenProject} />
   if (active === 'wallets') return <WalletWorkspace transactions={transactions} wallets={wallets} dataThrough={dataThrough} onOpenProject={onOpenProject} />
   if (active === 'projects') return <ProjectHealthBoard projects={projects} asOf={dataThrough} onOpen={onOpenProject} />
@@ -230,6 +231,7 @@ function Dashboard() {
   const [active, setActive] = useState('overview')
   const [transactionFilter, setTransactionFilter] = useState<TransactionTypeFilter>('all')
   const [selectedProject, setSelectedProject] = useState('')
+  const [selectedProjectTarget, setSelectedProjectTarget] = useState<ProjectTransactionTarget | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [theme, setTheme] = useState(() => localStorage.getItem('hollawall-theme') || 'light')
   const queryEnabled = !PREVIEW_MODE || SNAPSHOT_MODE
@@ -265,11 +267,13 @@ function Dashboard() {
     : 'SNAPSHOT PRODUKSI'
   const navigate = (value: string) => {
     setSelectedProject('')
+    setSelectedProjectTarget(null)
     setTransactionFilter('all')
     setActive(value)
   }
-  const openProject = (name: string) => {
+  const openProject = (name: string, portfolio?: string) => {
     setSelectedProject(name)
+    setSelectedProjectTarget({ name, portfolio })
     setTransactionFilter('projects')
     setActive('transactions')
   }
@@ -279,7 +283,7 @@ function Dashboard() {
       ? <section className="inline-state error-state" role="alert"><div><p className="eyebrow">SUMBER DATA TERGANGGU</p><h2>Dashboard belum bisa mengambil data</h2><p>Ini bukan masalah HP atau login. Coba lagi—halaman tidak akan mengunci layar.</p></div><button className="primary-button" onClick={() => snapshotQuery.refetch()}>Coba lagi</button></section>
       : active === 'overview'
         ? <OverviewPage overview={overview} transactions={transactions} meta={meta} projects={projects} walletSnapshots={wallets} setActive={setActive} setTransactionFilter={setTransactionFilter} />
-        : <DetailPage active={active} transactions={transactions} overview={overview} wallets={wallets} debts={debts} projects={projects} dataThrough={meta.data_through} completeness={meta.data_completeness.completeness_pct} qualityRows={qualityRows} initialFilter={transactionFilter} initialQuery={selectedProject} onOpenProject={openProject} />
+        : <DetailPage active={active} transactions={transactions} overview={overview} wallets={wallets} debts={debts} projects={projects} dataThrough={meta.data_through} completeness={meta.data_completeness.completeness_pct} qualityRows={qualityRows} initialFilter={transactionFilter} initialQuery={selectedProject} projectTarget={selectedProjectTarget} onOpenProject={openProject} />
 
   return <div className="app-shell">
     <Sidebar active={active} setActive={navigate} open={menuOpen} setOpen={setMenuOpen} transactionCount={transactions.length} />

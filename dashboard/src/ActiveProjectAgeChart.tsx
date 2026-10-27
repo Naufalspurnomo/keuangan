@@ -68,6 +68,7 @@ function calendarModel(projects: ProjectSummary[], asOfValue?: string | null) {
   const markers: Array<{ key: string; label: string; position: number }> = [{ key: `current-${asOf.toISOString()}`, label: snapshotLabel(asOf), position: 0 }]
 
   for (let cursor = monthStart(asOf); cursor >= windowStart; cursor = previousMonth(cursor)) {
+    if (cursor.getTime() === asOf.getTime()) continue
     markers.push({
       key: cursor.toISOString(),
       label: monthLabel(cursor),
@@ -92,12 +93,13 @@ function calendarModel(projects: ProjectSummary[], asOfValue?: string | null) {
   }
 }
 
-function ActiveCalendarSection({ portfolio, projects, asOf, onOpen }: { portfolio: Portfolio; projects: ProjectSummary[]; asOf?: string | null; onOpen: (name: string) => void }) {
+function ActiveCalendarSection({ portfolio, projects, asOf, onOpen }: { portfolio: Portfolio; projects: ProjectSummary[]; asOf?: string | null; onOpen: (name: string, portfolio?: string) => void }) {
   const [page, setPage] = useState(0)
   const [canScrollRight, setCanScrollRight] = useState(false)
   const viewportRef = useRef<HTMLDivElement>(null)
   const drag = useRef({ active: false, moved: false, x: 0, y: 0, left: 0, top: 0 })
   const ordered = useMemo(() => [...projects].sort((left, right) => (left.age_days ?? 0) - (right.age_days ?? 0) || left.name.localeCompare(right.name, 'id-ID')), [projects])
+  const projectKey = projects.map((project) => `${project.name}:${project.started_on ?? ''}:${project.age_days ?? ''}`).join('|')
   const pageCount = Math.max(1, Math.ceil(ordered.length / PAGE_SIZE))
   const visible = ordered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
   const calendar = calendarModel(visible, asOf)
@@ -110,7 +112,7 @@ function ActiveCalendarSection({ portfolio, projects, asOf, onOpen }: { portfoli
     setCanScrollRight(viewport.scrollLeft + viewport.clientWidth < viewport.scrollWidth - 12)
   }
 
-  useEffect(() => setPage(0), [portfolio, projects, asOf])
+  useEffect(() => setPage(0), [portfolio, projectKey, asOf])
   useEffect(() => { if (page >= pageCount) setPage(pageCount - 1) }, [page, pageCount])
   useEffect(() => {
     const viewport = viewportRef.current
@@ -175,7 +177,11 @@ function ActiveCalendarSection({ portfolio, projects, asOf, onOpen }: { portfoli
                 '--activity-top': `${Math.min(activityStart, activityEnd)}%`,
                 '--activity-span': `${Math.max(2, Math.abs(activityEnd - activityStart))}%`,
               } as CSSProperties
-              return <button type="button" key={project.name} data-project-candle={project.name} className="active-calendar-bar" style={{ '--project-calendar-span': calendar.spanFor(project.started_on), ...candleTone(age) } as CSSProperties} onPointerDown={() => { drag.current.moved = false }} onClick={() => { if (!drag.current.moved) onOpen(project.name) }} aria-label={`Buka detail proyek ${project.name}, mulai ${shortDate(project.started_on)}, umur ${age} hari`} title={`Klik untuk buka ${project.name} · mulai ${shortDate(project.started_on)} · umur ${age} hari`}>
+              const activityDescription = `transaksi pertama ${shortDate(project.first_activity_on)}, transaksi terakhir ${shortDate(project.last_activity_on)}`
+              return <button type="button" key={`${portfolio}-${project.name}`} data-project-candle={project.name} className="active-calendar-bar" style={{ '--project-calendar-span': calendar.spanFor(project.started_on), ...candleTone(age) } as CSSProperties} onPointerDown={() => { drag.current.moved = false }} onClick={(event) => {
+                if (event.detail === 0 || !drag.current.moved) onOpen(project.name, project.portfolio)
+                drag.current.moved = false
+              }} aria-label={`Buka detail proyek ${project.name}, mulai ${shortDate(project.started_on)}, umur ${age} hari, ${activityDescription}`} title={`Klik untuk buka ${project.name} · mulai ${shortDate(project.started_on)} · umur ${age} hari · ${activityDescription}`}>
                 {(project.first_activity_on || project.last_activity_on) && <span className="active-calendar-activity" style={activityStyle} title={`Rentang transaksi: pertama ${shortDate(project.first_activity_on)}, terakhir ${shortDate(project.last_activity_on)}`} />}
                 <span className="active-calendar-fill">
                   <small>{age} hari</small>
@@ -204,7 +210,7 @@ function ActiveCalendarSection({ portfolio, projects, asOf, onOpen }: { portfoli
   </section>
 }
 
-export default function ActiveProjectAgeChart({ projects, portfolios, query, asOf, onOpen }: { projects: ProjectSummary[]; portfolios: Portfolio[]; query: string; asOf?: string | null; onOpen: (name: string) => void }) {
+export default function ActiveProjectAgeChart({ projects, portfolios, query, asOf, onOpen }: { projects: ProjectSummary[]; portfolios: Portfolio[]; query: string; asOf?: string | null; onOpen: (name: string, portfolio?: string) => void }) {
   const normalizedQuery = query.trim().toLocaleLowerCase('id-ID')
   const chartProjects = projects.filter((project) => project.lifecycle_status === 'active'
     && project.started_on

@@ -26,7 +26,15 @@ const portfolioIdentity: Record<string, { mark: string; copy: string }> = {
 }
 
 function parseDate(value?: string | null) {
-  return value ? new Date(`${value}T00:00:00`) : null
+  if (!value) return null
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!match) return null
+  const [, yearText, monthText, dayText] = match
+  const year = Number(yearText)
+  const month = Number(monthText) - 1
+  const day = Number(dayText)
+  const date = new Date(year, month, day)
+  return date.getFullYear() === year && date.getMonth() === month && date.getDate() === day ? date : null
 }
 
 function dateLabel(value?: string | null) {
@@ -86,12 +94,12 @@ export function buildCandleDemo(projects: ProjectSummary[], asOfValue?: string |
   })
 }
 
-export default function ProjectHealthBoard({ projects, asOf, onOpen }: { projects: ProjectSummary[]; asOf?: string | null; onOpen: (name: string) => void }) {
+export default function ProjectHealthBoard({ projects, asOf, onOpen }: { projects: ProjectSummary[]; asOf?: string | null; onOpen: (name: string, portfolio?: string) => void }) {
   const [filter, setFilter] = useState<Filter>('all')
   const [portfolio, setPortfolio] = useState<Portfolio>('all')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(0)
-  const [candleMode, setCandleMode] = useState<'demo' | 'actual'>('demo')
+  const [candleMode, setCandleMode] = useState<'demo' | 'actual'>(() => import.meta.env.VITE_SNAPSHOT_PREVIEW === 'true' ? 'demo' : 'actual')
   const normalizedQuery = query.trim().toLocaleLowerCase('id-ID')
   const portfolioOptions = useMemo(() => Array.from(new Set(projects.map((project) => project.portfolio).filter(Boolean))) as Portfolio[], [projects])
   const filtered = useMemo(
@@ -136,6 +144,7 @@ export default function ProjectHealthBoard({ projects, asOf, onOpen }: { project
           { key: 'watch', count: counts.watch, label: 'Pantau' },
           { key: 'overdue', count: counts.overdue, label: 'Lewat 30 hari' },
           { key: 'completed', count: counts.completed, label: 'Selesai' },
+          { key: 'unmarked', count: counts.unmarked, label: 'Belum ditandai' },
         ].filter((item) => item.count > 0).map((item) => <span className={item.key} key={item.key}><strong>{item.count}</strong>{item.label}</span>)}
       </div>
     </header>
@@ -189,7 +198,8 @@ export default function ProjectHealthBoard({ projects, asOf, onOpen }: { project
             <div className="project-ledger-rows">{group.projects.map((project) => {
               const health = projectHealth(project)
               const meta = healthMeta[health]
-              return <button type="button" className={`project-ledger-row ${health}`} key={project.name} onClick={() => onOpen(project.name)} aria-label={`Buka transaksi proyek ${project.name}, ${meta.label}`}>
+              const accessibleDescription = `${project.portfolio ?? 'Belum dipetakan'}, ${project.transaction_count ?? 0} transaksi, aktivitas terakhir ${dateLabel(project.last_activity_on)}, ${meta.label}, umur ${project.age_days ?? 'belum tersedia'} hari, arus kas bersih ${IDR.format(project.net_cashflow)}`
+              return <button type="button" className={`project-ledger-row ${health}`} key={`${project.portfolio ?? 'unmapped'}-${project.name}`} onClick={() => onOpen(project.name, project.portfolio)} aria-label={`Buka transaksi proyek ${project.name}, ${accessibleDescription}`}>
                 <span className="project-ledger-main"><strong>{project.name}</strong><small>{project.portfolio ?? 'Belum dipetakan'} · {project.transaction_count ?? 0} transaksi · aktivitas terakhir {dateLabel(project.last_activity_on)}</small></span>
                 <span className={`health-label ${health}`}>{meta.label}</span>
                 <span className="project-ledger-age"><small>Umur</small><strong>{project.age_days === null || project.age_days === undefined ? '—' : `${project.age_days} hari`}</strong></span>

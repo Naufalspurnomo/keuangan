@@ -72,11 +72,16 @@ def dense_snapshot() -> dict[str, Any]:
     return data
 
 
-def open_projects(page: Page) -> None:
+def open_projects(page: Page, demo: bool = True) -> None:
     if page.get_by_role("button", name="Buka navigasi").is_visible():
         page.get_by_role("button", name="Buka navigasi").click()
     page.get_by_role("button", name="Proyek", exact=True).click()
     page.get_by_role("heading", name="Timeline kalender proyek aktif").wait_for()
+    if demo:
+        demo_button = page.get_by_role("button", name="Demo variasi", exact=True)
+        if demo_button.get_attribute("aria-pressed") != "true":
+            demo_button.click()
+            page.get_by_text("Variasi warna untuk uji visual", exact=True).wait_for()
 
 
 def assert_no_document_overflow(page: Page, label: str) -> None:

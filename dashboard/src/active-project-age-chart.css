@@ -57,6 +57,26 @@
 }
 .active-age-section.portfolio-texturin { --unit-color: var(--chart-secondary); }
 
+@supports not (color: color-mix(in srgb, white 50%, black)) {
+  .active-age-section { --unit-soft: var(--surface-raised); }
+  .active-age-identity > i,
+  .active-calendar-toolbar span,
+  .active-calendar-pan-cue { border-color: var(--unit-color); background: var(--surface-raised); }
+  .active-calendar-frame.has-more-right::after { background: linear-gradient(90deg, transparent, var(--surface)); }
+  .active-calendar-pan-cue { box-shadow: 0 8px 24px rgba(0,0,0,.14); }
+  .active-calendar { background-image: none; }
+  .active-calendar-project-heads,
+  .active-calendar-axis b,
+  .active-calendar-start small { background: var(--surface); }
+  .active-calendar-axis i { background: var(--border-subtle); }
+  .active-calendar-axis > span:first-child i { background: var(--unit-color); }
+  .active-calendar-fill { border-color: var(--border); box-shadow: 0 6px 16px rgba(0,0,0,.12); }
+  .active-calendar-activity,
+  .active-calendar-activity::before,
+  .active-calendar-activity::after,
+  .active-calendar-start i { border-color: var(--border); box-shadow: none; }
+}
+
 .active-age-section > header {
   min-height: 82px;
   display: flex;

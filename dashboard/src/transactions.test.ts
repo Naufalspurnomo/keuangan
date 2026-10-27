@@ -23,6 +23,18 @@ describe('transaction tools', () => {
     expect(rows).toEqual(original)
   })
 
+  it('opens one exact project identity instead of substring matches', () => {
+    const ambiguous: Transaction[] = [
+      { ...rows[0], id: 10, project: 'Villa A', company: 'HOLLA', notes: 'exact Hollawall' },
+      { ...rows[0], id: 11, project: 'Villa AB', company: 'HOLLA', notes: 'prefix collision' },
+      { ...rows[0], id: 12, project: 'Villa A', company: 'TEXTURIN-Surabaya', wallet: 'TX SBY(216)', notes: 'same name other portfolio' },
+      { ...rows[0], id: 13, project: 'Lainnya', company: 'HOLLA', notes: 'mentions Villa A' },
+    ]
+
+    expect(filterTransactions(ambiguous, 'Villa A', 'projects', { name: 'Villa A', portfolio: 'Hollawall' }).map((row) => row.id)).toEqual([10])
+    expect(filterTransactions(ambiguous, 'Villa A', 'projects', { name: 'Villa A', portfolio: 'Texturin' }).map((row) => row.id)).toEqual([12])
+  })
+
   it('exports traceable semicolon CSV with spreadsheet-injection protection', () => {
     const malicious = [{ ...rows[0], notes: '=HYPERLINK("https://evil.invalid")' }]
     const csv = transactionsToCsv(malicious)

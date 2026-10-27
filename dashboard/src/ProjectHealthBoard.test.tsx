@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { cleanup, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { buildCandleDemo } from './ProjectHealthBoard'
+import ProjectHealthBoard, { buildCandleDemo } from './ProjectHealthBoard'
 import type { ProjectSummary } from './snapshot'
 
 const project = (name: string, portfolio: 'Hollawall' | 'Texturin'): ProjectSummary => ({
@@ -14,6 +15,8 @@ const project = (name: string, portfolio: 'Hollawall' | 'Texturin'): ProjectSumm
   first_activity_on: '2026-01-02',
   last_activity_on: '2026-10-20',
 })
+
+afterEach(cleanup)
 
 describe('project candle demo data', () => {
   it('spreads every portfolio independently from green through red', () => {
@@ -31,5 +34,25 @@ describe('project candle demo data', () => {
     expect(result.age_days).toBe(21)
     expect(result.started_on).toBe('2026-09-30')
     expect(result.last_activity_on).toBe('2026-10-19')
+  })
+
+  it('survives malformed snapshot dates and accepts ISO timestamps', () => {
+    expect(() => buildCandleDemo([project('Malformed', 'Hollawall')], '2026-99-99')).not.toThrow()
+    render(<ProjectHealthBoard projects={[{ ...project('Timestamp', 'Hollawall'), last_activity_on: '2026-10-20T12:30:00Z' }]} asOf="2026-10-21" onOpen={vi.fn()} />)
+    expect(screen.queryByText(/Invalid Date/)).toBeNull()
+    expect(screen.getByText(/aktivitas terakhir 20 Okt 2026/)).toBeTruthy()
+  })
+
+  it('defaults to actual snapshot data outside explicit snapshot QA builds', () => {
+    render(<ProjectHealthBoard projects={[project('Actual Age', 'Hollawall')]} asOf="2026-10-21" onOpen={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Data aktual' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getAllByText('200 hari').length).toBeGreaterThan(0)
+  })
+
+  it('reports unmarked projects and exposes complete row context', () => {
+    const unmarked = { ...project('Tanpa Marker', 'Hollawall'), health: 'unmarked' as const, lifecycle_status: 'unmarked' as const, age_days: null }
+    render(<ProjectHealthBoard projects={[unmarked]} asOf="2026-10-21" onOpen={vi.fn()} />)
+    expect(screen.getAllByText('Belum ditandai').length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /Buka transaksi proyek Tanpa Marker, Hollawall, 0 transaksi/ })).toBeTruthy()
   })
 })
