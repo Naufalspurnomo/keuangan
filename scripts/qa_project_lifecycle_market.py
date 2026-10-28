@@ -16,6 +16,8 @@ OUT.mkdir(parents=True, exist_ok=True)
 viewports = (
     ("desktop-1440", 1440, 900),
     ("laptop-1024", 1024, 768),
+    ("desktop-boundary-901", 901, 700),
+    ("mobile-boundary-900", 900, 700),
     ("mobile-390", 390, 844),
 )
 results = []
@@ -32,7 +34,7 @@ with sync_playwright() as p:
         page.on("requestfailed", lambda request: request_failures.append(f"{request.method} {request.url}: {request.failure}"))
 
         page.goto(URL, wait_until="networkidle")
-        if width <= 760:
+        if width <= 900:
             page.get_by_role("button", name="Buka navigasi").click()
         page.get_by_role("button", name="Proyek", exact=True).click()
         page.get_by_role("heading", name="Umur dan status proyek").wait_for()
@@ -67,6 +69,19 @@ with sync_playwright() as p:
         assert before_zoom != after_zoom, (name, "zoom did not change geometry")
         assert page.get_by_text("Zoom 120%", exact=True).is_visible(), (name, "zoom readout")
 
+        # Wheel over a project column must zoom without native vertical scrolling on pointer-class layouts.
+        if width > 580:
+            wheel_box = viewport.bounding_box()
+            assert wheel_box
+            viewport.evaluate("el => { el.scrollTop = Math.min(50, el.scrollHeight - el.clientHeight) }")
+            wheel_top = viewport.evaluate("el => el.scrollTop")
+            visible_wheel_y = min(wheel_box["y"] + min(160, wheel_box["height"] * .45), height - 20)
+            page.mouse.move(wheel_box["x"] + wheel_box["width"] * .65, visible_wheel_y)
+            page.mouse.wheel(0, 100)
+            page.wait_for_timeout(100)
+            assert viewport.evaluate("el => el.scrollTop") == wheel_top, (name, "wheel changed vertical position")
+            assert not page.get_by_text("Zoom 120%", exact=True).is_visible(), (name, "wheel did not zoom")
+
         # Panning must work in both axes once zoom creates overflow.
         dimensions = viewport.evaluate("el => ({left: el.scrollLeft, top: el.scrollTop, maxX: el.scrollWidth - el.clientWidth, maxY: el.scrollHeight - el.clientHeight})")
         viewport.evaluate("el => { el.scrollLeft = Math.min(80, el.scrollWidth - el.clientWidth); el.scrollTop = Math.min(60, el.scrollHeight - el.clientHeight); }")
@@ -78,8 +93,22 @@ with sync_playwright() as p:
         page.mouse.up()
         page.wait_for_timeout(80)
         after_pan = viewport.evaluate("el => ({left: el.scrollLeft, top: el.scrollTop})")
-        assert dimensions["maxX"] > 0 and dimensions["maxY"] > 0, (name, dimensions)
+        assert dimensions["maxX"] >= 0 and dimensions["maxY"] > 0, (name, dimensions)
         assert after_pan["left"] >= 0 and after_pan["top"] >= 0, (name, after_pan)
+        horizontal_pan = "PASS" if dimensions["maxX"] > 0 else "FIT"
+        if dimensions["maxX"] > 0:
+            page.get_by_role("button", name="Kembali ke proyek terbaru Holla").click()
+            page.wait_for_timeout(80)
+            candle_box = canvases.first.locator("[data-project-candle]").last.bounding_box()
+            assert candle_box
+            before_candle_pan = viewport.evaluate("el => el.scrollLeft")
+            page.mouse.move(candle_box["x"] + candle_box["width"] / 2, candle_box["y"] + min(160, candle_box["height"] / 2))
+            page.mouse.down()
+            page.mouse.move(candle_box["x"] + candle_box["width"] / 2 + 45, candle_box["y"] + min(160, candle_box["height"] / 2), steps=5)
+            page.mouse.up()
+            page.wait_for_timeout(80)
+            assert viewport.evaluate("el => el.scrollLeft") != before_candle_pan, (name, "candle drag did not pan")
+            assert page.get_by_role("heading", name="Umur dan status proyek").is_visible(), (name, "candle drag opened project")
 
         page.get_by_role("button", name="Kembali ke proyek terbaru Holla").click()
         page.wait_for_timeout(80)
@@ -111,7 +140,7 @@ with sync_playwright() as p:
             "summaries": summaries,
             "month_markers": page.locator(".project-market-month").count(),
             "zoom": "PASS",
-            "pan_x_y": "PASS",
+            "pan_x_y": horizontal_pan,
             "latest": "PASS",
             "reset": "PASS",
             "document_overflow": False,

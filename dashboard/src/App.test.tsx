@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 import App from './App'
 
@@ -186,9 +186,11 @@ describe('Hollawall demo finance workspace', () => {
     expect(within(preview).getByText('3', { selector: '.preview-metrics strong' })).toBeTruthy()
   })
 
-  it('removes closed mobile navigation from tab order and restores menu focus', async () => {
-    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+  it('keeps the mobile navigation state aligned with the 900px CSS breakpoint', async () => {
+    const matchMedia = vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    vi.stubGlobal('matchMedia', matchMedia)
     renderApp()
+    expect(matchMedia).toHaveBeenCalledWith('(max-width: 900px)')
     const aside = document.querySelector('aside.sidebar')!
     expect(aside.getAttribute('aria-hidden')).toBe('true')
     const hiddenButtons = within(aside as HTMLElement).getAllByRole('button', { hidden: true })
@@ -198,10 +200,35 @@ describe('Hollawall demo finance workspace', () => {
     expect(open.getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(open)
     expect(open.getAttribute('aria-expanded')).toBe('true')
+    expect(document.querySelector('main')?.hasAttribute('inert')).toBe(true)
     await waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toBe('Tutup navigasi'))
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(open.getAttribute('aria-expanded')).toBe('false')
+    expect(document.querySelector('main')?.hasAttribute('inert')).toBe(false)
     await waitFor(() => expect(document.activeElement).toBe(open))
+  })
+
+  it('reconciles navigation focus and open state across breakpoint changes', async () => {
+    let mobile = false
+    let navigationListener: (() => void) | undefined
+    const matchMedia = vi.fn((query: string) => ({
+      get matches() { return query === '(max-width: 900px)' ? mobile : false },
+      addEventListener: (_type: string, listener: () => void) => { if (query === '(max-width: 900px)') navigationListener = listener },
+      removeEventListener: vi.fn(),
+    }))
+    vi.stubGlobal('matchMedia', matchMedia)
+    renderApp()
+    const activeNavigation = within(document.querySelector('aside.sidebar') as HTMLElement).getByRole('button', { name: 'Ringkasan' })
+    activeNavigation.focus()
+    mobile = true
+    act(() => navigationListener?.())
+    await waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toBe('Buka navigasi'))
+    fireEvent.click(screen.getByRole('button', { name: 'Buka navigasi' }))
+    await waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toBe('Tutup navigasi'))
+    mobile = false
+    act(() => navigationListener?.())
+    await waitFor(() => expect(document.activeElement?.textContent).toContain('Ringkasan'))
+    expect(document.querySelector('aside.sidebar')?.classList.contains('is-open')).toBe(false)
   })
 
   it('persists theme choice and exposes contextual add actions', async () => {

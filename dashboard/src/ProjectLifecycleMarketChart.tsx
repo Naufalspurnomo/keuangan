@@ -5,7 +5,6 @@ import {
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent,
 } from 'react'
 import { ChevronsRight, Minus, Move, Plus, RotateCcw } from 'lucide-react'
 
@@ -143,11 +142,20 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, zoom, regi
     const frame = requestAnimationFrame(latest)
     return () => cancelAnimationFrame(frame)
   }, [company, ordered.length])
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      onZoom(zoom * (event.deltaY > 0 ? .9 : 1.1))
+    }
+    viewport.addEventListener('wheel', handleWheel, { passive: false })
+    return () => viewport.removeEventListener('wheel', handleWheel)
+  }, [onZoom, zoom])
 
   const startPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if ((event.target as HTMLElement).closest('button, a, input, select, textarea')) return
+    drag.current.moved = false
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
-    event.currentTarget.setPointerCapture(event.pointerId)
     if (pointers.current.size === 2) {
       const [first, second] = [...pointers.current.values()]
       pinchDistance.current = Math.hypot(second.x - first.x, second.y - first.y)
@@ -173,7 +181,10 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, zoom, regi
     if (!drag.current.active || drag.current.pointerId !== event.pointerId || !viewportRef.current) return
     const dx = event.clientX - drag.current.x
     const dy = event.clientY - drag.current.y
-    if (Math.abs(dx) + Math.abs(dy) > 5) drag.current.moved = true
+    if (Math.abs(dx) + Math.abs(dy) > 5) {
+      drag.current.moved = true
+      if (!event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.setPointerCapture(event.pointerId)
+    }
     const viewport = viewportRef.current
     viewport.scrollLeft = drag.current.left - dx
     const desiredTop = drag.current.top - dy
@@ -193,10 +204,6 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, zoom, regi
     viewportRef.current?.classList.remove('is-panning')
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   }
-  const wheelZoom = (event: ReactWheelEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    onZoom(zoom * (event.deltaY > 0 ? .9 : 1.1))
-  }
 
   return <section className={`project-market-canvas company-${company.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`} data-project-company={company} role="region" aria-label={`Chart lifecycle ${company}`}>
     <header>
@@ -204,7 +211,7 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, zoom, regi
       <div className="project-market-summary" aria-label={`Ringkasan ${company}`}><strong>{active} / {ordered.length}</strong><span>aktif / total {year}</span><em>{completed} selesai{planned ? ` · ${planned} rencana` : ''}</em></div>
     </header>
     <div className="project-market-toolbar"><span><Move size={13} /> Seret chart · scroll/pinch untuk zoom</span><button type="button" onClick={latest} aria-label={`Kembali ke proyek terbaru ${company}`}><ChevronsRight size={15} /> Terbaru</button></div>
-    <div ref={viewportRef} className="project-market-viewport" onScroll={(event) => syncVertical(company, event.currentTarget.scrollTop)} onWheel={wheelZoom} onPointerDown={startPointer} onPointerMove={movePointer} onPointerUp={stopPointer} onPointerCancel={stopPointer}>
+    <div ref={viewportRef} className="project-market-viewport" onScroll={(event) => syncVertical(company, event.currentTarget.scrollTop)} onPointerDown={startPointer} onPointerMove={movePointer} onPointerUp={stopPointer} onPointerCancel={stopPointer}>
       <div className="project-market-chart" style={{ '--market-width': `${chartWidth}px`, '--market-height': `${chartHeight}px`, '--market-column': `${BASE_COLUMN * zoom}px` } as CSSProperties}>
         <div className="project-market-axis" aria-hidden="true">
           {model.months.map((month) => <span className="project-market-month" key={month.key} style={{ '--month-position': `${month.position}%` } as CSSProperties}><b>{month.label}</b><i /></span>)}

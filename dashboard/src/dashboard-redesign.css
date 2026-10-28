@@ -95,8 +95,10 @@ html[data-theme='dark'] {
 .donut-legend span { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .donut-legend b { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
 .donut-legend small { color: var(--text-tertiary); font-size: 10px; min-width: 38px; text-align: right; font-variant-numeric: tabular-nums; }
-@media (max-width: 640px) {
+@media (max-width: 980px) {
   .donut-with-legend { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
   .donut-chart-figure { min-height: 160px; }
 }
 

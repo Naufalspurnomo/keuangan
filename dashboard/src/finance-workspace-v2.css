@@ -44,7 +44,7 @@
 .wallet-command article { padding: 20px; border-right: 1px solid var(--border-subtle); }
 .wallet-command article:last-child { border: 0; }
 .wallet-command article > span { display: flex; gap: 9px; align-items: center; color: var(--text); }
-.wallet-command article > b { display: block; margin: 20px 0 4px; font-size: 25px; font-variant-numeric: tabular-nums; color: var(--text); }
+.wallet-command article > b { display: block; margin: 20px 0 4px; font-size: clamp(18px, 1.8vw, 25px); font-variant-numeric: tabular-nums; color: var(--text); }
 .wallet-command article > small { color: var(--text-secondary); }
 .wallet-command article > i { height: 4px; display: block; margin-top: 16px; background: var(--surface-muted); }
 .wallet-command article > i em { display: block; height: 100%; background: var(--chart-primary); }

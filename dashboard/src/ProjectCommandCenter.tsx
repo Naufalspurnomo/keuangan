@@ -8,6 +8,14 @@ import ProjectLifecycleMarketChart from './ProjectLifecycleMarketChart'
 const PAGE_SIZE = 12
 const statusOrder: ProjectStatus[] = ['active', 'planned', 'completed']
 
+export function projectSnapshotYear(workspace: FinanceWorkspace) {
+  return Number(workspace.updated_at.slice(0, 4)) || new Date().getFullYear()
+}
+
+export function projectYearOptions(workspace: FinanceWorkspace) {
+  return [...new Set([projectSnapshotYear(workspace), ...workspace.projects.map(projectYear)])].sort((a, b) => a - b)
+}
+
 export function projectAsOf(year: number, now = new Date()) {
   const yearEnd = new Date(`${year}-12-31T23:59:59`)
   return new Date(Math.min(now.getTime(), yearEnd.getTime()))
@@ -20,8 +28,9 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onDelet
   onDelete: (project: FinanceProject) => void
   onOpen: (project: FinanceProject) => void
 }) {
-  const years = useMemo(() => [...new Set(workspace.projects.map(projectYear))].sort((a, b) => a - b), [workspace.projects])
-  const [year, setYear] = useState(() => years.at(-1) ?? new Date().getFullYear())
+  const snapshotYear = projectSnapshotYear(workspace)
+  const years = useMemo(() => projectYearOptions(workspace), [workspace])
+  const [year, setYear] = useState(snapshotYear)
   const [company, setCompany] = useState<'all' | CompanyId>('all')
   const [status, setStatus] = useState<'all' | ProjectStatus>('all')
   const [query, setQuery] = useState('')
@@ -37,6 +46,7 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onDelet
   const planned = filtered.filter((project) => project.status === 'planned').length
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   useEffect(() => { if (page >= pageCount) setPage(pageCount - 1) }, [page, pageCount])
+  useEffect(() => { if (!years.includes(year)) setYear(snapshotYear) }, [snapshotYear, year, years])
   const visible = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
   const yearIndex = years.indexOf(year)
   const changeYear = (next: number) => { setYear(next); setPage(0) }
@@ -67,7 +77,7 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onDelet
 
     <p className="project-status-note"><strong>Lingkup {year}.</strong> Selesai: pekerjaan ditutup. Aktif: sedang berjalan. Direncanakan: belum dimulai.</p>
 
-    {allYear.length > 0 && <ProjectLifecycleMarketChart projects={allYear} transactions={workspace.transactions} year={year} asOf={asOf} onOpen={onOpen} />}
+    <ProjectLifecycleMarketChart projects={allYear} transactions={workspace.transactions} year={year} asOf={asOf} onOpen={onOpen} />
 
     {filtered.length ? <section className="project-register"><header><div><p className="eyebrow">DAFTAR PROYEK</p><h3>Rincian {year}</h3></div></header><div className="project-register-headings" aria-hidden="true"><span>Proyek</span><span>Status</span><span>Periode</span><span>Arus kas</span><span>Aksi</span></div>{visible.map((project) => {
         const view = projectView(project, workspace)

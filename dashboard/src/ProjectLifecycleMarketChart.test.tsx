@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import ProjectLifecycleMarketChart from './ProjectLifecycleMarketChart'
@@ -64,7 +64,9 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(chart.getAttribute('style')).not.toEqual(before)
 
     const afterButtonZoom = chart.getAttribute('style')
-    fireEvent.wheel(viewport, { deltaY: -100 })
+    const wheel = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true })
+    act(() => { expect(viewport.dispatchEvent(wheel)).toBe(false) })
+    expect(wheel.defaultPrevented).toBe(true)
     expect(chart.getAttribute('style')).not.toEqual(afterButtonZoom)
 
     viewport.scrollLeft = 100
@@ -75,6 +77,15 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(viewport.scrollLeft).toBeGreaterThan(100)
     expect(viewport.scrollTop).toBeGreaterThan(100)
 
+    const candle = canvas.querySelector('[data-project-candle="Holla Terbaru"]') as HTMLButtonElement
+    const beforeCandleDrag = viewport.scrollLeft
+    fireEvent.pointerDown(candle, { pointerType: 'mouse', button: 0, pointerId: 8, clientX: 220, clientY: 180 })
+    fireEvent.pointerMove(viewport, { pointerType: 'mouse', pointerId: 8, clientX: 160, clientY: 180 })
+    fireEvent.pointerUp(viewport, { pointerType: 'mouse', pointerId: 8, clientX: 160, clientY: 180 })
+    expect(viewport.scrollLeft).toBeGreaterThan(beforeCandleDrag)
+    fireEvent.click(candle, { detail: 1 })
+    expect(onOpen).not.toHaveBeenCalled()
+
     const otherViewport = container.querySelector('[data-project-company="Hojja"] .project-market-viewport') as HTMLDivElement
     fireEvent.scroll(viewport)
     expect(otherViewport.scrollTop).toBe(viewport.scrollTop)
@@ -83,7 +94,7 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(viewport.scrollLeft).toBe(700)
     fireEvent.click(screen.getByRole('button', { name: 'Reset tampilan semua chart' }))
     expect(viewport.scrollTop).toBe(0)
-    fireEvent.click(canvas.querySelector('[data-project-candle="Holla Terbaru"]') as HTMLButtonElement)
+    fireEvent.click(candle)
     expect(onOpen).toHaveBeenCalledWith(projects[1])
   })
 })

@@ -39,6 +39,7 @@ type Modal =
   | { kind: 'transaction'; value?: FinanceTransaction; scope?: 'project' | 'office' }
   | { kind: 'debt'; value?: FinanceDebt }
   | null
+const MOBILE_NAVIGATION_QUERY = '(max-width: 900px)'
 
 const pageMeta: Record<Page, { eyebrow: string; title: string; copy: string }> = {
   overview: { eyebrow: 'RINGKASAN', title: 'Ringkasan', copy: 'Posisi keuangan dari seluruh data demo.' },
@@ -52,9 +53,9 @@ const pageMeta: Record<Page, { eyebrow: string; title: string; copy: string }> =
 }
 
 function useMobileNavigation() {
-  const [mobile, setMobile] = useState(() => window.matchMedia('(max-width: 900px)').matches)
+  const [mobile, setMobile] = useState(() => window.matchMedia(MOBILE_NAVIGATION_QUERY).matches)
   useEffect(() => {
-    const query = window.matchMedia('(max-width: 900px)')
+    const query = window.matchMedia(MOBILE_NAVIGATION_QUERY)
     const update = () => setMobile(query.matches)
     query.addEventListener('change', update)
     return () => query.removeEventListener('change', update)
@@ -87,7 +88,9 @@ export default function App() {
   const [notice, setNotice] = useState('')
   const [theme, setTheme] = useState(() => localStorage.getItem('hollawall-theme') || 'light')
   const mobile = useMobileNavigation()
+  const previousMobile = useRef(mobile)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
+  const mainRef = useRef<HTMLElement>(null)
   const meta = pageMeta[active]
 
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('hollawall-theme', theme) }, [theme])
@@ -98,6 +101,24 @@ export default function App() {
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') closeMenu() }
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [mobile, menuOpen])
+  useEffect(() => {
+    if (previousMobile.current === mobile) return
+    const focused = document.activeElement as HTMLElement | null
+    const focusWasInNavigation = Boolean(focused?.closest('#app-navigation'))
+    const focusWasMobileControl = Boolean(focused?.classList.contains('mobile-only') || focused?.classList.contains('mobile-overlay'))
+    setMenuOpen(false)
+    window.requestAnimationFrame(() => {
+      if (mobile && focusWasInNavigation) menuButtonRef.current?.focus()
+      if (!mobile && focusWasMobileControl) document.querySelector<HTMLElement>('#app-navigation nav [aria-current="page"]')?.focus()
+    })
+    previousMobile.current = mobile
+  }, [mobile])
+  useEffect(() => {
+    const main = mainRef.current
+    if (!main) return
+    if (mobile && menuOpen) main.setAttribute('inert', '')
+    else main.removeAttribute('inert')
   }, [mobile, menuOpen])
 
   const navigate = (page: Page) => { setProjectFilter(undefined); setActive(page) }
@@ -138,7 +159,7 @@ export default function App() {
               : active === 'debts' ? <DebtWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'debt' })} onEdit={(value) => setModal({ kind: 'debt', value })} onDelete={(value) => confirmDelete('hutang internal', () => finance.removeDebt(value.id))} />
                 : <ReportsWorkspace workspace={finance.workspace} />
 
-  return <div className="app-shell finance-workspace-shell"><Sidebar active={active} open={menuOpen} mobile={mobile} close={closeMenu} navigate={navigate} transactionCount={finance.workspace.transactions.length} /><main className="main-canvas"><header className="topbar"><button ref={menuButtonRef} className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi" aria-controls="app-navigation" aria-expanded={mobile ? menuOpen : undefined}><Menu size={21} /></button><img className="mobile-header-logo" src={hollawallLogo} alt="Hollawall" /><div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{meta.title}</strong></div><div className="topbar-actions">{active === 'transactions' && <ExportButton workspace={finance.workspace} />}{active !== 'reports' && <button className="topbar-add" onClick={addAction.run}><Plus size={16} /><span>{addAction.label}</span></button>}<ThemeToggle theme={theme} setTheme={setTheme} /></div></header><div className="content"><DemoBanner updatedAt={finance.workspace.updated_at} onReset={reset} />{!['overview', 'projects', 'reports'].includes(active) && <header className="page-heading"><div><p className="eyebrow">{meta.eyebrow}</p><h1>{meta.title}</h1><p>{meta.copy}</p></div><span className="demo-badge">DATA DEMO</span></header>}{content}</div></main>{notice && <div className="finance-toast" role="status">{notice}</div>}
+  return <div className="app-shell finance-workspace-shell"><Sidebar active={active} open={menuOpen} mobile={mobile} close={closeMenu} navigate={navigate} transactionCount={finance.workspace.transactions.length} /><main ref={mainRef} className="main-canvas" aria-hidden={mobile && menuOpen ? true : undefined}><header className="topbar"><button ref={menuButtonRef} className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi" aria-controls="app-navigation" aria-expanded={mobile ? menuOpen : undefined}><Menu size={21} /></button><img className="mobile-header-logo" src={hollawallLogo} alt="Hollawall" /><div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{meta.title}</strong></div><div className="topbar-actions">{active === 'transactions' && <ExportButton workspace={finance.workspace} />}{active !== 'reports' && <button className="topbar-add" onClick={addAction.run}><Plus size={16} /><span>{addAction.label}</span></button>}<ThemeToggle theme={theme} setTheme={setTheme} /></div></header><div className="content"><DemoBanner updatedAt={finance.workspace.updated_at} onReset={reset} />{!['overview', 'projects', 'reports'].includes(active) && <header className="page-heading"><div><p className="eyebrow">{meta.eyebrow}</p><h1>{meta.title}</h1><p>{meta.copy}</p></div><span className="demo-badge">DATA DEMO</span></header>}{content}</div></main>{notice && <div className="finance-toast" role="status">{notice}</div>}
     {modal?.kind === 'project' && <ProjectForm project={modal.value} onSave={saveProject} onClose={() => setModal(null)} />}
     {modal?.kind === 'transaction' && <TransactionForm projects={finance.workspace.projects} transaction={modal.value} initialScope={modal.scope} onSave={saveTransaction} onClose={() => setModal(null)} />}
     {modal?.kind === 'debt' && <DebtForm debt={modal.value} onSave={saveDebt} onClose={() => setModal(null)} />}
