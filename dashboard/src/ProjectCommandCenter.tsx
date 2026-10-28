@@ -3,21 +3,10 @@ import { ArrowLeft, ArrowRight, CheckCircle2, CircleDot, Clock3, Pencil, Plus, S
 
 import { COMPANIES, projectYear, type CompanyId, type FinanceProject, type FinanceWorkspace, type ProjectStatus } from './financeWorkspace'
 import { dateLabel, IDR, projectStatusLabel, projectView } from './financeView'
+import ProjectLifecycleMarketChart from './ProjectLifecycleMarketChart'
 
 const PAGE_SIZE = 12
-const DAY = 86_400_000
 const statusOrder: ProjectStatus[] = ['active', 'planned', 'completed']
-
-function age(project: FinanceProject, asOf: Date) {
-  const end = project.completed_on ? new Date(`${project.completed_on}T00:00:00`) : asOf
-  const start = new Date(`${project.started_on}T00:00:00`)
-  return Math.max(0, Math.round((end.getTime() - start.getTime()) / DAY))
-}
-
-function ageColor(days: number) {
-  const progress = Math.max(0, Math.min(1, days / 90))
-  return `hsl(${Math.round(138 * (1 - progress))} 64% 39%)`
-}
 
 export function projectAsOf(year: number, now = new Date()) {
   const yearEnd = new Date(`${year}-12-31T23:59:59`)
@@ -78,34 +67,11 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onDelet
 
     <p className="project-status-note"><strong>Lingkup {year}.</strong> Selesai: pekerjaan ditutup. Aktif: sedang berjalan. Direncanakan: belum dimulai.</p>
 
-    {filtered.length ? <>
-      <section className="year-candle-board" aria-label={`Chart proyek tahun ${year}`}>
-        <header><div><p className="eyebrow">TIMELINE {year}</p><h3>Umur dan status proyek</h3><p>Klik candle untuk melihat transaksi proyek.</p></div><span>{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} dari {filtered.length}</span></header>
-        <div className="year-candle-grid">{visible.map((project) => {
-          const days = age(project, asOf)
-          const view = projectView(project, workspace)
-          const projectRows = workspace.transactions.filter((row) => row.project_id === project.id).sort((left, right) => left.date.localeCompare(right.date))
-          const firstActivity = projectRows.at(0)?.date
-          const lastActivity = projectRows.at(-1)?.date
-          const activityLabel = firstActivity && lastActivity ? `, transaksi ${dateLabel(firstActivity)} sampai ${dateLabel(lastActivity)}` : ', belum ada transaksi'
-          const start = new Date(`${project.started_on}T00:00:00`).getTime()
-          const end = project.completed_on ? new Date(`${project.completed_on}T00:00:00`).getTime() : asOf.getTime()
-          const duration = Math.max(DAY, end - start)
-          const rangeBottom = firstActivity ? Math.max(0, Math.min(100, ((new Date(`${firstActivity}T00:00:00`).getTime() - start) / duration) * 100)) : 0
-          const rangeTop = lastActivity ? Math.max(rangeBottom, Math.min(100, ((new Date(`${lastActivity}T00:00:00`).getTime() - start) / duration) * 100)) : 0
-          const color = project.status === 'completed' ? 'var(--positive)' : project.status === 'planned' ? 'var(--chart-neutral-2)' : ageColor(days)
-          return <button type="button" className={`year-candle ${project.status}`} key={project.id} onClick={() => onOpen(project)} aria-label={`Buka ${project.name}, ${projectStatusLabel(project.status)}, ${days} hari, arus kas ${IDR.format(view.net)}${activityLabel}`}>
-            <span className="candle-track"><i style={{ height: project.status === 'planned' ? '24%' : `${Math.max(18, Math.min(100, days / 1.2))}%`, background: color }} />{firstActivity && lastActivity && <span className="transaction-range" aria-hidden="true" style={{ bottom: `${rangeBottom}%`, height: `${Math.max(4, rangeTop - rangeBottom)}%` }} />}<b style={{ background: color }} /></span>
-            <strong>{project.name}</strong><small>{project.company}</small><em>{project.status === 'completed' ? `Selesai ${dateLabel(project.completed_on!)}` : project.status === 'planned' ? `Mulai ${dateLabel(project.started_on)}` : `${days} hari berjalan`}</em>
-          </button>
-        })}</div>
-        <footer><div className="project-chart-legend"><span><i className="active-key" />Aktif: warna mengikuti umur</span><span><i className="done-key" />Selesai: berhenti pada tanggal selesai</span><span><i className="planned-key" />Direncanakan: belum berjalan</span><span><i className="range-key" />Rentang transaksi pertama–terakhir</span></div>{pageCount > 1 && <nav aria-label="Halaman chart"><button type="button" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}><ArrowLeft size={16} /> Sebelumnya</button><span>{page + 1} / {pageCount}</span><button type="button" disabled={page === pageCount - 1} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>Berikutnya <ArrowRight size={16} /></button></nav>}</footer>
-      </section>
+    {allYear.length > 0 && <ProjectLifecycleMarketChart projects={allYear} transactions={workspace.transactions} year={year} asOf={asOf} onOpen={onOpen} />}
 
-      <section className="project-register"><header><div><p className="eyebrow">DAFTAR PROYEK</p><h3>Rincian {year}</h3></div></header><div className="project-register-headings" aria-hidden="true"><span>Proyek</span><span>Status</span><span>Periode</span><span>Arus kas</span><span>Aksi</span></div>{visible.map((project) => {
+    {filtered.length ? <section className="project-register"><header><div><p className="eyebrow">DAFTAR PROYEK</p><h3>Rincian {year}</h3></div></header><div className="project-register-headings" aria-hidden="true"><span>Proyek</span><span>Status</span><span>Periode</span><span>Arus kas</span><span>Aksi</span></div>{visible.map((project) => {
         const view = projectView(project, workspace)
         return <article key={project.id}><button className="project-register-main" onClick={() => onOpen(project)}><span><strong>{project.name}</strong><small>{project.company} · {project.wallet}{project.client ? ` · ${project.client}` : ''}</small></span><b className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</b><span><small>{dateLabel(project.started_on)}</small><strong>{project.completed_on ? dateLabel(project.completed_on) : 'Belum selesai'}</strong></span><span className={view.net >= 0 ? 'positive' : 'negative'}><small>{view.transactions} transaksi</small><strong>{IDR.format(view.net)}</strong></span></button><div className="row-actions"><button aria-label={`Ubah ${project.name}`} onClick={() => onEdit(project)}><Pencil size={16} /></button><button className="danger" aria-label={`Hapus ${project.name}`} onClick={() => onDelete(project)}><Trash2 size={16} /></button></div></article>
-      })}</section>
-    </> : <section className="command-empty"><strong>Belum ada proyek</strong><p>Ubah filter atau tambahkan proyek untuk tahun {year}.</p><button className="primary-button" onClick={onAdd}><Plus size={16} /> Tambah proyek</button></section>}
+      })}</section> : <section className="command-empty"><strong>Proyek tidak ditemukan</strong><p>Ubah filter atau tambahkan proyek untuk tahun {year}.</p><button className="primary-button" onClick={onAdd}><Plus size={16} /> Tambah proyek</button></section>}
   </section>
 }
