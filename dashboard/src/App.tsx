@@ -52,9 +52,9 @@ const pageMeta: Record<Page, { eyebrow: string; title: string; copy: string }> =
 }
 
 function useMobileNavigation() {
-  const [mobile, setMobile] = useState(() => window.matchMedia('(max-width: 760px)').matches)
+  const [mobile, setMobile] = useState(() => window.matchMedia('(max-width: 900px)').matches)
   useEffect(() => {
-    const query = window.matchMedia('(max-width: 760px)')
+    const query = window.matchMedia('(max-width: 900px)')
     const update = () => setMobile(query.matches)
     query.addEventListener('change', update)
     return () => query.removeEventListener('change', update)
@@ -71,7 +71,7 @@ function Sidebar({ active, open, mobile, close, navigate, transactionCount }: { 
     ['debts', 'Hutang Internal', Landmark], ['reports', 'Laporan', FileBarChart],
   ] as const
   const hidden = mobile && !open
-  return <>{mobile && open && <button type="button" className="mobile-overlay is-open" onClick={close} aria-label="Tutup navigasi" />}<aside className={`sidebar ${open ? 'is-open' : ''}`} aria-hidden={hidden || undefined}><div className="sidebar-head"><img src={hollawallLogo} alt="Hollawall" /><button ref={closeButtonRef} tabIndex={hidden ? -1 : 0} className="icon-button mobile-only" onClick={close} aria-label="Tutup navigasi"><X size={20} /></button></div><div className="workspace-switch"><Building2 size={18} /><span><small>Ruang kerja</small>Hollawall Group</span></div><nav aria-label="Menu utama">{items.map(([key, label, Icon]) => <button type="button" tabIndex={hidden ? -1 : 0} key={key} className={active === key ? 'active' : ''} aria-current={active === key ? 'page' : undefined} onClick={() => { navigate(key); close() }}><Icon size={18} /><span>{label}</span>{key === 'transactions' && <b>{transactionCount}</b>}</button>)}</nav><div className="sidebar-bottom"><div className="profile workspace-profile"><span><LockKeyhole size={15} /></span><div><strong>Workspace demo</strong><small>Data lokal · Teraudit</small></div></div></div></aside></>
+  return <>{mobile && open && <button type="button" className="mobile-overlay is-open" onClick={close} aria-label="Tutup navigasi" />}<aside id="app-navigation" className={`sidebar ${open ? 'is-open' : ''}`} aria-hidden={hidden || undefined}><div className="sidebar-head"><img src={hollawallLogo} alt="Hollawall" /><button ref={closeButtonRef} tabIndex={hidden ? -1 : 0} className="icon-button mobile-only" onClick={close} aria-label="Tutup navigasi"><X size={20} /></button></div><div className="workspace-switch"><Building2 size={18} /><span><small>Ruang kerja</small>Hollawall Group</span></div><nav aria-label="Menu utama">{items.map(([key, label, Icon]) => <button type="button" tabIndex={hidden ? -1 : 0} key={key} className={active === key ? 'active' : ''} aria-current={active === key ? 'page' : undefined} onClick={() => { navigate(key); close() }}><Icon size={18} /><span>{label}</span>{key === 'transactions' && <b>{transactionCount}</b>}</button>)}</nav><div className="sidebar-bottom"><div className="profile workspace-profile"><span><LockKeyhole size={15} /></span><div><strong>Workspace demo</strong><small>Data lokal · Teraudit</small></div></div></div></aside></>
 }
 
 function ThemeToggle({ theme, setTheme }: { theme: string; setTheme: (theme: string) => void }) {
@@ -93,6 +93,12 @@ export default function App() {
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('hollawall-theme', theme) }, [theme])
   useEffect(() => { document.title = `${meta.title} — Hollawall` }, [meta.title])
   useEffect(() => { if (!notice) return; const timeout = window.setTimeout(() => setNotice(''), 3500); return () => window.clearTimeout(timeout) }, [notice])
+  useEffect(() => {
+    if (!mobile || !menuOpen) return
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') closeMenu() }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [mobile, menuOpen])
 
   const navigate = (page: Page) => { setProjectFilter(undefined); setActive(page) }
   const closeMenu = () => { setMenuOpen(false); if (mobile) window.requestAnimationFrame(() => menuButtonRef.current?.focus()) }
@@ -132,7 +138,7 @@ export default function App() {
               : active === 'debts' ? <DebtWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'debt' })} onEdit={(value) => setModal({ kind: 'debt', value })} onDelete={(value) => confirmDelete('hutang internal', () => finance.removeDebt(value.id))} />
                 : <ReportsWorkspace workspace={finance.workspace} />
 
-  return <div className="app-shell finance-workspace-shell"><Sidebar active={active} open={menuOpen} mobile={mobile} close={closeMenu} navigate={navigate} transactionCount={finance.workspace.transactions.length} /><main className="main-canvas"><header className="topbar"><button ref={menuButtonRef} className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi"><Menu size={21} /></button><img className="mobile-header-logo" src={hollawallLogo} alt="Hollawall" /><div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{meta.title}</strong></div><div className="topbar-actions">{active === 'transactions' && <ExportButton workspace={finance.workspace} />}{active !== 'reports' && <button className="topbar-add" onClick={addAction.run}><Plus size={16} /><span>{addAction.label}</span></button>}<ThemeToggle theme={theme} setTheme={setTheme} /></div></header><div className="content"><DemoBanner updatedAt={finance.workspace.updated_at} onReset={reset} />{!['overview', 'projects', 'reports'].includes(active) && <header className="page-heading"><div><p className="eyebrow">{meta.eyebrow}</p><h1>{meta.title}</h1><p>{meta.copy}</p></div><span className="demo-badge">DATA DEMO</span></header>}{content}</div></main>{notice && <div className="finance-toast" role="status">{notice}</div>}
+  return <div className="app-shell finance-workspace-shell"><Sidebar active={active} open={menuOpen} mobile={mobile} close={closeMenu} navigate={navigate} transactionCount={finance.workspace.transactions.length} /><main className="main-canvas"><header className="topbar"><button ref={menuButtonRef} className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi" aria-controls="app-navigation" aria-expanded={mobile ? menuOpen : undefined}><Menu size={21} /></button><img className="mobile-header-logo" src={hollawallLogo} alt="Hollawall" /><div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{meta.title}</strong></div><div className="topbar-actions">{active === 'transactions' && <ExportButton workspace={finance.workspace} />}{active !== 'reports' && <button className="topbar-add" onClick={addAction.run}><Plus size={16} /><span>{addAction.label}</span></button>}<ThemeToggle theme={theme} setTheme={setTheme} /></div></header><div className="content"><DemoBanner updatedAt={finance.workspace.updated_at} onReset={reset} />{!['overview', 'projects', 'reports'].includes(active) && <header className="page-heading"><div><p className="eyebrow">{meta.eyebrow}</p><h1>{meta.title}</h1><p>{meta.copy}</p></div><span className="demo-badge">DATA DEMO</span></header>}{content}</div></main>{notice && <div className="finance-toast" role="status">{notice}</div>}
     {modal?.kind === 'project' && <ProjectForm project={modal.value} onSave={saveProject} onClose={() => setModal(null)} />}
     {modal?.kind === 'transaction' && <TransactionForm projects={finance.workspace.projects} transaction={modal.value} initialScope={modal.scope} onSave={saveTransaction} onClose={() => setModal(null)} />}
     {modal?.kind === 'debt' && <DebtForm debt={modal.value} onSave={saveDebt} onClose={() => setModal(null)} />}
