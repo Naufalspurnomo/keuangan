@@ -91,7 +91,7 @@ export default function FinancialChart({ kind, cashTrend = [], cashLabel = 'Sald
       <div className="donut-chart-figure">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Pie data={rows} dataKey="value" nameKey="name" innerRadius="62%" outerRadius="86%" paddingAngle={2} stroke="var(--surface)" strokeWidth={2}>
+            <Pie data={rows} dataKey="value" nameKey="name" innerRadius="62%" outerRadius="86%" paddingAngle={2} stroke="var(--surface)" strokeWidth={2} isAnimationActive={false}>
               {rows.map((_, index) => <Cell key={index} fill={COLORS[index % COLORS.length]} />)}
             </Pie>
             <Tooltip content={<ChartTooltip />} formatter={(value, name) => [IDR.format(Number(value ?? 0)), String(name)]} />

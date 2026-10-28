@@ -69,6 +69,9 @@ def assert_showcase(page, viewport, nav):
         assert page.get_by_role('heading', name=heading, exact=True).count() == 1, f'{viewport}:{nav}: missing heading {heading}'
     geometry = charts.evaluate_all("els => els.map(el => { const r=el.getBoundingClientRect(); const svgs=[...el.querySelectorAll('svg')].map(svg=>svg.getBoundingClientRect()).sort((a,b)=>(b.width*b.height)-(a.width*a.height)); const s=svgs[0]; return {w:r.width,h:r.height,svgW:s?.width||0,svgH:s?.height||0} })")
     assert all(item['w'] >= 240 and item['h'] >= 180 and item['svgW'] >= 100 and item['svgH'] >= 100 for item in geometry), f'{viewport}:{nav}: collapsed chart {geometry}'
+    if nav == 'Dompet':
+        sectors = page.locator('.wallet-distribution-chart path').evaluate_all("paths => { const svg=paths[0]?.ownerSVGElement; const view=svg?.viewBox?.baseVal; const area=(view?.width||0)*(view?.height||0); return paths.map(path => { const box=path.getBBox(); return {w:box.width,h:box.height,ratio:area ? (box.width*box.height)/area : 0} }) }")
+        assert len(sectors) == 3 and all(item['w'] > 50 and item['h'] > 50 and item['ratio'] > .02 for item in sectors), f'{viewport}:{nav}: incomplete donut sectors {sectors}'
     return {'charts': count, 'geometry': geometry}
 
 
