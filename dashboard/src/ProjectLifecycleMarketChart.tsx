@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -92,25 +93,28 @@ function yearModel(year: number, asOf: Date) {
   return { months, positionFor }
 }
 
-type ViewportApi = { latest: () => void; reset: () => void; setVertical: (top: number) => void }
+type ViewportApi = { latest: () => void; reset: () => void; zoomBy: (factor: number) => void }
 type CompanyCanvasProps = {
   company: CompanyId
   projects: FinanceProject[]
   transactions: FinanceTransaction[]
   year: number
   asOf: Date
-  zoom: number
   register: (company: CompanyId, api: ViewportApi | null) => void
-  syncVertical: (company: CompanyId, top: number) => void
-  onZoom: (next: number) => boolean
   onOpen: (project: FinanceProject) => void
 }
 
-function CompanyCanvas({ company, projects, transactions, year, asOf, zoom, register, syncVertical, onZoom, onOpen }: CompanyCanvasProps) {
+type ZoomAnchor = { x: number; y: number; xRatio: number; yRatio: number }
+
+function CompanyCanvas({ company, projects, transactions, year, asOf, register, onOpen }: CompanyCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
-  const drag = useRef({ active: false, moved: false, pointerId: 0, x: 0, y: 0, left: 0, top: 0, pageOverflow: 0 })
+  const drag = useRef({ active: false, moved: false, pointerId: 0, x: 0, y: 0, left: 0, top: 0, pageOverflow: 0, lastX: 0, lastY: 0, lastAt: 0, velocityX: 0, velocityY: 0 })
+  const momentumFrame = useRef<number | null>(null)
   const pointers = useRef(new Map<number, { x: number; y: number }>())
   const pinchDistance = useRef<number | null>(null)
+  const [zoom, setZoom] = useState(1)
+  const zoomRef = useRef(1)
+  const zoomAnchor = useRef<ZoomAnchor | null>(null)
   const ordered = useMemo(() => projects
     .filter((project) => project.company === company)
     .sort((left, right) => left.started_on.localeCompare(right.started_on) || left.name.localeCompare(right.name, 'id-ID')),
@@ -123,24 +127,52 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, zoom, regi
   const chartHeight = BASE_HEIGHT * zoom
   const meta = identity[company]
 
+  const stopMomentum = () => {
+    if (momentumFrame.current == null) return
+    cancelAnimationFrame(momentumFrame.current)
+    momentumFrame.current = null
+  }
   const latest = () => {
+    stopMomentum()
     const viewport = viewportRef.current
     if (viewport) viewport.scrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth)
   }
-  const reset = () => {
+  const setBoundedZoom = (next: number, clientX?: number, clientY?: number) => {
     const viewport = viewportRef.current
-    if (!viewport) return
-    viewport.scrollTop = 0
-    latest()
+    const bounded = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next))
+    if (Math.abs(bounded - zoomRef.current) < .001) return false
+    if (viewport) {
+      const rect = viewport.getBoundingClientRect()
+      const x = clientX == null ? viewport.clientWidth / 2 : Math.max(0, Math.min(viewport.clientWidth, clientX - rect.left))
+      const y = clientY == null ? viewport.clientHeight / 2 : Math.max(0, Math.min(viewport.clientHeight, clientY - rect.top))
+      zoomAnchor.current = {
+        x,
+        y,
+        xRatio: (viewport.scrollLeft + x) / Math.max(1, viewport.scrollWidth),
+        yRatio: (viewport.scrollTop + y) / Math.max(1, viewport.scrollHeight),
+      }
+    }
+    zoomRef.current = bounded
+    setZoom(bounded)
+    return true
   }
-  const setVertical = (top: number) => {
+  const zoomBy = (factor: number) => { setBoundedZoom(zoomRef.current * factor) }
+  const reset = () => {
+    stopMomentum()
+    zoomAnchor.current = null
+    zoomRef.current = 1
+    setZoom(1)
     const viewport = viewportRef.current
-    if (viewport && Math.abs(viewport.scrollTop - top) > 1) viewport.scrollTop = top
+    if (viewport) viewport.scrollTop = 0
+    requestAnimationFrame(latest)
   }
 
   useEffect(() => {
-    register(company, { latest, reset, setVertical })
-    return () => register(company, null)
+    register(company, { latest, reset, zoomBy })
+    return () => {
+      register(company, null)
+      if (momentumFrame.current != null) cancelAnimationFrame(momentumFrame.current)
+    }
   }, [company, chartWidth])
   useEffect(() => {
     const frame = requestAnimationFrame(latest)
@@ -151,7 +183,8 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, zoom, regi
     if (!viewport) return
     const handleWheel = (event: WheelEvent) => {
       if (!event.deltaY || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return
-      if (onZoom(zoom * (event.deltaY > 0 ? .9 : 1.1))) {
+      const delta = event.deltaY * (event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? viewport.clientHeight : 1)
+      if (setBoundedZoom(zoomRef.current * Math.exp(-delta * .0014), event.clientX, event.clientY)) {
         event.preventDefault()
         return
       }
@@ -159,14 +192,23 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, zoom, regi
       const atBoundary = event.deltaY < 0 ? viewport.scrollTop <= 0 : viewport.scrollTop >= maxTop
       if (atBoundary) {
         event.preventDefault()
-        window.scrollBy(0, event.deltaY)
+        window.scrollBy(0, delta)
       }
     }
     viewport.addEventListener('wheel', handleWheel, { passive: false })
     return () => viewport.removeEventListener('wheel', handleWheel)
-  }, [onZoom, zoom])
+  }, [])
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current
+    const anchor = zoomAnchor.current
+    if (!viewport || !anchor) return
+    viewport.scrollLeft = anchor.xRatio * viewport.scrollWidth - anchor.x
+    viewport.scrollTop = anchor.yRatio * viewport.scrollHeight - anchor.y
+    zoomAnchor.current = null
+  }, [zoom])
 
   const startPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    stopMomentum()
     drag.current.moved = false
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
     if (pointers.current.size === 2) {
@@ -178,7 +220,7 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, zoom, regi
     if (event.pointerType === 'mouse' && event.button !== 0) return
     const viewport = viewportRef.current
     if (!viewport) return
-    drag.current = { active: true, moved: false, pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop, pageOverflow: 0 }
+    drag.current = { active: true, moved: false, pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop, pageOverflow: 0, lastX: event.clientX, lastY: event.clientY, lastAt: performance.now(), velocityX: 0, velocityY: 0 }
     viewport.classList.add('is-panning')
   }
   const movePointer = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -187,7 +229,7 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, zoom, regi
     if (pointers.current.size === 2) {
       const [first, second] = [...pointers.current.values()]
       const distance = Math.hypot(second.x - first.x, second.y - first.y)
-      if (pinchDistance.current) onZoom(zoom * (distance / pinchDistance.current))
+      if (pinchDistance.current) setBoundedZoom(zoomRef.current * (distance / pinchDistance.current), (first.x + second.x) / 2, (first.y + second.y) / 2)
       pinchDistance.current = distance
       return
     }
@@ -209,6 +251,15 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, zoom, regi
       if (pageDelta) window.scrollBy(0, pageDelta)
       drag.current.pageOverflow = overflow
     }
+    const now = performance.now()
+    const elapsed = Math.max(8, now - drag.current.lastAt)
+    const sampleX = (drag.current.lastX - event.clientX) / elapsed
+    const sampleY = (drag.current.lastY - event.clientY) / elapsed
+    drag.current.velocityX = drag.current.velocityX * .55 + sampleX * .45
+    drag.current.velocityY = drag.current.velocityY * .55 + sampleY * .45
+    drag.current.lastX = event.clientX
+    drag.current.lastY = event.clientY
+    drag.current.lastAt = now
   }
   const stopPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
     pointers.current.delete(event.pointerId)
@@ -216,6 +267,29 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, zoom, regi
     if (drag.current.pointerId === event.pointerId) drag.current.active = false
     viewportRef.current?.classList.remove('is-panning')
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    const viewport = viewportRef.current
+    if (!viewport || !drag.current.moved || pointers.current.size) return
+    let velocityX = Math.max(-2.2, Math.min(2.2, drag.current.velocityX))
+    let velocityY = Math.max(-2.2, Math.min(2.2, drag.current.velocityY))
+    let lastAt = performance.now()
+    const glide = (now: number) => {
+      const elapsed = Math.min(32, now - lastAt)
+      lastAt = now
+      const beforeLeft = viewport.scrollLeft
+      const beforeTop = viewport.scrollTop
+      viewport.scrollLeft += velocityX * elapsed
+      viewport.scrollTop += velocityY * elapsed
+      const hitX = Math.abs(viewport.scrollLeft - beforeLeft) < .1 && Math.abs(velocityX) > .03
+      const hitY = Math.abs(viewport.scrollTop - beforeTop) < .1 && Math.abs(velocityY) > .03
+      velocityX = hitX ? 0 : velocityX * Math.pow(.91, elapsed / 16)
+      velocityY = hitY ? 0 : velocityY * Math.pow(.91, elapsed / 16)
+      if (Math.hypot(velocityX, velocityY) < .025) {
+        momentumFrame.current = null
+        return
+      }
+      momentumFrame.current = requestAnimationFrame(glide)
+    }
+    if (Math.hypot(velocityX, velocityY) >= .08) momentumFrame.current = requestAnimationFrame(glide)
   }
 
   return <section className={`project-market-canvas company-${company.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`} data-project-company={company} role="region" aria-label={`Chart lifecycle ${company}`}>
@@ -223,8 +297,8 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, zoom, regi
       <div className="project-market-identity"><i>{meta.mark}</i><div><p>{company}</p><h3>Project lifecycle</h3><span>{meta.copy}</span></div></div>
       <div className="project-market-summary" aria-label={`Ringkasan ${company}`}><strong>{active} / {ordered.length}</strong><span>aktif / total {year}</span><em>{completed} selesai{planned ? ` · ${planned} rencana` : ''}</em></div>
     </header>
-    <div className="project-market-toolbar"><span><Move size={13} /> Seret chart · scroll/pinch untuk zoom</span><button type="button" onClick={latest} aria-label={`Kembali ke proyek terbaru ${company}`}><ChevronsRight size={15} /> Terbaru</button></div>
-    <div ref={viewportRef} className="project-market-viewport" onScroll={(event) => syncVertical(company, event.currentTarget.scrollTop)} onPointerDown={startPointer} onPointerMove={movePointer} onPointerUp={stopPointer} onPointerCancel={stopPointer}>
+    <div className="project-market-toolbar"><span><Move size={13} /> Seret bebas · zoom {Math.round(zoom * 100)}%</span><button type="button" onClick={latest} aria-label={`Kembali ke proyek terbaru ${company}`}><ChevronsRight size={15} /> Terbaru</button></div>
+    <div ref={viewportRef} className="project-market-viewport" onPointerDown={startPointer} onPointerMove={movePointer} onPointerUp={stopPointer} onPointerCancel={stopPointer}>
       <div className="project-market-chart" style={{ '--market-width': `${chartWidth}px`, '--market-height': `${chartHeight}px`, '--market-column': `${BASE_COLUMN * zoom}px` } as CSSProperties}>
         <div className="project-market-axis" aria-hidden="true">
           {model.months.map((month) => <span className="project-market-month" key={month.key} style={{ '--month-position': `${month.position}%` } as CSSProperties}><b>{month.label}</b><i /></span>)}
@@ -273,30 +347,23 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, zoom, regi
 }
 
 export default function ProjectLifecycleMarketChart({ projects, transactions, year, asOf, onOpen }: { projects: FinanceProject[]; transactions: FinanceTransaction[]; year: number; asOf: Date; onOpen: (project: FinanceProject) => void }) {
-  const [zoom, setZoom] = useState(1)
   const api = useRef(new Map<CompanyId, ViewportApi>())
-  const setBoundedZoom = (next: number) => {
-    const bounded = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Number(next.toFixed(2))))
-    if (bounded === zoom) return false
-    setZoom(bounded)
-    return true
-  }
   const register = (company: CompanyId, value: ViewportApi | null) => { if (value) api.current.set(company, value); else api.current.delete(company) }
-  const syncVertical = (source: CompanyId, top: number) => api.current.forEach((value, company) => { if (company !== source) value.setVertical(top) })
-  const resetAll = () => { api.current.forEach((value) => value.reset()); setZoom(1) }
+  const zoomAll = (factor: number) => api.current.forEach((value) => value.zoomBy(factor))
+  const resetAll = () => api.current.forEach((value) => value.reset())
   const latestAll = () => api.current.forEach((value) => value.latest())
   const active = projects.filter((project) => project.status === 'active').length
 
   return <section className="project-market-report" aria-label={`Project lifecycle market ${year}`}>
     <header className="project-market-report-head"><div><p className="eyebrow">PROJECT LIFECYCLE MARKET · {year}</p><h3>Umur dan status proyek</h3><p>Empat canvas tahunan. Proyek terbaru berada di kanan; geser bebas, zoom, dan klik candle untuk melihat transaksi.</p></div><strong>{active} / {projects.length} aktif</strong></header>
     <div className="project-market-global-toolbar" role="group" aria-label="Kontrol zoom semua chart">
-      <span>Zoom {Math.round(zoom * 100)}%</span>
-      <button type="button" onClick={() => setBoundedZoom(zoom / 1.2)} aria-label="Perkecil semua chart"><Minus size={16} /></button>
-      <button type="button" onClick={() => setBoundedZoom(zoom * 1.2)} aria-label="Perbesar semua chart"><Plus size={16} /></button>
+      <span>Kontrol semua chart</span>
+      <button type="button" onClick={() => zoomAll(1 / 1.2)} aria-label="Perkecil semua chart"><Minus size={16} /></button>
+      <button type="button" onClick={() => zoomAll(1.2)} aria-label="Perbesar semua chart"><Plus size={16} /></button>
       <button type="button" onClick={resetAll} aria-label="Reset tampilan semua chart"><RotateCcw size={15} /> Reset</button>
       <button type="button" onClick={latestAll} aria-label="Kembali ke proyek terbaru semua chart"><ChevronsRight size={15} /> Terbaru</button>
     </div>
-    <div className="project-market-grid">{MARKET_COMPANIES.map((company) => <CompanyCanvas key={company} company={company} projects={projects} transactions={transactions} year={year} asOf={asOf} zoom={zoom} register={register} syncVertical={syncVertical} onZoom={setBoundedZoom} onOpen={onOpen} />)}</div>
+    <div className="project-market-grid">{MARKET_COMPANIES.map((company) => <CompanyCanvas key={company} company={company} projects={projects} transactions={transactions} year={year} asOf={asOf} register={register} onOpen={onOpen} />)}</div>
     <footer className="project-market-legend" aria-label="Keterangan project lifecycle">
       <div><span className="age-gradient" aria-hidden="true" /><p><strong>Aktif: warna mengikuti umur</strong><small>Hijau baru · kuning/oranye menua · merah 90+ hari</small></p></div>
       <div><span className="completed-key" aria-hidden="true" /><p><strong>Selesai</strong><small>Candle abu berhenti pada tanggal selesai</small></p></div>

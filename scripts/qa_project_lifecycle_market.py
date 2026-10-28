@@ -92,29 +92,33 @@ with sync_playwright() as p:
 
         viewport = canvases.first.locator(".project-market-viewport")
         viewport.scroll_into_view_if_needed()
-        before_zoom = canvases.first.locator(".project-market-chart").get_attribute("style")
+        before_zoom = page.locator(".project-market-chart").evaluate_all("els => els.map(el => el.getAttribute('style'))")
         page.get_by_role("button", name="Perbesar semua chart").click()
         page.wait_for_timeout(100)
-        after_zoom = canvases.first.locator(".project-market-chart").get_attribute("style")
-        assert before_zoom != after_zoom, (name, "zoom did not change geometry")
-        assert page.get_by_text("Zoom 120%", exact=True).is_visible(), (name, "zoom readout")
+        after_zoom = page.locator(".project-market-chart").evaluate_all("els => els.map(el => el.getAttribute('style'))")
+        assert all(before_zoom[index] != after_zoom[index] for index in range(4)), (name, "global zoom did not change all geometry")
+        zoom_readouts = page.locator(".project-market-toolbar > span").all_text_contents()
+        assert all("zoom 120%" in value.lower() for value in zoom_readouts), (name, "zoom readout", zoom_readouts)
 
         # Wheel over a project column must zoom without native vertical scrolling on pointer-class layouts.
         if width > 580:
             wheel_box = viewport.bounding_box()
             assert wheel_box
             viewport.evaluate("el => { el.scrollTop = Math.min(50, el.scrollHeight - el.clientHeight) }")
-            wheel_top = viewport.evaluate("el => el.scrollTop")
+            other_geometry = page.locator(".project-market-viewport").evaluate_all("els => els.slice(1).map(el => ({left: el.scrollLeft, top: el.scrollTop, width: el.querySelector('.project-market-chart').getBoundingClientRect().width}))")
             visible_wheel_y = min(wheel_box["y"] + min(160, wheel_box["height"] * .45), height - 20)
             page.mouse.move(wheel_box["x"] + wheel_box["width"] * .65, visible_wheel_y)
             page.mouse.wheel(0, 100)
             page.wait_for_timeout(100)
-            assert viewport.evaluate("el => el.scrollTop") == wheel_top, (name, "wheel changed vertical position")
-            assert not page.get_by_text("Zoom 120%", exact=True).is_visible(), (name, "wheel did not zoom")
+            local_readout = canvases.first.locator(".project-market-toolbar > span").inner_text()
+            assert "zoom 104%" in local_readout.lower(), (name, "wheel did not produce smooth local zoom", local_readout)
+            other_after_wheel = page.locator(".project-market-viewport").evaluate_all("els => els.slice(1).map(el => ({left: el.scrollLeft, top: el.scrollTop, width: el.querySelector('.project-market-chart').getBoundingClientRect().width}))")
+            assert other_after_wheel == other_geometry, (name, "local wheel changed sibling canvas", other_geometry, other_after_wheel)
 
         # Panning must work in both axes once zoom creates overflow.
         dimensions = viewport.evaluate("el => ({left: el.scrollLeft, top: el.scrollTop, maxX: el.scrollWidth - el.clientWidth, maxY: el.scrollHeight - el.clientHeight})")
         viewport.evaluate("el => { el.scrollLeft = Math.min(80, el.scrollWidth - el.clientWidth); el.scrollTop = Math.min(60, el.scrollHeight - el.clientHeight); }")
+        siblings_before_pan = page.locator(".project-market-viewport").evaluate_all("els => els.slice(1).map(el => ({left: el.scrollLeft, top: el.scrollTop}))")
         box = viewport.bounding_box()
         assert box
         page.mouse.move(box["x"] + min(250, box["width"] * .7), box["y"] + min(240, box["height"] * .6))
@@ -125,6 +129,8 @@ with sync_playwright() as p:
         after_pan = viewport.evaluate("el => ({left: el.scrollLeft, top: el.scrollTop})")
         assert dimensions["maxX"] >= 0 and dimensions["maxY"] > 0, (name, dimensions)
         assert after_pan["left"] >= 0 and after_pan["top"] >= 0, (name, after_pan)
+        siblings_after_pan = page.locator(".project-market-viewport").evaluate_all("els => els.slice(1).map(el => ({left: el.scrollLeft, top: el.scrollTop}))")
+        assert siblings_after_pan == siblings_before_pan, (name, "local drag changed sibling canvas", siblings_before_pan, siblings_after_pan)
         horizontal_pan = "PASS" if dimensions["maxX"] > 0 else "FIT"
         if dimensions["maxX"] > 0:
             page.get_by_role("button", name="Kembali ke proyek terbaru Holla").click()
@@ -157,7 +163,8 @@ with sync_playwright() as p:
 
         page.get_by_role("button", name="Reset tampilan semua chart").click()
         page.wait_for_timeout(100)
-        assert page.get_by_text("Zoom 100%", exact=True).is_visible(), (name, "reset zoom")
+        reset_readouts = page.locator(".project-market-toolbar > span").all_text_contents()
+        assert all("zoom 100%" in value.lower() for value in reset_readouts), (name, "reset zoom", reset_readouts)
         assert viewport.evaluate("el => el.scrollTop") == 0, (name, "reset vertical pan")
         if width > 580:
             viewport.evaluate("el => el.scrollIntoView({ block: 'center', inline: 'nearest' })")
@@ -169,7 +176,7 @@ with sync_playwright() as p:
             min_top = mid_scroll["top"]
             page.mouse.wheel(0, 100)
             page.wait_for_timeout(100)
-            assert page.get_by_text("Zoom 100%", exact=True).is_visible(), (name, "minimum wheel changed zoom")
+            assert "zoom 100%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "minimum wheel changed zoom")
             assert viewport.evaluate("el => el.scrollTop") > min_top, (name, "minimum wheel trapped native scroll")
 
             viewport.evaluate("el => { el.scrollTop = el.scrollHeight - el.clientHeight }")
@@ -191,12 +198,13 @@ with sync_playwright() as p:
             horizontal_left = viewport.evaluate("el => el.scrollLeft")
             page.mouse.wheel(-80, 0)
             page.wait_for_timeout(100)
-            assert page.get_by_text("Zoom 100%", exact=True).is_visible(), (name, "horizontal wheel changed zoom")
+            assert "zoom 100%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "horizontal wheel changed zoom")
             assert viewport.evaluate("el => el.scrollLeft") != horizontal_left or dimensions["maxX"] == 0, (name, "horizontal wheel trapped native pan")
 
             for _ in range(5):
                 page.get_by_role("button", name="Perbesar semua chart").click()
-            assert page.get_by_text("Zoom 240%", exact=True).is_visible(), (name, "maximum zoom")
+            max_readouts = page.locator(".project-market-toolbar > span").all_text_contents()
+            assert all("zoom 240%" in value.lower() for value in max_readouts), (name, "maximum zoom", max_readouts)
             viewport.evaluate("el => { el.scrollTop = 120 }")
             max_top = viewport.evaluate("el => el.scrollTop")
             wheel_box = viewport.bounding_box()
@@ -204,7 +212,7 @@ with sync_playwright() as p:
             page.mouse.move(wheel_box["x"] + wheel_box["width"] * .65, min(wheel_box["y"] + 160, height - 20))
             page.mouse.wheel(0, -100)
             page.wait_for_timeout(100)
-            assert page.get_by_text("Zoom 240%", exact=True).is_visible(), (name, "maximum wheel changed zoom")
+            assert "zoom 240%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "maximum wheel changed zoom")
             assert viewport.evaluate("el => el.scrollTop") < max_top, (name, "maximum wheel trapped native scroll")
             page.get_by_role("button", name="Reset tampilan semua chart").click()
             page.wait_for_timeout(100)

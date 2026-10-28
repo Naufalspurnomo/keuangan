@@ -48,7 +48,7 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(holla.querySelector('.project-market-wick')).toBeTruthy()
   })
 
-  it('supports synchronized zoom, drag pan, reset, latest, and candle activation', () => {
+  it('keeps drag and wheel zoom independent per canvas while global controls remain explicit', () => {
     const onOpen = vi.fn()
     const { container } = render(<ProjectLifecycleMarketChart projects={projects} transactions={transactions} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={onOpen} />)
     const canvas = container.querySelector('[data-project-company="Holla"]') as HTMLElement
@@ -59,7 +59,15 @@ describe('ProjectLifecycleMarketChart', () => {
       setPointerCapture: { value: vi.fn(), configurable: true }, hasPointerCapture: { value: vi.fn(() => false), configurable: true },
     })
     const chart = canvas.querySelector('.project-market-chart') as HTMLElement
+    const otherCanvas = container.querySelector('[data-project-company="Hojja"]') as HTMLElement
+    const otherViewport = otherCanvas.querySelector('.project-market-viewport') as HTMLDivElement
+    const otherChart = otherCanvas.querySelector('.project-market-chart') as HTMLElement
+    Object.defineProperties(otherViewport, {
+      scrollWidth: { value: 1200, configurable: true }, clientWidth: { value: 500, configurable: true },
+      scrollHeight: { value: 1000, configurable: true }, clientHeight: { value: 420, configurable: true },
+    })
     const before = chart.getAttribute('style')
+    const otherBefore = otherChart.getAttribute('style')
     viewport.scrollTop = 100
     const minWheel = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true })
     act(() => { expect(viewport.dispatchEvent(minWheel)).toBe(true) })
@@ -70,23 +78,26 @@ describe('ProjectLifecycleMarketChart', () => {
     act(() => { expect(viewport.dispatchEvent(boundaryWheel)).toBe(false) })
     expect(boundaryWheel.defaultPrevented).toBe(true)
     expect(scrollBy).toHaveBeenCalledWith(0, 100)
+    const lineBoundaryWheel = new WheelEvent('wheel', { deltaY: 3, deltaMode: WheelEvent.DOM_DELTA_LINE, bubbles: true, cancelable: true })
+    act(() => { viewport.dispatchEvent(lineBoundaryWheel) })
+    expect(scrollBy).toHaveBeenLastCalledWith(0, 48)
     scrollBy.mockRestore()
     const horizontalWheel = new WheelEvent('wheel', { deltaX: 100, bubbles: true, cancelable: true })
     act(() => { expect(viewport.dispatchEvent(horizontalWheel)).toBe(true) })
     expect(horizontalWheel.defaultPrevented).toBe(false)
-    fireEvent.click(screen.getByRole('button', { name: 'Perbesar semua chart' }))
-    expect(chart.getAttribute('style')).not.toEqual(before)
-
-    const afterButtonZoom = chart.getAttribute('style')
     const wheel = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true })
     act(() => { expect(viewport.dispatchEvent(wheel)).toBe(false) })
     expect(wheel.defaultPrevented).toBe(true)
-    expect(chart.getAttribute('style')).not.toEqual(afterButtonZoom)
-    for (let index = 0; index < 4; index += 1) fireEvent.click(screen.getByRole('button', { name: 'Perbesar semua chart' }))
-    expect(screen.getByText('Zoom 240%', { exact: true })).toBeTruthy()
+    expect(chart.getAttribute('style')).not.toEqual(before)
+    expect(otherChart.getAttribute('style')).toEqual(otherBefore)
+
+    const hollaAfterLocalZoom = chart.getAttribute('style')
+    fireEvent.click(screen.getByRole('button', { name: 'Perbesar semua chart' }))
+    expect(chart.getAttribute('style')).not.toEqual(hollaAfterLocalZoom)
+    expect(otherChart.getAttribute('style')).not.toEqual(otherBefore)
+    for (let index = 0; index < 5; index += 1) fireEvent.click(screen.getByRole('button', { name: 'Perbesar semua chart' }))
     const maxWheel = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true })
-    act(() => { expect(viewport.dispatchEvent(maxWheel)).toBe(true) })
-    expect(maxWheel.defaultPrevented).toBe(false)
+    act(() => { viewport.dispatchEvent(maxWheel) })
 
     viewport.scrollLeft = 100
     viewport.scrollTop = 100
@@ -95,6 +106,8 @@ describe('ProjectLifecycleMarketChart', () => {
     fireEvent.pointerUp(viewport, { pointerType: 'mouse', pointerId: 7, clientX: 150, clientY: 130 })
     expect(viewport.scrollLeft).toBeGreaterThan(100)
     expect(viewport.scrollTop).toBeGreaterThan(100)
+    expect(otherViewport.scrollLeft).toBe(0)
+    expect(otherViewport.scrollTop).toBe(0)
 
     const candle = canvas.querySelector('[data-project-candle="Holla Terbaru"]') as HTMLButtonElement
     const beforeCandleDrag = viewport.scrollLeft
@@ -105,14 +118,20 @@ describe('ProjectLifecycleMarketChart', () => {
     fireEvent.click(candle, { detail: 1 })
     expect(onOpen).not.toHaveBeenCalled()
 
-    const otherViewport = container.querySelector('[data-project-company="Hojja"] .project-market-viewport') as HTMLDivElement
-    fireEvent.scroll(viewport)
-    expect(otherViewport.scrollTop).toBe(viewport.scrollTop)
-
     fireEvent.click(screen.getByRole('button', { name: 'Kembali ke proyek terbaru Holla' }))
     expect(viewport.scrollLeft).toBe(700)
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame')
+    const scheduleFrame = vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(91)
+    viewport.scrollLeft = 100
+    viewport.scrollTop = 100
+    fireEvent.pointerDown(viewport, { pointerType: 'mouse', button: 0, pointerId: 9, clientX: 200, clientY: 180 })
+    fireEvent.pointerMove(viewport, { pointerType: 'mouse', pointerId: 9, clientX: 120, clientY: 110 })
+    fireEvent.pointerUp(viewport, { pointerType: 'mouse', pointerId: 9, clientX: 120, clientY: 110 })
     fireEvent.click(screen.getByRole('button', { name: 'Reset tampilan semua chart' }))
+    expect(cancelFrame).toHaveBeenCalledWith(91)
     expect(viewport.scrollTop).toBe(0)
+    scheduleFrame.mockRestore()
+    cancelFrame.mockRestore()
     fireEvent.click(candle)
     expect(onOpen).toHaveBeenCalledWith(projects[1])
   })
