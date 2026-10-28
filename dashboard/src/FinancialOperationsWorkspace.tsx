@@ -58,7 +58,7 @@ function MovementLedger({ rows, onOpenProject }: { rows: Transaction[]; onOpenPr
   return <><div className="ops-ledger">
     {visible.map((row) => <article key={row.id}>
       <time>{day(row.transaction_date)}</time>
-      <div><strong>{row.notes || row.project || 'Transaksi operasional'}</strong><span>{[row.company, row.wallet].filter((value, index, all) => value && all.indexOf(value) === index).join(' · ')}</span></div>
+      <div><strong>{row.notes || row.project || 'Transaksi umum'}</strong><span>{[row.company, row.wallet].filter((value, index, all) => value && all.indexOf(value) === index).join(' · ')}</span></div>
       {row.project && row.project !== '-' ? <button type="button" onClick={() => onOpenProject?.(row.project)}>{row.project}</button> : <span>Tanpa proyek</span>}
       <em className={row.transaction_type === 'Pemasukan' ? 'positive' : 'negative'}>{row.transaction_type === 'Pemasukan' ? '+' : '−'}{amount(row.amount)}</em>
       <small>{isInternal(row) ? 'Internal' : 'Eksternal'} · Source {row.source_key || `ID ${row.id}`}</small>
@@ -101,7 +101,7 @@ export function CashflowWorkspace({ transactions, dataThrough, onOpenProject }: 
       <article className="ops-ratio-panel"><p className="eyebrow">TEKANAN KAS</p><h3>{inflow > 0 ? `${((outflow / inflow) * 100).toLocaleString('id-ID', { maximumFractionDigits: 1 })}%` : '—'}</h3><span>pengeluaran terhadap pemasukan</span><div><i style={{ width: `${Math.min(inflow > 0 ? (outflow / inflow) * 100 : 0, 100)}%` }} /></div><p>{inflow === 0 ? 'Tidak ada pemasukan eksternal pada lingkup ini.' : outflow > inflow ? 'Kas keluar melampaui kas masuk pada periode ini.' : 'Kas masuk masih menutup kas keluar pada periode ini.'}</p></article>
     </div>
     <section className="ops-unit-section"><header><div><p className="eyebrow">KONTRIBUSI NET EKSTERNAL</p><h3>Siapa menghasilkan atau menyerap kas</h3></div></header><div className="ops-unit-list">{unitRows.map((row) => <button type="button" key={row.name} onClick={() => setCompany(row.name)}><span><strong>{row.name}</strong><small>{row.count} transaksi eksternal</small></span><i><b style={{ width: `${Math.max(4, Math.min(Math.abs(row.net) / Math.max(...unitRows.map((item) => Math.abs(item.net)), 1) * 100, 100))}%` }} className={row.net >= 0 ? 'positive' : 'negative'} /></i><em className={row.net >= 0 ? 'positive' : 'negative'}>{amount(row.net)}</em></button>)}</div></section>
-    <section className="ops-ledger-section"><header><div><p className="eyebrow">LEDGER OPERASIONAL</p><h3>{company} · {PERIODS.find((item) => item.key === period)?.label}</h3></div><span>{operating.length} eksternal · {internal.length} internal</span></header><MovementLedger key={`${period}-${company}`} rows={[...operating, ...internal]} onOpenProject={onOpenProject} /></section>
+    <section className="ops-ledger-section"><header><div><p className="eyebrow">LEDGER TRANSAKSI</p><h3>{company} · {PERIODS.find((item) => item.key === period)?.label}</h3></div><span>{operating.length} eksternal · {internal.length} internal</span></header><MovementLedger key={`${period}-${company}`} rows={[...operating, ...internal]} onOpenProject={onOpenProject} /></section>
   </section>
 }
 

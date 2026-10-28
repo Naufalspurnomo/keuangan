@@ -1,234 +1,120 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-vi.mock('./FinancialChart', () => ({
-  default: ({ kind }: { kind: string }) => <div data-testid={`chart-${kind}`} />,
-}))
 
 import App from './App'
 
-const snapshot = {
-  version: 'dashboard.snapshot.v1',
-  overview: {
-    metrics: { cash_balance: 868900000, operating_inflow: 497500000, operating_outflow: 192150000, net_operating_cashflow: 305350000, open_internal_debt: 28500000, project_cashflow: 305350000 },
-    counts: { valid_rows: 148, invalid_rows: 2 },
-    labels: { cash_balance: 'Saldo kas', operating_inflow: 'Pemasukan operasional', operating_outflow: 'Pengeluaran operasional', net_operating_cashflow: 'Arus kas operasional bersih', open_internal_debt: 'Hutang antar-dompet terbuka', project_cashflow: 'Arus kas proyek bersih' },
-    drilldowns: {
-      cash_balance: 'wallets', operating_inflow: 'transactions:external-income', operating_outflow: 'transactions:external-expense',
-      net_operating_cashflow: 'transactions:external', open_internal_debt: 'debts:open', project_cashflow: 'transactions:projects',
-    },
-  },
-  meta: { as_of: '2026-10-21T12:00:00Z', data_through: '2026-10-21', source: 'test', freshness: 'fresh', data_completeness: { valid_rows: 3, invalid_rows: 1, completeness_pct: 75 } },
-  wallets: [
-    { source_key: 'CV HB(101):wallet:summary', name: 'CV HB(101)', balance: 868900000 },
-    { source_key: 'TX SBY(216):wallet:summary', name: 'TX SBY(216)', balance: 120000000 },
-    { source_key: 'TX BALI(087):wallet:summary', name: 'TX BALI(087)', balance: 80000000 },
-  ],
-  transactions: [
-    { id: 1, source_key: 'CV HB(101):pemasukan:9', transaction_date: '2026-10-21', transaction_type: 'Pemasukan', amount: 497500000, wallet: 'CV HB(101)', company: 'HOLLA', project: 'Villa A', notes: 'Termin Holla', internal_movement: false },
-    { id: 2, source_key: 'CV HB(101):pemasukan:10', transaction_date: '2026-10-21', transaction_type: 'Pemasukan', amount: 28500000, wallet: 'CV HB(101)', company: 'HOLLA', project: 'Saldo Umum', notes: 'Terima pelunasan hutang', internal_movement: true },
-    { id: 3, source_key: 'CV HB(101):pengeluaran:11', transaction_date: '2026-10-20', transaction_type: 'Pengeluaran', amount: 192150000, wallet: 'CV HB(101)', company: 'HOLLA', project: 'Villa A', notes: 'Vendor Holla', internal_movement: false },
-    { id: 4, source_key: 'CV HB(101):pemasukan:12', transaction_date: '2026-10-19', transaction_type: 'Pemasukan', amount: 72000000, wallet: 'CV HB(101)', company: 'HOJJA', project: 'Woodtopics', notes: 'Termin Hojja', internal_movement: false },
-    { id: 5, source_key: 'TX SBY(216):pemasukan:20', transaction_date: '2026-10-18', transaction_type: 'Pemasukan', amount: 44000000, wallet: 'TX SBY(216)', company: 'TEXTURIN-Surabaya', project: 'Pizza A', notes: 'Termin Texturin SBY', internal_movement: false },
-    { id: 6, source_key: 'TX BALI(087):pengeluaran:21', transaction_date: '2026-10-17', transaction_type: 'Pengeluaran', amount: 13000000, wallet: 'TX BALI(087)', company: 'TEXTURIN-Bali', project: 'Lobby Bali', notes: 'Vendor Texturin Bali', internal_movement: false },
-  ],
-  debts: [{ source_key: 'HUTANG:2', date: '2026-10-20', amount: 28500000, notes: 'Bridge', borrower: 'CV HB(101)', lender: 'TX SBY(216)', status: 'OPEN' }],
-  quality_rows: [{ source_key: 'TX SBY(216):pengeluaran:12', invalid_reason: 'invalid_date_or_amount' }],
-  cash_trend: [], project_summaries: [
-    { name: 'Villa A', portfolio: 'Hollawall', net_cashflow: 305350000, transaction_count: 2, first_activity_on: '2026-09-01', last_activity_on: '2026-10-21', started_on: '2026-09-01', completed_on: null, age_days: 50, lifecycle_status: 'active', health: 'overdue', source_key_first: 'CV HB(101):pemasukan:9', source_key_latest: 'CV HB(101):pengeluaran:11' },
-    { name: 'Proyek Baru', portfolio: 'Texturin', net_cashflow: 12000000, transaction_count: 1, first_activity_on: '2026-10-17', last_activity_on: '2026-10-17', started_on: '2026-10-17', completed_on: null, age_days: 4, lifecycle_status: 'active', health: 'healthy', source_key_first: 'TX SBY(216):pemasukan:20', source_key_latest: 'TX SBY(216):pemasukan:20' },
-  ],
-}
-
 beforeEach(() => {
+  localStorage.clear()
   vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(snapshot), { status: 200 })))
+  vi.stubGlobal('confirm', vi.fn(() => true))
 })
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); localStorage.clear() })
+afterEach(() => {
+  cleanup()
+  localStorage.clear()
+  vi.unstubAllGlobals()
+})
 
-function renderApp() {
-  return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><App /></QueryClientProvider>)
-}
+const renderApp = () => render(<App />)
+const nav = (name: string) => fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${name}`) }))
 
-describe('Hollawall command center', () => {
-  it('renders owner financial overview and seven navigation views', async () => {
+describe('Hollawall demo finance workspace', () => {
+  it('renders one reconciled demo workspace with eight navigation views', () => {
     renderApp()
-    expect(await screen.findByText('TOTAL POSISI KAS')).toBeTruthy()
-    for (const label of ['Ringkasan', 'Arus Kas', 'Dompet', 'Transaksi', 'Proyek', 'Hutang Internal', 'Laporan']) expect(screen.getAllByRole('button', { name: new RegExp(label) }).length).toBeGreaterThan(0)
-  }, 20_000)
-
-  it('separates four real companies and three real wallets into Hollawall and Texturin sections', async () => {
-    renderApp()
-    const report = await screen.findByRole('region', { name: 'Laporan unit usaha' })
-
-    expect(report.querySelector('.portfolio-section')).toBeNull()
-    expect(report.querySelector('.business-chart-card')).toBeNull()
-    expect(report.querySelector('.business-ledger-card')).toBeNull()
-    expect(report.querySelector('.unit-navigator')).toBeTruthy()
-    expect(report.querySelector('.unit-focus-canvas')).toBeTruthy()
-    expect(report.querySelector('.activity-stream')).toBeTruthy()
-    expect(within(report).getByRole('heading', { name: 'Hollawall Section' })).toBeTruthy()
-    expect(within(report).getByRole('heading', { name: 'Texturin Section' })).toBeTruthy()
-    for (const company of ['Holla', 'Hojja', 'TX Surabaya', 'TX Bali']) {
-      expect(within(report).getByRole('button', { name: new RegExp(`Pilih perusahaan ${company}`) })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Posisi keuangan Hollawall' })).toBeTruthy()
+    expect(screen.getByText(/Tidak terhubung ke ledger production/)).toBeTruthy()
+    const menu = screen.getByRole('navigation', { name: 'Menu utama' })
+    for (const label of ['Ringkasan', 'Arus Kas', 'Dompet', 'Transaksi', 'Proyek', 'Operasional Kantor', 'Hutang Internal', 'Laporan']) {
+      expect(within(menu).getByRole('button', { name: new RegExp(`^${label}`) })).toBeTruthy()
     }
-
-    fireEvent.click(within(report).getByRole('button', { name: /Pilih perusahaan Hojja/ }))
-    expect(within(report).getByRole('heading', { name: 'Hojja' })).toBeTruthy()
-    expect(within(report).getByText(/Termin Hojja/)).toBeTruthy()
-    expect(within(report).queryByText(/Termin Holla/)).toBeNull()
-
-    fireEvent.click(within(report).getByRole('button', { name: 'Lihat berdasarkan dompet' }))
-    for (const wallet of ['CV HB (101)', 'TX SBY (216)', 'TX BALI (087)']) {
-      expect(within(report).getByRole('button', { name: new RegExp(`Pilih dompet ${wallet.replace(/[()]/g, '\\$&')}`) })).toBeTruthy()
-    }
-    fireEvent.click(within(report).getByRole('button', { name: /Pilih dompet TX BALI \(087\)/ }))
-    expect(within(report).getByRole('heading', { name: 'TX BALI (087)' })).toBeTruthy()
-    expect(within(report).getByText(/Vendor Texturin Bali/)).toBeTruthy()
-    expect(within(report).queryByText(/Termin Texturin SBY/)).toBeNull()
   })
 
-  it('renders the sketched monthly report matrix and separate project timelines', async () => {
+  it('shows exact wallet-to-company mapping and keeps office costs separate', () => {
     renderApp()
-    const module = await screen.findByRole('region', { name: 'Laporan omzet dan timeline proyek' })
+    nav('Dompet')
+    expect(screen.getByText('Holla · Hojja')).toBeTruthy()
+    expect(screen.getByText('Texturin Surabaya')).toBeTruthy()
+    expect(screen.getByText('Texturin Bali')).toBeTruthy()
 
-    expect(within(module).getByText('HOLLA REPORT')).toBeTruthy()
-    expect(within(module).getByText('Bulan ini')).toBeTruthy()
-    expect(within(module).getByText('Bulan lalu')).toBeTruthy()
-    expect(within(module).getByText('HOLLA')).toBeTruthy()
-    expect(within(module).getByText('TX')).toBeTruthy()
-    expect(within(module).getByText('HOJJA')).toBeTruthy()
-    expect(within(module).getByRole('region', { name: 'Timeline proyek Hollawall' })).toBeTruthy()
-    expect(within(module).getByRole('region', { name: 'Timeline proyek Texturin' })).toBeTruthy()
-    for (const name of ['Timeline proyek Hollawall', 'Timeline proyek Texturin']) {
-      const timeline = within(module).getByRole('region', { name })
-      expect(within(timeline).getByText('Oktober')).toBeTruthy()
-      expect(within(timeline).getByText('November')).toBeTruthy()
-      expect(within(timeline).getByText('Desember')).toBeTruthy()
-    }
-
-    fireEvent.click(within(module).getByRole('button', { name: 'Buka proyek Villa A dari timeline' }))
-    expect(within(module).getByRole('heading', { name: 'Villa A' })).toBeTruthy()
-    expect(within(module).getByText('Mulai')).toBeTruthy()
-    expect(within(module).getByText('1 Sep 2026')).toBeTruthy()
-
-    fireEvent.click(within(module).getByRole('button', { name: 'Tambah proyek Hollawall' }))
-    expect(within(module).getByRole('dialog', { name: 'Dashboard read-only' })).toBeTruthy()
-    expect(within(module).getByText(/kelola proyek dari sumber data/)).toBeTruthy()
+    nav('Operasional Kantor')
+    expect(screen.getByRole('heading', { name: 'Kebutuhan kantor' })).toBeTruthy()
+    expect(screen.getByText(/Biaya kantor terpisah dari proyek/)).toBeTruthy()
   })
 
-  it('persists explicit dark mode choice', async () => {
+  it('creates a project, persists it, and records an audit event', async () => {
+    const first = renderApp()
+    nav('Proyek')
+    fireEvent.click(screen.getAllByRole('button', { name: 'Tambah proyek' })[0])
+    const dialog = screen.getByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText('Nama proyek *'), { target: { value: 'Proyek Integrasi' } })
+    fireEvent.change(within(dialog).getByLabelText('Klien'), { target: { value: 'Klien Integrasi' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Tambah proyek' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getAllByText('Proyek Integrasi').length).toBeGreaterThan(0)
+
+    first.unmount()
     renderApp()
-    await screen.findByRole('heading', { name: 'Ringkasan Perusahaan' })
-    fireEvent.click(screen.getByRole('button', { name: 'Ubah tema' }))
+    nav('Proyek')
+    expect(screen.getAllByText('Proyek Integrasi').length).toBeGreaterThan(0)
+    nav('Ringkasan')
+    expect(screen.getByText('Menambah proyek Proyek Integrasi')).toBeTruthy()
+  })
+
+  it('keeps invalid project submission open without mutating storage', () => {
+    renderApp()
+    nav('Proyek')
+    fireEvent.click(screen.getAllByRole('button', { name: 'Tambah proyek' })[0])
+    const before = localStorage.getItem('hollawall-finance-demo-v2')
+    const dialog = screen.getByRole('dialog')
+    fireEvent.submit(within(dialog).getByRole('button', { name: 'Tambah proyek' }).closest('form')!)
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect(localStorage.getItem('hollawall-finance-demo-v2')).toBe(before)
+  })
+
+  it('navigates annual project data and exposes explicit completion ratios', () => {
+    renderApp()
+    nav('Proyek')
+    expect(screen.getByRole('button', { name: '2024, 120 selesai dari 120 proyek' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '2025, 40 selesai dari 74 proyek' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '2026, 7 selesai dari 28 proyek' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Tahun sebelumnya' }))
+    expect(screen.getByText((_, element) => element?.tagName === 'SPAN' && element.textContent === '40/74 selesai')).toBeTruthy()
+    expect(screen.getByLabelText('Status proyek tahun 2025')).toBeTruthy()
+  })
+
+  it('creates an office expense from an explicitly selected wallet', async () => {
+    renderApp()
+    nav('Operasional Kantor')
+    fireEvent.click(screen.getAllByRole('button', { name: /Biaya kantor|Catat biaya/ })[0])
+    const dialog = screen.getByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText('Dompet *'), { target: { value: 'TX Bali' } })
+    fireEvent.change(within(dialog).getByLabelText('Jumlah *'), { target: { value: '500000' } })
+    fireEvent.change(within(dialog).getByLabelText('Keterangan *'), { target: { value: 'Listrik kantor QA' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Simpan transaksi' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getByText('Listrik kantor QA')).toBeTruthy()
+    expect(screen.getAllByText('TX Bali').length).toBeGreaterThan(0)
+  })
+
+  it('filters report preview using the same seven visible scope labels', () => {
+    renderApp()
+    nav('Laporan')
+    expect(screen.getByRole('heading', { name: 'Preview dan ekspor PDF' })).toBeTruthy()
+    const preview = screen.getByRole('region', { name: 'Preview laporan' })
+    expect(within(preview).getByLabelText('Filter aktif').children).toHaveLength(7)
+    fireEvent.change(screen.getByLabelText('Aktivitas'), { target: { value: 'office' } })
+    expect(within(preview).getAllByText('Operasional Kantor').length).toBeGreaterThan(0)
+    expect(within(preview).getByText('3', { selector: '.preview-metrics strong' })).toBeTruthy()
+  })
+
+  it('persists theme choice and exposes contextual add actions', async () => {
+    renderApp()
+    fireEvent.click(screen.getByRole('button', { name: 'Gunakan tema gelap' }))
     await waitFor(() => expect(document.documentElement.dataset.theme).toBe('dark'))
     expect(localStorage.getItem('hollawall-theme')).toBe('dark')
+    nav('Hutang Internal')
+    expect(screen.getAllByRole('button', { name: 'Tambah hutang' }).length).toBeGreaterThan(0)
+    nav('Laporan')
+    expect(screen.queryByRole('button', { name: /Tambah transaksi/ })).toBeNull()
   })
-
-  it('navigates to transaction detail without a page reload', async () => {
-    renderApp()
-    await screen.findByRole('heading', { name: 'Ringkasan Perusahaan' })
-    fireEvent.click(screen.getByRole('button', { name: /Transaksi/ }))
-    expect(await screen.findByRole('heading', { name: 'Semua Transaksi' })).toBeTruthy()
-    expect(screen.getByPlaceholderText(/Cari transaksi/)).toBeTruthy()
-  })
-
-  it('uses dedicated cashflow and wallet workspaces without exposing the owner name', async () => {
-    renderApp()
-    await screen.findByRole('heading', { name: 'Ringkasan Perusahaan' })
-    expect(screen.queryByText(/Naufalspurnomo|Naufal Spurnomo/i)).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: /^Arus Kas$/ }))
-    expect(await screen.findByRole('heading', { name: 'Aliran operasi, bukan sekadar saldo' })).toBeTruthy()
-    expect(screen.getByText('Kas masuk eksternal')).toBeTruthy()
-    expect(screen.getByText('Transfer internal bruto')).toBeTruthy()
-    expect(screen.getByRole('navigation', { name: 'Periode arus kas' })).toBeTruthy()
-
-    fireEvent.click(screen.getByRole('button', { name: /^Dompet$/ }))
-    expect(await screen.findByRole('heading', { name: 'Posisi kas per sumber' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: /TX SBY\(216\)/ }))
-    expect(screen.getAllByRole('heading', { name: 'TX SBY(216)' }).length).toBeGreaterThan(0)
-    expect(screen.getByRole('navigation', { name: 'Filter mutasi' })).toBeTruthy()
-    expect(screen.getByRole('textbox', { name: 'Cari mutasi dompet' })).toBeTruthy()
-    expect(screen.queryByText(/Naufalspurnomo|Naufal Spurnomo/i)).toBeNull()
-  }, 15_000)
-
-  it('drills an operating KPI into exact external transactions', async () => {
-    renderApp()
-    await screen.findByText('TOTAL POSISI KAS', {}, { timeout: 4_000 })
-    fireEvent.click(screen.getByRole('button', { name: /Pemasukan operasional/ }))
-    expect(await screen.findByRole('heading', { name: 'Semua Transaksi' })).toBeTruthy()
-    expect(screen.getByText('Termin Holla')).toBeTruthy()
-    expect(screen.getByText('CV HB(101):pemasukan:9')).toBeTruthy()
-    expect(screen.queryByText('Terima pelunasan hutang')).toBeNull()
-    expect(screen.getByText('3 transaksi')).toBeTruthy()
-  })
-
-  it('drills the cash headline into wallet source keys', async () => {
-    renderApp()
-    fireEvent.click(await screen.findByRole('button', { name: 'Saldo kas' }, { timeout: 10_000 }))
-    expect(await screen.findByRole('heading', { name: 'Dompet & Rekening' })).toBeTruthy()
-    expect(screen.getAllByText(/CV HB\(101\):wallet:summary/).length).toBeGreaterThan(0)
-  })
-
-  it('drills open debt into its source key', async () => {
-    renderApp()
-    fireEvent.click(await screen.findByRole('button', { name: /Hutang antar-dompet terbuka/ }, { timeout: 10_000 }))
-    expect(await screen.findByRole('heading', { name: 'Hutang Antar-Dompet' })).toBeTruthy()
-    expect(screen.getByText(/HUTANG:2/)).toBeTruthy()
-  })
-
-  it('drills completeness into invalid source keys', async () => {
-    renderApp()
-    fireEvent.click(await screen.findByRole('button', { name: /Kelengkapan data/ }, { timeout: 4_000 }))
-    expect(await screen.findByRole('heading', { name: 'Laporan' })).toBeTruthy()
-    expect(screen.getByText(/TX SBY\(216\):pengeluaran:12/)).toBeTruthy()
-    expect(screen.getByText(/invalid_date_or_amount/)).toBeTruthy()
-  })
-
-  it('keeps navigation usable while the first snapshot is loading', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})))
-    renderApp()
-    expect(await screen.findByRole('heading', { name: 'Ringkasan Perusahaan' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Buka navigasi' })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: 'Mengambil data keuangan' })).toBeTruthy()
-    expect(screen.queryByText('Menyiapkan pusat kendali…')).toBeNull()
-  })
-
-  it('fails closed inside the dashboard shell and offers retry', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { code: 'unavailable' } }), { status: 503 })))
-    renderApp()
-    expect(await screen.findByRole('heading', { name: 'Dashboard belum bisa mengambil data' }, { timeout: 4_000 })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Coba lagi' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Proyek/ })).toBeTruthy()
-    expect(screen.queryByText('PRATINJAU · DATA DEMO')).toBeNull()
-    expect(screen.queryByText('Rp 868.900.000')).toBeNull()
-  })
-
-  it('shows project health, age and opens the selected project transactions', async () => {
-    renderApp()
-    await screen.findByText('TOTAL POSISI KAS')
-    fireEvent.click(screen.getByRole('button', { name: 'Proyek' }))
-    expect(await screen.findByRole('heading', { name: 'Hollawall & Texturin' })).toBeTruthy()
-    expect(screen.getAllByText('Lewat 30 hari').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('Baru · Sehat').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('50 hari').length).toBeGreaterThan(0)
-    expect(screen.getByRole('heading', { name: 'Timeline kalender proyek aktif' })).toBeTruthy()
-    expect(screen.getAllByText(/Section$/).length).toBeGreaterThan(0)
-    fireEvent.click(screen.getByRole('button', { name: 'Selesai' }))
-    expect(screen.queryByRole('heading', { name: 'Timeline kalender proyek aktif' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Semua' }))
-    expect(screen.getAllByText('Hollawall').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('Texturin').length).toBeGreaterThan(0)
-    expect(screen.queryByRole('combobox', { name: 'Filter portfolio' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Filter portfolio Texturin' }))
-    expect(screen.queryByRole('button', { name: /Buka transaksi proyek Villa A/ })).toBeNull()
-    expect(screen.getAllByRole('button', { name: /Buka transaksi proyek Proyek Baru/ }).length).toBeGreaterThan(0)
-    fireEvent.click(screen.getByRole('button', { name: 'Filter portfolio Semua portfolio' }))
-    fireEvent.click(screen.getByRole('button', { name: /^Buka transaksi proyek Villa A,/ }))
-    expect(await screen.findByRole('heading', { name: 'Semua Transaksi' })).toBeTruthy()
-    expect(screen.getByDisplayValue('Villa A')).toBeTruthy()
-    expect(screen.getByText('2 transaksi')).toBeTruthy()
-  }, 15_000)
 })

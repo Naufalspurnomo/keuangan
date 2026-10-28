@@ -21,7 +21,7 @@ const healthMeta: Record<ProjectHealth, { label: string; copy: string }> = {
 const portfolioIdentity: Record<string, { mark: string; copy: string }> = {
   Hollawall: { mark: 'H', copy: 'Produksi & aktivasi' },
   Texturin: { mark: 'T', copy: 'Tekstur & finishing' },
-  Operasional: { mark: 'O', copy: 'Operasional bersama' },
+  'Belum ditandai': { mark: 'B', copy: 'Belum dikelompokkan' },
   'Lintas portfolio': { mark: 'L', copy: 'Lintas unit' },
 }
 

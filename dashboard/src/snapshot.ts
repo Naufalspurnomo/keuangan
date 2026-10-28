@@ -6,7 +6,7 @@ export interface CashTrendPoint { month: string; balance: number; net_movement: 
 export type ProjectHealth = 'healthy' | 'watch' | 'overdue' | 'completed' | 'unmarked'
 export interface ProjectSummary {
   name: string
-  portfolio?: 'Hollawall' | 'Texturin' | 'Operasional' | 'Lintas portfolio'
+  portfolio?: 'Hollawall' | 'Texturin' | 'Belum ditandai' | 'Lintas portfolio'
   net_cashflow: number
   transaction_count?: number
   first_activity_on?: string
