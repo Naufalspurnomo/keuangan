@@ -215,6 +215,7 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
       const [first, second] = [...pointers.current.values()]
       pinchDistance.current = Math.hypot(second.x - first.x, second.y - first.y)
       drag.current.active = false
+      drag.current.moved = true
       return
     }
     if (event.pointerType === 'mouse' && event.button !== 0) return

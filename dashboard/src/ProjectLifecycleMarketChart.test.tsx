@@ -118,6 +118,14 @@ describe('ProjectLifecycleMarketChart', () => {
     fireEvent.click(candle, { detail: 1 })
     expect(onOpen).not.toHaveBeenCalled()
 
+    fireEvent.pointerDown(candle, { pointerType: 'touch', pointerId: 10, clientX: 120, clientY: 120 })
+    fireEvent.pointerDown(candle, { pointerType: 'touch', pointerId: 11, clientX: 220, clientY: 120 })
+    fireEvent.pointerMove(viewport, { pointerType: 'touch', pointerId: 11, clientX: 250, clientY: 120 })
+    fireEvent.pointerUp(viewport, { pointerType: 'touch', pointerId: 11, clientX: 250, clientY: 120 })
+    fireEvent.pointerUp(viewport, { pointerType: 'touch', pointerId: 10, clientX: 120, clientY: 120 })
+    fireEvent.click(candle, { detail: 1 })
+    expect(onOpen).not.toHaveBeenCalled()
+
     fireEvent.click(screen.getByRole('button', { name: 'Kembali ke proyek terbaru Holla' }))
     expect(viewport.scrollLeft).toBe(700)
     const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame')
