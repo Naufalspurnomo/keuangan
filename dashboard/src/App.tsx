@@ -110,6 +110,10 @@ export default function App() {
   const confirmDelete = (label: string, action: () => void) => { if (window.confirm(`Hapus ${label} dari data demo?`)) safe(action, `${label} dihapus.`) }
   const reset = () => { if (window.confirm('Reset seluruh perubahan dan kembali ke data demo awal?')) { finance.reset(); setNotice('Data demo direset.') } }
   const openProject = (project: FinanceProject) => { setProjectFilter(project.id); setActive('transactions') }
+  const openProjectByName = (name: string) => {
+    const project = finance.workspace.projects.find((item) => item.name === name)
+    if (project) openProject(project)
+  }
   const addAction = active === 'projects'
     ? { label: 'Tambah proyek', run: () => setModal({ kind: 'project' } as Modal) }
     : active === 'office'
@@ -120,8 +124,8 @@ export default function App() {
 
   const content = active === 'overview'
     ? <OverviewWorkspace workspace={finance.workspace} onAddTransaction={() => setModal({ kind: 'transaction' })} onAddProject={() => setModal({ kind: 'project' })} onAddOffice={() => setModal({ kind: 'transaction', scope: 'office' })} />
-    : active === 'cashflow' ? <CashflowWorkspacePage workspace={finance.workspace} />
-      : active === 'wallets' ? <WalletWorkspacePage workspace={finance.workspace} />
+    : active === 'cashflow' ? <CashflowWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
+      : active === 'wallets' ? <WalletWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
         : active === 'transactions' ? <TransactionsWorkspace workspace={finance.workspace} initialProjectId={projectFilter} onAdd={() => setModal({ kind: 'transaction' })} onEdit={(value) => setModal({ kind: 'transaction', value })} onDelete={(value) => confirmDelete('transaksi', () => finance.removeTransaction(value.id))} />
           : active === 'projects' ? <ProjectCommandCenter workspace={finance.workspace} onAdd={() => setModal({ kind: 'project' })} onEdit={(value) => setModal({ kind: 'project', value })} onDelete={(value) => confirmDelete(`proyek ${value.name}`, () => finance.removeProject(value.id))} onOpen={openProject} />
             : active === 'office' ? <OfficeWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'transaction', scope: 'office' })} onEdit={(value) => setModal({ kind: 'transaction', value })} onDelete={(value) => confirmDelete('biaya kantor', () => finance.removeTransaction(value.id))} />

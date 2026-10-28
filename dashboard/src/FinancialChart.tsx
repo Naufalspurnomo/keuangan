@@ -24,9 +24,10 @@ function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: 
   </div>
 }
 
-export default function FinancialChart({ kind, cashTrend = [], projects = [], wallets = [], debts = [], transactions = [] }: {
+export default function FinancialChart({ kind, cashTrend = [], cashLabel = 'Saldo kas', projects = [], wallets = [], debts = [], transactions = [] }: {
   kind: 'cash' | 'projects' | 'wallets' | 'monthly' | 'debts' | 'waterfall'
   cashTrend?: CashTrendPoint[]
+  cashLabel?: string
   projects?: ProjectSummary[]
   wallets?: WalletSnapshot[]
   debts?: DebtSnapshot[]
@@ -45,8 +46,8 @@ export default function FinancialChart({ kind, cashTrend = [], projects = [], wa
         <XAxis dataKey="month" tickFormatter={monthLabel} axisLine={false} tickLine={false} tick={{ fill: 'var(--text-secondary)', fontSize: 11 }} />
         <YAxis width={58} axisLine={false} tickLine={false} tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} tickFormatter={(value) => compact.format(value)} />
         <Tooltip content={<ChartTooltip />} />
-        <Area type="monotone" dataKey="balance" name="Saldo kas" connectNulls isAnimationActive={false} stroke="none" fill="url(#cashGradient)" />
-        <Line type="monotone" dataKey="balance" name="Saldo kas" connectNulls isAnimationActive={false} dot={{ r: 3, fill: 'var(--surface)', stroke: 'var(--chart-primary)', strokeWidth: 2 }} activeDot={{ r: 5 }} stroke="var(--chart-primary)" strokeWidth={2.5} />
+        <Area type="monotone" dataKey="balance" name={cashLabel} connectNulls isAnimationActive={false} stroke="none" fill="url(#cashGradient)" />
+        <Line type="monotone" dataKey="balance" name={cashLabel} connectNulls isAnimationActive={false} dot={{ r: 3, fill: 'var(--surface)', stroke: 'var(--chart-primary)', strokeWidth: 2 }} activeDot={{ r: 5 }} stroke="var(--chart-primary)" strokeWidth={2.5} />
       </ComposedChart>
     </ResponsiveContainer>
   }

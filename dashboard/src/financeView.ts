@@ -12,6 +12,8 @@ import {
   type TransactionScope,
   type WalletId,
 } from './financeWorkspace'
+import type { CashTrendPoint, ProjectSummary, WalletSnapshot } from './snapshot'
+import type { Transaction } from './types'
 
 export const IDR = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })
 export const DATE = new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -147,4 +149,104 @@ export function monthlyCashflow(rows: FinanceTransaction[], year: number) {
     const expense = sumMoney(monthRows.filter((row) => row.direction === 'expense').map((row) => row.amount), 'pengeluaran bulanan')
     return { month, income, expense, net: income - expense }
   })
+}
+
+export function chartTransactions(workspace: FinanceWorkspace, includeInternal = false): Transaction[] {
+  const projects = new Map(workspace.projects.map((project) => [project.id, project]))
+  const external = workspace.transactions.map((row, index): Transaction => {
+    const project = row.project_id ? projects.get(row.project_id) : undefined
+    return {
+      id: index + 1,
+      source_key: row.id,
+      transaction_date: row.date,
+      transaction_type: directionLabel(row.direction),
+      amount: row.amount,
+      wallet: row.wallet,
+      company: row.company ?? 'Operasional Kantor',
+      project: project?.name ?? 'Operasional Kantor',
+      notes: row.notes,
+      transfer_scope: 'external',
+    }
+  })
+  if (!includeInternal) return external
+  const internal = workspace.debts.flatMap((debt, index): Transaction[] => {
+    const outstanding = debt.amount - debt.repaid
+    if (outstanding <= 0) return []
+    const base = external.length + index * 2
+    return [{
+      id: base + 1,
+      source_key: `${debt.id}:lender`,
+      transaction_date: debt.date,
+      transaction_type: 'Pengeluaran',
+      amount: outstanding,
+      wallet: debt.lender,
+      company: 'Hutang internal',
+      project: 'Hutang internal',
+      notes: `${debt.notes} · dipinjamkan ke ${debt.borrower}`,
+      internal_movement: true,
+      transfer_scope: 'internal',
+    }, {
+      id: base + 2,
+      source_key: `${debt.id}:borrower`,
+      transaction_date: debt.date,
+      transaction_type: 'Pemasukan',
+      amount: outstanding,
+      wallet: debt.borrower,
+      company: 'Hutang internal',
+      project: 'Hutang internal',
+      notes: `${debt.notes} · diterima dari ${debt.lender}`,
+      internal_movement: true,
+      transfer_scope: 'internal',
+    }]
+  })
+  return [...external, ...internal]
+}
+
+export function chartWallets(workspace: FinanceWorkspace): WalletSnapshot[] {
+  return walletBalances(workspace).map((row) => ({
+    source_key: `demo-wallet:${row.wallet}`,
+    name: row.wallet,
+    balance: row.balance,
+  }))
+}
+
+export function chartProjects(workspace: FinanceWorkspace): ProjectSummary[] {
+  return workspace.projects.map((project) => {
+    const totals = projectTotals(project, workspace.transactions)
+    const dates = workspace.transactions.filter((row) => row.project_id === project.id).map((row) => row.date).sort()
+    return {
+      name: project.name,
+      portfolio: project.company.startsWith('Texturin') ? 'Texturin' : 'Hollawall',
+      net_cashflow: totals.net,
+      transaction_count: totals.transactions,
+      first_activity_on: dates[0],
+      last_activity_on: dates.at(-1),
+      started_on: project.started_on,
+      completed_on: project.completed_on,
+      lifecycle_status: project.status === 'planned' ? 'unmarked' : project.status,
+      source_key_first: project.id,
+      source_key_latest: project.id,
+    }
+  })
+}
+
+export function cashTrend(workspace: FinanceWorkspace, months = 12): CashTrendPoint[] {
+  const ordered = [...workspace.transactions].sort((left, right) => left.date.localeCompare(right.date))
+  const latest = ordered.at(-1)?.date ?? new Date().toISOString().slice(0, 10)
+  const latestDate = new Date(`${latest.slice(0, 7)}-01T00:00:00Z`)
+  const firstDate = new Date(Date.UTC(latestDate.getUTCFullYear(), latestDate.getUTCMonth() - (months - 1), 1))
+  const firstKey = `${firstDate.getUTCFullYear()}-${String(firstDate.getUTCMonth() + 1).padStart(2, '0')}`
+  let balance = sumMoney(ordered.filter((row) => row.date.slice(0, 7) < firstKey).map((row) => row.direction === 'income' ? row.amount : -row.amount), 'saldo awal tren')
+  return Array.from({ length: months }, (_, index) => {
+    const date = new Date(Date.UTC(firstDate.getUTCFullYear(), firstDate.getUTCMonth() + index, 1))
+    const month = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`
+    const rows = ordered.filter((row) => row.date.startsWith(month))
+    const netMovement = sumMoney(rows.map((row) => row.direction === 'income' ? row.amount : -row.amount), `pergerakan ${month}`)
+    balance = sumMoney([balance, netMovement], `saldo ${month}`)
+    return { month, balance, net_movement: netMovement }
+  })
+}
+
+export function workspaceDataThrough(workspace: FinanceWorkspace) {
+  return workspace.transactions.reduce((latest, row) => row.date > latest ? row.date : latest, '') || null
 }

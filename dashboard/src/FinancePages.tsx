@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { BarChart3, CircleDollarSign, Download, Pencil, Plus, RotateCcw, Search, Trash2, WalletCards } from 'lucide-react'
 
+import BusinessSectionReport from './BusinessSectionReport'
+import { CashflowWorkspace, WalletWorkspace } from './FinancialOperationsWorkspace'
+import ProjectReportTimeline from './ProjectReportTimeline'
 import { sumMoney, workspaceTotals, type FinanceDebt, type FinanceProject, type FinanceTransaction, type FinanceWorkspace, type TransactionScope } from './financeWorkspace'
-import { dateLabel, directionLabel, IDR, monthlyCashflow, projectLabel, projectView, scopeLabel, walletBalances } from './financeView'
+import { cashTrend, chartProjects, chartTransactions, chartWallets, dateLabel, directionLabel, IDR, projectLabel, scopeLabel, walletBalances, workspaceDataThrough } from './financeView'
+
+const FinancialChart = lazy(() => import('./FinancialChart'))
 
 export function DemoBanner({ updatedAt, onReset }: { updatedAt: string; onReset: () => void }) {
   return <section className="demo-workspace-banner" aria-label="Status data demo"><div><strong>Data demo</strong><span>Perubahan tersimpan di browser ini. Tidak terhubung ke buku besar produksi.</span></div><small>Diperbarui {new Date(updatedAt).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })}</small><button type="button" onClick={onReset}><RotateCcw size={15} /> Reset demo</button></section>
@@ -11,32 +16,38 @@ export function DemoBanner({ updatedAt, onReset }: { updatedAt: string; onReset:
 export function OverviewWorkspace({ workspace, onAddTransaction, onAddProject, onAddOffice }: { workspace: FinanceWorkspace; onAddTransaction: () => void; onAddProject: () => void; onAddOffice: () => void }) {
   const totals = workspaceTotals(workspace)
   const balances = walletBalances(workspace)
+  const transactions = chartTransactions(workspace)
+  const wallets = chartWallets(workspace)
+  const projects = chartProjects(workspace)
+  const trend = cashTrend(workspace)
   const active = workspace.projects.filter((project) => project.status === 'active').length
   const completed = workspace.projects.filter((project) => project.status === 'completed').length
   const openDebt = sumMoney(workspace.debts.map((debt) => debt.amount - debt.repaid), 'saldo hutang')
   const recent = [...workspace.transactions].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6)
   const audit = [...workspace.audit].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 6)
-  return <div className="finance-page-stack">
-    <section className="overview-command"><div><p className="eyebrow">RINGKASAN · DATA DEMO</p><h1>Posisi keuangan Hollawall</h1><p>Angka berikut dihitung dari transaksi demo yang sama.</p></div><div className="quick-actions"><button className="primary-button" onClick={onAddTransaction}><Plus size={16} /> Transaksi</button><button className="secondary-button" onClick={onAddProject}>Tambah proyek</button><button className="secondary-button" onClick={onAddOffice}>Biaya kantor</button></div></section>
-    <section className="finance-kpis"><article><small>Arus kas bersih</small><strong className={totals.net >= 0 ? 'positive' : 'negative'}>{IDR.format(totals.net)}</strong><span>{IDR.format(totals.income)} masuk · {IDR.format(totals.expense)} keluar</span></article><article><small>Proyek aktif</small><strong>{active}</strong><span>{completed} proyek selesai</span></article><article><small>Operasional Kantor</small><strong>{IDR.format(totals.office)}</strong><span>Pengeluaran kantor tercatat</span></article><article><small>Hutang internal terbuka</small><strong>{IDR.format(openDebt)}</strong><span>Tidak mengubah kas konsolidasi</span></article></section>
-    <section className="wallet-command"><header><div><p className="eyebrow">POSISI DOMPET</p><h2>Tiga sumber dana</h2></div></header><div>{balances.map((item) => { const expenseShare = item.income ? Math.round((item.expense / item.income) * 100) : 0; return <article key={item.wallet}><span><WalletCards size={18} /><strong>{item.wallet}</strong></span><b>{IDR.format(item.balance)}</b><small>Penyesuaian hutang: {IDR.format(item.adjusted)}</small><i><em style={{ width: `${Math.max(4, Math.min(100, expenseShare))}%` }} /></i><small>{expenseShare}% pemasukan telah digunakan</small></article> })}</div></section>
+  return <div className="finance-page-stack overview-showcase">
+    <section className="overview-command"><div><p className="eyebrow">RINGKASAN · DATA DEMO</p><h1>Pusat kendali keuangan Hollawall</h1><p>Saldo, arus kas, dompet, proyek, dan audit dihitung dari satu workspace demo yang sama.</p></div><div className="quick-actions"><button className="primary-button" onClick={onAddTransaction}><Plus size={16} /> Transaksi</button><button className="secondary-button" onClick={onAddProject}>Tambah proyek</button><button className="secondary-button" onClick={onAddOffice}>Biaya kantor</button></div></section>
+    <section className="finance-kpis"><article><small>Posisi kas konsolidasi</small><strong className={totals.net >= 0 ? 'positive' : 'negative'}>{IDR.format(totals.net)}</strong><span>{IDR.format(totals.income)} masuk · {IDR.format(totals.expense)} keluar</span></article><article><small>Proyek aktif</small><strong>{active}</strong><span>{completed} proyek selesai</span></article><article><small>Biaya kantor</small><strong>{IDR.format(totals.office)}</strong><span>Terpisah dari seluruh proyek</span></article><article><small>Hutang internal terbuka</small><strong>{IDR.format(openDebt)}</strong><span>Tidak mengubah kas konsolidasi</span></article></section>
+    <BusinessSectionReport transactions={transactions} wallets={wallets} />
+    <section className="overview-chart-grid" aria-label="Analitik utama">
+      <article className="showcase-chart"><header><div><p className="eyebrow">POSISI KAS</p><h2>Tren kas 12 bulan</h2></div><span>Saldo berjalan</span></header><div><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="cash" cashTrend={trend} /></Suspense></div></article>
+      <article className="showcase-chart"><header><div><p className="eyebrow">LIKUIDITAS</p><h2>Sebaran saldo dompet</h2></div><span>{wallets.length} sumber dana</span></header><div><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="wallets" wallets={wallets} /></Suspense></div></article>
+      <article className="showcase-chart"><header><div><p className="eyebrow">PORTOFOLIO</p><h2>Kontribusi proyek terbesar</h2></div><span>Arus bersih proyek</span></header><div><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="projects" projects={projects} /></Suspense></div></article>
+    </section>
+    <ProjectReportTimeline transactions={transactions} projects={projects} asOf={workspaceDataThrough(workspace)} dataThrough={workspaceDataThrough(workspace)} onAddProject={onAddProject} />
+    <section className="wallet-command"><header><div><p className="eyebrow">POSISI DOMPET</p><h2>Tiga sumber dana</h2></div></header><div>{balances.map((item) => { const expenseShare = item.income ? Math.round((item.expense / item.income) * 100) : 0; return <article key={item.wallet}><span><WalletCards size={18} /><strong>{item.wallet}</strong></span><b>{IDR.format(item.balance)}</b><small>Saldo + piutang − hutang: {IDR.format(item.adjusted)}</small><i><em style={{ width: `${Math.max(4, Math.min(100, expenseShare))}%` }} /></i><small>{expenseShare}% pemasukan telah digunakan</small></article> })}</div></section>
     <section className="recent-command"><header><div><p className="eyebrow">TRANSAKSI TERBARU</p><h2>Aktivitas terakhir</h2></div></header><TransactionRows rows={recent} projects={workspace.projects} compact /></section>
     <section className="audit-command"><header><div><p className="eyebrow">RIWAYAT PERUBAHAN</p><h2>Audit data demo</h2></div><small>{workspace.audit.length} perubahan tercatat</small></header>{audit.length ? <ol>{audit.map((event) => <li key={event.id}><span className={`audit-action ${event.action}`}>{event.action === 'create' ? 'Tambah' : event.action === 'update' ? 'Ubah' : event.action === 'delete' ? 'Hapus' : 'Reset'}</span><div><strong>{event.summary}</strong><small>{new Date(event.at).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })}</small></div></li>)}</ol> : <div className="audit-empty">Belum ada perubahan manual pada data demo.</div>}</section>
   </div>
 }
 
-export function CashflowWorkspacePage({ workspace }: { workspace: FinanceWorkspace }) {
-  const years = [...new Set(workspace.transactions.map((row) => Number(row.date.slice(0, 4))))].sort((a, b) => a - b)
-  const [year, setYear] = useState(years.at(-1) ?? new Date().getFullYear())
-  const months = monthlyCashflow(workspace.transactions, year)
-  const max = Math.max(...months.flatMap((month) => [month.income, month.expense]), 1)
-  const labels = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des']
-  const annual = months.reduce((sum, row) => sum + row.net, 0)
-  return <section className="finance-page-stack"><header className="command-head"><div><p className="eyebrow">ARUS KAS · DATA DEMO</p><h2>Pergerakan kas bulanan</h2><p>Transfer dan hutang internal tidak dihitung sebagai pemasukan atau pengeluaran.</p></div><select aria-label="Tahun arus kas" value={year} onChange={(event) => setYear(Number(event.target.value))}>{years.map((item) => <option key={item}>{item}</option>)}</select></header><section className="cashflow-bars"><header><span><i className="income" /> Pemasukan</span><span><i className="expense" /> Pengeluaran</span><strong className={annual >= 0 ? 'positive' : 'negative'}>Bersih {IDR.format(annual)}</strong></header><div>{months.map((month) => <article key={month.month}><div><i className="income" style={{ height: `${(month.income / max) * 100}%` }} /><i className="expense" style={{ height: `${(month.expense / max) * 100}%` }} /></div><strong>{labels[month.month]}</strong><small>{IDR.format(month.net)}</small></article>)}</div></section></section>
+export function CashflowWorkspacePage({ workspace, onOpenProject }: { workspace: FinanceWorkspace; onOpenProject: (name: string) => void }) {
+  const openDebt = sumMoney(workspace.debts.map((debt) => debt.amount - debt.repaid), 'saldo hutang')
+  return <CashflowWorkspace transactions={chartTransactions(workspace, true)} cashTrend={cashTrend(workspace)} internalOpen={openDebt} dataThrough={workspaceDataThrough(workspace)} onOpenProject={onOpenProject} />
 }
 
-export function WalletWorkspacePage({ workspace }: { workspace: FinanceWorkspace }) {
-  return <section className="finance-page-stack"><header className="command-head"><div><p className="eyebrow">DOMPET · DATA DEMO</p><h2>Sumber dana dan perusahaan</h2><p>Saldo berasal dari seluruh transaksi demo pada setiap dompet.</p></div></header><section className="wallet-detail-grid">{walletBalances(workspace).map((item) => { const companies = item.wallet === 'CV HB' ? ['Holla', 'Hojja'] : item.wallet === 'TX SBY' ? ['Texturin Surabaya'] : ['Texturin Bali']; const projects = workspace.projects.filter((project) => project.wallet === item.wallet); return <article key={item.wallet}><header><WalletCards /><div><h3>{item.wallet}</h3><p>{companies.join(' · ')}</p></div></header><strong>{IDR.format(item.balance)}</strong><div><span><small>Pemasukan</small><b>{IDR.format(item.income)}</b></span><span><small>Pengeluaran</small><b>{IDR.format(item.expense)}</b></span><span><small>Dipinjam</small><b>{IDR.format(item.borrowed)}</b></span><span><small>Dipinjamkan</small><b>{IDR.format(item.lent)}</b></span></div><footer>{projects.length} proyek · posisi setelah hutang {IDR.format(item.adjusted)}</footer></article> })}</section></section>
+export function WalletWorkspacePage({ workspace, onOpenProject }: { workspace: FinanceWorkspace; onOpenProject: (name: string) => void }) {
+  return <WalletWorkspace transactions={chartTransactions(workspace, true)} wallets={chartWallets(workspace)} dataThrough={workspaceDataThrough(workspace)} onOpenProject={onOpenProject} />
 }
 
 function TransactionRows({ rows, projects, compact, onEdit, onDelete }: { rows: FinanceTransaction[]; projects: FinanceProject[]; compact?: boolean; onEdit?: (row: FinanceTransaction) => void; onDelete?: (row: FinanceTransaction) => void }) {

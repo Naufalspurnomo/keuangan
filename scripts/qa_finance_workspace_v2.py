@@ -9,9 +9,17 @@ from playwright.sync_api import sync_playwright
 URL = 'http://127.0.0.1:4173/'
 OUT = Path('artifacts/qa-finance-v2')
 OUT.mkdir(parents=True, exist_ok=True)
-VIEWPORTS = [
+CHROMIUM_VIEWPORTS = [
     ('mobile-390', 390, 844),
     ('tablet-768', 768, 1024),
+    ('laptop-1024', 1024, 768),
+    ('desktop-1280', 1280, 800),
+    ('laptop-1366', 1366, 768),
+    ('desktop-1440', 1440, 900),
+    ('macbook-1512', 1512, 982),
+    ('fullhd-1920', 1920, 1080),
+]
+WEBKIT_VIEWPORTS = [
     ('laptop-1024', 1024, 768),
     ('desktop-1440', 1440, 900),
     ('macbook-1512', 1512, 982),
@@ -47,9 +55,26 @@ def goto_page(page, name):
     page.wait_for_timeout(100)
 
 
-def matrix(browser):
+def assert_showcase(page, viewport, nav):
+    expected = {
+        'Ringkasan': (3, ['Pusat kendali keuangan Hollawall', 'Arus kas per unit', 'Tren kas 12 bulan', 'Sebaran saldo dompet', 'Kontribusi proyek terbesar', 'Omzet dan rentang proyek', 'Audit data demo']),
+        'Arus Kas': (2, ['Aliran kas, bukan sekadar saldo', 'Masuk vs keluar bulanan', 'Tren arus kas tercatat', 'Kontribusi bersih per perusahaan', 'Ledger transaksi']),
+        'Dompet': (2, ['Posisi kas per sumber', 'Sebaran saldo semua dompet', 'Arus bulanan dompet terpilih', 'Jejak sumber', 'Mutasi dompet']),
+    }
+    count, headings = expected[nav]
+    page.wait_for_timeout(500)
+    charts = page.locator('.showcase-chart')
+    assert charts.count() == count, f'{viewport}:{nav}: expected {count} showcase charts, got {charts.count()}'
+    for heading in headings:
+        assert page.get_by_role('heading', name=heading, exact=True).count() == 1, f'{viewport}:{nav}: missing heading {heading}'
+    geometry = charts.evaluate_all("els => els.map(el => { const r=el.getBoundingClientRect(); const svgs=[...el.querySelectorAll('svg')].map(svg=>svg.getBoundingClientRect()).sort((a,b)=>(b.width*b.height)-(a.width*a.height)); const s=svgs[0]; return {w:r.width,h:r.height,svgW:s?.width||0,svgH:s?.height||0} })")
+    assert all(item['w'] >= 240 and item['h'] >= 180 and item['svgW'] >= 100 and item['svgH'] >= 100 for item in geometry), f'{viewport}:{nav}: collapsed chart {geometry}'
+    return {'charts': count, 'geometry': geometry}
+
+
+def matrix(browser, viewports):
     results=[]
-    for name,width,height in VIEWPORTS:
+    for name,width,height in viewports:
         page=browser.new_page(viewport={'width':width,'height':height}, locale='id-ID')
         errors=[]
         page.on('console', lambda msg: errors.append(f'console:{msg.type}:{msg.text}') if msg.type=='error' else None)
@@ -59,19 +84,24 @@ def matrix(browser):
         if width <= 760:
             assert page.locator('aside.sidebar').get_attribute('aria-hidden') == 'true'
             assert page.locator('aside.sidebar button[tabindex="-1"]').count() == 9
+        showcase = {}
         for nav in ['Ringkasan','Arus Kas','Dompet','Transaksi','Proyek','Operasional Kantor','Hutang Internal','Laporan']:
             if width <= 900:
                 dispatch(page.get_by_role('button', name='Buka navigasi'))
                 page.wait_for_timeout(50)
             goto_page(page,nav)
             assert_geometry(page,f'{name}:{nav}')
+            if nav in ['Ringkasan','Arus Kas','Dompet']:
+                showcase[nav] = assert_showcase(page, name, nav)
+                if name in ['mobile-390','desktop-1440']:
+                    page.screenshot(path=str(OUT/f"{name}-{nav.lower().replace(' ','-')}.png"), full_page=True)
             if nav == 'Proyek' and width <= 760:
                 grid=page.locator('.year-candle-grid')
                 reach=grid.evaluate("e=>{e.scrollLeft=e.scrollWidth;const last=e.lastElementChild?.getBoundingClientRect();const box=e.getBoundingClientRect();return {max:e.scrollWidth-e.clientWidth,left:e.scrollLeft,last:last?.right,edge:box.right}}")
                 assert reach['max'] > 0 and abs(reach['left']-reach['max']) <= 2 and reach['last'] <= reach['edge'] + 2, f'{name}: candle end unreachable {reach}'
         page.screenshot(path=str(OUT/f'{name}-reports.png'))
         assert not errors, f'{name}: {errors}'
-        results.append({'viewport':name,'pages':8,'errors':0})
+        results.append({'viewport':name,'pages':8,'showcase':showcase,'errors':0})
         page.close()
     return results
 
@@ -157,10 +187,10 @@ def journeys(browser):
 def main():
     with sync_playwright() as p:
         webkit=p.webkit.launch(headless=True)
-        result={'webkit_matrix':matrix(webkit),'journeys':journeys(webkit)}
+        result={'webkit_matrix':matrix(webkit, WEBKIT_VIEWPORTS),'journeys':journeys(webkit)}
         webkit.close()
         chromium=p.chromium.launch(headless=True,executable_path='/snap/bin/chromium',args=['--no-sandbox'])
-        result['chromium_matrix']=matrix(chromium)
+        result['chromium_matrix']=matrix(chromium, CHROMIUM_VIEWPORTS)
         chromium.close()
     (OUT/'result.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
     print(json.dumps(result))

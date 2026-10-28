@@ -143,7 +143,7 @@ function SectionTimeline({ portfolio, projects, window, selected, onSelect, onNe
   </section>
 }
 
-export default function ProjectReportTimeline({ transactions, projects, asOf, dataThrough }: { transactions: Transaction[]; projects: ProjectSummary[]; asOf?: string | null; dataThrough?: string | null }) {
+export default function ProjectReportTimeline({ transactions, projects, asOf, dataThrough, onAddProject }: { transactions: Transaction[]; projects: ProjectSummary[]; asOf?: string | null; dataThrough?: string | null; onAddProject?: () => void }) {
   const window = useMemo(() => quarterWindow(asOf), [asOf])
   const revenueAnchor = parseDate(dataThrough) ?? window.anchor
   const [selected, setSelected] = useState<ProjectSummary | null>(null)
@@ -187,8 +187,8 @@ export default function ProjectReportTimeline({ transactions, projects, asOf, da
     </div>
 
     <div className="section-timeline-grid">
-      <SectionTimeline portfolio="Hollawall" projects={projects} window={window} selected={selected?.name} onSelect={setSelected} onNew={() => setReadOnlyNotice(true)} />
-      <SectionTimeline portfolio="Texturin" projects={projects} window={window} selected={selected?.name} onSelect={setSelected} onNew={() => setReadOnlyNotice(true)} />
+      <SectionTimeline portfolio="Hollawall" projects={projects} window={window} selected={selected?.name} onSelect={setSelected} onNew={() => onAddProject ? onAddProject() : setReadOnlyNotice(true)} />
+      <SectionTimeline portfolio="Texturin" projects={projects} window={window} selected={selected?.name} onSelect={setSelected} onNew={() => onAddProject ? onAddProject() : setReadOnlyNotice(true)} />
     </div>
 
     {selected && <aside className="project-timeline-detail" aria-label={`Detail proyek ${selected.name}`}>

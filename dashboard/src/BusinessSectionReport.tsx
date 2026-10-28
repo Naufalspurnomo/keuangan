@@ -18,16 +18,16 @@ type Unit = {
 }
 
 const COMPANY_UNITS: Unit[] = [
-  { key: 'holla', label: 'Holla', portfolio: 'Hollawall', mode: 'company', company: 'HOLLA' },
-  { key: 'hojja', label: 'Hojja', portfolio: 'Hollawall', mode: 'company', company: 'HOJJA' },
-  { key: 'tx-surabaya', label: 'TX Surabaya', portfolio: 'Texturin', mode: 'company', company: 'TEXTURIN-Surabaya' },
-  { key: 'tx-bali', label: 'TX Bali', portfolio: 'Texturin', mode: 'company', company: 'TEXTURIN-Bali' },
+  { key: 'holla', label: 'Holla', portfolio: 'Hollawall', mode: 'company', company: 'Holla' },
+  { key: 'hojja', label: 'Hojja', portfolio: 'Hollawall', mode: 'company', company: 'Hojja' },
+  { key: 'tx-surabaya', label: 'Texturin Surabaya', portfolio: 'Texturin', mode: 'company', company: 'Texturin Surabaya' },
+  { key: 'tx-bali', label: 'Texturin Bali', portfolio: 'Texturin', mode: 'company', company: 'Texturin Bali' },
 ]
 
 const WALLET_UNITS: Unit[] = [
-  { key: 'cv-hb', label: 'CV HB (101)', portfolio: 'Hollawall', mode: 'wallet', wallet: 'CV HB(101)' },
-  { key: 'tx-sby', label: 'TX SBY (216)', portfolio: 'Texturin', mode: 'wallet', wallet: 'TX SBY(216)' },
-  { key: 'tx-bali-wallet', label: 'TX BALI (087)', portfolio: 'Texturin', mode: 'wallet', wallet: 'TX BALI(087)' },
+  { key: 'cv-hb', label: 'CV HB', portfolio: 'Hollawall', mode: 'wallet', wallet: 'CV HB' },
+  { key: 'tx-sby', label: 'TX SBY', portfolio: 'Texturin', mode: 'wallet', wallet: 'TX SBY' },
+  { key: 'tx-bali-wallet', label: 'TX Bali', portfolio: 'Texturin', mode: 'wallet', wallet: 'TX Bali' },
 ]
 
 const IDR = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })

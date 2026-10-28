@@ -11,6 +11,15 @@
 .demo-workspace-banner button { border: 0; background: transparent; color: var(--text); display: flex; gap: 6px; align-items: center; font-weight: 700; cursor: pointer; }
 .topbar-add { min-height: 38px; display: flex; align-items: center; gap: 7px; padding: 0 13px; border: 1px solid var(--border); background: var(--surface-raised); color: var(--text); font-weight: 750; cursor: pointer; }
 .finance-page-stack, .project-command-center, .reports-workspace { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; min-width: 0; gap: 20px; }
+.overview-showcase { gap: 24px; }
+.overview-chart-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.overview-chart-grid .showcase-chart { min-width: 0; border: 1px solid var(--border-subtle); border-radius: 16px; background: color-mix(in srgb, var(--surface) 92%, transparent); padding: 18px; box-shadow: var(--shadow-sm); }
+.overview-chart-grid .showcase-chart > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+.overview-chart-grid h2 { margin: 3px 0 0; font-family: 'Newsreader', serif; font-size: 21px; font-weight: 500; letter-spacing: -.015em; }
+.overview-chart-grid header > span { color: var(--text-tertiary); font-size: 9px; text-align: right; }
+.overview-chart-grid .showcase-chart > div:last-child { height: 260px; min-width: 0; }
+@media (max-width: 1180px) { .overview-chart-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .overview-chart-grid .showcase-chart:last-child { grid-column: 1 / -1; } }
+@media (max-width: 760px) { .overview-chart-grid { grid-template-columns: 1fr; } .overview-chart-grid .showcase-chart:last-child { grid-column: auto; } .overview-chart-grid .showcase-chart > div:last-child { height: 235px; } }
 .project-command-center { gap: 12px; }
 .finance-page-stack > *, .project-command-center > *, .reports-workspace > * { min-width: 0; max-width: 100%; }
 .command-head, .overview-command { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
