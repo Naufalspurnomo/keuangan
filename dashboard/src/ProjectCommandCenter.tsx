@@ -56,6 +56,7 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onDelet
   const [status, setStatus] = useState<'all' | ProjectStatus>('all')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(0)
+  const yearNavRef = useRef<HTMLElement>(null)
   const activeYearRef = useRef<HTMLButtonElement>(null)
   const snapshotDate = workspace.updated_at.slice(0, 10)
   const allYear = workspace.projects.filter((project) => projectOverlapsYear(project, year, snapshotDate))
@@ -70,7 +71,15 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onDelet
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   useEffect(() => { if (page >= pageCount) setPage(pageCount - 1) }, [page, pageCount])
   useEffect(() => { if (!years.includes(year)) setYear(snapshotYear) }, [snapshotYear, year, years])
-  useEffect(() => { activeYearRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }) }, [year])
+  useEffect(() => {
+    const nav = yearNavRef.current
+    const reveal = () => activeYearRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+    reveal()
+    if (!nav || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(reveal)
+    observer.observe(nav)
+    return () => observer.disconnect()
+  }, [year, years])
   const visible = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
   const yearIndex = years.indexOf(year)
   const changeYear = (next: number) => { setYear(next); setPage(0) }
@@ -83,7 +92,7 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onDelet
       <button type="button" aria-label="Tahun sebelumnya" title={yearIndex <= 0 ? 'Tidak ada tahun sebelumnya' : undefined} disabled={yearIndex <= 0} onClick={() => changeYear(years[yearIndex - 1])}><ArrowLeft size={19} /></button>
       <div><small>TAHUN PROYEK</small><strong>{year}</strong><span><b>{yearCompleted}</b>/{allYear.length} selesai</span></div>
       <button type="button" aria-label="Tahun berikutnya" title={yearIndex >= years.length - 1 ? 'Tahun terbaru yang tersedia' : undefined} disabled={yearIndex < 0 || yearIndex >= years.length - 1} onClick={() => changeYear(years[yearIndex + 1])}><ArrowRight size={19} /></button>
-      <nav aria-label="Daftar tahun">{years.map((item) => {
+      <nav ref={yearNavRef} aria-label="Daftar tahun">{years.map((item) => {
         const projects = workspace.projects.filter((project) => projectOverlapsYear(project, item, snapshotDate))
         const done = projects.filter((project) => project.status === 'completed').length
         return <button ref={item === year ? activeYearRef : undefined} type="button" className={item === year ? 'active' : ''} aria-current={item === year ? 'page' : undefined} aria-label={`${item}, ${done} selesai dari ${projects.length} proyek`} key={item} onClick={() => changeYear(item)}><strong>{item}</strong><span>{done} selesai / {projects.length} total</span></button>

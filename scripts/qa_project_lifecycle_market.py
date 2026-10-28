@@ -9,8 +9,9 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 URL = os.getenv("QA_URL", "http://127.0.0.1:4173/")
+ENGINE = os.getenv("QA_ENGINE", "chromium")
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / "artifacts" / "project-lifecycle-market-qa"
+OUT = ROOT / "artifacts" / "project-lifecycle-market-qa" / ENGINE
 OUT.mkdir(parents=True, exist_ok=True)
 
 viewports = (
@@ -21,14 +22,36 @@ viewports = (
     ("mobile-390", 390, 844),
 )
 results = []
+companies = ["Holla", "Hojja", "Texturin Bali", "Texturin Surabaya"]
+seed_companies = ["Holla", "Hojja", "Texturin Surabaya", "Texturin Bali"]
+expected_ids = [*(f"demo-prj-2025-{index:03d}" for index in range(41, 65)), *(f"demo-prj-2026-{index:03d}" for index in range(1, 29))]
+expected_by_company = {
+    company: sorted(project_id for project_id in expected_ids if seed_companies[(int(project_id[-3:]) - 1) % 4] == company)
+    for company in companies
+}
+
+def active_year_geometry(page):
+    return page.locator(".year-command nav").evaluate("el => { const active=el.querySelector('button.active'); const n=el.getBoundingClientRect(); const a=active.getBoundingClientRect(); return {navLeft:n.left,navRight:n.right,activeLeft:a.left,activeRight:a.right}; }")
+
+def assert_active_year_visible(page, label):
+    geometry = active_year_geometry(page)
+    assert geometry["activeLeft"] >= geometry["navLeft"] - 1 and geometry["activeRight"] <= geometry["navRight"] + 1, (label, "active year clipped", geometry)
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True, executable_path="/snap/bin/chromium", args=["--no-sandbox"])
+    if ENGINE == "chromium":
+        browser = p.chromium.launch(headless=True, executable_path="/snap/bin/chromium", args=["--no-sandbox"])
+    elif ENGINE == "firefox":
+        browser = p.firefox.launch(headless=True)
+    elif ENGINE == "webkit":
+        browser = p.webkit.launch(headless=True)
+    else:
+        raise ValueError(f"Unsupported QA_ENGINE: {ENGINE}")
     for name, width, height in viewports:
         page = browser.new_page(viewport={"width": width, "height": height})
         console_errors: list[str] = []
         page_errors: list[str] = []
         request_failures: list[str] = []
+        page.add_init_script("localStorage.removeItem('hollawall-finance-demo-v2')")
         page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
         page.on("pageerror", lambda error: page_errors.append(str(error)))
         page.on("requestfailed", lambda request: request_failures.append(f"{request.method} {request.url}: {request.failure}"))
@@ -38,22 +61,26 @@ with sync_playwright() as p:
             page.get_by_role("button", name="Buka navigasi").click()
         page.get_by_role("button", name="Proyek", exact=True).click()
         page.get_by_role("heading", name="Umur dan status proyek").wait_for()
-        year_geometry = page.locator(".year-command nav").evaluate("el => { const active=el.querySelector('button.active'); const n=el.getBoundingClientRect(); const a=active.getBoundingClientRect(); return {navLeft:n.left,navRight:n.right,activeLeft:a.left,activeRight:a.right}; }")
-        assert year_geometry["activeLeft"] >= year_geometry["navLeft"] - 1 and year_geometry["activeRight"] <= year_geometry["navRight"] + 1, (name, "active year clipped", year_geometry)
+        assert_active_year_visible(page, name)
 
         canvases = page.locator(".project-market-canvas")
         assert canvases.count() == 4, (name, canvases.count())
-        companies = canvases.evaluate_all("els => els.map(el => el.dataset.projectCompany)")
-        assert companies == ["Holla", "Hojja", "Texturin Bali", "Texturin Surabaya"], (name, companies)
-        assert page.locator(".project-market-month").count() == 48, (name, "month axis")
+        rendered_companies = canvases.evaluate_all("els => els.map(el => el.dataset.projectCompany)")
+        assert rendered_companies == companies, (name, rendered_companies)
+        month_marker_count = page.locator(".project-market-month").count()
+        assert month_marker_count == 48, (name, "month axis")
         assert page.locator('[aria-label="Halaman chart"]').count() == 0, (name, "chart pagination remains")
         assert page.locator(".year-candle-board").count() == 0, (name, "legacy chart remains")
 
         summaries = page.locator(".project-market-summary strong").all_text_contents()
         assert len(summaries) == 4 and all(re.fullmatch(r"\d+ / \d+", value.strip()) for value in summaries), (name, summaries)
-        expected_candles = sum(int(value.split('/')[1].strip()) for value in summaries)
         candles = page.locator("[data-project-candle]")
-        assert candles.count() == expected_candles, (name, candles.count(), expected_candles)
+        candle_count = candles.count()
+        rendered_ids = sorted(candles.evaluate_all("els => els.map(el => el.dataset.projectId)"))
+        assert rendered_ids == sorted(expected_ids), (name, rendered_ids, expected_ids)
+        for company in companies:
+            company_ids = sorted(page.locator(f'[data-project-company="{company}"] [data-project-id]').evaluate_all("els => els.map(el => el.dataset.projectId)"))
+            assert company_ids == expected_by_company[company], (name, company, company_ids, expected_by_company[company])
 
         # DOM order and rendered X position must progress from old to new in every non-empty company.
         order_checks = page.locator(".project-market-canvas").evaluate_all("""canvases => canvases.map(canvas => {
@@ -102,12 +129,16 @@ with sync_playwright() as p:
         if dimensions["maxX"] > 0:
             page.get_by_role("button", name="Kembali ke proyek terbaru Holla").click()
             page.wait_for_timeout(80)
+            viewport.scroll_into_view_if_needed()
             candle_box = canvases.first.locator("[data-project-candle]").last.bounding_box()
-            assert candle_box
+            viewport_box = viewport.bounding_box()
+            assert candle_box and viewport_box
+            candle_x = candle_box["x"] + candle_box["width"] / 2
+            candle_y = max(viewport_box["y"] + 20, min(candle_box["y"] + candle_box["height"] / 2, viewport_box["y"] + viewport_box["height"] - 20, height - 20))
             before_candle_pan = viewport.evaluate("el => el.scrollLeft")
-            page.mouse.move(candle_box["x"] + candle_box["width"] / 2, candle_box["y"] + min(160, candle_box["height"] / 2))
+            page.mouse.move(candle_x, candle_y)
             page.mouse.down()
-            page.mouse.move(candle_box["x"] + candle_box["width"] / 2 + 45, candle_box["y"] + min(160, candle_box["height"] / 2), steps=5)
+            page.mouse.move(candle_x + 45, candle_y, steps=5)
             page.mouse.up()
             page.wait_for_timeout(80)
             assert viewport.evaluate("el => el.scrollLeft") != before_candle_pan, (name, "candle drag did not pan")
@@ -128,6 +159,61 @@ with sync_playwright() as p:
         page.wait_for_timeout(100)
         assert page.get_by_text("Zoom 100%", exact=True).is_visible(), (name, "reset zoom")
         assert viewport.evaluate("el => el.scrollTop") == 0, (name, "reset vertical pan")
+        if width > 580:
+            viewport.evaluate("el => el.scrollIntoView({ block: 'center', inline: 'nearest' })")
+            page.wait_for_timeout(80)
+            mid_scroll = viewport.evaluate("el => { const max = el.scrollHeight - el.clientHeight; el.scrollTop = max / 2; return { top: el.scrollTop, max }; }")
+            wheel_box = viewport.bounding_box()
+            assert wheel_box and mid_scroll["max"] > 2
+            page.mouse.move(wheel_box["x"] + wheel_box["width"] * .65, min(wheel_box["y"] + 160, height - 20))
+            min_top = mid_scroll["top"]
+            page.mouse.wheel(0, 100)
+            page.wait_for_timeout(100)
+            assert page.get_by_text("Zoom 100%", exact=True).is_visible(), (name, "minimum wheel changed zoom")
+            assert viewport.evaluate("el => el.scrollTop") > min_top, (name, "minimum wheel trapped native scroll")
+
+            viewport.evaluate("el => { el.scrollTop = el.scrollHeight - el.clientHeight }")
+            viewport.evaluate("el => window.scrollTo(0, Math.max(0, el.getBoundingClientRect().top + window.scrollY - 80))")
+            page.wait_for_timeout(80)
+            wheel_box = viewport.bounding_box()
+            assert wheel_box
+            page.mouse.move(wheel_box["x"] + wheel_box["width"] * .65, min(wheel_box["y"] + 160, height - 20))
+            page_top = page.evaluate("window.scrollY")
+            page.mouse.wheel(0, 180)
+            page.wait_for_timeout(100)
+            assert page.evaluate("window.scrollY") > page_top, (name, "minimum boundary trapped page scroll")
+
+            viewport.scroll_into_view_if_needed()
+            viewport.evaluate("el => { el.scrollLeft = Math.min(120, el.scrollWidth - el.clientWidth) }")
+            wheel_box = viewport.bounding_box()
+            assert wheel_box
+            page.mouse.move(wheel_box["x"] + wheel_box["width"] * .65, min(wheel_box["y"] + 160, height - 20))
+            horizontal_left = viewport.evaluate("el => el.scrollLeft")
+            page.mouse.wheel(-80, 0)
+            page.wait_for_timeout(100)
+            assert page.get_by_text("Zoom 100%", exact=True).is_visible(), (name, "horizontal wheel changed zoom")
+            assert viewport.evaluate("el => el.scrollLeft") != horizontal_left or dimensions["maxX"] == 0, (name, "horizontal wheel trapped native pan")
+
+            for _ in range(5):
+                page.get_by_role("button", name="Perbesar semua chart").click()
+            assert page.get_by_text("Zoom 240%", exact=True).is_visible(), (name, "maximum zoom")
+            viewport.evaluate("el => { el.scrollTop = 120 }")
+            max_top = viewport.evaluate("el => el.scrollTop")
+            wheel_box = viewport.bounding_box()
+            assert wheel_box
+            page.mouse.move(wheel_box["x"] + wheel_box["width"] * .65, min(wheel_box["y"] + 160, height - 20))
+            page.mouse.wheel(0, -100)
+            page.wait_for_timeout(100)
+            assert page.get_by_text("Zoom 240%", exact=True).is_visible(), (name, "maximum wheel changed zoom")
+            assert viewport.evaluate("el => el.scrollTop") < max_top, (name, "maximum wheel trapped native scroll")
+            page.get_by_role("button", name="Reset tampilan semua chart").click()
+            page.wait_for_timeout(100)
+
+        click_candle = canvases.first.locator("[data-project-id]").last
+        click_project_id = click_candle.get_attribute("data-project-id")
+        click_candle.click()
+        page.get_by_role("heading", name="Semua transaksi").wait_for()
+        assert page.get_by_label("Filter proyek").input_value() == click_project_id, (name, "candle click filter", click_project_id, page.get_by_label("Filter proyek").input_value())
 
         body_overflow = page.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth + 1")
         assert not body_overflow, (name, "document horizontal overflow")
@@ -139,9 +225,9 @@ with sync_playwright() as p:
         results.append({
             "viewport": name,
             "canvases": 4,
-            "candles": candles.count(),
+            "candles": candle_count,
             "summaries": summaries,
-            "month_markers": page.locator(".project-market-month").count(),
+            "month_markers": month_marker_count,
             "zoom": "PASS",
             "pan_x_y": horizontal_pan,
             "latest": "PASS",
@@ -152,7 +238,25 @@ with sync_playwright() as p:
             "request_failures": 0,
         })
         page.close()
+
+    resize_page = browser.new_page(viewport={"width": 1440, "height": 900})
+    resize_page.add_init_script("localStorage.removeItem('hollawall-finance-demo-v2')")
+    resize_page.goto(URL, wait_until="networkidle")
+    resize_page.get_by_role("button", name="Proyek", exact=True).click()
+    resize_page.get_by_role("heading", name="Umur dan status proyek").wait_for()
+    resize_page.set_viewport_size({"width": 390, "height": 844})
+    resize_page.wait_for_timeout(150)
+    assert_active_year_visible(resize_page, "desktop-to-mobile resize")
+    resize_page.locator(".topbar-add").click()
+    dialog = resize_page.get_by_role("dialog")
+    dialog.get_by_label("Nama proyek *").fill("Year Growth Probe")
+    dialog.get_by_label("Tanggal mulai *").fill("2023-12-20")
+    dialog.get_by_role("button", name="Tambah proyek").click()
+    dialog.wait_for(state="detached")
+    resize_page.wait_for_timeout(150)
+    assert_active_year_visible(resize_page, "year-list growth")
+    resize_page.close()
     browser.close()
 
 (OUT / "result.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
-print(json.dumps({"status": "PASS", "viewports": len(results), "results": results}, indent=2))
+print(json.dumps({"status": "PASS", "engine": ENGINE, "viewports": len(results), "responsive_reconciliation": "PASS", "exact_candle_ids": len(expected_ids), "results": results}, indent=2))

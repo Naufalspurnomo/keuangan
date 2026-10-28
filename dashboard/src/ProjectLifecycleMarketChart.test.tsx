@@ -60,6 +60,20 @@ describe('ProjectLifecycleMarketChart', () => {
     })
     const chart = canvas.querySelector('.project-market-chart') as HTMLElement
     const before = chart.getAttribute('style')
+    viewport.scrollTop = 100
+    const minWheel = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true })
+    act(() => { expect(viewport.dispatchEvent(minWheel)).toBe(true) })
+    expect(minWheel.defaultPrevented).toBe(false)
+    const scrollBy = vi.spyOn(window, 'scrollBy').mockImplementation(() => undefined)
+    viewport.scrollTop = 580
+    const boundaryWheel = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true })
+    act(() => { expect(viewport.dispatchEvent(boundaryWheel)).toBe(false) })
+    expect(boundaryWheel.defaultPrevented).toBe(true)
+    expect(scrollBy).toHaveBeenCalledWith(0, 100)
+    scrollBy.mockRestore()
+    const horizontalWheel = new WheelEvent('wheel', { deltaX: 100, bubbles: true, cancelable: true })
+    act(() => { expect(viewport.dispatchEvent(horizontalWheel)).toBe(true) })
+    expect(horizontalWheel.defaultPrevented).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: 'Perbesar semua chart' }))
     expect(chart.getAttribute('style')).not.toEqual(before)
 
@@ -68,6 +82,11 @@ describe('ProjectLifecycleMarketChart', () => {
     act(() => { expect(viewport.dispatchEvent(wheel)).toBe(false) })
     expect(wheel.defaultPrevented).toBe(true)
     expect(chart.getAttribute('style')).not.toEqual(afterButtonZoom)
+    for (let index = 0; index < 4; index += 1) fireEvent.click(screen.getByRole('button', { name: 'Perbesar semua chart' }))
+    expect(screen.getByText('Zoom 240%', { exact: true })).toBeTruthy()
+    const maxWheel = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true })
+    act(() => { expect(viewport.dispatchEvent(maxWheel)).toBe(true) })
+    expect(maxWheel.defaultPrevented).toBe(false)
 
     viewport.scrollLeft = 100
     viewport.scrollTop = 100

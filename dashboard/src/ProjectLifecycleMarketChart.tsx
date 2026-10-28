@@ -102,7 +102,7 @@ type CompanyCanvasProps = {
   zoom: number
   register: (company: CompanyId, api: ViewportApi | null) => void
   syncVertical: (company: CompanyId, top: number) => void
-  onZoom: (next: number) => void
+  onZoom: (next: number) => boolean
   onOpen: (project: FinanceProject) => void
 }
 
@@ -150,8 +150,17 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, zoom, regi
     const viewport = viewportRef.current
     if (!viewport) return
     const handleWheel = (event: WheelEvent) => {
-      event.preventDefault()
-      onZoom(zoom * (event.deltaY > 0 ? .9 : 1.1))
+      if (!event.deltaY || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return
+      if (onZoom(zoom * (event.deltaY > 0 ? .9 : 1.1))) {
+        event.preventDefault()
+        return
+      }
+      const maxTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+      const atBoundary = event.deltaY < 0 ? viewport.scrollTop <= 0 : viewport.scrollTop >= maxTop
+      if (atBoundary) {
+        event.preventDefault()
+        window.scrollBy(0, event.deltaY)
+      }
     }
     viewport.addEventListener('wheel', handleWheel, { passive: false })
     return () => viewport.removeEventListener('wheel', handleWheel)
@@ -242,6 +251,7 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, zoom, regi
             return <button
               type="button"
               key={project.id}
+              data-project-id={project.id}
               data-project-candle={project.name}
               className={`project-market-candle is-${project.status}`}
               style={{ '--candle-top': `${candleTop}%`, '--candle-span': `${candleSpan}%`, '--activity-top': `${activityTop}%`, '--activity-span': `${activitySpan}%`, ...candleTone(project, asOf) } as CSSProperties}
@@ -265,7 +275,12 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, zoom, regi
 export default function ProjectLifecycleMarketChart({ projects, transactions, year, asOf, onOpen }: { projects: FinanceProject[]; transactions: FinanceTransaction[]; year: number; asOf: Date; onOpen: (project: FinanceProject) => void }) {
   const [zoom, setZoom] = useState(1)
   const api = useRef(new Map<CompanyId, ViewportApi>())
-  const setBoundedZoom = (next: number) => setZoom(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Number(next.toFixed(2)))))
+  const setBoundedZoom = (next: number) => {
+    const bounded = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Number(next.toFixed(2))))
+    if (bounded === zoom) return false
+    setZoom(bounded)
+    return true
+  }
   const register = (company: CompanyId, value: ViewportApi | null) => { if (value) api.current.set(company, value); else api.current.delete(company) }
   const syncVertical = (source: CompanyId, top: number) => api.current.forEach((value, company) => { if (company !== source) value.setVertical(top) })
   const resetAll = () => { api.current.forEach((value) => value.reset()); setZoom(1) }
