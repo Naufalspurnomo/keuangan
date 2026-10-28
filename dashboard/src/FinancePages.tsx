@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { BarChart3, CircleDollarSign, Download, Pencil, Plus, RotateCcw, Search, Trash2, WalletCards } from 'lucide-react'
 
 import { sumMoney, workspaceTotals, type FinanceDebt, type FinanceProject, type FinanceTransaction, type FinanceWorkspace, type TransactionScope } from './financeWorkspace'
 import { dateLabel, directionLabel, IDR, monthlyCashflow, projectLabel, projectView, scopeLabel, walletBalances } from './financeView'
 
 export function DemoBanner({ updatedAt, onReset }: { updatedAt: string; onReset: () => void }) {
-  return <section className="demo-workspace-banner" aria-label="Status data demo"><div><strong>Data demo</strong><span>Perubahan tersimpan di browser ini. Tidak terhubung ke ledger production.</span></div><small>Diperbarui {new Date(updatedAt).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })}</small><button type="button" onClick={onReset}><RotateCcw size={15} /> Reset demo</button></section>
+  return <section className="demo-workspace-banner" aria-label="Status data demo"><div><strong>Data demo</strong><span>Perubahan tersimpan di browser ini. Tidak terhubung ke buku besar produksi.</span></div><small>Diperbarui {new Date(updatedAt).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })}</small><button type="button" onClick={onReset}><RotateCcw size={15} /> Reset demo</button></section>
 }
 
 export function OverviewWorkspace({ workspace, onAddTransaction, onAddProject, onAddOffice }: { workspace: FinanceWorkspace; onAddTransaction: () => void; onAddProject: () => void; onAddOffice: () => void }) {
@@ -48,6 +48,7 @@ export function TransactionsWorkspace({ workspace, initialProjectId, onAdd, onEd
   const [query, setQuery] = useState('')
   const [scope, setScope] = useState<'all' | TransactionScope>('all')
   const [projectId, setProjectId] = useState(initialProjectId ?? 'all')
+  useEffect(() => setProjectId(initialProjectId ?? 'all'), [initialProjectId])
   const rows = workspace.transactions.filter((row) => (scope === 'all' || row.scope === scope) && (projectId === 'all' || row.project_id === projectId) && (!query.trim() || `${row.notes} ${row.wallet} ${row.company ?? ''} ${row.office_category ?? ''}`.toLocaleLowerCase('id-ID').includes(query.trim().toLocaleLowerCase('id-ID')))).sort((a, b) => b.date.localeCompare(a.date))
   return <section className="finance-page-stack"><header className="command-head"><div><p className="eyebrow">TRANSAKSI · DATA DEMO</p><h2>Semua transaksi</h2><p>Ubah data demo dan lihat seluruh ringkasan diperbarui otomatis.</p></div><button className="primary-button" onClick={onAdd}><Plus size={16} /> Tambah transaksi</button></header><div className="workspace-filters"><label className="command-search"><Search size={17} /><input aria-label="Cari transaksi" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari transaksi" /></label><select aria-label="Filter aktivitas" value={scope} onChange={(event) => setScope(event.target.value as 'all' | TransactionScope)}><option value="all">Semua aktivitas</option><option value="project">Proyek</option><option value="office">Operasional Kantor</option></select><select aria-label="Filter proyek" value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="all">Semua proyek</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} · {project.company}</option>)}</select><span><strong>{rows.length}</strong> transaksi</span></div><TransactionRows rows={rows} projects={workspace.projects} onEdit={onEdit} onDelete={onDelete} /></section>
 }

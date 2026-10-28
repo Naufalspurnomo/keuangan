@@ -22,7 +22,7 @@ describe('Hollawall demo finance workspace', () => {
   it('renders one reconciled demo workspace with eight navigation views', () => {
     renderApp()
     expect(screen.getByRole('heading', { name: 'Posisi keuangan Hollawall' })).toBeTruthy()
-    expect(screen.getByText(/Tidak terhubung ke ledger production/)).toBeTruthy()
+    expect(screen.getByText(/Tidak terhubung ke buku besar produksi/)).toBeTruthy()
     const menu = screen.getByRole('navigation', { name: 'Menu utama' })
     for (const label of ['Ringkasan', 'Arus Kas', 'Dompet', 'Transaksi', 'Proyek', 'Operasional Kantor', 'Hutang Internal', 'Laporan']) {
       expect(within(menu).getByRole('button', { name: new RegExp(`^${label}`) })).toBeTruthy()
@@ -82,6 +82,25 @@ describe('Hollawall demo finance workspace', () => {
     expect(screen.getByLabelText('Status proyek tahun 2025')).toBeTruthy()
   })
 
+  it('keeps annual summaries aligned with company filters and exposes transaction ranges', () => {
+    renderApp()
+    nav('Proyek')
+    fireEvent.change(screen.getByLabelText('Perusahaan'), { target: { value: 'Holla' } })
+    const summary = screen.getByLabelText('Status proyek tahun 2026')
+    expect(within(summary).getByText(/Hasil filter · \d+\/7/)).toBeTruthy()
+    expect(screen.getByText('Rentang transaksi pertama–terakhir')).toBeTruthy()
+    expect(screen.getAllByRole('button', { name: /transaksi .* sampai/ }).length).toBeGreaterThan(0)
+  })
+
+  it('clears a project drilldown when Transactions is selected again', async () => {
+    renderApp()
+    nav('Proyek')
+    fireEvent.click(document.querySelector('button.year-candle')!)
+    expect((screen.getByLabelText('Filter proyek') as HTMLSelectElement).value).not.toBe('all')
+    nav('Transaksi')
+    await waitFor(() => expect((screen.getByLabelText('Filter proyek') as HTMLSelectElement).value).toBe('all'))
+  })
+
   it('creates an office expense from an explicitly selected wallet', async () => {
     renderApp()
     nav('Operasional Kantor')
@@ -96,15 +115,31 @@ describe('Hollawall demo finance workspace', () => {
     expect(screen.getAllByText('TX Bali').length).toBeGreaterThan(0)
   })
 
-  it('filters report preview using the same seven visible scope labels', () => {
+  it('filters report preview using the same seven visible scope labels and complete row set', () => {
     renderApp()
     nav('Laporan')
-    expect(screen.getByRole('heading', { name: 'Preview dan ekspor PDF' })).toBeTruthy()
-    const preview = screen.getByRole('region', { name: 'Preview laporan' })
+    expect(screen.getByRole('heading', { name: 'Pratinjau dan ekspor PDF' })).toBeTruthy()
+    const preview = screen.getByRole('region', { name: 'Pratinjau laporan' })
     expect(within(preview).getByLabelText('Filter aktif').children).toHaveLength(7)
+    expect(within(preview).getAllByRole('row')).toHaveLength(420)
+    expect(within(preview).queryByText(/Pratinjau menampilkan 50/)).toBeNull()
     fireEvent.change(screen.getByLabelText('Aktivitas'), { target: { value: 'office' } })
     expect(within(preview).getAllByText('Operasional Kantor').length).toBeGreaterThan(0)
     expect(within(preview).getByText('3', { selector: '.preview-metrics strong' })).toBeTruthy()
+  })
+
+  it('removes closed mobile navigation from tab order and restores menu focus', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+    renderApp()
+    const aside = document.querySelector('aside.sidebar')!
+    expect(aside.getAttribute('aria-hidden')).toBe('true')
+    const hiddenButtons = within(aside as HTMLElement).getAllByRole('button', { hidden: true })
+    expect(hiddenButtons.every((button) => button.tabIndex === -1)).toBe(true)
+    const open = screen.getByRole('button', { name: 'Buka navigasi' })
+    fireEvent.click(open)
+    await waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toBe('Tutup navigasi'))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Tutup navigasi' })[0])
+    await waitFor(() => expect(document.activeElement).toBe(open))
   })
 
   it('persists theme choice and exposes contextual add actions', async () => {

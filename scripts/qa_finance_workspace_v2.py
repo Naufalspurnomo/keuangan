@@ -56,12 +56,19 @@ def matrix(browser):
         page.on('pageerror', lambda err: errors.append(f'page:{err}'))
         page.goto(URL, wait_until='domcontentloaded', timeout=60_000)
         wait_shell(page)
+        if width <= 760:
+            assert page.locator('aside.sidebar').get_attribute('aria-hidden') == 'true'
+            assert page.locator('aside.sidebar button[tabindex="-1"]').count() == 9
         for nav in ['Ringkasan','Arus Kas','Dompet','Transaksi','Proyek','Operasional Kantor','Hutang Internal','Laporan']:
             if width <= 900:
                 dispatch(page.get_by_role('button', name='Buka navigasi'))
                 page.wait_for_timeout(50)
             goto_page(page,nav)
             assert_geometry(page,f'{name}:{nav}')
+            if nav == 'Proyek' and width <= 760:
+                grid=page.locator('.year-candle-grid')
+                reach=grid.evaluate("e=>{e.scrollLeft=e.scrollWidth;const last=e.lastElementChild?.getBoundingClientRect();const box=e.getBoundingClientRect();return {max:e.scrollWidth-e.clientWidth,left:e.scrollLeft,last:last?.right,edge:box.right}}")
+                assert reach['max'] > 0 and abs(reach['left']-reach['max']) <= 2 and reach['last'] <= reach['edge'] + 2, f'{name}: candle end unreachable {reach}'
         page.screenshot(path=str(OUT/f'{name}-reports.png'))
         assert not errors, f'{name}: {errors}'
         results.append({'viewport':name,'pages':8,'errors':0})
@@ -81,7 +88,7 @@ def journeys(browser):
     assert page.get_by_role('button',name='2025, 40 selesai dari 74 proyek').count()==1
     assert page.get_by_role('button',name='2026, 7 selesai dari 28 proyek').count()==1
     dispatch(page.get_by_role('button',name='Tahun sebelumnya')); page.wait_for_timeout(100)
-    assert 'Tingkat selesai · 40/74' in page.locator('.project-year-stats').inner_text()
+    assert 'Hasil filter · 40/74' in page.locator('.project-year-stats').inner_text()
     dispatch(page.get_by_role('button',name='Tahun berikutnya')); page.wait_for_timeout(100)
 
     dispatch(page.get_by_role('button',name='Tambah proyek').first)
@@ -134,6 +141,9 @@ def journeys(browser):
     goto_page(page,'Laporan')
     page.get_by_label('Aktivitas').select_option('office'); page.get_by_label('Dompet').select_option('TX Bali'); page.wait_for_timeout(100)
     chips=page.locator('.preview-scope span').all_inner_texts(); assert len(chips)==7 and 'Operasional Kantor' in chips and 'TX Bali' in chips
+    preview_rows=page.locator('.preview-table tbody tr').count()
+    declared=int(page.locator('.preview-metrics article').last.locator('strong').inner_text())
+    assert preview_rows==declared and page.get_by_text(re.compile('menampilkan 50 dari')).count()==0
     with page.expect_download(timeout=30_000) as info:
         dispatch(page.get_by_role('button',name='Ekspor PDF'))
     download=info.value; pdf=OUT/'hollawall-report.pdf'; download.save_as(pdf)
