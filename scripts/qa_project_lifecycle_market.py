@@ -38,6 +38,8 @@ with sync_playwright() as p:
             page.get_by_role("button", name="Buka navigasi").click()
         page.get_by_role("button", name="Proyek", exact=True).click()
         page.get_by_role("heading", name="Umur dan status proyek").wait_for()
+        year_geometry = page.locator(".year-command nav").evaluate("el => { const active=el.querySelector('button.active'); const n=el.getBoundingClientRect(); const a=active.getBoundingClientRect(); return {navLeft:n.left,navRight:n.right,activeLeft:a.left,activeRight:a.right}; }")
+        assert year_geometry["activeLeft"] >= year_geometry["navLeft"] - 1 and year_geometry["activeRight"] <= year_geometry["navRight"] + 1, (name, "active year clipped", year_geometry)
 
         canvases = page.locator(".project-market-canvas")
         assert canvases.count() == 4, (name, canvases.count())
@@ -49,8 +51,9 @@ with sync_playwright() as p:
 
         summaries = page.locator(".project-market-summary strong").all_text_contents()
         assert len(summaries) == 4 and all(re.fullmatch(r"\d+ / \d+", value.strip()) for value in summaries), (name, summaries)
+        expected_candles = sum(int(value.split('/')[1].strip()) for value in summaries)
         candles = page.locator("[data-project-candle]")
-        assert candles.count() == 28, (name, candles.count())
+        assert candles.count() == expected_candles, (name, candles.count(), expected_candles)
 
         # DOM order and rendered X position must progress from old to new in every non-empty company.
         order_checks = page.locator(".project-market-canvas").evaluate_all("""canvases => canvases.map(canvas => {

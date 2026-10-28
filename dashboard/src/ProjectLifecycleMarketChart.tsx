@@ -37,10 +37,14 @@ function isoDate(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
+function calendarDay(date: Date) {
+  return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / DAY
+}
+
 function age(project: FinanceProject, asOf: Date) {
   const start = parseDate(project.started_on) ?? asOf
   const end = project.completed_on ? (parseDate(project.completed_on) ?? asOf) : asOf
-  return Math.max(0, Math.round((end.getTime() - start.getTime()) / DAY))
+  return Math.max(0, calendarDay(end) - calendarDay(start))
 }
 
 function ageColor(days: number) {
@@ -74,9 +78,9 @@ function candleTone(project: FinanceProject, asOf: Date) {
 function yearModel(year: number, asOf: Date) {
   const start = new Date(year, 0, 1)
   const end = new Date(year, 11, 31)
-  const span = Math.max(DAY, end.getTime() - start.getTime())
+  const span = Math.max(1, calendarDay(end) - calendarDay(start))
   const clip = (date: Date) => new Date(Math.max(start.getTime(), Math.min(end.getTime(), date.getTime())))
-  const positionFor = (value: string | null | undefined, fallback = asOf) => ((end.getTime() - clip(parseDate(value) ?? fallback).getTime()) / span) * 100
+  const positionFor = (value: string | null | undefined, fallback = asOf) => ((calendarDay(end) - calendarDay(clip(parseDate(value) ?? fallback))) / span) * 100
   const months = Array.from({ length: 12 }, (_, index) => {
     const date = new Date(year, index, 1)
     return {
