@@ -82,6 +82,17 @@ with sync_playwright() as p:
             company_ids = sorted(page.locator(f'[data-project-company="{company}"] [data-project-id]').evaluate_all("els => els.map(el => el.dataset.projectId)"))
             assert company_ids == expected_by_company[company], (name, company, company_ids, expected_by_company[company])
 
+        # Registry pagination is independent; all four full-year lifecycle canvases remain unchanged.
+        registry_pagination = page.get_by_role("navigation", name="Pagination proyek")
+        assert registry_pagination.is_visible(), (name, "registry pagination missing")
+        assert registry_pagination.get_by_text("Halaman 1 / 5").is_visible(), (name, "initial registry page")
+        registry_page_one = page.locator(".project-register article .project-register-main strong").all_text_contents()
+        page.get_by_role("button", name="Halaman proyek berikutnya").click()
+        assert registry_pagination.get_by_text("Halaman 2 / 5").is_visible(), (name, "next registry page")
+        registry_page_two = page.locator(".project-register article .project-register-main strong").all_text_contents()
+        assert registry_page_two and registry_page_two != registry_page_one, (name, "registry page did not change")
+        assert canvases.count() == 4 and page.locator("[data-project-candle]").count() == candle_count, (name, "registry pagination changed lifecycle canvases")
+
         # DOM order and rendered X position must progress from old to new in every non-empty company.
         order_checks = page.locator(".project-market-canvas").evaluate_all("""canvases => canvases.map(canvas => {
           const marks = [...canvas.querySelectorAll('[data-project-candle]')];
@@ -248,6 +259,7 @@ with sync_playwright() as p:
         page.go_back(wait_until="networkidle")
         page.get_by_role("heading", name="Umur dan status proyek").wait_for()
         assert page.evaluate("window.location.hash") == "#projects", (name, "browser back did not restore projects")
+        page.wait_for_function("top => Math.abs(window.scrollY - top) <= 2", arg=source_scroll, timeout=2_000)
         assert abs(page.evaluate("window.scrollY") - source_scroll) <= 2, (name, "browser back did not restore project scroll", source_scroll, page.evaluate("window.scrollY"))
 
         body_overflow = page.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth + 1")

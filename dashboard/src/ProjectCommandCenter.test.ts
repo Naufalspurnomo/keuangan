@@ -1,5 +1,5 @@
 import { createElement } from 'react'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import ProjectCommandCenter, { projectAsOf, projectOverlapsYear, projectSnapshotDate, projectSnapshotYear, projectYearOptions } from './ProjectCommandCenter'
@@ -47,5 +47,19 @@ describe('projectAsOf', () => {
     render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
     expect(screen.getAllByRole('button', { name: /Carry Over/ }).length).toBeGreaterThanOrEqual(2)
     expect(document.querySelector('[data-project-candle="Carry Over"]')).toBeTruthy()
+  })
+
+  it('paginates the project registry independently from the four lifecycle canvases', () => {
+    const workspace = seedFinanceWorkspace()
+    const onOpen = vi.fn()
+    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn(), onOpen }))
+
+    expect(screen.getByRole('navigation', { name: 'Pagination proyek' })).toBeTruthy()
+    expect(screen.getByText('Halaman 1 / 5')).toBeTruthy()
+    expect(screen.getAllByRole('region', { name: /Chart lifecycle/ })).toHaveLength(4)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Halaman proyek berikutnya' }))
+    expect(screen.getByText('Halaman 2 / 5')).toBeTruthy()
+    expect(screen.getAllByRole('region', { name: /Chart lifecycle/ })).toHaveLength(4)
   })
 })

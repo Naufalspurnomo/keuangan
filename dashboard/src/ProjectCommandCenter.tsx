@@ -125,5 +125,10 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onDelet
         const view = projectView(project, workspace)
         return <article key={project.id}><button className="project-register-main" onClick={() => onOpen(project)}><span><strong>{project.name}</strong><small>{project.company} · {project.wallet}{project.client ? ` · ${project.client}` : ''}</small></span><b className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</b><span><small>{dateLabel(project.started_on)}</small><strong>{project.completed_on ? dateLabel(project.completed_on) : 'Belum selesai'}</strong></span><span className={view.net >= 0 ? 'positive' : 'negative'}><small>{view.transactions} transaksi</small><strong>{IDR.format(view.net)}</strong></span></button><div className="row-actions"><button aria-label={`Ubah ${project.name}`} onClick={() => onEdit(project)}><Pencil size={16} /></button><button className="danger" aria-label={`Hapus ${project.name}`} onClick={() => onDelete(project)}><Trash2 size={16} /></button></div></article>
       })}</section> : <section className="command-empty"><strong>Proyek tidak ditemukan</strong><p>Ubah filter atau tambahkan proyek untuk tahun {year}.</p><button className="primary-button" onClick={onAdd}><Plus size={16} /> Tambah proyek</button></section>}
+    {pageCount > 1 && <nav className="project-ledger-pagination" aria-label="Pagination proyek">
+      <button type="button" onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={page === 0} aria-label="Halaman proyek sebelumnya"><ArrowLeft size={16} /> Sebelumnya</button>
+      <span>Halaman {page + 1} / {pageCount}</span>
+      <button type="button" onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))} disabled={page === pageCount - 1} aria-label="Halaman proyek berikutnya">Berikutnya <ArrowRight size={16} /></button>
+    </nav>}
   </section>
 }
