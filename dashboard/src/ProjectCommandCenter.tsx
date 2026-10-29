@@ -6,7 +6,14 @@ import { dateLabel, IDR, projectStatusLabel, projectView } from './financeView'
 import ProjectLifecycleMarketChart from './ProjectLifecycleMarketChart'
 
 const PAGE_SIZE = 12
+const PROJECT_VIEW_KEY = 'hollawall-project-view-v1'
 const statusOrder: ProjectStatus[] = ['active', 'planned', 'completed']
+
+type StoredProjectView = { year?: number; company?: 'all' | CompanyId; status?: 'all' | ProjectStatus; query?: string; page?: number }
+
+function storedProjectView(): StoredProjectView {
+  try { return JSON.parse(sessionStorage.getItem(PROJECT_VIEW_KEY) ?? '{}') as StoredProjectView } catch { return {} }
+}
 
 export function projectSnapshotYear(workspace: FinanceWorkspace) {
   return Number(workspace.updated_at.slice(0, 4)) || new Date().getFullYear()
@@ -51,11 +58,12 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onDelet
 }) {
   const snapshotYear = projectSnapshotYear(workspace)
   const years = useMemo(() => projectYearOptions(workspace), [workspace])
-  const [year, setYear] = useState(snapshotYear)
-  const [company, setCompany] = useState<'all' | CompanyId>('all')
-  const [status, setStatus] = useState<'all' | ProjectStatus>('all')
-  const [query, setQuery] = useState('')
-  const [page, setPage] = useState(0)
+  const initialView = useRef(storedProjectView()).current
+  const [year, setYear] = useState(() => initialView.year && years.includes(initialView.year) ? initialView.year : snapshotYear)
+  const [company, setCompany] = useState<'all' | CompanyId>(() => initialView.company && ['all', ...COMPANIES].includes(initialView.company) ? initialView.company : 'all')
+  const [status, setStatus] = useState<'all' | ProjectStatus>(() => initialView.status && ['all', ...statusOrder].includes(initialView.status) ? initialView.status : 'all')
+  const [query, setQuery] = useState(() => typeof initialView.query === 'string' ? initialView.query : '')
+  const [page, setPage] = useState(() => Number.isInteger(initialView.page) && (initialView.page ?? 0) >= 0 ? initialView.page! : 0)
   const yearNavRef = useRef<HTMLElement>(null)
   const activeYearRef = useRef<HTMLButtonElement>(null)
   const snapshotDate = workspace.updated_at.slice(0, 10)
@@ -71,6 +79,7 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onDelet
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   useEffect(() => { if (page >= pageCount) setPage(pageCount - 1) }, [page, pageCount])
   useEffect(() => { if (!years.includes(year)) setYear(snapshotYear) }, [snapshotYear, year, years])
+  useEffect(() => { sessionStorage.setItem(PROJECT_VIEW_KEY, JSON.stringify({ year, company, status, query, page })) }, [year, company, status, query, page])
   useEffect(() => {
     const nav = yearNavRef.current
     const reveal = () => activeYearRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })

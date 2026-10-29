@@ -31,6 +31,23 @@ class RumahwebAdminReleaseTests(unittest.TestCase):
         self.assertIn("method_not_allowed", proxy)
         self.assertIn("X-Hollawall-Proxy-Token", proxy)
 
+    def test_login_session_is_secure_persistent_and_rolling(self) -> None:
+        login = (RELEASE / "index.php").read_text(encoding="utf-8")
+        proxy = (RELEASE / "api" / "snapshot.php").read_text(encoding="utf-8")
+        for source in (login, proxy):
+            self.assertIn("2592000", source)
+            self.assertIn("session.gc_maxlifetime", source)
+            self.assertIn(".hollawall-admin-sessions", source)
+            self.assertIn("session_save_path() !== $sessionPath", source)
+            self.assertIn("!session_start()", source)
+            self.assertIn("fileperms($realSessionPath)", source)
+            self.assertNotIn("chmod($realSessionPath, 0700)", source)
+            self.assertIn("httponly", source)
+            self.assertIn("samesite", source)
+            self.assertNotIn("'lifetime' => 0", source)
+        self.assertIn("cookie_renewed_at", login)
+        self.assertIn("cookie_renewed_at", proxy)
+
     def test_release_contains_no_live_secret_or_config(self) -> None:
         self.assertFalse((RELEASE / "config.example.php").exists())
         self.assertFalse((RELEASE / ".hollawall-admin.php").exists())

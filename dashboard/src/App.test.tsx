@@ -5,13 +5,19 @@ import App from './App'
 
 beforeEach(() => {
   localStorage.clear()
+  sessionStorage.clear()
+  window.history.replaceState(null, '', '/')
   vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
   vi.stubGlobal('confirm', vi.fn(() => true))
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
 })
 
 afterEach(() => {
   cleanup()
   localStorage.clear()
+  sessionStorage.clear()
+  window.history.replaceState(null, '', '/')
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -157,6 +163,23 @@ describe('Hollawall demo finance workspace', () => {
     expect((screen.getByLabelText('Filter proyek') as HTMLSelectElement).value).not.toBe('all')
     nav('Transaksi')
     await waitFor(() => expect((screen.getByLabelText('Filter proyek') as HTMLSelectElement).value).toBe('all'))
+  })
+
+  it('returns from a project drilldown to the Projects page with its view state', async () => {
+    renderApp()
+    nav('Proyek')
+    expect(window.location.hash).toBe('#projects')
+    fireEvent.click(screen.getByRole('button', { name: 'Tahun sebelumnya' }))
+    fireEvent.change(screen.getByLabelText('Perusahaan'), { target: { value: 'Holla' } })
+    fireEvent.click(document.querySelector('button[data-project-candle]')!)
+    expect(window.location.hash).toMatch(/^#transactions\?project=/)
+    expect((screen.getByLabelText('Filter proyek') as HTMLSelectElement).value).not.toBe('all')
+
+    act(() => window.history.back())
+    await waitFor(() => expect(window.location.hash).toBe('#projects'))
+    expect(screen.getByRole('heading', { name: 'Umur dan status proyek' })).toBeTruthy()
+    expect((screen.getByLabelText('Perusahaan') as HTMLSelectElement).value).toBe('Holla')
+    expect(screen.getByRole('button', { name: '2025, 40 selesai dari 74 proyek' }).getAttribute('aria-current')).toBe('page')
   })
 
   it('creates an office expense from an explicitly selected wallet', async () => {

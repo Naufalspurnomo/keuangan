@@ -108,7 +108,7 @@ type ZoomAnchor = { x: number; y: number; xRatio: number; yRatio: number }
 
 function CompanyCanvas({ company, projects, transactions, year, asOf, register, onOpen }: CompanyCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
-  const drag = useRef({ active: false, moved: false, pointerId: 0, x: 0, y: 0, left: 0, top: 0, pageOverflow: 0, lastX: 0, lastY: 0, lastAt: 0, velocityX: 0, velocityY: 0 })
+  const drag = useRef({ active: false, moved: false, pointerId: 0, x: 0, y: 0, left: 0, top: 0, lastX: 0, lastY: 0, lastAt: 0, velocityX: 0, velocityY: 0 })
   const momentumFrame = useRef<number | null>(null)
   const pointers = useRef(new Map<number, { x: number; y: number }>())
   const pinchDistance = useRef<number | null>(null)
@@ -182,18 +182,22 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
     const viewport = viewportRef.current
     if (!viewport) return
     const handleWheel = (event: WheelEvent) => {
-      if (!event.deltaY || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return
-      const delta = event.deltaY * (event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? viewport.clientHeight : 1)
-      if (setBoundedZoom(zoomRef.current * Math.exp(-delta * .0014), event.clientX, event.clientY)) {
-        event.preventDefault()
+      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? viewport.clientHeight : 1
+      const deltaX = event.deltaX * unit
+      const deltaY = event.deltaY * unit
+      if (!deltaX && !deltaY) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.ctrlKey || event.metaKey) {
+        setBoundedZoom(zoomRef.current * Math.exp(-deltaY * .0014), event.clientX, event.clientY)
         return
       }
+      const horizontal = deltaX || (event.shiftKey ? deltaY : 0)
+      const vertical = event.shiftKey ? 0 : deltaY
+      const maxLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth)
       const maxTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
-      const atBoundary = event.deltaY < 0 ? viewport.scrollTop <= 0 : viewport.scrollTop >= maxTop
-      if (atBoundary) {
-        event.preventDefault()
-        window.scrollBy(0, delta)
-      }
+      viewport.scrollLeft = Math.max(0, Math.min(maxLeft, viewport.scrollLeft + horizontal))
+      viewport.scrollTop = Math.max(0, Math.min(maxTop, viewport.scrollTop + vertical))
     }
     viewport.addEventListener('wheel', handleWheel, { passive: false })
     return () => viewport.removeEventListener('wheel', handleWheel)
@@ -221,11 +225,12 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
     if (event.pointerType === 'mouse' && event.button !== 0) return
     const viewport = viewportRef.current
     if (!viewport) return
-    drag.current = { active: true, moved: false, pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop, pageOverflow: 0, lastX: event.clientX, lastY: event.clientY, lastAt: performance.now(), velocityX: 0, velocityY: 0 }
+    drag.current = { active: true, moved: false, pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop, lastX: event.clientX, lastY: event.clientY, lastAt: performance.now(), velocityX: 0, velocityY: 0 }
     viewport.classList.add('is-panning')
   }
   const movePointer = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!pointers.current.has(event.pointerId)) return
+    if (event.pointerType === 'touch') event.preventDefault()
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
     if (pointers.current.size === 2) {
       const [first, second] = [...pointers.current.values()]
@@ -246,12 +251,7 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
     const desiredTop = drag.current.top - dy
     const maxTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
     viewport.scrollTop = Math.max(0, Math.min(maxTop, desiredTop))
-    if (event.pointerType === 'touch') {
-      const overflow = desiredTop < 0 ? desiredTop : desiredTop > maxTop ? desiredTop - maxTop : 0
-      const pageDelta = overflow - drag.current.pageOverflow
-      if (pageDelta) window.scrollBy(0, pageDelta)
-      drag.current.pageOverflow = overflow
-    }
+
     const now = performance.now()
     const elapsed = Math.max(8, now - drag.current.lastAt)
     const sampleX = (drag.current.lastX - event.clientX) / elapsed

@@ -146,8 +146,7 @@
   width: 100%;
   height: 470px;
   overflow: auto;
-  overscroll-behavior-x: contain;
-  overscroll-behavior-y: auto;
+  overscroll-behavior: contain;
   scrollbar-color: color-mix(in srgb, var(--unit-color) 45%, var(--border)) transparent;
   scrollbar-width: thin;
   scrollbar-gutter: stable both-edges;

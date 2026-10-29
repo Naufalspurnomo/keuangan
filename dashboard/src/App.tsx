@@ -40,6 +40,18 @@ type Modal =
   | { kind: 'debt'; value?: FinanceDebt }
   | null
 const MOBILE_NAVIGATION_QUERY = '(max-width: 900px)'
+const PAGES: Page[] = ['overview', 'cashflow', 'wallets', 'transactions', 'projects', 'office', 'debts', 'reports']
+
+function currentRoute(): { page: Page; projectId?: string } {
+  const [rawPage, rawQuery = ''] = window.location.hash.replace(/^#/, '').split('?')
+  const page = PAGES.includes(rawPage as Page) ? rawPage as Page : 'overview'
+  const projectId = page === 'transactions' ? new URLSearchParams(rawQuery).get('project') || undefined : undefined
+  return { page, projectId }
+}
+
+function routeHash(page: Page, projectId?: string) {
+  return `#${page}${page === 'transactions' && projectId ? `?project=${encodeURIComponent(projectId)}` : ''}`
+}
 
 const pageMeta: Record<Page, { eyebrow: string; title: string; copy: string }> = {
   overview: { eyebrow: 'RINGKASAN', title: 'Ringkasan', copy: 'Posisi keuangan dari seluruh data demo.' },
@@ -81,20 +93,54 @@ function ThemeToggle({ theme, setTheme }: { theme: string; setTheme: (theme: str
 
 export default function App() {
   const finance = useFinanceWorkspace()
-  const [active, setActive] = useState<Page>('overview')
+  const initialRoute = useRef(currentRoute()).current
+  const [route, setRoute] = useState(initialRoute)
+  const { page: active, projectId: projectFilter } = route
   const [menuOpen, setMenuOpen] = useState(false)
   const [modal, setModal] = useState<Modal>(null)
-  const [projectFilter, setProjectFilter] = useState<string | undefined>()
   const [notice, setNotice] = useState('')
   const [theme, setTheme] = useState(() => localStorage.getItem('hollawall-theme') || 'light')
   const mobile = useMobileNavigation()
   const previousMobile = useRef(mobile)
+  const pendingScroll = useRef<number | null>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const mainRef = useRef<HTMLElement>(null)
   const meta = pageMeta[active]
 
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('hollawall-theme', theme) }, [theme])
   useEffect(() => { document.title = `${meta.title} — Hollawall` }, [meta.title])
+  useEffect(() => {
+    const scrollRestoration = window.history.scrollRestoration
+    window.history.scrollRestoration = 'manual'
+    if (!window.location.hash) window.history.replaceState({ page: initialRoute.page, projectId: initialRoute.projectId, scrollY: 0 }, '', routeHash(initialRoute.page, initialRoute.projectId))
+    else if (!window.history.state?.page) window.history.replaceState({ ...window.history.state, page: initialRoute.page, projectId: initialRoute.projectId, scrollY: window.scrollY }, '', window.location.href)
+    const restore = (event: PopStateEvent) => {
+      const route = currentRoute()
+      pendingScroll.current = Number(event.state?.scrollY ?? 0)
+      setRoute(route)
+      setMenuOpen(false)
+    }
+    window.addEventListener('popstate', restore)
+    return () => {
+      window.history.scrollRestoration = scrollRestoration
+      window.removeEventListener('popstate', restore)
+    }
+  }, [])
+  useEffect(() => {
+    if (pendingScroll.current == null) return
+    const top = pendingScroll.current
+    let restoreFrame = 0
+    const layoutFrame = window.requestAnimationFrame(() => {
+      restoreFrame = window.requestAnimationFrame(() => {
+        pendingScroll.current = null
+        window.scrollTo({ top, behavior: 'auto' })
+      })
+    })
+    return () => {
+      window.cancelAnimationFrame(layoutFrame)
+      if (restoreFrame) window.cancelAnimationFrame(restoreFrame)
+    }
+  }, [route])
   useEffect(() => { if (!notice) return; const timeout = window.setTimeout(() => setNotice(''), 3500); return () => window.clearTimeout(timeout) }, [notice])
   useEffect(() => {
     if (!mobile || !menuOpen) return
@@ -121,7 +167,14 @@ export default function App() {
     else main.removeAttribute('inert')
   }, [mobile, menuOpen])
 
-  const navigate = (page: Page) => { setProjectFilter(undefined); setActive(page) }
+  const pushRoute = (page: Page, projectId?: string) => {
+    if (active === page && projectFilter === projectId) return
+    window.history.replaceState({ ...window.history.state, page: active, projectId: projectFilter, scrollY: window.scrollY }, '', window.location.href)
+    window.history.pushState({ page, projectId, scrollY: 0 }, '', routeHash(page, projectId))
+    setRoute({ page, projectId })
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'auto' }))
+  }
+  const navigate = (page: Page) => pushRoute(page)
   const closeMenu = () => { setMenuOpen(false); if (mobile) window.requestAnimationFrame(() => menuButtonRef.current?.focus()) }
   const commit = (action: () => void, success: string) => { action(); setNotice(success) }
   const safe = (action: () => void, success: string) => { try { commit(action, success) } catch (error) { setNotice(error instanceof Error ? error.message : 'Tindakan belum dapat diproses.') } }
@@ -136,7 +189,7 @@ export default function App() {
     : commit(() => finance.addDebt(input), 'Hutang ditambahkan.')
   const confirmDelete = (label: string, action: () => void) => { if (window.confirm(`Hapus ${label} dari data demo?`)) safe(action, `${label} dihapus.`) }
   const reset = () => { if (window.confirm('Reset seluruh perubahan dan kembali ke data demo awal?')) { finance.reset(); setNotice('Data demo direset.') } }
-  const openProject = (project: FinanceProject) => { setProjectFilter(project.id); setActive('transactions') }
+  const openProject = (project: FinanceProject) => pushRoute('transactions', project.id)
   const openProjectByName = (name: string) => {
     const project = finance.workspace.projects.find((item) => item.name === name)
     if (project) openProject(project)

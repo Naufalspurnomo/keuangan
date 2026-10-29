@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 const ADMIN_PATH = '/admin/';
 const SESSION_KEY = 'hollawall_admin_user';
+const SESSION_LIFETIME = 2592000;
+const SESSION_RENEW_AFTER = 86400;
 
 function fail_closed(int $status, string $message): void
 {
@@ -34,18 +36,48 @@ header('Permissions-Policy: camera=(), microphone=(), geolocation=()');
 header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
 header('Cache-Control: no-store, private');
 
-session_name('hollawall_admin');
-session_set_cookie_params([
-    'lifetime' => 0,
+$accountRoot = dirname(__DIR__, 2);
+$realAccountRoot = realpath($accountRoot);
+$sessionPath = $accountRoot . '/.hollawall-admin-sessions';
+if ($realAccountRoot === false || is_link($sessionPath)) {
+    fail_closed(503, 'Admin session storage unavailable.');
+}
+if (!file_exists($sessionPath) && !mkdir($sessionPath, 0700, false)) {
+    fail_closed(503, 'Admin session storage unavailable.');
+}
+clearstatcache(true, $sessionPath);
+$realSessionPath = realpath($sessionPath);
+if (!is_dir($sessionPath)
+    || is_link($sessionPath)
+    || $realSessionPath === false
+    || dirname($realSessionPath) !== $realAccountRoot
+    || fileowner($realSessionPath) !== fileowner($realAccountRoot)
+    || ((int) fileperms($realSessionPath) & 0777) !== 0700
+    || !is_writable($realSessionPath)) {
+    fail_closed(503, 'Admin session storage unavailable.');
+}
+$sessionPath = $realSessionPath;
+if (session_name('hollawall_admin') === false
+    || ini_set('session.use_strict_mode', '1') === false
+    || ini_set('session.use_only_cookies', '1') === false
+    || ini_set('session.gc_maxlifetime', (string) SESSION_LIFETIME) === false
+    || session_save_path($sessionPath) === false
+    || session_save_path() !== $sessionPath
+    || !session_set_cookie_params([
+    'lifetime' => SESSION_LIFETIME,
     'path' => ADMIN_PATH,
     'secure' => true,
     'httponly' => true,
     'samesite' => 'Strict',
-]);
-session_start();
+])) {
+    fail_closed(503, 'Admin session configuration unavailable.');
+}
+if (!session_start()) {
+    fail_closed(503, 'Admin session unavailable.');
+}
 
 $now = time();
-if (isset($_SESSION['last_seen']) && $now - (int) $_SESSION['last_seen'] > 28800) {
+if (isset($_SESSION['last_seen']) && $now - (int) $_SESSION['last_seen'] > SESSION_LIFETIME) {
     $_SESSION = [];
     session_regenerate_id(true);
 }
@@ -62,7 +94,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (isset($_POST['logout'])) {
         $_SESSION = [];
-        session_regenerate_id(true);
+        session_destroy();
+        setcookie(session_name(), '', ['expires' => 1, 'path' => ADMIN_PATH, 'secure' => true, 'httponly' => true, 'samesite' => 'Strict']);
         header('Location: ' . ADMIN_PATH, true, 303);
         exit;
     }
@@ -82,6 +115,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['last_seen'] = $now;
             $_SESSION['attempts'] = 0;
             $_SESSION['csrf'] = bin2hex(random_bytes(24));
+            $_SESSION['cookie_renewed_at'] = $now;
+            setcookie(session_name(), session_id(), ['expires' => $now + SESSION_LIFETIME, 'path' => ADMIN_PATH, 'secure' => true, 'httponly' => true, 'samesite' => 'Strict']);
             header('Location: ' . ADMIN_PATH, true, 303);
             exit;
         }
@@ -94,6 +129,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         usleep(400000);
         $loginError = 'Username atau password tidak cocok.';
     }
+}
+
+if (isset($_SESSION[SESSION_KEY]) && $now - (int) ($_SESSION['cookie_renewed_at'] ?? 0) >= SESSION_RENEW_AFTER) {
+    $_SESSION['cookie_renewed_at'] = $now;
+    setcookie(session_name(), session_id(), ['expires' => $now + SESSION_LIFETIME, 'path' => ADMIN_PATH, 'secure' => true, 'httponly' => true, 'samesite' => 'Strict']);
 }
 
 if (!isset($_SESSION[SESSION_KEY])):

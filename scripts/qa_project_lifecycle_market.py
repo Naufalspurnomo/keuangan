@@ -100,7 +100,7 @@ with sync_playwright() as p:
         zoom_readouts = page.locator(".project-market-toolbar > span").all_text_contents()
         assert all("zoom 120%" in value.lower() for value in zoom_readouts), (name, "zoom readout", zoom_readouts)
 
-        # Wheel over a project column must zoom without native vertical scrolling on pointer-class layouts.
+        # Plain wheel pans only the active canvas; Ctrl/Command + wheel zooms only that canvas.
         if width > 580:
             wheel_box = viewport.bounding_box()
             assert wheel_box
@@ -108,7 +108,15 @@ with sync_playwright() as p:
             other_geometry = page.locator(".project-market-viewport").evaluate_all("els => els.slice(1).map(el => ({left: el.scrollLeft, top: el.scrollTop, width: el.querySelector('.project-market-chart').getBoundingClientRect().width}))")
             visible_wheel_y = min(wheel_box["y"] + min(160, wheel_box["height"] * .45), height - 20)
             page.mouse.move(wheel_box["x"] + wheel_box["width"] * .65, visible_wheel_y)
+            canvas_top_before = viewport.evaluate("el => el.scrollTop")
+            page_top_before = page.evaluate("window.scrollY")
             page.mouse.wheel(0, 100)
+            page.wait_for_timeout(100)
+            assert viewport.evaluate("el => el.scrollTop") > canvas_top_before, (name, "plain wheel did not pan canvas")
+            assert page.evaluate("window.scrollY") == page_top_before, (name, "plain wheel moved page")
+            page.keyboard.down("Control")
+            page.mouse.wheel(0, 100)
+            page.keyboard.up("Control")
             page.wait_for_timeout(100)
             local_readout = canvases.first.locator(".project-market-toolbar > span").inner_text()
             assert "zoom 104%" in local_readout.lower(), (name, "wheel did not produce smooth local zoom", local_readout)
@@ -174,10 +182,12 @@ with sync_playwright() as p:
             assert wheel_box and mid_scroll["max"] > 2
             page.mouse.move(wheel_box["x"] + wheel_box["width"] * .65, min(wheel_box["y"] + 160, height - 20))
             min_top = mid_scroll["top"]
+            min_page_top = page.evaluate("window.scrollY")
             page.mouse.wheel(0, 100)
             page.wait_for_timeout(100)
             assert "zoom 100%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "minimum wheel changed zoom")
-            assert viewport.evaluate("el => el.scrollTop") > min_top, (name, "minimum wheel trapped native scroll")
+            assert viewport.evaluate("el => el.scrollTop") > min_top, (name, "minimum wheel did not pan canvas")
+            assert page.evaluate("window.scrollY") == min_page_top, (name, "minimum wheel moved page")
 
             viewport.evaluate("el => { el.scrollTop = el.scrollHeight - el.clientHeight }")
             viewport.evaluate("el => window.scrollTo(0, Math.max(0, el.getBoundingClientRect().top + window.scrollY - 80))")
@@ -188,7 +198,8 @@ with sync_playwright() as p:
             page_top = page.evaluate("window.scrollY")
             page.mouse.wheel(0, 180)
             page.wait_for_timeout(100)
-            assert page.evaluate("window.scrollY") > page_top, (name, "minimum boundary trapped page scroll")
+            assert page.evaluate("window.scrollY") == page_top, (name, "canvas boundary moved page")
+            assert viewport.evaluate("el => el.scrollTop") == viewport.evaluate("el => el.scrollHeight - el.clientHeight"), (name, "canvas boundary moved outside bounds")
 
             viewport.scroll_into_view_if_needed()
             viewport.evaluate("el => { el.scrollLeft = Math.min(120, el.scrollWidth - el.clientWidth) }")
@@ -210,18 +221,34 @@ with sync_playwright() as p:
             wheel_box = viewport.bounding_box()
             assert wheel_box
             page.mouse.move(wheel_box["x"] + wheel_box["width"] * .65, min(wheel_box["y"] + 160, height - 20))
+            max_page_top = page.evaluate("window.scrollY")
             page.mouse.wheel(0, -100)
             page.wait_for_timeout(100)
             assert "zoom 240%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "maximum wheel changed zoom")
-            assert viewport.evaluate("el => el.scrollTop") < max_top, (name, "maximum wheel trapped native scroll")
+            assert viewport.evaluate("el => el.scrollTop") < max_top, (name, "maximum wheel did not pan canvas")
+            assert page.evaluate("window.scrollY") == max_page_top, (name, "maximum wheel moved page")
+            page.keyboard.down("Control")
+            page.mouse.wheel(0, -100)
+            page.keyboard.up("Control")
+            page.wait_for_timeout(100)
+            assert "zoom 240%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "maximum Ctrl-wheel exceeded zoom")
+            assert page.evaluate("window.scrollY") == max_page_top, (name, "maximum Ctrl-wheel moved page")
             page.get_by_role("button", name="Reset tampilan semua chart").click()
             page.wait_for_timeout(100)
 
         click_candle = canvases.first.locator("[data-project-id]").last
         click_project_id = click_candle.get_attribute("data-project-id")
+        click_candle.scroll_into_view_if_needed()
+        page.wait_for_timeout(50)
+        source_scroll = page.evaluate("window.scrollY")
         click_candle.click()
         page.get_by_role("heading", name="Semua transaksi").wait_for()
         assert page.get_by_label("Filter proyek").input_value() == click_project_id, (name, "candle click filter", click_project_id, page.get_by_label("Filter proyek").input_value())
+        assert page.evaluate("window.location.hash").startswith("#transactions?project="), (name, "project detail route")
+        page.go_back(wait_until="networkidle")
+        page.get_by_role("heading", name="Umur dan status proyek").wait_for()
+        assert page.evaluate("window.location.hash") == "#projects", (name, "browser back did not restore projects")
+        assert abs(page.evaluate("window.scrollY") - source_scroll) <= 2, (name, "browser back did not restore project scroll", source_scroll, page.evaluate("window.scrollY"))
 
         body_overflow = page.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth + 1")
         assert not body_overflow, (name, "document horizontal overflow")
@@ -229,6 +256,7 @@ with sync_playwright() as p:
         assert not page_errors, (name, page_errors)
         assert not request_failures, (name, request_failures)
 
+        page.evaluate("window.scrollTo(0, 0)")
         page.screenshot(path=str(OUT / f"{name}.png"), full_page=True)
         results.append({
             "viewport": name,
@@ -240,6 +268,8 @@ with sync_playwright() as p:
             "pan_x_y": horizontal_pan,
             "latest": "PASS",
             "reset": "PASS",
+            "page_scroll_containment": "PASS",
+            "project_back_navigation": "PASS",
             "document_overflow": False,
             "console_errors": 0,
             "page_errors": 0,
