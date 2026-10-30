@@ -78,7 +78,7 @@ function yearModel(year: number, asOf: Date) {
   const end = new Date(year, 11, 31)
   const span = Math.max(1, calendarDay(end) - calendarDay(start))
   const clip = (date: Date) => new Date(Math.max(start.getTime(), Math.min(end.getTime(), date.getTime())))
-  const positionFor = (value: string | null | undefined, fallback = asOf) => ((calendarDay(end) - calendarDay(clip(parseDate(value) ?? fallback))) / span) * 100
+  const positionFor = (value: string | null | undefined, fallback = asOf) => ((calendarDay(clip(parseDate(value) ?? fallback)) - calendarDay(start)) / span) * 100
   const months = Array.from({ length: 12 }, (_, index) => {
     const date = new Date(year, index, 1)
     return {
@@ -86,7 +86,7 @@ function yearModel(year: number, asOf: Date) {
       label: new Intl.DateTimeFormat('id-ID', { month: 'short' }).format(date).toLocaleUpperCase('id-ID'),
       position: positionFor(isoDate(date)),
     }
-  }).reverse()
+  })
   return { months, positionFor }
 }
 

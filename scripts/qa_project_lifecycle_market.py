@@ -278,19 +278,21 @@ with sync_playwright() as p:
             assert viewport.evaluate("el => el.scrollLeft") != dominant_x_left, (name, "dominant-X wheel did not pan horizontally")
             assert "zoom 183%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "dominant-X wheel changed zoom")
 
-            report_head = page.locator(".project-market-report-head")
-            report_head.evaluate("el => el.scrollIntoView({ block: 'center' })")
+            page.evaluate("window.scrollTo(0, Math.min(800, Math.max(0, document.documentElement.scrollHeight - innerHeight - 500)))")
             page.wait_for_timeout(100)
-            head_box = report_head.bounding_box()
-            assert head_box
-            page.mouse.move(head_box["x"] + min(40, head_box["width"] / 2), head_box["y"] + min(40, head_box["height"] / 2))
+            outside_surface = page.locator(".topbar")
+            outside_box = outside_surface.bounding_box()
+            assert outside_box
+            page.mouse.move(outside_box["x"] + min(40, outside_box["width"] / 2), outside_box["y"] + outside_box["height"] / 2)
             outside_scroll = page.evaluate("({ top: window.scrollY, max: document.documentElement.scrollHeight - innerHeight })")
-            outside_delta = 100 if outside_scroll["top"] < outside_scroll["max"] - 1 else -100
+            outside_zoom_before = canvases.first.locator(".project-market-toolbar > span").inner_text()
+            outside_delta = 400 if outside_scroll["top"] < outside_scroll["max"] - 1 else -400
             page.mouse.wheel(0, outside_delta)
-            page.wait_for_timeout(100)
+            page.wait_for_timeout(300)
             outside_after = page.evaluate("window.scrollY")
+            outside_zoom_after = canvases.first.locator(".project-market-toolbar > span").inner_text()
             assert outside_after > outside_scroll["top"] if outside_delta > 0 else outside_after < outside_scroll["top"], (name, "wheel outside canvas did not scroll page", outside_scroll, outside_after)
-            assert "zoom 183%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "outside wheel changed canvas zoom")
+            assert outside_zoom_after == outside_zoom_before, (name, "outside wheel changed canvas zoom", outside_zoom_before, outside_zoom_after)
             viewport.scroll_into_view_if_needed()
 
         # Panning must work in both axes once zoom creates overflow.

@@ -88,13 +88,21 @@ describe('ProjectLifecycleMarketChart', () => {
       const axis = canvas.querySelector('.project-market-axis') as HTMLElement
       const columns = canvas.querySelector('.project-market-columns') as HTMLElement
       const chart = canvas.querySelector('.project-market-chart') as HTMLElement
-      const positions = [...canvas.querySelectorAll<HTMLElement>('.project-market-month')]
-        .map((month) => Number.parseFloat(month.style.getPropertyValue('--month-position')))
+      const months = [...canvas.querySelectorAll<HTMLElement>('.project-market-month')]
+        .map((month) => ({
+          label: month.textContent?.trim(),
+          position: Number.parseFloat(month.style.getPropertyValue('--month-position')),
+        }))
+      const positions = months.map((month) => month.position)
 
       expect(axis.compareDocumentPosition(columns) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-      expect(positions).toHaveLength(12)
+      expect(months).toHaveLength(12)
       expect(new Set(positions)).toHaveLength(12)
       expect(positions.every((position, index) => index === 0 || position > positions[index - 1])).toBe(true)
+      expect(months[0].label).toBe('JAN')
+      expect(months[0].position).toBe(0)
+      expect(months.at(-1)?.label).toBe('DES')
+      expect(months.at(-1)?.position).toBeGreaterThan(90)
       expect(Number.parseFloat(chart.style.getPropertyValue('--market-height'))).toBeGreaterThanOrEqual(624)
     }
   })
