@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 import App from './App'
+import { seedFinanceWorkspace } from './financeWorkspace'
 
 beforeEach(() => {
   localStorage.clear()
@@ -134,6 +135,29 @@ describe('Hollawall demo finance workspace', () => {
     fireEvent.submit(within(dialog).getByRole('button', { name: 'Tambah proyek' }).closest('form')!)
     expect(screen.getByRole('dialog')).toBeTruthy()
     expect(localStorage.getItem('hollawall-finance-demo-v2')).toBe(before)
+  })
+
+  it('completes an active project and updates its status, candle marker, and audit trail', async () => {
+    const workspace = seedFinanceWorkspace()
+    const project = workspace.projects.find((item) => item.status === 'active' && item.started_on.startsWith('2026'))!
+    workspace.projects = [project]
+    workspace.transactions = workspace.transactions.filter((row) => row.project_id === project.id)
+    localStorage.setItem('hollawall-finance-demo-v2', JSON.stringify(workspace))
+    renderApp()
+    nav('Proyek')
+
+    fireEvent.click(screen.getByRole('button', { name: `Selesaikan ${project.name}` }))
+    const dialog = screen.getByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText('Tanggal selesai *'), { target: { value: project.started_on } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Selesaikan proyek' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getByRole('status').textContent).toBe('Proyek diselesaikan.')
+    expect(document.querySelector('.status-chip.completed')?.textContent).toBe('Selesai')
+    expect(document.querySelector('.project-market-completed')?.textContent).toContain('Selesai')
+    expect(screen.queryByRole('button', { name: `Selesaikan ${project.name}` })).toBeNull()
+    nav('Ringkasan')
+    expect(screen.getByText(`Memperbarui proyek ${project.name}`)).toBeTruthy()
   })
 
   it('navigates annual project data and exposes explicit completion ratios', () => {

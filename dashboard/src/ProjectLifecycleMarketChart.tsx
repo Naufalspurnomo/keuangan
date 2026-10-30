@@ -7,7 +7,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { ChevronsRight, Minus, Move, Plus, RotateCcw } from 'lucide-react'
+import { Check, ChevronsRight, Minus, Move, Plus, RotateCcw } from 'lucide-react'
 
 import { type CompanyId, type FinanceProject, type FinanceTransaction } from './financeWorkspace'
 import { dateLabel, IDR, projectStatusLabel } from './financeView'
@@ -337,6 +337,7 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
             >
               {firstActivity && lastActivity && <span className="project-market-wick" aria-hidden="true" />}
               <span className="project-market-body"><small>{project.status === 'planned' ? 'Rencana' : `${days} hari`}</small><strong>{project.name}</strong></span>
+              {project.status === 'completed' && <span className="project-market-completed" aria-label="Proyek selesai"><Check size={12} /> Selesai</span>}
               <span className="project-market-start" aria-hidden="true"><i /><small>{dateLabel(project.started_on)}</small></span>
             </button>
           })}

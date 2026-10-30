@@ -30,7 +30,7 @@ describe('projectAsOf', () => {
     expect(projectSnapshotDate(workspace).getMonth()).toBe(0)
     expect(projectSnapshotDate(workspace).getDate()).toBe(1)
     expect(projectYearOptions(workspace)).toContain(2026)
-    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
+    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
     expect(screen.getByText('TAHUN PROYEK').parentElement?.textContent).toContain('2026')
     for (const company of ['Holla', 'Hojja', 'Texturin Bali', 'Texturin Surabaya']) {
       expect(screen.getByRole('region', { name: `Chart lifecycle ${company}` })).toBeTruthy()
@@ -44,7 +44,7 @@ describe('projectAsOf', () => {
     workspace.projects = [carry]
     expect(projectYearOptions(workspace)).toEqual([2025, 2026])
     expect(projectOverlapsYear(carry, 2026, '2026-10-28')).toBe(true)
-    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
+    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
     expect(screen.getAllByRole('button', { name: /Carry Over/ }).length).toBeGreaterThanOrEqual(2)
     expect(document.querySelector('[data-project-candle="Carry Over"]')).toBeTruthy()
   })
@@ -52,7 +52,7 @@ describe('projectAsOf', () => {
   it('paginates the project registry independently from the four lifecycle canvases', () => {
     const workspace = seedFinanceWorkspace()
     const onOpen = vi.fn()
-    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn(), onOpen }))
+    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onDelete: vi.fn(), onOpen }))
 
     expect(screen.getByRole('navigation', { name: 'Pagination proyek' })).toBeTruthy()
     expect(screen.getByText('Halaman 1 / 5')).toBeTruthy()
@@ -61,5 +61,23 @@ describe('projectAsOf', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Halaman proyek berikutnya' }))
     expect(screen.getByText('Halaman 2 / 5')).toBeTruthy()
     expect(screen.getAllByRole('region', { name: /Chart lifecycle/ })).toHaveLength(4)
+  })
+
+  it('exposes exactly one quick-completion action only for active registry rows', () => {
+    const workspace = seedFinanceWorkspace()
+    const active = workspace.projects.find((project) => project.status === 'active')!
+    const completed = workspace.projects.find((project) => project.status === 'completed')!
+    const planned = workspace.projects.find((project) => project.status === 'planned')!
+    workspace.projects = [active, completed, planned]
+    workspace.updated_at = `${active.started_on.slice(0, 4)}-12-31T10:00:00.000Z`
+    const onComplete = vi.fn()
+    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete, onDelete: vi.fn(), onOpen: vi.fn() }))
+
+    const action = screen.getByRole('button', { name: `Selesaikan ${active.name}` })
+    expect(screen.getAllByRole('button', { name: `Selesaikan ${active.name}` })).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: `Selesaikan ${completed.name}` })).toBeNull()
+    expect(screen.queryByRole('button', { name: `Selesaikan ${planned.name}` })).toBeNull()
+    fireEvent.click(action)
+    expect(onComplete).toHaveBeenCalledWith(active)
   })
 })

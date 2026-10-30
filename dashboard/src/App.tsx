@@ -28,6 +28,7 @@ import {
   WalletWorkspacePage,
 } from './FinancePages'
 import ProjectCommandCenter from './ProjectCommandCenter'
+import ProjectCompleteDialog from './ProjectCompleteDialog'
 import ProjectTransactionsWorkspace from './ProjectTransactionsWorkspace'
 import ReportsWorkspace from './ReportsWorkspace'
 import type { FinanceDebt, FinanceProject, FinanceTransaction, ProjectInput, TransactionInput, DebtInput } from './financeWorkspace'
@@ -37,6 +38,7 @@ import hollawallLogo from './assets/hollawall-logo.png'
 type Page = 'overview' | 'cashflow' | 'wallets' | 'projects' | 'office' | 'debts' | 'reports'
 type Modal =
   | { kind: 'project'; value?: FinanceProject }
+  | { kind: 'complete-project'; value: FinanceProject }
   | { kind: 'transaction'; value?: FinanceTransaction; scope?: 'project' | 'office'; projectId?: string }
   | { kind: 'debt'; value?: FinanceDebt }
   | null
@@ -196,6 +198,8 @@ export default function App() {
   const saveProject = (input: ProjectInput) => modal?.kind === 'project' && modal.value
     ? commit(() => finance.editProject(modal.value!.id, input), 'Proyek diperbarui.')
     : commit(() => finance.addProject(input), 'Proyek ditambahkan.')
+  const completeProject = (input: ProjectInput) => modal?.kind === 'complete-project'
+    && commit(() => finance.editProject(modal.value.id, input), 'Proyek diselesaikan.')
   const saveTransaction = (input: TransactionInput) => modal?.kind === 'transaction' && modal.value
     ? commit(() => finance.editTransaction(modal.value!.id, input), 'Transaksi diperbarui.')
     : commit(() => finance.addTransaction(input), 'Transaksi ditambahkan.')
@@ -224,7 +228,7 @@ export default function App() {
     : active === 'cashflow' ? <CashflowWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
       : active === 'wallets' ? <WalletWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
         : active === 'projects' && selectedProject ? <ProjectTransactionsWorkspace workspace={finance.workspace} project={selectedProject} onBack={() => pushRoute('projects')} onAdd={(project) => setModal({ kind: 'transaction', projectId: project.id })} onEdit={(value) => setModal({ kind: 'transaction', value, projectId: selectedProject.id })} onDelete={(value) => confirmDelete('transaksi', () => finance.removeTransaction(value.id))} />
-          : active === 'projects' ? <ProjectCommandCenter workspace={finance.workspace} onAdd={() => setModal({ kind: 'project' })} onEdit={(value) => setModal({ kind: 'project', value })} onDelete={(value) => confirmDelete(`proyek ${value.name}`, () => finance.removeProject(value.id))} onOpen={openProject} />
+          : active === 'projects' ? <ProjectCommandCenter workspace={finance.workspace} onAdd={() => setModal({ kind: 'project' })} onEdit={(value) => setModal({ kind: 'project', value })} onComplete={(value) => setModal({ kind: 'complete-project', value })} onDelete={(value) => confirmDelete(`proyek ${value.name}`, () => finance.removeProject(value.id))} onOpen={openProject} />
             : active === 'office' ? <OfficeWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'transaction', scope: 'office' })} onEdit={(value) => setModal({ kind: 'transaction', value })} onDelete={(value) => confirmDelete('biaya kantor', () => finance.removeTransaction(value.id))} />
               : active === 'debts' ? <DebtWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'debt' })} onEdit={(value) => setModal({ kind: 'debt', value })} onDelete={(value) => confirmDelete('hutang internal', () => finance.removeDebt(value.id))} />
                 : <ReportsWorkspace workspace={finance.workspace} />
@@ -251,6 +255,7 @@ export default function App() {
       </main>
       {notice && <div className="finance-toast" role="status">{notice}</div>}
       {modal?.kind === 'project' && <ProjectForm project={modal.value} onSave={saveProject} onClose={() => setModal(null)} />}
+      {modal?.kind === 'complete-project' && <ProjectCompleteDialog project={modal.value} onSave={completeProject} onClose={() => setModal(null)} />}
       {modal?.kind === 'transaction' && <TransactionForm projects={finance.workspace.projects} transaction={modal.value} initialScope={modal.scope} lockedProjectId={modal.projectId} onSave={saveTransaction} onClose={() => setModal(null)} />}
       {modal?.kind === 'debt' && <DebtForm debt={modal.value} onSave={saveDebt} onClose={() => setModal(null)} />}
     </div>

@@ -24,7 +24,7 @@ import { projectStatusLabel } from './financeView'
 
 const today = () => new Date().toISOString().slice(0, 10)
 
-function Modal({ title, copy, onClose, children }: { title: string; copy: string; onClose: () => void; children: ReactNode }) {
+export function Modal({ title, copy, onClose, children }: { title: string; copy: string; onClose: () => void; children: ReactNode }) {
   const modalRef = useRef<HTMLElement>(null)
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
