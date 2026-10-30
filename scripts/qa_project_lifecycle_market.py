@@ -279,14 +279,17 @@ with sync_playwright() as p:
             assert "zoom 183%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "dominant-X wheel changed zoom")
 
             report_head = page.locator(".project-market-report-head")
-            report_head.scroll_into_view_if_needed()
+            report_head.evaluate("el => el.scrollIntoView({ block: 'center' })")
+            page.wait_for_timeout(100)
             head_box = report_head.bounding_box()
             assert head_box
             page.mouse.move(head_box["x"] + min(40, head_box["width"] / 2), head_box["y"] + min(40, head_box["height"] / 2))
-            outside_top = page.evaluate("window.scrollY")
-            page.mouse.wheel(0, 100)
+            outside_scroll = page.evaluate("({ top: window.scrollY, max: document.documentElement.scrollHeight - innerHeight })")
+            outside_delta = 100 if outside_scroll["top"] < outside_scroll["max"] - 1 else -100
+            page.mouse.wheel(0, outside_delta)
             page.wait_for_timeout(100)
-            assert page.evaluate("window.scrollY") > outside_top, (name, "wheel outside canvas did not scroll page")
+            outside_after = page.evaluate("window.scrollY")
+            assert outside_after > outside_scroll["top"] if outside_delta > 0 else outside_after < outside_scroll["top"], (name, "wheel outside canvas did not scroll page", outside_scroll, outside_after)
             assert "zoom 183%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "outside wheel changed canvas zoom")
             viewport.scroll_into_view_if_needed()
 
