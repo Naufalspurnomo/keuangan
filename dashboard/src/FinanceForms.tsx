@@ -115,7 +115,8 @@ export function TransactionForm({ projects, transaction, initialScope = 'project
     submitting.current = true
     try {
       if (locked && (!lockedProject || lockedProject.status === 'planned')) throw new Error('Proyek terkunci tidak tersedia untuk transaksi.')
-      onSave({ date, direction, amount: amount ?? 0, scope: locked ? 'project' : scope, wallet: selected?.wallet ?? wallet, company: selected?.company ?? null, project_id: (locked || scope === 'project') ? selected?.id ?? projectId : null, office_category: !locked && scope === 'office' ? category : null, notes })
+      const projectScoped = locked || scope === 'project'
+      onSave({ date, direction, amount: amount ?? 0, scope: projectScoped ? 'project' : 'office', wallet: projectScoped ? selected?.wallet ?? wallet : wallet, company: projectScoped ? selected?.company ?? null : null, project_id: projectScoped ? selected?.id ?? projectId : null, office_category: projectScoped ? null : category, notes })
       onClose()
     } catch (reason) { submitting.current = false; setError(reason instanceof Error ? reason.message : 'Data belum dapat disimpan.') }
   }

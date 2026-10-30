@@ -18,6 +18,14 @@ const project = (name: string): ProjectInput => ({
 describe('useFinanceWorkspace', () => {
   beforeEach(() => localStorage.clear())
 
+  it('persists the version 3 demo seed on first load', () => {
+    renderHook(() => useFinanceWorkspace())
+
+    const stored = JSON.parse(localStorage.getItem('hollawall-finance-demo-v3') ?? 'null')
+    expect(stored?.version).toBe(3)
+    expect(stored?.projects).toHaveLength(36)
+  })
+
   it('serializes two mutations issued in the same React tick without losing either', () => {
     const { result } = renderHook(() => useFinanceWorkspace())
     const initial = result.current.workspace.projects.length

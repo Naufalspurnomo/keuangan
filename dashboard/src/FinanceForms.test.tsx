@@ -38,6 +38,19 @@ describe('TransactionForm project lock', () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ scope: 'project', project_id: project.id }))
   })
 
+  it('submits the selected wallet for office spending', () => {
+    const workspace = seedFinanceWorkspace()
+    const onSave = vi.fn()
+    render(<TransactionForm projects={workspace.projects} initialScope="office" onSave={onSave} onClose={vi.fn()} />)
+
+    fireEvent.change(screen.getByLabelText('Dompet *'), { target: { value: 'TX Bali' } })
+    fireEvent.change(screen.getByLabelText('Jumlah *'), { target: { value: '500000' } })
+    fireEvent.change(screen.getByLabelText('Keterangan *'), { target: { value: 'Biaya kantor Bali' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan transaksi' }))
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ scope: 'office', wallet: 'TX Bali', company: null, project_id: null }))
+  })
+
   it('rejects a missing locked project visibly', () => {
     const workspace = seedFinanceWorkspace()
     const onSave = vi.fn()

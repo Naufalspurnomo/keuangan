@@ -23,12 +23,7 @@ viewports = (
 )
 results = []
 companies = ["Holla", "Hojja", "Texturin Bali", "Texturin Surabaya"]
-seed_companies = ["Holla", "Hojja", "Texturin Surabaya", "Texturin Bali"]
-expected_ids = [*(f"demo-prj-2025-{index:03d}" for index in range(41, 65)), *(f"demo-prj-2026-{index:03d}" for index in range(1, 29))]
-expected_by_company = {
-    company: sorted(project_id for project_id in expected_ids if seed_companies[(int(project_id[-3:]) - 1) % 4] == company)
-    for company in companies
-}
+expected_id_count = 0
 
 def active_year_geometry(page):
     return page.locator(".year-command nav").evaluate("el => { const active=el.querySelector('button.active'); const n=el.getBoundingClientRect(); const a=active.getBoundingClientRect(); return {navLeft:n.left,navRight:n.right,activeLeft:a.left,activeRight:a.right}; }")
@@ -51,7 +46,7 @@ with sync_playwright() as p:
         console_errors: list[str] = []
         page_errors: list[str] = []
         request_failures: list[str] = []
-        page.add_init_script("localStorage.removeItem('hollawall-finance-demo-v2')")
+        page.add_init_script("localStorage.removeItem('hollawall-finance-demo-v3')")
         page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
         page.on("pageerror", lambda error: page_errors.append(str(error)))
         page.on("requestfailed", lambda request: request_failures.append(f"{request.method} {request.url}: {request.failure}"))
@@ -76,6 +71,15 @@ with sync_playwright() as p:
         assert len(summaries) == 4 and all(re.fullmatch(r"\d+ / \d+", value.strip()) for value in summaries), (name, summaries)
         candles = page.locator("[data-project-candle]")
         candle_count = candles.count()
+        seeded = json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
+        assert seeded["version"] == 3 and len(seeded["projects"]) >= 36
+        assert len({project["name"] for project in seeded["projects"]}) == len(seeded["projects"])
+        assert {project["started_on"][:4] for project in seeded["projects"]} == {"2024", "2025", "2026"}
+        snapshot = seeded["updated_at"][:10]
+        expected_projects = [project for project in seeded["projects"] if project["started_on"] <= "2026-12-31" and (project["completed_on"] or (project["started_on"] if project["status"] == "planned" else snapshot)) >= "2026-01-01"]
+        expected_ids = [project["id"] for project in expected_projects]
+        expected_by_company = {company: sorted(project["id"] for project in expected_projects if project["company"] == company) for company in companies}
+        expected_id_count = len(expected_ids)
         rendered_ids = sorted(candles.evaluate_all("els => els.map(el => el.dataset.projectId)"))
         assert rendered_ids == sorted(expected_ids), (name, rendered_ids, expected_ids)
         for company in companies:
@@ -85,10 +89,10 @@ with sync_playwright() as p:
         # Registry pagination is independent; all four full-year lifecycle canvases remain unchanged.
         registry_pagination = page.get_by_role("navigation", name="Pagination proyek")
         assert registry_pagination.is_visible(), (name, "registry pagination missing")
-        assert registry_pagination.get_by_text("Halaman 1 / 5").is_visible(), (name, "initial registry page")
+        assert registry_pagination.get_by_text("Halaman 1 / 2").is_visible(), (name, "initial registry page")
         registry_page_one = page.locator(".project-register article .project-register-main strong").all_text_contents()
         page.get_by_role("button", name="Halaman proyek berikutnya").click()
-        assert registry_pagination.get_by_text("Halaman 2 / 5").is_visible(), (name, "next registry page")
+        assert registry_pagination.get_by_text("Halaman 2 / 2").is_visible(), (name, "next registry page")
         registry_page_two = page.locator(".project-register article .project-register-main strong").all_text_contents()
         assert registry_page_two and registry_page_two != registry_page_one, (name, "registry page did not change")
         assert canvases.count() == 4 and page.locator("[data-project-candle]").count() == candle_count, (name, "registry pagination changed lifecycle canvases")
@@ -290,7 +294,7 @@ with sync_playwright() as p:
         page.close()
 
     resize_page = browser.new_page(viewport={"width": 1440, "height": 900})
-    resize_page.add_init_script("localStorage.removeItem('hollawall-finance-demo-v2')")
+    resize_page.add_init_script("localStorage.removeItem('hollawall-finance-demo-v3')")
     resize_page.goto(URL, wait_until="networkidle")
     resize_page.get_by_role("button", name="Proyek", exact=True).click()
     resize_page.get_by_role("heading", name="Umur dan status proyek").wait_for()
@@ -309,4 +313,4 @@ with sync_playwright() as p:
     browser.close()
 
 (OUT / "result.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
-print(json.dumps({"status": "PASS", "engine": ENGINE, "viewports": len(results), "responsive_reconciliation": "PASS", "exact_candle_ids": len(expected_ids), "results": results}, indent=2))
+print(json.dumps({"status": "PASS", "engine": ENGINE, "viewports": len(results), "responsive_reconciliation": "PASS", "exact_candle_ids": expected_id_count, "results": results}, indent=2))

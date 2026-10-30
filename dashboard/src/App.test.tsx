@@ -130,11 +130,11 @@ describe('Hollawall demo finance workspace', () => {
     renderApp()
     nav('Proyek')
     fireEvent.click(screen.getAllByRole('button', { name: 'Tambah proyek' })[0])
-    const before = localStorage.getItem('hollawall-finance-demo-v2')
+    const before = localStorage.getItem('hollawall-finance-demo-v3')
     const dialog = screen.getByRole('dialog')
     fireEvent.submit(within(dialog).getByRole('button', { name: 'Tambah proyek' }).closest('form')!)
     expect(screen.getByRole('dialog')).toBeTruthy()
-    expect(localStorage.getItem('hollawall-finance-demo-v2')).toBe(before)
+    expect(localStorage.getItem('hollawall-finance-demo-v3')).toBe(before)
   })
 
   it('completes an active project and updates its status, candle marker, and audit trail', async () => {
@@ -142,7 +142,7 @@ describe('Hollawall demo finance workspace', () => {
     const project = workspace.projects.find((item) => item.status === 'active' && item.started_on.startsWith('2026'))!
     workspace.projects = [project]
     workspace.transactions = workspace.transactions.filter((row) => row.project_id === project.id)
-    localStorage.setItem('hollawall-finance-demo-v2', JSON.stringify(workspace))
+    localStorage.setItem('hollawall-finance-demo-v3', JSON.stringify(workspace))
     renderApp()
     nav('Proyek')
 
@@ -163,11 +163,11 @@ describe('Hollawall demo finance workspace', () => {
   it('navigates annual project data and exposes explicit completion ratios', () => {
     renderApp()
     nav('Proyek')
-    expect(screen.getByRole('button', { name: '2024, 120 selesai dari 120 proyek' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '2025, 40 selesai dari 74 proyek' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '2026, 7 selesai dari 52 proyek' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '2024, 12 selesai dari 12 proyek' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '2025, 12 selesai dari 15 proyek' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '2026, 7 selesai dari 17 proyek' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Tahun sebelumnya' }))
-    expect(screen.getByText((_, element) => element?.tagName === 'SPAN' && element.textContent === '40/74 selesai')).toBeTruthy()
+    expect(screen.getByText((_, element) => element?.tagName === 'SPAN' && element.textContent === '12/15 selesai')).toBeTruthy()
     expect(screen.getByLabelText('Status proyek tahun 2025')).toBeTruthy()
   })
 
@@ -176,9 +176,9 @@ describe('Hollawall demo finance workspace', () => {
     nav('Proyek')
     fireEvent.change(screen.getByLabelText('Perusahaan'), { target: { value: 'Holla' } })
     const summary = screen.getByLabelText('Status proyek tahun 2026')
-    expect(within(summary).getByText(/Hasil filter · \d+\/13/)).toBeTruthy()
+    expect(within(summary).getByText(/Hasil filter · \d+\/4/)).toBeTruthy()
     expect(document.querySelectorAll('.project-market-canvas')).toHaveLength(4)
-    expect(screen.getByText('41 / 52 aktif')).toBeTruthy()
+    expect(screen.getByText('8 / 17 aktif')).toBeTruthy()
     expect(screen.getByText('Garis putih = rentang transaksi')).toBeTruthy()
     expect(screen.getAllByRole('button', { name: /transaksi pertama .* transaksi terakhir/ }).length).toBeGreaterThan(0)
   })
@@ -207,7 +207,7 @@ describe('Hollawall demo finance workspace', () => {
     await waitFor(() => expect(window.location.hash).toBe('#projects'))
     expect(screen.getByRole('heading', { name: 'Umur dan status proyek' })).toBeTruthy()
     expect((screen.getByLabelText('Perusahaan') as HTMLSelectElement).value).toBe('Holla')
-    expect(screen.getByRole('button', { name: '2025, 40 selesai dari 74 proyek' }).getAttribute('aria-current')).toBe('page')
+    expect(screen.getByRole('button', { name: '2025, 12 selesai dari 15 proyek' }).getAttribute('aria-current')).toBe('page')
   })
 
   it('creates an office expense from an explicitly selected wallet', async () => {
@@ -230,11 +230,11 @@ describe('Hollawall demo finance workspace', () => {
     expect(screen.getByRole('heading', { name: 'Pratinjau dan ekspor PDF' })).toBeTruthy()
     const preview = screen.getByRole('region', { name: 'Pratinjau laporan' })
     expect(within(preview).getByLabelText('Filter aktif').children).toHaveLength(7)
-    expect(within(preview).getAllByRole('row')).toHaveLength(420)
+    expect(within(preview).getAllByRole('row')).toHaveLength(95)
     expect(within(preview).queryByText(/Pratinjau menampilkan 50/)).toBeNull()
     fireEvent.change(screen.getByLabelText('Aktivitas'), { target: { value: 'office' } })
     expect(within(preview).getAllByText('Operasional Kantor').length).toBeGreaterThan(0)
-    expect(within(preview).getByText('3', { selector: '.preview-metrics strong' })).toBeTruthy()
+    expect(within(preview).getByText('4', { selector: '.preview-metrics strong' })).toBeTruthy()
   })
 
   it('keeps the mobile navigation state aligned with the 900px CSS breakpoint', async () => {

@@ -86,9 +86,9 @@ def matrix(browser, viewports):
         wait_shell(page)
         if width <= 760:
             assert page.locator('aside.sidebar').get_attribute('aria-hidden') == 'true'
-            assert page.locator('aside.sidebar button[tabindex="-1"]').count() == 9
+            assert page.locator('aside.sidebar button[tabindex="-1"]').count() == 8
         showcase = {}
-        for nav in ['Ringkasan','Arus Kas','Dompet','Transaksi','Proyek','Operasional Kantor','Hutang Internal','Laporan']:
+        for nav in ['Ringkasan','Arus Kas','Dompet','Proyek','Operasional Kantor','Hutang Internal','Laporan']:
             if width <= 900:
                 dispatch(page.get_by_role('button', name='Buka navigasi'))
                 page.wait_for_timeout(50)
@@ -104,7 +104,7 @@ def matrix(browser, viewports):
                 assert reach['max'] > 0 and abs(reach['left']-reach['max']) <= 2 and reach['last'] <= reach['edge'] + 2, f'{name}: candle end unreachable {reach}'
         page.screenshot(path=str(OUT/f'{name}-reports.png'))
         assert not errors, f'{name}: {errors}'
-        results.append({'viewport':name,'pages':8,'showcase':showcase,'errors':0})
+        results.append({'viewport':name,'pages':7,'showcase':showcase,'errors':0})
         page.close()
     return results
 
@@ -117,11 +117,23 @@ def journeys(browser):
     page.goto(URL,wait_until='domcontentloaded',timeout=60_000); wait_shell(page)
 
     goto_page(page,'Proyek')
-    assert page.get_by_role('button',name='2024, 120 selesai dari 120 proyek').count()==1
-    assert page.get_by_role('button',name='2025, 40 selesai dari 74 proyek').count()==1
-    assert page.get_by_role('button',name='2026, 7 selesai dari 28 proyek').count()==1
+    seeded=json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
+    assert seeded['version']==3 and len(seeded['projects'])>=36
+    assert len({row['name'] for row in seeded['projects']})==len(seeded['projects'])
+    assert {row['started_on'][:4] for row in seeded['projects']}=={'2024','2025','2026'}
+    assert {row['company'] for row in seeded['projects']}=={'Holla','Hojja','Texturin Surabaya','Texturin Bali'}
+    assert {row['status'] for row in seeded['projects']}=={'planned','active','completed'}
+    snapshot=seeded['updated_at'][:10]
+    def annual(year):
+        start,end=f'{year}-01-01',f'{year}-12-31'
+        rows=[row for row in seeded['projects'] if row['started_on']<=end and (row['completed_on'] or (row['started_on'] if row['status']=='planned' else snapshot))>=start]
+        return len([row for row in rows if row['status']=='completed']),len(rows)
+    for year in (2024,2025,2026):
+        done,total=annual(year)
+        assert page.get_by_role('button',name=f'{year}, {done} selesai dari {total} proyek').count()==1
     dispatch(page.get_by_role('button',name='Tahun sebelumnya')); page.wait_for_timeout(100)
-    assert 'Hasil filter · 40/74' in page.locator('.project-year-stats').inner_text()
+    done,total=annual(2025)
+    assert f'Hasil filter · {done}/{total}' in page.locator('.project-year-stats').inner_text()
     dispatch(page.get_by_role('button',name='Tahun berikutnya')); page.wait_for_timeout(100)
 
     dispatch(page.get_by_role('button',name='Tambah proyek').first)
@@ -132,7 +144,7 @@ def journeys(browser):
     dispatch(dialog.get_by_role('button',name='Tambah proyek'))
     page.wait_for_timeout(150)
     assert page.get_by_text('QA Project CRUD',exact=True).count()>=1
-    stored=json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v2')"))
+    stored=json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
     project=next(row for row in stored['projects'] if row['name']=='QA Project CRUD')
     assert project['wallet']=='CV HB' and stored['audit'][-1]['action']=='create'
 
@@ -140,13 +152,13 @@ def journeys(browser):
     dialog=page.get_by_role('dialog'); dialog.get_by_label('Perusahaan *').select_option(label='Texturin Bali')
     dialog.get_by_label('Nama proyek *').fill('QA Project CRUD Updated')
     dispatch(dialog.get_by_role('button',name='Simpan perubahan')); page.wait_for_timeout(150)
-    stored=json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v2')"))
+    stored=json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
     project=next(row for row in stored['projects'] if row['name']=='QA Project CRUD Updated')
     assert project['wallet']=='TX Bali' and stored['audit'][-1]['action']=='update'
 
     page.once('dialog',lambda prompt: prompt.accept())
     dispatch(page.get_by_role('button',name='Hapus QA Project CRUD Updated')); page.wait_for_timeout(150)
-    stored=json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v2')"))
+    stored=json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
     assert all(row['name']!='QA Project CRUD Updated' for row in stored['projects']) and stored['audit'][-1]['action']=='delete'
 
     goto_page(page,'Operasional Kantor')
@@ -154,7 +166,7 @@ def journeys(browser):
     dialog=page.get_by_role('dialog'); dialog.get_by_label('Dompet *').select_option('TX Bali'); dialog.get_by_label('Jumlah *').fill('500000'); dialog.get_by_label('Keterangan *').fill('QA listrik 500 ribu')
     dispatch(dialog.get_by_role('button',name='Simpan transaksi')); page.wait_for_timeout(150)
     assert page.get_by_text('QA listrik 500 ribu',exact=True).count()==1
-    stored=json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v2')"))
+    stored=json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
     office=next(row for row in stored['transactions'] if row['notes']=='QA listrik 500 ribu')
     assert office['scope']=='office' and office['wallet']=='TX Bali' and office['project_id'] is None and office['amount']==500000
 
@@ -162,12 +174,12 @@ def journeys(browser):
     dispatch(page.get_by_role('button',name='Tambah hutang').first)
     dialog=page.get_by_role('dialog'); dialog.get_by_label('Jumlah hutang *').fill('7000000'); dialog.get_by_label('Keterangan *').fill('QA antar dompet')
     dispatch(dialog.get_by_role('button',name='Simpan hutang')); page.wait_for_timeout(150)
-    stored=json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v2')"))
+    stored=json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
     debt=next(row for row in stored['debts'] if row['notes']=='QA antar dompet')
     assert debt['borrower']!=debt['lender'] and debt['amount']==7000000
 
     page.reload(wait_until='domcontentloaded',timeout=60_000); wait_shell(page)
-    stored2=json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v2')"))
+    stored2=json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
     assert any(row['notes']=='QA listrik 500 ribu' for row in stored2['transactions'])
     assert any(row['notes']=='QA antar dompet' for row in stored2['debts'])
 

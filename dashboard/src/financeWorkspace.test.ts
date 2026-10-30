@@ -37,7 +37,7 @@ describe('demo finance workspace', () => {
       const projects = workspace.projects.filter((project) => projectYear(project) === year)
       return [year, projects.filter((project) => project.status === 'completed').length, projects.length]
     })
-    expect(summary).toEqual([[2024, 120, 120], [2025, 40, 74], [2026, 7, 28]])
+    expect(summary).toEqual([[2024, 12, 12], [2025, 9, 12], [2026, 5, 12]])
     expect(workspace.projects.every((project) => project.wallet === COMPANY_WALLET[project.company])).toBe(true)
   })
 
@@ -166,9 +166,9 @@ describe('demo finance workspace', () => {
   it('keeps every mutation immutable and appends exactly one audit event', () => {
     const workspace = seedFinanceWorkspace()
     const next = createProject(workspace, newProject({ name: 'Audit Baru' }))
-    expect(workspace.projects).toHaveLength(222)
+    expect(workspace.projects).toHaveLength(36)
     expect(workspace.audit).toHaveLength(0)
-    expect(next.projects).toHaveLength(223)
+    expect(next.projects).toHaveLength(37)
     expect(next.audit).toHaveLength(1)
     expect(next.audit[0]).toMatchObject({ action: 'create', entity: 'project' })
   })
@@ -176,7 +176,7 @@ describe('demo finance workspace', () => {
   it('resets demo data without deleting the append-only audit history', () => {
     const changed = createProject(seedFinanceWorkspace(), newProject({ name: 'Sebelum Reset' }))
     const reset = resetFinanceWorkspace(changed)
-    expect(reset.projects).toHaveLength(222)
+    expect(reset.projects).toHaveLength(36)
     expect(reset.audit).toHaveLength(2)
     expect(reset.audit.map((event) => event.action)).toEqual(['create', 'reset'])
   })

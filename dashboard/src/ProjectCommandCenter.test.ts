@@ -55,19 +55,19 @@ describe('projectAsOf', () => {
     render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onDelete: vi.fn(), onOpen }))
 
     expect(screen.getByRole('navigation', { name: 'Pagination proyek' })).toBeTruthy()
-    expect(screen.getByText('Halaman 1 / 5')).toBeTruthy()
+    expect(screen.getByText('Halaman 1 / 2')).toBeTruthy()
     expect(screen.getAllByRole('region', { name: /Chart lifecycle/ })).toHaveLength(4)
 
     fireEvent.click(screen.getByRole('button', { name: 'Halaman proyek berikutnya' }))
-    expect(screen.getByText('Halaman 2 / 5')).toBeTruthy()
+    expect(screen.getByText('Halaman 2 / 2')).toBeTruthy()
     expect(screen.getAllByRole('region', { name: /Chart lifecycle/ })).toHaveLength(4)
   })
 
   it('exposes exactly one quick-completion action only for active registry rows', () => {
     const workspace = seedFinanceWorkspace()
-    const active = workspace.projects.find((project) => project.status === 'active')!
-    const completed = workspace.projects.find((project) => project.status === 'completed')!
-    const planned = workspace.projects.find((project) => project.status === 'planned')!
+    const active = workspace.projects.find((project) => project.status === 'active' && project.started_on.startsWith('2026'))!
+    const completed = workspace.projects.find((project) => project.status === 'completed' && project.started_on.startsWith('2026'))!
+    const planned = workspace.projects.find((project) => project.status === 'planned' && project.started_on.startsWith('2026'))!
     workspace.projects = [active, completed, planned]
     workspace.updated_at = `${active.started_on.slice(0, 4)}-12-31T10:00:00.000Z`
     const onComplete = vi.fn()

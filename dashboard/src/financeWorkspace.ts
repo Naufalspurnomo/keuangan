@@ -1,3 +1,5 @@
+import { seedDemoFinanceWorkspace } from './demoFinanceFixtures'
+
 export const WALLETS = ['CV HB', 'TX SBY', 'TX Bali'] as const
 export type WalletId = typeof WALLETS[number]
 
@@ -71,7 +73,7 @@ export interface FinanceDebt {
 }
 
 export interface FinanceWorkspace {
-  version: 2
+  version: 3
   mode: 'demo'
   projects: FinanceProject[]
   transactions: FinanceTransaction[]
@@ -262,70 +264,8 @@ function commit(workspace: FinanceWorkspace, patch: Partial<Pick<FinanceWorkspac
   return next
 }
 
-function dateAt(year: number, month: number, day: number) {
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-}
-
-function projectSeed(year: number, index: number, status: ProjectStatus): FinanceProject {
-  const companies = COMPANIES
-  const company = companies[index % companies.length]
-  const startedMonth = (index % (year === 2026 ? 9 : 11)) + 1
-  const startedDay = (index % 24) + 1
-  const started_on = dateAt(year, startedMonth, startedDay)
-  const completed_on = status === 'completed' ? dateAt(year, Math.min(12, startedMonth + 1), Math.min(28, startedDay + 3)) : null
-  const at = `${started_on}T08:00:00.000Z`
-  return {
-    id: `demo-prj-${year}-${String(index + 1).padStart(3, '0')}`,
-    name: `${['Aruna', 'Bimasena', 'Cendana', 'Dahayu', 'Elang', 'Fajar', 'Griya', 'Harmoni'][index % 8]} ${year}-${String(index + 1).padStart(3, '0')}`,
-    company,
-    wallet: COMPANY_WALLET[company],
-    status,
-    started_on,
-    completed_on,
-    client: `Klien ${String(index + 1).padStart(3, '0')}`,
-    contract_value: 25_000_000 + (index % 12) * 7_500_000,
-    notes: '',
-    created_at: at,
-    updated_at: at,
-  }
-}
-
-function transactionSeed(project: FinanceProject, index: number): FinanceTransaction[] {
-  const base = project.completed_on ?? project.started_on
-  const at = `${base}T09:00:00.000Z`
-  const income: FinanceTransaction = {
-    id: `demo-trx-${project.id}-in`, date: project.started_on, direction: 'income', amount: 18_000_000 + (index % 10) * 4_000_000,
-    scope: 'project', wallet: project.wallet, company: project.company, project_id: project.id, office_category: null,
-    notes: 'Pembayaran proyek', created_at: at, updated_at: at,
-  }
-  const expense: FinanceTransaction = {
-    id: `demo-trx-${project.id}-out`, date: base, direction: 'expense', amount: 7_000_000 + (index % 8) * 1_500_000,
-    scope: 'project', wallet: project.wallet, company: project.company, project_id: project.id, office_category: null,
-    notes: 'Biaya material dan pelaksana', created_at: at, updated_at: at,
-  }
-  return [income, expense]
-}
-
 export function seedFinanceWorkspace(): FinanceWorkspace {
-  const projects = [
-    ...Array.from({ length: 120 }, (_, index) => projectSeed(2024, index, 'completed')),
-    ...Array.from({ length: 74 }, (_, index) => projectSeed(2025, index, index < 40 ? 'completed' : index < 64 ? 'active' : 'planned')),
-    ...Array.from({ length: 28 }, (_, index) => projectSeed(2026, index, index < 7 ? 'completed' : index < 24 ? 'active' : 'planned')),
-  ]
-  const projectTransactions = projects.filter((project) => project.status !== 'planned').flatMap(transactionSeed)
-  const officeTransactions: FinanceTransaction[] = [
-    ['office-1', '2026-01-08', 'CV HB', 'Listrik & utilitas', 500_000, 'Listrik kantor Januari'],
-    ['office-2', '2026-02-03', 'TX SBY', 'Peralatan kantor', 1_850_000, 'Printer dan tinta'],
-    ['office-3', '2026-03-05', 'TX Bali', 'Sewa & fasilitas', 6_500_000, 'Sewa ruang kerja'],
-  ].map(([id, date, wallet, category, amount, notes]) => ({
-    id: `demo-trx-${id}`, date: String(date), direction: 'expense', amount: Number(amount), scope: 'office', wallet: wallet as WalletId,
-    company: null, project_id: null, office_category: category as OfficeCategory, notes: String(notes), created_at: `${date}T08:00:00.000Z`, updated_at: `${date}T08:00:00.000Z`,
-  }))
-  const debts: FinanceDebt[] = [
-    { id: 'demo-debt-1', date: '2026-02-14', borrower: 'TX Bali', lender: 'CV HB', amount: 25_000_000, repaid: 10_000_000, notes: 'Dukungan kas proyek Bali', created_at: '2026-02-14T08:00:00.000Z', updated_at: '2026-03-10T08:00:00.000Z' },
-    { id: 'demo-debt-2', date: '2026-04-03', borrower: 'TX SBY', lender: 'CV HB', amount: 12_500_000, repaid: 12_500_000, notes: 'Pendanaan material sementara', created_at: '2026-04-03T08:00:00.000Z', updated_at: '2026-05-01T08:00:00.000Z' },
-  ]
-  return { version: 2, mode: 'demo', projects, transactions: [...projectTransactions, ...officeTransactions], debts, audit: [], updated_at: nowIso() }
+  return seedDemoFinanceWorkspace()
 }
 
 export function resetFinanceWorkspace(workspace: FinanceWorkspace): FinanceWorkspace {
@@ -351,7 +291,7 @@ function validMoney(value: unknown, allowZero = true) {
 }
 
 export function isFinanceWorkspace(value: unknown): value is FinanceWorkspace {
-  if (!isRecord(value) || value.version !== 2 || value.mode !== 'demo' || !Array.isArray(value.projects) || !Array.isArray(value.transactions) || !Array.isArray(value.debts) || !Array.isArray(value.audit) || !validTimestamp(value.updated_at)) return false
+  if (!isRecord(value) || value.version !== 3 || value.mode !== 'demo' || !Array.isArray(value.projects) || !Array.isArray(value.transactions) || !Array.isArray(value.debts) || !Array.isArray(value.audit) || !validTimestamp(value.updated_at)) return false
   const projectIds = new Set<string>()
   const projectMap = new Map<string, Record<string, unknown>>()
   const projectNames = new Set<string>()

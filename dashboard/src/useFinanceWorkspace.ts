@@ -19,16 +19,22 @@ import {
   type TransactionInput,
 } from './financeWorkspace'
 
-const STORAGE_KEY = 'hollawall-finance-demo-v2'
+const STORAGE_KEY = 'hollawall-finance-demo-v3'
+
+function persistSeed() {
+  const seeded = seedFinanceWorkspace()
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(seeded))
+  return seeded
+}
 
 function loadWorkspace() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return seedFinanceWorkspace()
+    if (!raw) return persistSeed()
     const parsed: unknown = JSON.parse(raw)
-    return isFinanceWorkspace(parsed) ? parsed : seedFinanceWorkspace()
+    return isFinanceWorkspace(parsed) ? parsed : persistSeed()
   } catch {
-    return seedFinanceWorkspace()
+    return persistSeed()
   }
 }
 
