@@ -81,10 +81,27 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(container.textContent).not.toContain('Berikutnya')
   })
 
-  it('draws a full-year month axis, keeps completed projects, and orders newest on the right', () => {
+  it('renders each month axis ahead of the candle layer with 12 unique, fully spaced positions', () => {
+    const { container } = render(<ProjectLifecycleMarketChart projects={projects} transactions={transactions} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={vi.fn()} />)
+
+    for (const canvas of container.querySelectorAll('.project-market-canvas')) {
+      const axis = canvas.querySelector('.project-market-axis') as HTMLElement
+      const columns = canvas.querySelector('.project-market-columns') as HTMLElement
+      const chart = canvas.querySelector('.project-market-chart') as HTMLElement
+      const positions = [...canvas.querySelectorAll<HTMLElement>('.project-market-month')]
+        .map((month) => Number.parseFloat(month.style.getPropertyValue('--month-position')))
+
+      expect(axis.compareDocumentPosition(columns) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      expect(positions).toHaveLength(12)
+      expect(new Set(positions)).toHaveLength(12)
+      expect(positions.every((position, index) => index === 0 || position > positions[index - 1])).toBe(true)
+      expect(Number.parseFloat(chart.style.getPropertyValue('--market-height'))).toBeGreaterThanOrEqual(624)
+    }
+  })
+
+  it('keeps completed projects and orders newest on the right', () => {
     const { container } = render(<ProjectLifecycleMarketChart projects={projects} transactions={transactions} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={vi.fn()} />)
     const holla = container.querySelector('[data-project-company="Holla"]') as HTMLElement
-    expect(holla.querySelectorAll('.project-market-month')).toHaveLength(12)
     expect([...holla.querySelectorAll('[data-project-candle]')].map((node) => node.getAttribute('data-project-candle'))).toEqual(['Holla Lama', 'Holla Terbaru'])
     expect(holla.querySelector('[data-project-candle="Holla Lama"]')?.classList.contains('is-completed')).toBe(true)
     expect(holla.querySelector('.project-market-wick')).toBeTruthy()

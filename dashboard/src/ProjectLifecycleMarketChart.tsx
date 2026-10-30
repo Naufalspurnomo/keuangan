@@ -13,7 +13,7 @@ import { type CompanyId, type FinanceProject, type FinanceTransaction } from './
 import { dateLabel, IDR, projectStatusLabel } from './financeView'
 
 const DAY = 86_400_000
-const BASE_HEIGHT = 540
+const BASE_HEIGHT = 624
 const BASE_COLUMN = 76
 const MIN_ZOOM = 1
 const MAX_ZOOM = 2.4
@@ -86,7 +86,7 @@ function yearModel(year: number, asOf: Date) {
       label: new Intl.DateTimeFormat('id-ID', { month: 'short' }).format(date).toLocaleUpperCase('id-ID'),
       position: positionFor(isoDate(date)),
     }
-  })
+  }).reverse()
   return { months, positionFor }
 }
 

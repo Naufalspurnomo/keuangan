@@ -32,6 +32,41 @@ def assert_active_year_visible(page, label):
     geometry = active_year_geometry(page)
     assert geometry["activeLeft"] >= geometry["navLeft"] - 1 and geometry["activeRight"] <= geometry["navRight"] + 1, (label, "active year clipped", geometry)
 
+
+def assert_month_axis_geometry(page, label):
+    geometry = page.locator(".project-market-canvas").evaluate_all("""canvases => canvases.map(canvas => {
+      const viewport = canvas.querySelector('.project-market-viewport').getBoundingClientRect();
+      const axis = canvas.querySelector('.project-market-axis');
+      const previousPointerEvents = axis.style.pointerEvents;
+      axis.style.pointerEvents = 'auto';
+      const monthBoxes = [...canvas.querySelectorAll('.project-market-month b')].map(el => {
+        const rect = el.getBoundingClientRect();
+        const style = getComputedStyle(el);
+        const visible = rect.bottom > Math.max(viewport.top, 0)
+          && rect.top < Math.min(viewport.bottom, window.innerHeight)
+          && rect.right > 0
+          && rect.left < window.innerWidth;
+        const topmost = visible ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) : null;
+        return {
+          top: rect.top,
+          bottom: rect.bottom,
+          left: rect.left,
+          right: rect.right,
+          z: Number(style.zIndex || 0),
+          visible,
+          labelIsTopmost: !visible || topmost === el || el.contains(topmost),
+        };
+      });
+      axis.style.pointerEvents = previousPointerEvents;
+      return { company: canvas.dataset.projectCompany, monthBoxes };
+    })""")
+    for canvas in geometry:
+        month_boxes = canvas["monthBoxes"]
+        assert len(month_boxes) == 12, (label, canvas["company"], "month count", len(month_boxes))
+        assert all(box["z"] >= 10 for box in month_boxes), (label, canvas["company"], "month z-index", month_boxes)
+        assert all(month_boxes[index + 1]["top"] - month_boxes[index]["top"] >= 24 for index in range(len(month_boxes) - 1)), (label, canvas["company"], "month spacing", month_boxes)
+        assert all(box["labelIsTopmost"] for box in month_boxes), (label, canvas["company"], "visible month label covered by candle", month_boxes)
+
 with sync_playwright() as p:
     if ENGINE == "chromium":
         browser = p.chromium.launch(headless=True, executable_path="/snap/bin/chromium", args=["--no-sandbox"])
@@ -64,6 +99,7 @@ with sync_playwright() as p:
         assert rendered_companies == companies, (name, rendered_companies)
         month_marker_count = page.locator(".project-market-month").count()
         assert month_marker_count == 48, (name, "month axis")
+        assert_month_axis_geometry(page, name)
         assert page.locator('[aria-label="Halaman chart"]').count() == 0, (name, "chart pagination remains")
         assert page.locator(".year-candle-board").count() == 0, (name, "legacy chart remains")
 
@@ -257,9 +293,8 @@ with sync_playwright() as p:
         page.wait_for_timeout(50)
         source_scroll = page.evaluate("window.scrollY")
         click_candle.click()
-        page.get_by_role("heading", name="Semua transaksi").wait_for()
-        assert page.get_by_label("Filter proyek").input_value() == click_project_id, (name, "candle click filter", click_project_id, page.get_by_label("Filter proyek").input_value())
-        assert page.evaluate("window.location.hash").startswith("#transactions?project="), (name, "project detail route")
+        page.get_by_role("button", name="Kembali ke Proyek").wait_for()
+        assert page.evaluate("window.location.hash") == f"#projects?project={click_project_id}", (name, "project detail route", click_project_id, page.evaluate("window.location.hash"))
         page.go_back(wait_until="networkidle")
         page.get_by_role("heading", name="Umur dan status proyek").wait_for()
         assert page.evaluate("window.location.hash") == "#projects", (name, "browser back did not restore projects")
