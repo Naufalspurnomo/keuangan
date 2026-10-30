@@ -179,22 +179,21 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
     const viewport = viewportRef.current
     if (!viewport) return
     const handleWheel = (event: WheelEvent) => {
-      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? viewport.clientHeight : 1
+      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? 16
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+          ? viewport.clientHeight
+          : 1
       const deltaX = event.deltaX * unit
       const deltaY = event.deltaY * unit
       if (!deltaX && !deltaY) return
       event.preventDefault()
       event.stopPropagation()
-      if (event.ctrlKey || event.metaKey) {
-        setBoundedZoom(zoomRef.current * Math.exp(-deltaY * .0014), event.clientX, event.clientY)
+      if (event.shiftKey || Math.abs(deltaX) > Math.abs(deltaY)) {
+        viewport.scrollLeft += deltaX || deltaY
         return
       }
-      const horizontal = deltaX || (event.shiftKey ? deltaY : 0)
-      const vertical = event.shiftKey ? 0 : deltaY
-      const maxLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth)
-      const maxTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
-      viewport.scrollLeft = Math.max(0, Math.min(maxLeft, viewport.scrollLeft + horizontal))
-      viewport.scrollTop = Math.max(0, Math.min(maxTop, viewport.scrollTop + vertical))
+      setBoundedZoom(zoomRef.current * Math.exp(-deltaY * .0014), event.clientX, event.clientY)
     }
     viewport.addEventListener('wheel', handleWheel, { passive: false })
     return () => viewport.removeEventListener('wheel', handleWheel)
@@ -295,7 +294,7 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
       <div className="project-market-identity"><i>{meta.mark}</i><div><p>{company}</p><h3>Project lifecycle</h3><span>{meta.copy}</span></div></div>
       <div className="project-market-summary" aria-label={`Ringkasan ${company}`}><strong>{active} / {ordered.length}</strong><span>aktif / total {year}</span><em>{completed} selesai{planned ? ` · ${planned} rencana` : ''}</em></div>
     </header>
-    <div className="project-market-toolbar"><span><Move size={13} /> Seret bebas · zoom {Math.round(zoom * 100)}%</span><button type="button" onClick={latest} aria-label={`Kembali ke proyek terbaru ${company}`}><ChevronsRight size={15} /> Terbaru</button></div>
+    <div className="project-market-toolbar"><span><Move size={13} /> Seret untuk geser · roda untuk zoom · zoom {Math.round(zoom * 100)}%</span><button type="button" onClick={latest} aria-label={`Kembali ke proyek terbaru ${company}`}><ChevronsRight size={15} /> Terbaru</button></div>
     <div ref={viewportRef} className="project-market-viewport" onPointerDown={startPointer} onPointerMove={movePointer} onPointerUp={stopPointer} onPointerCancel={stopPointer}>
       <div className="project-market-chart" style={{ '--market-width': `${chartWidth}px`, '--market-height': `${chartHeight}px`, '--market-column': `${BASE_COLUMN * zoom}px` } as CSSProperties}>
         <div className="project-market-axis" aria-hidden="true">

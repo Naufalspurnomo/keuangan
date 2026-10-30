@@ -34,37 +34,44 @@ def assert_active_year_visible(page, label):
 
 
 def assert_month_axis_geometry(page, label):
-    geometry = page.locator(".project-market-canvas").evaluate_all("""canvases => canvases.map(canvas => {
-      const viewport = canvas.querySelector('.project-market-viewport').getBoundingClientRect();
-      const axis = canvas.querySelector('.project-market-axis');
-      const previousPointerEvents = axis.style.pointerEvents;
-      axis.style.pointerEvents = 'auto';
-      const monthBoxes = [...canvas.querySelectorAll('.project-market-month b')].map(el => {
-        const rect = el.getBoundingClientRect();
-        const style = getComputedStyle(el);
-        const visible = rect.bottom > Math.max(viewport.top, 0)
-          && rect.top < Math.min(viewport.bottom, window.innerHeight)
-          && rect.right > 0
-          && rect.left < window.innerWidth;
-        const topmost = visible ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) : null;
-        return {
-          top: rect.top,
-          bottom: rect.bottom,
-          left: rect.left,
-          right: rect.right,
-          z: Number(style.zIndex || 0),
-          visible,
-          labelIsTopmost: !visible || topmost === el || el.contains(topmost),
-        };
-      });
-      axis.style.pointerEvents = previousPointerEvents;
-      return { company: canvas.dataset.projectCompany, monthBoxes };
-    })""")
-    for canvas in geometry:
+    canvases = page.locator(".project-market-canvas")
+    assert canvases.count() == 4, (label, "canvas count", canvases.count())
+    for index in range(canvases.count()):
+        canvas_locator = canvases.nth(index)
+        canvas_locator.evaluate("el => el.scrollIntoView({block: 'start'})")
+        page.wait_for_timeout(40)
+        canvas = canvas_locator.evaluate("""canvas => {
+          const viewport = canvas.querySelector('.project-market-viewport').getBoundingClientRect();
+          const axis = canvas.querySelector('.project-market-axis');
+          const previousPointerEvents = axis.style.pointerEvents;
+          axis.style.pointerEvents = 'auto';
+          const monthBoxes = [...canvas.querySelectorAll('.project-market-month b')].map(el => {
+            const rect = el.getBoundingClientRect();
+            const style = getComputedStyle(el);
+            const visible = rect.bottom > Math.max(viewport.top, 0)
+              && rect.top < Math.min(viewport.bottom, window.innerHeight)
+              && rect.right > 0
+              && rect.left < window.innerWidth;
+            const topmost = visible ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) : null;
+            return {
+              top: rect.top,
+              bottom: rect.bottom,
+              left: rect.left,
+              right: rect.right,
+              z: Number(style.zIndex || 0),
+              visible,
+              labelIsTopmost: !visible || topmost === el || el.contains(topmost),
+            };
+          });
+          const visibleMonthBoxes = monthBoxes.filter(box => box.visible);
+          axis.style.pointerEvents = previousPointerEvents;
+          return { company: canvas.dataset.projectCompany, monthBoxes, visibleMonthBoxes };
+        }""")
         month_boxes = canvas["monthBoxes"]
         assert len(month_boxes) == 12, (label, canvas["company"], "month count", len(month_boxes))
+        assert canvas["visibleMonthBoxes"], (label, canvas["company"], "no visible month labels; layer assertion would be vacuous")
         assert all(box["z"] >= 10 for box in month_boxes), (label, canvas["company"], "month z-index", month_boxes)
-        assert all(month_boxes[index + 1]["top"] - month_boxes[index]["top"] >= 24 for index in range(len(month_boxes) - 1)), (label, canvas["company"], "month spacing", month_boxes)
+        assert all(month_boxes[position + 1]["top"] - month_boxes[position]["top"] >= 24 for position in range(len(month_boxes) - 1)), (label, canvas["company"], "month spacing", month_boxes)
         assert all(box["labelIsTopmost"] for box in month_boxes), (label, canvas["company"], "visible month label covered by candle", month_boxes)
 
 with sync_playwright() as p:
@@ -151,28 +158,57 @@ with sync_playwright() as p:
         zoom_readouts = page.locator(".project-market-toolbar > span").all_text_contents()
         assert all("zoom 120%" in value.lower() for value in zoom_readouts), (name, "zoom readout", zoom_readouts)
 
-        # Plain wheel pans only the active canvas; Ctrl/Command + wheel zooms only that canvas.
+        # Ordinary wheel zooms only the hovered canvas; Shift+wheel pans it horizontally.
         if width > 580:
             wheel_box = viewport.bounding_box()
             assert wheel_box
-            viewport.evaluate("el => { el.scrollTop = Math.min(50, el.scrollHeight - el.clientHeight) }")
             other_geometry = page.locator(".project-market-viewport").evaluate_all("els => els.slice(1).map(el => ({left: el.scrollLeft, top: el.scrollTop, width: el.querySelector('.project-market-chart').getBoundingClientRect().width}))")
             visible_wheel_y = min(wheel_box["y"] + min(160, wheel_box["height"] * .45), height - 20)
             page.mouse.move(wheel_box["x"] + wheel_box["width"] * .65, visible_wheel_y)
-            canvas_top_before = viewport.evaluate("el => el.scrollTop")
             page_top_before = page.evaluate("window.scrollY")
-            page.mouse.wheel(0, 100)
-            page.wait_for_timeout(100)
-            assert viewport.evaluate("el => el.scrollTop") > canvas_top_before, (name, "plain wheel did not pan canvas")
-            assert page.evaluate("window.scrollY") == page_top_before, (name, "plain wheel moved page")
-            page.keyboard.down("Control")
-            page.mouse.wheel(0, 100)
-            page.keyboard.up("Control")
+            page.mouse.wheel(0, -100)
             page.wait_for_timeout(100)
             local_readout = canvases.first.locator(".project-market-toolbar > span").inner_text()
-            assert "zoom 104%" in local_readout.lower(), (name, "wheel did not produce smooth local zoom", local_readout)
+            assert "zoom 138%" in local_readout.lower(), (name, "ordinary wheel did not zoom active canvas in", local_readout)
+            assert page.evaluate("window.scrollY") == page_top_before, (name, "canvas wheel moved page")
+            page.mouse.wheel(0, 100)
+            page.wait_for_timeout(100)
+            local_readout = canvases.first.locator(".project-market-toolbar > span").inner_text()
+            assert "zoom 120%" in local_readout.lower(), (name, "ordinary wheel did not zoom active canvas out", local_readout)
             other_after_wheel = page.locator(".project-market-viewport").evaluate_all("els => els.slice(1).map(el => ({left: el.scrollLeft, top: el.scrollTop, width: el.querySelector('.project-market-chart').getBoundingClientRect().width}))")
             assert other_after_wheel == other_geometry, (name, "local wheel changed sibling canvas", other_geometry, other_after_wheel)
+
+            # Create horizontal overflow locally before proving Shift+wheel pan.
+            page.mouse.wheel(0, -300)
+            page.wait_for_timeout(100)
+            assert "zoom 183%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "local overflow zoom", canvases.first.locator(".project-market-toolbar > span").inner_text())
+            assert viewport.evaluate("el => el.scrollWidth > el.clientWidth"), (name, "local zoom did not create horizontal overflow")
+            viewport.evaluate("el => { el.scrollLeft = 0 }")
+            horizontal_left = viewport.evaluate("el => el.scrollLeft")
+            page.keyboard.down("Shift")
+            page.mouse.wheel(0, 80)
+            page.keyboard.up("Shift")
+            page.wait_for_timeout(100)
+            assert viewport.evaluate("el => el.scrollLeft") != horizontal_left, (name, "Shift+wheel did not pan horizontally")
+            assert "zoom 183%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "Shift+wheel changed zoom")
+            viewport.evaluate("el => { el.scrollLeft = Math.min(120, el.scrollWidth - el.clientWidth) }")
+            dominant_x_left = viewport.evaluate("el => el.scrollLeft")
+            page.mouse.wheel(-80, 0)
+            page.wait_for_timeout(100)
+            assert viewport.evaluate("el => el.scrollLeft") != dominant_x_left, (name, "dominant-X wheel did not pan horizontally")
+            assert "zoom 183%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "dominant-X wheel changed zoom")
+
+            report_head = page.locator(".project-market-report-head")
+            report_head.scroll_into_view_if_needed()
+            head_box = report_head.bounding_box()
+            assert head_box
+            page.mouse.move(head_box["x"] + min(40, head_box["width"] / 2), head_box["y"] + min(40, head_box["height"] / 2))
+            outside_top = page.evaluate("window.scrollY")
+            page.mouse.wheel(0, 100)
+            page.wait_for_timeout(100)
+            assert page.evaluate("window.scrollY") > outside_top, (name, "wheel outside canvas did not scroll page")
+            assert "zoom 183%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "outside wheel changed canvas zoom")
+            viewport.scroll_into_view_if_needed()
 
         # Panning must work in both axes once zoom creates overflow.
         dimensions = viewport.evaluate("el => ({left: el.scrollLeft, top: el.scrollTop, maxX: el.scrollWidth - el.clientWidth, maxY: el.scrollHeight - el.clientHeight})")
@@ -232,36 +268,12 @@ with sync_playwright() as p:
             wheel_box = viewport.bounding_box()
             assert wheel_box and mid_scroll["max"] > 2
             page.mouse.move(wheel_box["x"] + wheel_box["width"] * .65, min(wheel_box["y"] + 160, height - 20))
-            min_top = mid_scroll["top"]
             min_page_top = page.evaluate("window.scrollY")
             page.mouse.wheel(0, 100)
             page.wait_for_timeout(100)
-            assert "zoom 100%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "minimum wheel changed zoom")
-            assert viewport.evaluate("el => el.scrollTop") > min_top, (name, "minimum wheel did not pan canvas")
-            assert page.evaluate("window.scrollY") == min_page_top, (name, "minimum wheel moved page")
-
-            viewport.evaluate("el => { el.scrollTop = el.scrollHeight - el.clientHeight }")
-            viewport.evaluate("el => window.scrollTo(0, Math.max(0, el.getBoundingClientRect().top + window.scrollY - 80))")
-            page.wait_for_timeout(80)
-            wheel_box = viewport.bounding_box()
-            assert wheel_box
-            page.mouse.move(wheel_box["x"] + wheel_box["width"] * .65, min(wheel_box["y"] + 160, height - 20))
-            page_top = page.evaluate("window.scrollY")
-            page.mouse.wheel(0, 180)
-            page.wait_for_timeout(100)
-            assert page.evaluate("window.scrollY") == page_top, (name, "canvas boundary moved page")
-            assert viewport.evaluate("el => el.scrollTop") == viewport.evaluate("el => el.scrollHeight - el.clientHeight"), (name, "canvas boundary moved outside bounds")
-
-            viewport.scroll_into_view_if_needed()
-            viewport.evaluate("el => { el.scrollLeft = Math.min(120, el.scrollWidth - el.clientWidth) }")
-            wheel_box = viewport.bounding_box()
-            assert wheel_box
-            page.mouse.move(wheel_box["x"] + wheel_box["width"] * .65, min(wheel_box["y"] + 160, height - 20))
-            horizontal_left = viewport.evaluate("el => el.scrollLeft")
-            page.mouse.wheel(-80, 0)
-            page.wait_for_timeout(100)
-            assert "zoom 100%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "horizontal wheel changed zoom")
-            assert viewport.evaluate("el => el.scrollLeft") != horizontal_left or dimensions["maxX"] == 0, (name, "horizontal wheel trapped native pan")
+            assert "zoom 100%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "minimum wheel exceeded zoom bound")
+            assert viewport.evaluate("el => el.scrollTop") == mid_scroll["top"], (name, "ordinary wheel panned canvas vertically")
+            assert page.evaluate("window.scrollY") == min_page_top, (name, "canvas wheel moved page at minimum zoom")
 
             for _ in range(5):
                 page.get_by_role("button", name="Perbesar semua chart").click()
@@ -275,15 +287,9 @@ with sync_playwright() as p:
             max_page_top = page.evaluate("window.scrollY")
             page.mouse.wheel(0, -100)
             page.wait_for_timeout(100)
-            assert "zoom 240%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "maximum wheel changed zoom")
-            assert viewport.evaluate("el => el.scrollTop") < max_top, (name, "maximum wheel did not pan canvas")
-            assert page.evaluate("window.scrollY") == max_page_top, (name, "maximum wheel moved page")
-            page.keyboard.down("Control")
-            page.mouse.wheel(0, -100)
-            page.keyboard.up("Control")
-            page.wait_for_timeout(100)
-            assert "zoom 240%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "maximum Ctrl-wheel exceeded zoom")
-            assert page.evaluate("window.scrollY") == max_page_top, (name, "maximum Ctrl-wheel moved page")
+            assert "zoom 240%" in canvases.first.locator(".project-market-toolbar > span").inner_text().lower(), (name, "maximum wheel exceeded zoom bound")
+            assert viewport.evaluate("el => el.scrollTop") == max_top, (name, "ordinary wheel panned canvas vertically at maximum zoom")
+            assert page.evaluate("window.scrollY") == max_page_top, (name, "canvas wheel moved page at maximum zoom")
             page.get_by_role("button", name="Reset tampilan semua chart").click()
             page.wait_for_timeout(100)
 

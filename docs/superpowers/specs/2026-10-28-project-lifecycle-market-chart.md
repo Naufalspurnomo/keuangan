@@ -44,12 +44,14 @@ No backend snapshot split or inferred classification is needed. Project identity
 
 ## Interaction
 
+> **Superseded interaction note (2026-10-30):** The wheel behavior and cross-canvas zoom synchronization below are superseded by [`2026-10-30-project-transactions-lifecycle-redesign.md`](2026-10-30-project-transactions-lifecycle-redesign.md). Ordinary wheel now zooms only the hovered canvas, `Shift`+wheel or dominant horizontal wheel pans that canvas horizontally, and wheel outside a canvas keeps native page scrolling.
+
 - Pointer drag pans horizontally and vertically.
-- Mouse wheel/trackpad and pinch gestures zoom.
+- ~~Mouse wheel/trackpad and pinch gestures zoom.~~ Pinch continues to zoom; ordinary wheel uses the superseding local interaction above.
 - `+`, `−`, `Reset`, and `Terbaru` controls are visible.
 - Month axis remains readable while panning horizontally.
 - Horizontal pan is independent per unit because project counts differ.
-- Vertical year scale and zoom level are synchronized across the four canvases.
+- ~~Vertical year scale and zoom level are synchronized across the four canvases.~~ Global controls remain synchronized; local wheel/pinch interactions are independent per canvas under the superseding specification.
 - Zoom is bounded so marks remain usable.
 - Keyboard controls and non-hover labels preserve accessibility.
 

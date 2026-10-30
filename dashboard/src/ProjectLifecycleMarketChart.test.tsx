@@ -107,7 +107,76 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(holla.querySelector('.project-market-wick')).toBeTruthy()
   })
 
-  it('keeps drag and wheel zoom independent per canvas while global controls remain explicit', () => {
+  it('uses ordinary wheel for local zoom, Shift or dominant-X wheel for horizontal pan, and leaves outside wheel to the page', () => {
+    const { container } = render(<ProjectLifecycleMarketChart projects={projects} transactions={transactions} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={vi.fn()} />)
+    const canvases = [...container.querySelectorAll<HTMLElement>('.project-market-canvas')]
+    const canvas = canvases[0]
+    const viewport = canvas.querySelector('.project-market-viewport') as HTMLDivElement
+    const readout = (target: HTMLElement) => target.querySelector('.project-market-toolbar > span')?.textContent ?? ''
+    Object.defineProperties(viewport, {
+      scrollWidth: { value: 1200, configurable: true }, clientWidth: { value: 500, configurable: true },
+      scrollHeight: { value: 1000, configurable: true }, clientHeight: { value: 420, configurable: true },
+    })
+    Object.defineProperty(window, 'scrollY', { value: 200, configurable: true })
+    const emulatePageScroll = (event: Event) => {
+      const wheel = event as WheelEvent
+      if (!wheel.defaultPrevented) Object.defineProperty(window, 'scrollY', { value: window.scrollY + wheel.deltaY, configurable: true })
+    }
+    window.addEventListener('wheel', emulatePageScroll)
+
+    expect(readout(canvas)).toContain('Seret untuk geser · roda untuk zoom · zoom 100%')
+    const outsideWheel = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true })
+    act(() => { expect(container.querySelector('.project-market-report-head')?.dispatchEvent(outsideWheel)).toBe(true) })
+    expect(outsideWheel.defaultPrevented).toBe(false)
+    expect(window.scrollY).toBe(300)
+    expect(canvases.map(readout).every((copy) => copy.includes('zoom 100%'))).toBe(true)
+
+    const zoomIn = new WheelEvent('wheel', { deltaY: -100, clientX: 250, clientY: 210, bubbles: true, cancelable: true })
+    act(() => { expect(viewport.dispatchEvent(zoomIn)).toBe(false) })
+    expect(zoomIn.defaultPrevented).toBe(true)
+    expect(readout(canvas)).toContain('zoom 115%')
+    expect(canvases.slice(1).map(readout).every((copy) => copy.includes('zoom 100%'))).toBe(true)
+    expect(window.scrollY).toBe(300)
+
+    const zoomOut = new WheelEvent('wheel', { deltaY: 100, clientX: 250, clientY: 210, bubbles: true, cancelable: true })
+    act(() => { expect(viewport.dispatchEvent(zoomOut)).toBe(false) })
+    expect(readout(canvas)).toContain('zoom 100%')
+    expect(window.scrollY).toBe(300)
+
+    viewport.scrollLeft = 100
+    const shiftWheel = new WheelEvent('wheel', { deltaY: 100, shiftKey: true, bubbles: true, cancelable: true })
+    act(() => { expect(viewport.dispatchEvent(shiftWheel)).toBe(false) })
+    expect(viewport.scrollLeft).toBe(200)
+    expect(readout(canvas)).toContain('zoom 100%')
+
+    const dominantXWheel = new WheelEvent('wheel', { deltaX: 30, deltaY: 10, bubbles: true, cancelable: true })
+    act(() => { expect(viewport.dispatchEvent(dominantXWheel)).toBe(false) })
+    expect(viewport.scrollLeft).toBe(230)
+    expect(readout(canvas)).toContain('zoom 100%')
+
+    const lineWheel = new WheelEvent('wheel', { deltaY: -3, deltaMode: WheelEvent.DOM_DELTA_LINE, bubbles: true, cancelable: true })
+    act(() => { expect(viewport.dispatchEvent(lineWheel)).toBe(false) })
+    expect(readout(canvas)).toContain('zoom 107%')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset tampilan semua chart' }))
+    const minWheel = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true })
+    act(() => { expect(viewport.dispatchEvent(minWheel)).toBe(false) })
+    expect(readout(canvas)).toContain('zoom 100%')
+    for (let index = 0; index < 5; index += 1) fireEvent.click(screen.getByRole('button', { name: 'Perbesar semua chart' }))
+    expect(readout(canvas)).toContain('zoom 240%')
+    const maxWheel = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true })
+    act(() => { expect(viewport.dispatchEvent(maxWheel)).toBe(false) })
+    expect(readout(canvas)).toContain('zoom 240%')
+    expect(window.scrollY).toBe(300)
+
+    const zeroWheel = new WheelEvent('wheel', { bubbles: true, cancelable: true })
+    act(() => { expect(viewport.dispatchEvent(zeroWheel)).toBe(true) })
+    expect(zeroWheel.defaultPrevented).toBe(false)
+    window.removeEventListener('wheel', emulatePageScroll)
+    Object.defineProperty(window, 'scrollY', { value: 0, configurable: true })
+  })
+
+  it('keeps drag, pinch, and global controls independent per canvas', () => {
     const onOpen = vi.fn()
     const { container } = render(<ProjectLifecycleMarketChart projects={projects} transactions={transactions} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={onOpen} />)
     const canvas = container.querySelector('[data-project-company="Holla"]') as HTMLElement
@@ -127,52 +196,16 @@ describe('ProjectLifecycleMarketChart', () => {
     })
     const before = chart.getAttribute('style')
     const otherBefore = otherChart.getAttribute('style')
-    const scrollBy = vi.spyOn(window, 'scrollBy').mockImplementation(() => undefined)
-    viewport.scrollTop = 100
-    const minWheel = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true })
-    act(() => { expect(viewport.dispatchEvent(minWheel)).toBe(false) })
-    expect(minWheel.defaultPrevented).toBe(true)
-    expect(viewport.scrollTop).toBe(200)
-    expect(scrollBy).not.toHaveBeenCalled()
-    viewport.scrollTop = 580
-    const boundaryWheel = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true })
-    act(() => { expect(viewport.dispatchEvent(boundaryWheel)).toBe(false) })
-    expect(boundaryWheel.defaultPrevented).toBe(true)
-    expect(viewport.scrollTop).toBe(580)
-    expect(scrollBy).not.toHaveBeenCalled()
-    viewport.scrollTop = 500
-    const lineBoundaryWheel = new WheelEvent('wheel', { deltaY: 3, deltaMode: WheelEvent.DOM_DELTA_LINE, bubbles: true, cancelable: true })
-    act(() => { viewport.dispatchEvent(lineBoundaryWheel) })
-    expect(lineBoundaryWheel.defaultPrevented).toBe(true)
-    expect(viewport.scrollTop).toBe(548)
-    expect(scrollBy).not.toHaveBeenCalled()
-    viewport.scrollLeft = 100
-    const horizontalWheel = new WheelEvent('wheel', { deltaX: 100, bubbles: true, cancelable: true })
-    act(() => { expect(viewport.dispatchEvent(horizontalWheel)).toBe(false) })
-    expect(horizontalWheel.defaultPrevented).toBe(true)
-    expect(viewport.scrollLeft).toBe(200)
-    const wheel = new WheelEvent('wheel', { deltaY: -100, ctrlKey: true, bubbles: true, cancelable: true })
-    act(() => { expect(viewport.dispatchEvent(wheel)).toBe(false) })
-    expect(wheel.defaultPrevented).toBe(true)
-    expect(chart.getAttribute('style')).not.toEqual(before)
-    expect(otherChart.getAttribute('style')).toEqual(otherBefore)
-
-    const hollaAfterLocalZoom = chart.getAttribute('style')
     fireEvent.click(screen.getByRole('button', { name: 'Perbesar semua chart' }))
-    expect(chart.getAttribute('style')).not.toEqual(hollaAfterLocalZoom)
+    expect(chart.getAttribute('style')).not.toEqual(before)
     expect(otherChart.getAttribute('style')).not.toEqual(otherBefore)
     for (let index = 0; index < 5; index += 1) fireEvent.click(screen.getByRole('button', { name: 'Perbesar semua chart' }))
-    const maxWheel = new WheelEvent('wheel', { deltaY: -100, ctrlKey: true, bubbles: true, cancelable: true })
-    act(() => { viewport.dispatchEvent(maxWheel) })
-    expect(maxWheel.defaultPrevented).toBe(true)
-    expect(scrollBy).not.toHaveBeenCalled()
 
     viewport.scrollTop = 0
     fireEvent.pointerDown(viewport, { pointerType: 'touch', button: 0, pointerId: 6, clientX: 180, clientY: 120 })
     fireEvent.pointerMove(viewport, { pointerType: 'touch', pointerId: 6, clientX: 180, clientY: 220 })
     fireEvent.pointerUp(viewport, { pointerType: 'touch', pointerId: 6, clientX: 180, clientY: 220 })
     expect(viewport.scrollTop).toBe(0)
-    expect(scrollBy).not.toHaveBeenCalled()
 
     viewport.scrollLeft = 100
     viewport.scrollTop = 100
@@ -215,7 +248,6 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(viewport.scrollTop).toBe(0)
     scheduleFrame.mockRestore()
     cancelFrame.mockRestore()
-    scrollBy.mockRestore()
     fireEvent.click(candle)
     expect(onOpen).toHaveBeenCalledWith(projects[1])
   })
