@@ -93,32 +93,39 @@ export function ProjectForm({ project, onSave, onClose }: { project?: FinancePro
   </Modal>
 }
 
-export function TransactionForm({ projects, transaction, initialScope = 'project', onSave, onClose }: { projects: FinanceProject[]; transaction?: FinanceTransaction; initialScope?: TransactionScope; onSave: (input: TransactionInput) => void; onClose: () => void }) {
+export function TransactionForm({ projects, transaction, initialScope = 'project', lockedProjectId, onSave, onClose }: { projects: FinanceProject[]; transaction?: FinanceTransaction; initialScope?: TransactionScope; lockedProjectId?: string; onSave: (input: TransactionInput) => void; onClose: () => void }) {
   const submitting = useRef(false)
   const selectable = projects.filter((project) => project.status !== 'planned')
+  const lockedProject = projects.find((project) => project.id === lockedProjectId)
+  const locked = Boolean(lockedProjectId)
   const [date, setDate] = useState(transaction?.date ?? today())
-  const [scope, setScope] = useState<TransactionScope>(transaction?.scope ?? initialScope)
+  const [scope, setScope] = useState<TransactionScope>(locked ? 'project' : transaction?.scope ?? initialScope)
   const [direction, setDirection] = useState<TransactionDirection>(transaction?.direction ?? 'expense')
-  const [projectId, setProjectId] = useState(transaction?.project_id ?? selectable[0]?.id ?? '')
+  const [projectId, setProjectId] = useState(lockedProjectId ?? transaction?.project_id ?? selectable[0]?.id ?? '')
   const [wallet, setWallet] = useState<WalletId>(transaction?.wallet ?? 'CV HB')
   const [category, setCategory] = useState<OfficeCategory>(transaction?.office_category ?? 'Listrik & utilitas')
   const [amount, setAmount] = useState<number | null>(transaction?.amount ?? null)
   const [notes, setNotes] = useState(transaction?.notes ?? '')
   const [error, setError] = useState('')
   useEffect(() => { if (scope === 'office') setDirection('expense') }, [scope])
-  const selected = projects.find((project) => project.id === projectId)
+  const selected = lockedProject ?? projects.find((project) => project.id === projectId)
   const submit = (event: FormEvent) => {
     event.preventDefault()
     if (submitting.current) return
     submitting.current = true
-    try { onSave({ date, direction, amount: amount ?? 0, scope, wallet, company: null, project_id: scope === 'project' ? projectId : null, office_category: scope === 'office' ? category : null, notes }); onClose() } catch (reason) { submitting.current = false; setError(reason instanceof Error ? reason.message : 'Data belum dapat disimpan.') }
+    try {
+      if (locked && (!lockedProject || lockedProject.status === 'planned')) throw new Error('Proyek terkunci tidak tersedia untuk transaksi.')
+      onSave({ date, direction, amount: amount ?? 0, scope: locked ? 'project' : scope, wallet: selected?.wallet ?? wallet, company: selected?.company ?? null, project_id: (locked || scope === 'project') ? selected?.id ?? projectId : null, office_category: !locked && scope === 'office' ? category : null, notes })
+      onClose()
+    } catch (reason) { submitting.current = false; setError(reason instanceof Error ? reason.message : 'Data belum dapat disimpan.') }
   }
-  return <Modal title={transaction ? 'Ubah transaksi' : scope === 'office' ? 'Catat biaya kantor' : 'Tambah transaksi'} copy="Transaksi demo langsung memperbarui seluruh ringkasan dan laporan." onClose={onClose}>
+  const title = transaction ? `Ubah transaksi${lockedProject ? ` · ${lockedProject.name}` : ''}` : lockedProject ? `Tambah transaksi · ${lockedProject.name}` : scope === 'office' ? 'Catat biaya kantor' : 'Tambah transaksi'
+  return <Modal title={title} copy="Transaksi demo langsung memperbarui seluruh ringkasan dan laporan." onClose={onClose}>
     <form className="finance-form" onSubmit={submit}>
-      <div className="scope-selector" role="group" aria-label="Pilih aktivitas"><button type="button" className={scope === 'project' ? 'active' : ''} aria-pressed={scope === 'project'} onClick={() => setScope('project')}>Proyek</button><button type="button" className={scope === 'office' ? 'active' : ''} aria-pressed={scope === 'office'} onClick={() => setScope('office')}>Operasional Kantor</button></div>
-      <div className="form-grid"><label><span>Tanggal *</span><input type="date" required value={date} onChange={(event) => setDate(event.target.value)} /></label>
-        <label><span>Jenis *</span><select value={direction} disabled={scope === 'office'} onChange={(event) => setDirection(event.target.value as TransactionDirection)}><option value="income">Pemasukan</option><option value="expense">Pengeluaran</option></select></label>
-        {scope === 'project' ? <><label className="wide"><span>Proyek *</span><select value={projectId} onChange={(event) => setProjectId(event.target.value)}>{selectable.map((project) => <option value={project.id} key={project.id}>{project.name} · {project.company}</option>)}</select></label><label><span>Perusahaan</span><input readOnly value={selected?.company ?? ''} /></label><label><span>Dompet</span><input readOnly value={selected?.wallet ?? ''} /></label></> : <><label><span>Dompet *</span><select value={wallet} onChange={(event) => setWallet(event.target.value as WalletId)}>{WALLETS.map((item) => <option key={item}>{item}</option>)}</select></label><label><span>Kategori *</span><select value={category} onChange={(event) => setCategory(event.target.value as OfficeCategory)}>{OFFICE_CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></label></>}
+      {!locked && <div className="scope-selector" role="group" aria-label="Pilih aktivitas"><button type="button" className={scope === 'project' ? 'active' : ''} aria-pressed={scope === 'project'} onClick={() => setScope('project')}>Proyek</button><button type="button" className={scope === 'office' ? 'active' : ''} aria-pressed={scope === 'office'} onClick={() => setScope('office')}>Operasional Kantor</button></div>}
+      <div className="form-grid"><label><span>Tanggal *</span><input type="date" required value={date} min={lockedProject?.started_on} max={lockedProject?.completed_on ?? undefined} onChange={(event) => setDate(event.target.value)} /></label>
+        <label><span>Jenis *</span><select value={direction} disabled={!locked && scope === 'office'} onChange={(event) => setDirection(event.target.value as TransactionDirection)}><option value="income">Pemasukan</option><option value="expense">Pengeluaran</option></select></label>
+        {(locked || scope === 'project') ? <>{lockedProject ? <div className="wide locked-project-context" aria-label="Proyek terkunci"><small>Proyek</small><strong>{lockedProject.name}</strong><span>{lockedProject.company} · {lockedProject.wallet}</span></div> : <label className="wide"><span>Proyek *</span><select value={projectId} onChange={(event) => setProjectId(event.target.value)}>{selectable.map((project) => <option value={project.id} key={project.id}>{project.name} · {project.company}</option>)}</select></label>}<label><span>Perusahaan</span><input readOnly value={selected?.company ?? ''} /></label><label><span>Dompet</span><input readOnly value={selected?.wallet ?? ''} /></label></> : <><label><span>Dompet *</span><select value={wallet} onChange={(event) => setWallet(event.target.value as WalletId)}>{WALLETS.map((item) => <option key={item}>{item}</option>)}</select></label><label><span>Kategori *</span><select value={category} onChange={(event) => setCategory(event.target.value as OfficeCategory)}>{OFFICE_CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></label></>}
         <AmountInput label="Jumlah" value={amount} onChange={setAmount} />
         <label className="wide"><span>Keterangan *</span><textarea autoFocus rows={3} required value={notes} onChange={(event) => setNotes(event.target.value)} /></label></div>
       <ErrorNote error={error} /><footer><button type="button" className="secondary-button" onClick={onClose}>Batal</button><button className="primary-button">{transaction ? 'Simpan perubahan' : 'Simpan transaksi'}</button></footer>

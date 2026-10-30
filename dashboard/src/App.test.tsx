@@ -25,14 +25,15 @@ const renderApp = () => render(<App />)
 const nav = (name: string) => fireEvent.click(within(screen.getByRole('navigation', { name: 'Menu utama' })).getByRole('button', { name: new RegExp(`^${name}`) }))
 
 describe('Hollawall demo finance workspace', () => {
-  it('renders one reconciled demo workspace with eight navigation views', () => {
+  it('renders one reconciled demo workspace with seven navigation views', () => {
     renderApp()
     expect(screen.getByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })).toBeTruthy()
     expect(screen.getByText(/Tidak terhubung ke buku besar produksi/)).toBeTruthy()
     const menu = screen.getByRole('navigation', { name: 'Menu utama' })
-    for (const label of ['Ringkasan', 'Arus Kas', 'Dompet', 'Transaksi', 'Proyek', 'Operasional Kantor', 'Hutang Internal', 'Laporan']) {
+    for (const label of ['Ringkasan', 'Arus Kas', 'Dompet', 'Proyek', 'Operasional Kantor', 'Hutang Internal', 'Laporan']) {
       expect(within(menu).getByRole('button', { name: new RegExp(`^${label}`) })).toBeTruthy()
     }
+    expect(within(menu).queryByRole('button', { name: /^Transaksi/ })).toBeNull()
   })
 
   it('keeps the overview showcase dense, transparent, and additive', () => {
@@ -63,13 +64,15 @@ describe('Hollawall demo finance workspace', () => {
     expect(document.querySelectorAll('.cashflow-workspace .showcase-chart')).toHaveLength(2)
   })
 
-  it('drills from cashflow project rows into the existing transaction workspace', () => {
+  it('drills from cashflow project rows into project-owned transaction detail', () => {
     renderApp()
     nav('Arus Kas')
     const project = document.querySelector<HTMLButtonElement>('.ops-ledger article > button')
     expect(project).toBeTruthy()
     fireEvent.click(project!)
-    expect((screen.getByLabelText('Filter proyek') as HTMLSelectElement).value).not.toBe('all')
+    expect(window.location.hash).toMatch(/^#projects\?project=/)
+    expect(screen.getByRole('button', { name: 'Kembali ke Proyek' })).toBeTruthy()
+    expect(screen.queryByLabelText('Filter proyek')).toBeNull()
   })
 
   it('keeps wallet analysis traceable from distribution to mutation ledger', () => {
@@ -156,13 +159,14 @@ describe('Hollawall demo finance workspace', () => {
     expect(screen.getAllByRole('button', { name: /transaksi pertama .* transaksi terakhir/ }).length).toBeGreaterThan(0)
   })
 
-  it('clears a project drilldown when Transactions is selected again', async () => {
+  it('opens project detail under Projects and returns with the explicit back action', async () => {
     renderApp()
     nav('Proyek')
     fireEvent.click(document.querySelector('button[data-project-candle]')!)
-    expect((screen.getByLabelText('Filter proyek') as HTMLSelectElement).value).not.toBe('all')
-    nav('Transaksi')
-    await waitFor(() => expect((screen.getByLabelText('Filter proyek') as HTMLSelectElement).value).toBe('all'))
+    expect(window.location.hash).toMatch(/^#projects\?project=/)
+    fireEvent.click(screen.getByRole('button', { name: 'Kembali ke Proyek' }))
+    await waitFor(() => expect(window.location.hash).toBe('#projects'))
+    expect(screen.getByRole('heading', { name: 'Umur dan status proyek' })).toBeTruthy()
   })
 
   it('returns from a project drilldown to the Projects page with its view state', async () => {
@@ -172,8 +176,8 @@ describe('Hollawall demo finance workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Tahun sebelumnya' }))
     fireEvent.change(screen.getByLabelText('Perusahaan'), { target: { value: 'Holla' } })
     fireEvent.click(document.querySelector('button[data-project-candle]')!)
-    expect(window.location.hash).toMatch(/^#transactions\?project=/)
-    expect((screen.getByLabelText('Filter proyek') as HTMLSelectElement).value).not.toBe('all')
+    expect(window.location.hash).toMatch(/^#projects\?project=/)
+    expect(screen.getByRole('button', { name: 'Kembali ke Proyek' })).toBeTruthy()
 
     act(() => window.history.back())
     await waitFor(() => expect(window.location.hash).toBe('#projects'))
