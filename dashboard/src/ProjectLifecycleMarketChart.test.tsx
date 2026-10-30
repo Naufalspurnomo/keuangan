@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import ProjectLifecycleMarketChart from './ProjectLifecycleMarketChart'
+import ProjectLifecycleMarketChart, { ageBand } from './ProjectLifecycleMarketChart'
 import type { CompanyId, FinanceProject, FinanceTransaction } from './financeWorkspace'
 
 const project = (id: string, name: string, company: CompanyId, status: FinanceProject['status'], started_on: string, completed_on: string | null = null): FinanceProject => ({
@@ -25,6 +25,48 @@ const transactions: FinanceTransaction[] = [
 afterEach(cleanup)
 
 describe('ProjectLifecycleMarketChart', () => {
+  it.each([
+    [0, 'new'],
+    [14, 'new'],
+    [15, 'steady'],
+    [30, 'steady'],
+    [31, 'watch'],
+    [60, 'watch'],
+    [61, 'late'],
+    [90, 'late'],
+    [91, 'overdue'],
+  ] as const)('maps %i lifecycle days to the %s age band', (days, expected) => {
+    expect(ageBand(days)).toBe(expected)
+  })
+
+  it('keeps the same overdue color for active and completed projects and marks completion separately', () => {
+    const lifecycleProjects = [
+      project('active-100', 'Aktif 100 Hari', 'Holla', 'active', '2026-07-20'),
+      project('completed-100', 'Selesai 100 Hari', 'Holla', 'completed', '2026-07-20', '2026-10-28'),
+    ]
+    const { container } = render(<ProjectLifecycleMarketChart projects={lifecycleProjects} transactions={[]} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={vi.fn()} />)
+    const active = container.querySelector('[data-project-id="active-100"]') as HTMLElement
+    const completed = container.querySelector('[data-project-id="completed-100"]') as HTMLElement
+
+    expect(active.getAttribute('data-age-band')).toBe('overdue')
+    expect(completed.getAttribute('data-age-band')).toBe('overdue')
+    expect(active.style.getPropertyValue('--bar-color')).toBe('#b83a3f')
+    expect(completed.style.getPropertyValue('--bar-color')).toBe(active.style.getPropertyValue('--bar-color'))
+    expect(active.style.getPropertyValue('--bar-mid-color')).toBe('')
+    expect(active.style.getPropertyValue('--bar-start-color')).toBe('')
+    expect(completed.querySelector('.project-market-completed')).toBeTruthy()
+    expect(active.querySelector('.project-market-completed')).toBeNull()
+    expect(completed.getAttribute('aria-label')).toContain('selesai')
+    expect(completed.getAttribute('title')).toContain('selesai')
+  })
+
+  it('renders solid age-band and completion legend copy', () => {
+    const { container } = render(<ProjectLifecycleMarketChart projects={projects} transactions={transactions} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={vi.fn()} />)
+    expect(container.querySelectorAll('.age-band-swatches > i')).toHaveLength(5)
+    expect(container.textContent).toContain('Warna umur: hijau · toska · kuning · oranye · merah')
+    expect(container.textContent).toContain('Selesai: warna umur dipertahankan, tanda centang menunjukkan status')
+  })
+
   it('renders four fixed company canvases with active/total summaries and no chart pagination', () => {
     const { container } = render(<ProjectLifecycleMarketChart projects={projects} transactions={transactions} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={vi.fn()} />)
     expect(container.querySelectorAll('.project-market-canvas')).toHaveLength(4)

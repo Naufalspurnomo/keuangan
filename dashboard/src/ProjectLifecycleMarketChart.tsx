@@ -48,32 +48,29 @@ function age(project: FinanceProject, asOf: Date) {
   return Math.max(0, calendarDay(end) - calendarDay(start))
 }
 
-function ageColor(days: number) {
-  const progress = Math.max(0, Math.min(1, days / 90))
-  return `hsl(${Math.round(138 * (1 - progress))} 64% 39%)`
+export type ProjectAgeBand = 'new' | 'steady' | 'watch' | 'late' | 'overdue'
+
+export function ageBand(days: number): ProjectAgeBand {
+  if (days <= 14) return 'new'
+  if (days <= 30) return 'steady'
+  if (days <= 60) return 'watch'
+  if (days <= 90) return 'late'
+  return 'overdue'
+}
+
+const AGE_COLORS: Record<ProjectAgeBand, string> = {
+  new: '#168a52',
+  steady: '#168b83',
+  watch: '#b98916',
+  late: '#c8641b',
+  overdue: '#b83a3f',
 }
 
 function candleTone(project: FinanceProject, asOf: Date) {
-  if (project.status === 'completed') {
-    return {
-      '--bar-color': '#64748b',
-      '--bar-mid-color': '#7b8a9d',
-      '--bar-start-color': '#94a3b8',
-    } as CSSProperties
-  }
   if (project.status === 'planned') {
-    return {
-      '--bar-color': 'var(--chart-neutral-2)',
-      '--bar-mid-color': 'var(--chart-neutral-2)',
-      '--bar-start-color': 'var(--chart-neutral-2)',
-    } as CSSProperties
+    return { '--bar-color': 'var(--chart-neutral-2)' } as CSSProperties
   }
-  const days = age(project, asOf)
-  return {
-    '--bar-color': ageColor(days),
-    '--bar-mid-color': ageColor(days / 2),
-    '--bar-start-color': ageColor(0),
-  } as CSSProperties
+  return { '--bar-color': AGE_COLORS[ageBand(age(project, asOf))] } as CSSProperties
 }
 
 function yearModel(year: number, asOf: Date) {
@@ -328,6 +325,7 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
               key={project.id}
               data-project-id={project.id}
               data-project-candle={project.name}
+              data-age-band={project.status === 'planned' ? undefined : ageBand(days)}
               className={`project-market-candle is-${project.status}`}
               style={{ '--candle-top': `${candleTop}%`, '--candle-span': `${candleSpan}%`, '--activity-top': `${activityTop}%`, '--activity-span': `${activitySpan}%`, ...candleTone(project, asOf) } as CSSProperties}
               onPointerDown={() => { drag.current.moved = false }}
@@ -367,8 +365,8 @@ export default function ProjectLifecycleMarketChart({ projects, transactions, ye
     </div>
     <div className="project-market-grid">{MARKET_COMPANIES.map((company) => <CompanyCanvas key={company} company={company} projects={projects} transactions={transactions} year={year} asOf={asOf} register={register} onOpen={onOpen} />)}</div>
     <footer className="project-market-legend" aria-label="Keterangan project lifecycle">
-      <div><span className="age-gradient" aria-hidden="true" /><p><strong>Aktif: warna mengikuti umur</strong><small>Hijau baru · kuning/oranye menua · merah 90+ hari</small></p></div>
-      <div><span className="completed-key" aria-hidden="true" /><p><strong>Selesai</strong><small>Candle abu berhenti pada tanggal selesai</small></p></div>
+      <div><span className="age-band-swatches" aria-hidden="true"><i /><i /><i /><i /><i /></span><p><strong>Warna umur: hijau · toska · kuning · oranye · merah</strong><small>0–14 · 15–30 · 31–60 · 61–90 · 91+ hari</small></p></div>
+      <div><span className="completed-key" aria-hidden="true"><Check size={11} /></span><p><strong>Selesai</strong><small>Selesai: warna umur dipertahankan, tanda centang menunjukkan status</small></p></div>
       <div><span className="planned-key" aria-hidden="true" /><p><strong>Direncanakan</strong><small>Marker putus-putus pada tanggal mulai</small></p></div>
       <div><span className="activity-key" aria-hidden="true" /><p><strong>Garis putih = rentang transaksi</strong><small>Transaksi pertama sampai transaksi terakhir</small></p></div>
     </footer>
