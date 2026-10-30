@@ -1,11 +1,14 @@
 import { createElement } from 'react'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import ProjectCommandCenter, { projectAsOf, projectOverlapsYear, projectSnapshotDate, projectSnapshotYear, projectYearOptions } from './ProjectCommandCenter'
 import { seedFinanceWorkspace } from './financeWorkspace'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  sessionStorage.clear()
+})
 
 describe('projectAsOf', () => {
   it('stops a current-year active project at today instead of future year-end', () => {
@@ -61,6 +64,52 @@ describe('projectAsOf', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Halaman proyek berikutnya' }))
     expect(screen.getByText('Halaman 2 / 2')).toBeTruthy()
     expect(screen.getAllByRole('region', { name: /Chart lifecycle/ })).toHaveLength(4)
+  })
+
+  it('places registry filters after the lifecycle chart and directly before the project registry', () => {
+    const workspace = seedFinanceWorkspace()
+    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
+
+    const chart = screen.getByRole('region', { name: /Project lifecycle market/ })
+    const filters = screen.getByRole('region', { name: 'Filter daftar proyek' })
+    const registry = screen.getByRole('region', { name: /Daftar proyek/ })
+    expect(chart.compareDocumentPosition(filters) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(filters.compareDocumentPosition(registry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('filters registry rows and count without changing lifecycle candles', () => {
+    const workspace = seedFinanceWorkspace()
+    const snapshotYear = projectSnapshotYear(workspace)
+    const snapshotDate = workspace.updated_at.slice(0, 10)
+    const yearProjects = workspace.projects.filter((project) => projectOverlapsYear(project, snapshotYear, snapshotDate))
+    const company = yearProjects[0].company
+    const expected = yearProjects.filter((project) => project.company === company).length
+    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
+
+    const candleCount = document.querySelectorAll('[data-project-candle]').length
+    fireEvent.change(screen.getByRole('combobox', { name: 'Perusahaan' }), { target: { value: company } })
+
+    const filters = screen.getByRole('region', { name: 'Filter daftar proyek' })
+    const registry = screen.getByRole('region', { name: `Daftar proyek ${snapshotYear}` })
+    expect(filters.textContent).toContain(`${expected} proyek`)
+    expect(registry.querySelectorAll(':scope > article')).toHaveLength(Math.min(expected, 12))
+    expect(document.querySelectorAll('[data-project-candle]')).toHaveLength(candleCount)
+  })
+
+  it('gives every registry row and action an explicit accessible label', () => {
+    const workspace = seedFinanceWorkspace()
+    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
+
+    const registry = screen.getByRole('region', { name: /Daftar proyek/ })
+    for (const row of registry.querySelectorAll(':scope > article')) {
+      const projectName = row.querySelector('.project-register-main strong')?.textContent ?? ''
+      expect(within(row as HTMLElement).getByRole('button', { name: `Buka proyek ${projectName}` })).toBeTruthy()
+      expect(within(row as HTMLElement).getByRole('button', { name: `Ubah ${projectName}` })).toBeTruthy()
+      expect(within(row as HTMLElement).getByRole('button', { name: `Hapus ${projectName}` })).toBeTruthy()
+      const completion = within(row as HTMLElement).queryByRole('button', { name: `Selesaikan ${projectName}` })
+      if (row.querySelector('.status-chip.active')) expect(completion).toBeTruthy()
+      else expect(completion).toBeNull()
+    }
   })
 
   it('exposes exactly one quick-completion action only for active registry rows', () => {

@@ -1,7 +1,7 @@
 /* Trading-style annual lifecycle canvases for the four canonical companies. */
 .project-market-report {
   min-width: 0;
-  margin: 24px 0;
+  margin: 24px 0 0;
 }
 .project-market-report-head {
   display: flex;

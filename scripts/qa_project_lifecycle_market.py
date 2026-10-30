@@ -129,6 +129,32 @@ with sync_playwright() as p:
             company_ids = sorted(page.locator(f'[data-project-company="{company}"] [data-project-id]').evaluate_all("els => els.map(el => el.dataset.projectId)"))
             assert company_ids == expected_by_company[company], (name, company, company_ids, expected_by_company[company])
 
+        # Chart remains immediately above registry filters; filters remain immediately above the registry.
+        section_order = page.locator(".project-market-report, .project-controls, .project-register").evaluate_all("els => els.map(el => el.className)")
+        assert section_order == ["project-market-report", "project-controls", "project-register"], (name, "project section order", section_order)
+        assert page.get_by_role("region", name="Filter daftar proyek").is_visible(), (name, "registry filter region missing")
+        assert page.get_by_role("region", name=re.compile(r"^Daftar proyek 2026$")).is_visible(), (name, "registry region missing")
+
+        # Registry filters change only registry rows/count, never lifecycle candles.
+        page.get_by_role("combobox", name="Perusahaan").select_option("Holla")
+        expected_filtered = len(expected_by_company["Holla"])
+        assert page.locator(".project-controls > span").inner_text().strip() == f"{expected_filtered} proyek", (name, "filtered count")
+        assert page.locator(".project-register > article").count() == min(expected_filtered, 12), (name, "filtered registry rows")
+        assert page.locator("[data-project-candle]").count() == candle_count, (name, "registry filter changed lifecycle candles")
+        page.get_by_role("combobox", name="Perusahaan").select_option("all")
+
+        # Registry row controls are named and mobile touch targets remain at least 44px.
+        registry_rows = page.locator(".project-register > article")
+        assert registry_rows.count() > 0, (name, "registry rows missing")
+        control_audit = registry_rows.evaluate_all("""rows => rows.flatMap(row => [...row.querySelectorAll('button')].map(button => {
+          const rect = button.getBoundingClientRect();
+          return { name: button.getAttribute('aria-label'), width: rect.width, height: rect.height };
+        }))""")
+        assert all(control["name"] for control in control_audit), (name, "unnamed registry control", control_audit)
+        if width <= 900:
+            undersized = [control for control in control_audit if control["width"] < 44 or control["height"] < 44]
+            assert not undersized, (name, "registry control below 44px", undersized)
+
         # Registry pagination is independent; all four full-year lifecycle canvases remain unchanged.
         registry_pagination = page.get_by_role("navigation", name="Pagination proyek")
         assert registry_pagination.is_visible(), (name, "registry pagination missing")
