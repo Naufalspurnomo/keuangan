@@ -319,7 +319,7 @@ html[data-theme='dark'] .project-market-snapshot b { color: var(--text-secondary
 .project-market-wick::after { content: ''; width: 7px; height: 7px; position: absolute; left: 50%; border: 1px solid color-mix(in srgb, var(--bar-color) 68%, var(--border)); border-radius: 50%; background: #f8fafc; transform: translateX(-50%); }
 .project-market-wick::before { top: -3px; }
 .project-market-wick::after { bottom: -3px; }
-.project-market-start { position: absolute; top: calc(var(--candle-top) + var(--candle-span)); left: 50%; z-index: 5; display: flex; flex-direction: column; align-items: center; transform: translate(-50%, -4px); pointer-events: none; white-space: nowrap; }
+.project-market-start { position: absolute; top: var(--start-position); left: 50%; z-index: 5; display: flex; flex-direction: column; align-items: center; transform: translate(-50%, -4px); pointer-events: none; white-space: nowrap; }
 .project-market-start i { width: 8px; height: 8px; border: 2px solid var(--surface); border-radius: 50%; background: var(--bar-color); box-shadow: 0 0 0 1px color-mix(in srgb, var(--bar-color) 70%, var(--border)); }
 .project-market-start small { margin-top: 3px; padding: 1px 3px; border-radius: 3px; background: color-mix(in srgb, var(--surface) 92%, transparent); color: var(--text-tertiary); font-size: 7px; }
 .project-market-empty { position: sticky; left: 82px; align-self: center; width: min(280px, calc(100vw - 130px)); display: flex; flex-direction: column; gap: 4px; padding: 18px; border: 1px dashed var(--border); border-radius: 8px; background: var(--surface-raised); color: var(--text-secondary); text-align: center; }

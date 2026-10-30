@@ -326,7 +326,7 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
               data-project-candle={project.name}
               data-age-band={project.status === 'planned' ? undefined : ageBand(days)}
               className={`project-market-candle is-${project.status}`}
-              style={{ '--candle-top': `${candleTop}%`, '--candle-span': `${candleSpan}%`, '--activity-top': `${activityTop}%`, '--activity-span': `${activitySpan}%`, ...candleTone(project, asOf) } as CSSProperties}
+              style={{ '--candle-top': `${candleTop}%`, '--candle-span': `${candleSpan}%`, '--start-position': `${startPosition}%`, '--activity-top': `${activityTop}%`, '--activity-span': `${activitySpan}%`, ...candleTone(project, asOf) } as CSSProperties}
               onPointerDown={() => { drag.current.moved = false }}
               onClick={(event) => { if (event.detail === 0 || !drag.current.moved) onOpen(project); drag.current.moved = false }}
               aria-label={`Buka ${project.name}, ${accessible}`}

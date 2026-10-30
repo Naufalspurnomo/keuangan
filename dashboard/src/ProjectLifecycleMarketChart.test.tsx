@@ -56,6 +56,8 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(active.style.getPropertyValue('--bar-start-color')).toBe('')
     expect(completed.querySelector('.project-market-completed')).toBeTruthy()
     expect(active.querySelector('.project-market-completed')).toBeNull()
+    expect(Number.parseFloat(completed.style.getPropertyValue('--start-position'))).toBeLessThan(60)
+    expect(Number.parseFloat(completed.style.getPropertyValue('--start-position'))).toBe(Number.parseFloat(completed.style.getPropertyValue('--candle-top')))
     expect(completed.getAttribute('aria-label')).toContain('selesai')
     expect(completed.getAttribute('title')).toContain('selesai')
   })
