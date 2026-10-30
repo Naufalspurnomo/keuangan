@@ -149,6 +149,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         console_errors = []
         page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
         page.on("pageerror", lambda error: console_errors.append(str(error)))
+        page.on("requestfailed", lambda request: console_errors.append(f"request:{request.method}:{request.url}:{request.failure}"))
         return context, page, console_errors
 
     def new_dynamic_page(self, width, height, theme="light"):
@@ -159,6 +160,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         console_errors = []
         page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
         page.on("pageerror", lambda error: console_errors.append(str(error)))
+        page.on("requestfailed", lambda request: console_errors.append(f"request:{request.method}:{request.url}:{request.failure}"))
         state = {"calls": 0}
 
         def route_api(route):
@@ -170,7 +172,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
 
     def assert_clean_render(self, page, errors):
         page.goto(self.base_url, wait_until="networkidle")
-        page.get_by_role("heading", name="Ringkasan Perusahaan").wait_for()
+        page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
         page.locator(".recharts-responsive-container, .business-empty").first.wait_for()
         self.assertEqual(errors, [])
         metrics = page.evaluate("""() => ({
@@ -231,123 +233,96 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 self.assert_clean_render(page, errors)
                 page.get_by_role("button", name="Buka navigasi").click()
                 self.assertTrue(page.locator(".sidebar").evaluate("node => node.classList.contains('is-open')"))
-                page.locator(".sidebar nav button").filter(has_text="Transaksi").click()
-                page.get_by_role("heading", name="Semua Transaksi").wait_for()
+                navigation = page.get_by_role("navigation", name="Menu utama")
+                self.assertEqual(navigation.get_by_role("button").count(), 7)
+                expect(navigation.get_by_role("button", name=re.compile(r"^Transaksi"))).to_have_count(0)
+                navigation.get_by_role("button", name=re.compile(r"^Proyek")).click()
+                page.get_by_role("heading", name="Umur dan status proyek").wait_for()
                 overflow = page.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth")
                 self.assertFalse(overflow)
                 page.screenshot(path=str(ARTIFACTS / f"mobile-{theme}-390x844.png"), full_page=True)
                 context.close()
 
 
-    def test_projects_route_uses_company_ledger_without_mobile_timeline(self):
+    def test_projects_route_uses_lifecycle_market_and_project_registry(self):
         for width, height in ((390, 844), (1440, 1000)):
             with self.subTest(width=width):
                 context, page, errors = self.new_page(width, height, "dark")
                 page.goto(self.base_url, wait_until="networkidle")
-                page.get_by_role("heading", name="Ringkasan Perusahaan").wait_for()
+                page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
                 if width <= 760:
                     page.get_by_role("button", name="Buka navigasi").click()
                 page.locator(".sidebar nav button").filter(has_text="Proyek").click()
-                page.get_by_role("heading", name="Hollawall & Texturin").wait_for()
+                page.get_by_role("heading", name="Umur dan status proyek", exact=True).wait_for()
                 metrics = page.evaluate("""() => {
                   const visible = element => element.offsetParent !== null;
-                  const targets = [...document.querySelectorAll('.portfolio-switcher button, .project-filter-rail button, .project-ledger-row, .project-ledger-pagination button')]
+                  const report = document.querySelector('.project-market-report');
+                  const controls = document.querySelector('.project-controls');
+                  const register = document.querySelector('.project-register');
+                  const targets = [...document.querySelectorAll('.project-market-toolbar button, .project-market-global-toolbar button, .project-register button, .project-ledger-pagination button')]
                     .filter(visible)
                     .map(element => element.getBoundingClientRect().height);
-                  const bars = [...document.querySelectorAll('.active-calendar-bar')].filter(visible);
-                  const viewports = [...document.querySelectorAll('.active-calendar-viewport')].filter(visible);
+                  const viewports = [...document.querySelectorAll('.project-market-viewport')].filter(visible);
+                  const completed = [...document.querySelectorAll('.project-market-candle.is-completed')].filter(visible);
                   return {
                     viewport: document.documentElement.clientWidth,
                     document: document.documentElement.scrollWidth,
-                    nativeSelect: document.querySelectorAll('select[aria-label="Filter portfolio"]').length,
-                    companySwitcher: document.querySelectorAll('.portfolio-switcher').length,
-                    ageHeading: document.querySelector('.active-project-age-report h2')?.textContent || '',
-                    ageSections: [...document.querySelectorAll('.active-age-identity p')].map(element => element.textContent),
-                    ageBars: bars.length,
-                    ageColors: bars.map(element => element.className),
-                    ageHeights: bars.map(element => element.querySelector('.active-calendar-fill').getBoundingClientRect().height),
-                    ageNames: bars.map(element => element.querySelector('.active-calendar-fill strong')?.textContent || ''),
-                    months: [...document.querySelectorAll('.active-calendar-axis b')].map(element => element.textContent),
-                    starts: [...document.querySelectorAll('.active-calendar-start small')].map(element => element.textContent),
-                    activityWicks: document.querySelectorAll('.active-calendar-activity').length,
-                    viewportCount: viewports.length,
+                    canvases: document.querySelectorAll('.project-market-canvas').length,
+                    candles: document.querySelectorAll('.project-market-candle').length,
+                    months: document.querySelectorAll('.project-market-month').length,
+                    completed: completed.length,
+                    completedMarkers: document.querySelectorAll('.project-market-completed').length,
+                    maskedAxes: [...document.querySelectorAll('.project-market-axis')].filter(axis => getComputedStyle(axis).backgroundImage !== 'none').length,
+                    rows: document.querySelectorAll('.project-register > article').length,
+                    quickComplete: document.querySelectorAll('button.complete-project-action[aria-label^="Selesaikan "]').length,
+                    ordered: Boolean(report && controls && register && (report.compareDocumentPosition(controls) & Node.DOCUMENT_POSITION_FOLLOWING) && (controls.compareDocumentPosition(register) & Node.DOCUMENT_POSITION_FOLLOWING)),
                     internalHorizontalOverflow: viewports.every(element => element.scrollWidth > element.clientWidth),
-                    projectHeads: [...document.querySelectorAll('.active-calendar-project-heads strong')].map(element => element.textContent),
-                    groups: [...document.querySelectorAll('.portfolio-project-group h3')].map(element => element.textContent),
-                    rows: document.querySelectorAll('.project-ledger-row').length,
-                    legacyTimeline: [...document.querySelectorAll('.portfolio-timeline .timeline-row')].filter(visible).length,
-                    minTarget: Math.min(...targets),
-                    ownership: [...document.querySelectorAll('.project-ledger-main small')].every(element => /Hollawall|Texturin/.test(element.textContent || '')),
+                    minTarget: targets.length ? Math.min(...targets) : 0,
                   };
                 }""")
                 self.assertEqual(errors, [])
                 self.assertLessEqual(metrics["document"], metrics["viewport"])
-                self.assertEqual(metrics["nativeSelect"], 0)
-                self.assertEqual(metrics["companySwitcher"], 1)
-                self.assertEqual(sorted(metrics["groups"]), ["Hollawall", "Texturin"])
+                self.assertEqual(metrics["canvases"], 4)
+                self.assertGreater(metrics["candles"], 0)
+                self.assertEqual(metrics["months"], 48)
+                self.assertGreater(metrics["completed"], 0)
+                self.assertEqual(metrics["completedMarkers"], metrics["completed"])
+                self.assertEqual(metrics["maskedAxes"], 4)
                 self.assertGreater(metrics["rows"], 0)
-                self.assertLessEqual(metrics["rows"], 12)
-                self.assertTrue(metrics["ownership"])
-                self.assertEqual(metrics["legacyTimeline"], 0)
-                self.assertEqual(metrics["ageHeading"], "Timeline kalender proyek aktif")
-                self.assertGreater(metrics["ageBars"], 0)
-                self.assertEqual(
-                    sorted(set(re.findall(r"age-(?:new|growing|watch|overdue)", " ".join(metrics["ageColors"])))),
-                    ["age-growing", "age-new", "age-overdue", "age-watch"],
-                )
-                self.assertNotIn("Proyek Selesai", metrics["ageNames"])
-                self.assertEqual(sorted(metrics["ageSections"]), ["Hollawall Section", "Texturin Section"])
-                self.assertGreaterEqual(metrics["viewportCount"], 2)
+                self.assertGreater(metrics["quickComplete"], 0)
+                self.assertTrue(metrics["ordered"])
                 if width <= 760:
                     self.assertTrue(metrics["internalHorizontalOverflow"], metrics)
-                self.assertGreater(len(set(metrics["months"])), 1)
-                self.assertTrue(all(label.startswith("Mulai ") for label in metrics["starts"]))
-                self.assertGreater(metrics["activityWicks"], 0)
-                self.assertEqual(sorted(metrics["projectHeads"]), sorted(metrics["ageNames"]))
-                self.assertGreater(max(metrics["ageHeights"]), min(metrics["ageHeights"]))
-                if width <= 760:
                     self.assertGreaterEqual(metrics["minTarget"], 44)
-                    first_frame = page.locator(".active-calendar-frame").first
-                    first_viewport = first_frame.locator(".active-calendar-viewport")
-                    first_cue = first_frame.locator(".active-calendar-pan-cue")
-                    expect(first_cue).to_be_visible()
-                    left_before = first_viewport.evaluate("element => element.scrollLeft")
-                    first_cue.click()
-                    page.wait_for_timeout(100)
-                    self.assertGreater(first_viewport.evaluate("element => element.scrollLeft"), left_before)
-                    first_viewport.evaluate("element => { element.scrollLeft = element.scrollWidth; element.dispatchEvent(new Event('scroll')); }")
-                    expect(first_cue).to_have_count(0)
-                page.get_by_role("button", name="Selesai", exact=True).click()
-                expect(page.locator(".active-project-age-report")).to_have_count(0)
                 context.close()
 
     def test_cashflow_and_wallet_routes_are_operational_and_paginated(self):
         context, page, errors = self.new_page(390, 844, "light")
         page.goto(self.base_url, wait_until="networkidle")
-        page.get_by_role("heading", name="Ringkasan Perusahaan").wait_for()
+        page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
         page.get_by_role("button", name="Buka navigasi").click()
         page.locator(".sidebar nav button").filter(has_text="Arus Kas").click()
-        page.get_by_role("heading", name="Aliran operasi, bukan sekadar saldo").wait_for()
+        page.get_by_role("heading", name="Aliran kas, bukan sekadar saldo", exact=True).wait_for()
         expect(page.locator(".cashflow-workspace")).to_have_count(1)
         expect(page.get_by_text("Kas masuk eksternal")).to_be_visible()
-        expect(page.locator(".ops-metric-strip article").filter(has_text="Transfer internal bruto")).to_be_visible()
+        expect(page.locator(".ops-metric-strip article").filter(has_text="Transfer internal terbuka")).to_be_visible()
         expect(page.get_by_text(re.compile(r"Naufalspurnomo|Naufal Spurnomo", re.I))).to_have_count(0)
 
         page.get_by_role("button", name="Buka navigasi").click()
         page.locator(".sidebar nav button").filter(has_text="Dompet").click()
         page.get_by_role("heading", name="Posisi kas per sumber").wait_for()
         expect(page.locator(".wallet-workspace")).to_have_count(1)
-        expect(page.get_by_text("Dompet 1 dari 7")).to_be_visible()
+        expect(page.get_by_text(re.compile(r"Dompet 1 dari 3", re.I))).to_be_visible()
         expect(page.get_by_role("navigation", name="Filter mutasi")).to_be_visible()
 
         ledger = page.locator(".ops-ledger article")
         self.assertEqual(ledger.count(), 8)
-        expect(page.get_by_text("Halaman 1 dari 2")).to_be_visible()
+        expect(page.get_by_text(re.compile(r"Halaman 1 dari 7"))).to_be_visible()
         first_page = ledger.first.text_content()
         page.get_by_role("button", name="Berikutnya").click()
-        expect(page.get_by_text("Halaman 2 dari 2")).to_be_visible()
+        expect(page.get_by_text(re.compile(r"Halaman 2 dari 7"))).to_be_visible()
         self.assertNotEqual(ledger.first.text_content(), first_page)
-        self.assertEqual(ledger.count(), 2)
+        self.assertEqual(ledger.count(), 8)
 
         page.get_by_role("button", name="Internal", exact=True).click()
         self.assertEqual(ledger.count(), 1)
@@ -359,12 +334,12 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
     def test_dark_routes_keep_readable_text_contrast(self):
         context, page, errors = self.new_page(1440, 1000, "dark")
         page.goto(self.base_url, wait_until="networkidle")
-        page.get_by_role("heading", name="Ringkasan Perusahaan").wait_for()
+        page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
         routes = (
             (None, ".executive-overview"),
             ("Arus Kas", ".cashflow-workspace"),
             ("Dompet", ".wallet-workspace"),
-            ("Proyek", ".project-portfolio-ledger"),
+            ("Proyek", ".project-command-center"),
         )
         for route_name, selector in routes:
             if route_name:
@@ -431,16 +406,16 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             }""")
             self.assertEqual(failures, [], {"route": route_name or "Ringkasan", "failures": failures})
 
-        titles = page.locator(".active-calendar-bar").evaluate_all("elements => elements.map(element => element.title)")
+        titles = page.locator(".project-market-candle").evaluate_all("elements => elements.map(element => element.title)")
         self.assertTrue(titles)
-        self.assertTrue(all(title and "mulai" in title and "hari" in title for title in titles))
+        self.assertTrue(all(title and "mulai" in title and "umur" in title for title in titles))
         self.assertEqual(errors, [])
         context.close()
 
     def test_light_filled_color_surfaces_use_white_text(self):
         context, page, errors = self.new_page(1440, 1000, "light")
         page.goto(self.base_url, wait_until="networkidle")
-        page.get_by_role("heading", name="Ringkasan Perusahaan").wait_for()
+        page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
         routes = (
             (None, (
                 ".workspace-switch", ".sidebar nav button.active", ".sidebar nav button b",
@@ -448,11 +423,8 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 ".new-project-button", ".vertical-project-bar",
             )),
             ("Proyek", (
-                ".portfolio-switcher button.active", ".portfolio-switcher button > i",
-                ".project-summary-stats span", ".active-age-identity > i",
-                ".active-calendar-toolbar span", ".active-calendar-pan-cue", ".active-calendar-fill",
+                ".year-command nav button.active", ".project-market-candle:not(.is-planned) .project-market-body", ".project-market-completed",
             )),
-            ("Transaksi", (".type-chip",)),
             ("Arus Kas", (".ops-filter-block button.active",)),
             ("Dompet", (".wallet-rail button.active", ".movement-filters button.active")),
         )
@@ -493,12 +465,12 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             (1440, 900, "light"),
             (1920, 1080, "dark"),
         )
-        routes = ("Ringkasan", "Arus Kas", "Dompet", "Transaksi", "Proyek", "Hutang Internal", "Laporan")
+        routes = ("Ringkasan", "Arus Kas", "Dompet", "Proyek", "Operasional Kantor", "Hutang Internal", "Laporan")
         for width, height, theme in viewports:
             with self.subTest(width=width, height=height, theme=theme):
                 context, page, errors = self.new_page(width, height, theme)
                 page.goto(self.base_url, wait_until="networkidle")
-                page.get_by_role("heading", name="Ringkasan Perusahaan").wait_for()
+                page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
                 for route_name in routes:
                     page.locator(".sidebar nav button").filter(has_text=route_name).dispatch_event("click")
                     page.wait_for_timeout(25)
@@ -543,21 +515,43 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 self.assertEqual(errors, [])
                 context.close()
 
-    def test_live_refresh_shows_new_transaction_and_reversal_within_target(self):
-        context, page, errors, state = self.new_dynamic_page(1440, 1000)
-        page.goto(self.base_url, wait_until="networkidle")
-        page.get_by_role("heading", name="Ringkasan Perusahaan").wait_for()
-        page.get_by_role("button", name="Arus kas operasional bersih").click()
-        expect(page.get_by_text("Termin baru proyek")).to_be_hidden()
-        expect(page.get_by_text("Reversal termin salah")).to_be_hidden()
+    def test_legacy_transaction_route_canonicalizes_and_preserves_project_owned_crud(self):
+        context, page, errors = self.new_page(1440, 1000)
+        page.goto(f"{self.base_url}/#transactions?project=p26-dahayu", wait_until="networkidle")
+        page.get_by_role("heading", name="Dahayu Boutique Hotel", exact=True).wait_for()
+        self.assertEqual(page.evaluate("window.location.hash"), "#projects?project=p26-dahayu")
 
-        page.clock.run_for(10_000)
+        page.locator(".project-detail-head").get_by_role("button", name="Tambah transaksi", exact=True).click()
+        dialog = page.get_by_role("dialog")
+        expect(dialog.get_by_text("Dahayu Boutique Hotel", exact=True)).to_be_visible()
+        dialog.get_by_label("Jenis *").select_option("income")
+        dialog.get_by_label("Jumlah *").fill("1234567")
+        dialog.get_by_label("Keterangan *").fill("QA Detail Ownership")
+        dialog.get_by_role("button", name="Simpan transaksi").click()
+        expect(page.get_by_text("QA Detail Ownership", exact=True)).to_be_visible()
 
-        expect(page.get_by_text("Termin baru proyek")).to_be_visible()
-        expect(page.get_by_text("Reversal termin salah")).to_be_visible()
-        page.get_by_role("button", name="Ringkasan").click()
-        expect(page.get_by_role("button", name="Arus kas operasional bersih").locator("strong")).to_have_text(re.compile(r"340\.350\.000"))
-        self.assertGreaterEqual(state["calls"], 2)
+        stored = json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
+        created = next(row for row in stored["transactions"] if row["notes"] == "QA Detail Ownership")
+        self.assertEqual((created["project_id"], created["company"], created["wallet"]), ("p26-dahayu", "Hojja", "CV HB"))
+
+        page.get_by_role("button", name="Ubah transaksi QA Detail Ownership").click()
+        dialog = page.get_by_role("dialog")
+        dialog.get_by_label("Keterangan *").fill("QA Detail Updated")
+        dialog.get_by_role("button", name="Simpan perubahan").click()
+        expect(page.get_by_text("QA Detail Updated", exact=True)).to_be_visible()
+        stored = json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
+        updated = next(row for row in stored["transactions"] if row["notes"] == "QA Detail Updated")
+        self.assertEqual((updated["id"], updated["project_id"], updated["company"], updated["wallet"]), (created["id"], "p26-dahayu", "Hojja", "CV HB"))
+
+        page.once("dialog", lambda prompt: prompt.accept())
+        page.get_by_role("button", name="Hapus transaksi QA Detail Updated").click()
+        expect(page.get_by_text("QA Detail Updated", exact=True)).to_have_count(0)
+        stored = json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
+        self.assertTrue(all(row["id"] != created["id"] for row in stored["transactions"]))
+
+        page.get_by_role("button", name="Kembali ke Proyek").click()
+        page.get_by_role("heading", name="Umur dan status proyek", exact=True).wait_for()
+        self.assertEqual(page.evaluate("window.location.hash"), "#projects")
         self.assertEqual(errors, [])
         context.close()
 

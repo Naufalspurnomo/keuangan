@@ -36,6 +36,7 @@ def assert_active_year_visible(page, label):
 def assert_month_axis_geometry(page, label):
     canvases = page.locator(".project-market-canvas")
     assert canvases.count() == 4, (label, "canvas count", canvases.count())
+    overlap_candidate_count = 0
     for index in range(canvases.count()):
         canvas_locator = canvases.nth(index)
         canvas_locator.evaluate("el => el.scrollIntoView({block: 'start'})")
@@ -64,8 +65,52 @@ def assert_month_axis_geometry(page, label):
             };
           });
           const visibleMonthBoxes = monthBoxes.filter(box => box.visible);
+
+          const chart = canvas.querySelector('.project-market-chart');
+          const viewportElement = canvas.querySelector('.project-market-viewport');
+          const axisWidth = parseFloat(getComputedStyle(chart).getPropertyValue('--axis-width')) || 86;
+          const axisBackground = getComputedStyle(axis).backgroundImage;
+          const candleBodies = [...canvas.querySelectorAll('.project-market-body')];
+          const originalScrollLeft = viewportElement.scrollLeft;
+          const collectOverlapCandidates = () => {
+            const viewportRect = viewportElement.getBoundingClientRect();
+            return candleBodies.flatMap(body => {
+              const rect = body.getBoundingClientRect();
+              const left = Math.max(viewportRect.left + 2, rect.left + 1);
+              const right = Math.min(viewportRect.left + axisWidth - 2, rect.right - 1);
+              const top = Math.max(viewportRect.top + 2, rect.top + 1);
+              const bottom = Math.min(viewportRect.bottom - 2, rect.bottom - 1, innerHeight - 2);
+              if (right <= left + 2 || bottom <= top + 2) return [];
+              const y = top + (bottom - top) / 2;
+              const points = [.2, .5, .8].map(position => {
+                const x = left + (right - left) * position;
+                const topmost = document.elementFromPoint(x, y);
+                return {
+                  x,
+                  y,
+                  topmost: topmost?.className || topmost?.tagName || null,
+                  bodyIsTopmost: Boolean(topmost?.closest('.project-market-body')),
+                  axisIsTopmost: Boolean(topmost?.closest('.project-market-axis')),
+                };
+              });
+              return [{ points }];
+            });
+          };
+          let overlapCandidates = collectOverlapCandidates();
+          if (innerWidth <= 580 && overlapCandidates.length === 0) {
+            viewportElement.scrollLeft = Math.max(0, viewportElement.scrollWidth - viewportElement.clientWidth);
+            overlapCandidates = collectOverlapCandidates();
+          }
+          viewportElement.scrollLeft = originalScrollLeft;
           axis.style.pointerEvents = previousPointerEvents;
-          return { company: canvas.dataset.projectCompany, monthBoxes, visibleMonthBoxes };
+          return {
+            company: canvas.dataset.projectCompany,
+            monthBoxes,
+            visibleMonthBoxes,
+            candleCount: candleBodies.length,
+            axisBackground,
+            overlapCandidates,
+          };
         }""")
         month_boxes = canvas["monthBoxes"]
         assert len(month_boxes) == 12, (label, canvas["company"], "month count", len(month_boxes))
@@ -73,6 +118,15 @@ def assert_month_axis_geometry(page, label):
         assert all(box["z"] >= 10 for box in month_boxes), (label, canvas["company"], "month z-index", month_boxes)
         assert all(month_boxes[position + 1]["top"] - month_boxes[position]["top"] >= 24 for position in range(len(month_boxes) - 1)), (label, canvas["company"], "month spacing", month_boxes)
         assert all(box["labelIsTopmost"] for box in month_boxes), (label, canvas["company"], "visible month label covered by candle", month_boxes)
+        assert canvas["candleCount"] > 0, (label, canvas["company"], "no candle geometry; rail assertion would be vacuous")
+        assert canvas["axisBackground"] != "none", (label, canvas["company"], "reserved month-label rail has no opaque mask")
+        overlap_candidate_count += len(canvas["overlapCandidates"])
+        for candidate in canvas["overlapCandidates"]:
+            assert len(candidate["points"]) == 3, (label, canvas["company"], "incomplete reserved rail probe", candidate)
+            assert all(point["axisIsTopmost"] for point in candidate["points"]), (label, canvas["company"], "reserved rail mask is not topmost", candidate)
+            assert all(not point["bodyIsTopmost"] for point in candidate["points"]), (label, canvas["company"], "candle visibly present in reserved month-label rail", candidate)
+    if page.viewport_size["width"] <= 580:
+        assert overlap_candidate_count > 0, (label, "no narrow-mobile candle intersects reserved rail; mask assertion would be vacuous")
 
 with sync_playwright() as p:
     if ENGINE == "chromium":

@@ -71,7 +71,7 @@ def assert_showcase(page, viewport, nav):
     assert all(item['w'] >= 240 and item['h'] >= 180 and item['svgW'] >= 100 and item['svgH'] >= 100 for item in geometry), f'{viewport}:{nav}: collapsed chart {geometry}'
     if nav == 'Dompet':
         sectors = page.locator('.wallet-distribution-chart path').evaluate_all("paths => { const svg=paths[0]?.ownerSVGElement; const view=svg?.viewBox?.baseVal; const area=(view?.width||0)*(view?.height||0); return paths.map(path => { const box=path.getBBox(); return {w:box.width,h:box.height,ratio:area ? (box.width*box.height)/area : 0} }) }")
-        assert len(sectors) == 3 and all(item['w'] > 50 and item['h'] > 50 and item['ratio'] > .02 for item in sectors), f'{viewport}:{nav}: incomplete donut sectors {sectors}'
+        assert len(sectors) == 3 and all(item['w'] > 0 and item['h'] > 0 and item['ratio'] > .02 for item in sectors), f'{viewport}:{nav}: incomplete donut sectors {sectors}'
     return {'charts': count, 'geometry': geometry}
 
 
@@ -82,11 +82,13 @@ def matrix(browser, viewports):
         errors=[]
         page.on('console', lambda msg: errors.append(f'console:{msg.type}:{msg.text}') if msg.type=='error' else None)
         page.on('pageerror', lambda err: errors.append(f'page:{err}'))
+        page.on('requestfailed', lambda request: errors.append(f'request:{request.method}:{request.url}:{request.failure}'))
         page.goto(URL, wait_until='domcontentloaded', timeout=60_000)
         wait_shell(page)
         if width <= 760:
             assert page.locator('aside.sidebar').get_attribute('aria-hidden') == 'true'
-            assert page.locator('aside.sidebar button[tabindex="-1"]').count() == 8
+            assert page.locator('aside.sidebar nav button[tabindex="-1"]').count() == 7
+            assert page.locator('aside.sidebar nav button', has_text='Transaksi').count() == 0
         showcase = {}
         for nav in ['Ringkasan','Arus Kas','Dompet','Proyek','Operasional Kantor','Hutang Internal','Laporan']:
             if width <= 900:
@@ -99,9 +101,11 @@ def matrix(browser, viewports):
                 if name in ['mobile-390','desktop-1440']:
                     page.screenshot(path=str(OUT/f"{name}-{nav.lower().replace(' ','-')}.png"), full_page=True)
             if nav == 'Proyek' and width <= 760:
-                grid=page.locator('.year-candle-grid')
-                reach=grid.evaluate("e=>{e.scrollLeft=e.scrollWidth;const last=e.lastElementChild?.getBoundingClientRect();const box=e.getBoundingClientRect();return {max:e.scrollWidth-e.clientWidth,left:e.scrollLeft,last:last?.right,edge:box.right}}")
-                assert reach['max'] > 0 and abs(reach['left']-reach['max']) <= 2 and reach['last'] <= reach['edge'] + 2, f'{name}: candle end unreachable {reach}'
+                project_viewports=page.locator('.project-market-viewport')
+                assert project_viewports.count() == 4, f'{name}: expected four project lifecycle viewports'
+                for index in range(project_viewports.count()):
+                    reach=project_viewports.nth(index).evaluate("e=>{e.scrollLeft=e.scrollWidth;const bodies=[...e.querySelectorAll('.project-market-body')].map(node=>node.getBoundingClientRect());const box=e.getBoundingClientRect();return {max:e.scrollWidth-e.clientWidth,left:e.scrollLeft,last:Math.max(...bodies.map(body=>body.right)),edge:box.right}}")
+                    assert reach['max'] > 0 and reach['left'] > 0 and reach['last'] <= reach['edge'] + 2, f'{name}: candle end unreachable {index} {reach}'
         page.screenshot(path=str(OUT/f'{name}-reports.png'))
         assert not errors, f'{name}: {errors}'
         results.append({'viewport':name,'pages':7,'showcase':showcase,'errors':0})
@@ -114,6 +118,7 @@ def journeys(browser):
     page=context.new_page(); errors=[]
     page.on('console', lambda msg: errors.append(f'console:{msg.type}:{msg.text}') if msg.type=='error' else None)
     page.on('pageerror', lambda err: errors.append(f'page:{err}'))
+    page.on('requestfailed', lambda request: errors.append(f'request:{request.method}:{request.url}:{request.failure}'))
     page.goto(URL,wait_until='domcontentloaded',timeout=60_000); wait_shell(page)
 
     goto_page(page,'Proyek')

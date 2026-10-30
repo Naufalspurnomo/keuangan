@@ -59,10 +59,10 @@ export function ageBand(days: number): ProjectAgeBand {
 }
 
 const AGE_COLORS: Record<ProjectAgeBand, string> = {
-  new: '#168a52',
-  steady: '#168b83',
-  watch: '#b98916',
-  late: '#c8641b',
+  new: '#117642',
+  steady: '#10766f',
+  watch: '#806006',
+  late: '#98470c',
   overdue: '#b83a3f',
 }
 
