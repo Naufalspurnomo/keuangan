@@ -29,7 +29,7 @@ describe('Hollawall demo finance workspace', () => {
   it('renders one reconciled demo workspace with seven navigation views', () => {
     renderApp()
     expect(screen.getByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })).toBeTruthy()
-    expect(screen.getByText(/Tidak terhubung ke buku besar produksi/)).toBeTruthy()
+    expect(screen.getByText(/Data keuangan demo tersimpan di browser ini dan tidak terhubung ke buku besar produksi\. Data Presensi privat dibaca dari server\./)).toBeTruthy()
     const menu = screen.getByRole('navigation', { name: 'Menu utama' })
     for (const label of ['Ringkasan', 'Arus Kas', 'Dompet', 'Proyek', 'Operasional Kantor', 'Hutang Internal', 'Laporan']) {
       expect(within(menu).getByRole('button', { name: new RegExp(`^${label}`) })).toBeTruthy()

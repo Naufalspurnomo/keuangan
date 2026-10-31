@@ -10,7 +10,7 @@ import { cashTrend, chartProjects, chartTransactions, chartWallets, dateLabel, d
 const FinancialChart = lazy(() => import('./FinancialChart'))
 
 export function DemoBanner({ updatedAt, onReset }: { updatedAt: string; onReset: () => void }) {
-  return <section className="demo-workspace-banner" aria-label="Status data demo"><div><strong>Data demo</strong><span>Perubahan tersimpan di browser ini. Tidak terhubung ke buku besar produksi.</span></div><small>Diperbarui {new Date(updatedAt).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })}</small><button type="button" onClick={onReset}><RotateCcw size={15} /> Reset demo</button></section>
+  return <section className="demo-workspace-banner" aria-label="Status data demo"><div><strong>Data demo</strong><span>Data keuangan demo tersimpan di browser ini dan tidak terhubung ke buku besar produksi. Data Presensi privat dibaca dari server.</span></div><small>Diperbarui {new Date(updatedAt).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })}</small><button type="button" onClick={onReset}><RotateCcw size={15} /> Reset demo</button></section>
 }
 
 export function OverviewWorkspace({ workspace, onAddTransaction, onAddProject, onAddOffice }: { workspace: FinanceWorkspace; onAddTransaction: () => void; onAddProject: () => void; onAddOffice: () => void }) {
