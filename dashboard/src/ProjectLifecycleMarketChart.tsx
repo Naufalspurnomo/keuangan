@@ -78,9 +78,10 @@ function yearModel(year: number, asOf: Date) {
   const end = new Date(year, 11, 31)
   const span = Math.max(1, calendarDay(end) - calendarDay(start))
   const clip = (date: Date) => new Date(Math.max(start.getTime(), Math.min(end.getTime(), date.getTime())))
-  const positionFor = (value: string | null | undefined, fallback = asOf) => ((calendarDay(clip(parseDate(value) ?? fallback)) - calendarDay(start)) / span) * 100
-  const months = Array.from({ length: 12 }, (_, index) => {
-    const date = new Date(year, index, 1)
+  const positionFor = (value: string | null | undefined, fallback = asOf) => ((calendarDay(end) - calendarDay(clip(parseDate(value) ?? fallback))) / span) * 100
+  const months = Array.from({ length: 12 }, (_, offset) => {
+    const index = 11 - offset
+    const date = new Date(year, index + 1, 0)
     return {
       key: `${year}-${index}`,
       label: new Intl.DateTimeFormat('id-ID', { month: 'short' }).format(date).toLocaleUpperCase('id-ID'),
@@ -132,7 +133,10 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
   const latest = () => {
     stopMomentum()
     const viewport = viewportRef.current
-    if (viewport) viewport.scrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth)
+    if (viewport) {
+      viewport.scrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth)
+      viewport.scrollTop = 0
+    }
   }
   const setBoundedZoom = (next: number, clientX?: number, clientY?: number) => {
     const viewport = viewportRef.current
@@ -354,7 +358,7 @@ export default function ProjectLifecycleMarketChart({ projects, transactions, ye
   const active = projects.filter((project) => project.status === 'active').length
 
   return <section className="project-market-report" aria-label={`Project lifecycle market ${year}`}>
-    <header className="project-market-report-head"><div><p className="eyebrow">PROJECT LIFECYCLE MARKET · {year}</p><h3>Umur dan status proyek</h3><p>Empat canvas tahunan. Proyek terbaru berada di kanan; geser bebas, zoom, dan klik candle untuk melihat transaksi.</p></div><strong>{active} / {projects.length} aktif</strong></header>
+    <header className="project-market-report-head"><div><p className="eyebrow">PROJECT LIFECYCLE MARKET · {year}</p><h3>Umur dan status proyek</h3><p>Empat canvas tahunan. Bulan terbaru di atas; proyek terbaru di kanan. Geser bebas, zoom, dan klik candle untuk melihat transaksi.</p></div><strong>{active} / {projects.length} aktif</strong></header>
     <div className="project-market-global-toolbar" role="group" aria-label="Kontrol zoom semua chart">
       <span>Kontrol semua chart</span>
       <button type="button" onClick={() => zoomAll(1 / 1.2)} aria-label="Perkecil semua chart"><Minus size={16} /></button>

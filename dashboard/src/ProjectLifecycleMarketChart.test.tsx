@@ -56,8 +56,7 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(active.style.getPropertyValue('--bar-start-color')).toBe('')
     expect(completed.querySelector('.project-market-completed')).toBeTruthy()
     expect(active.querySelector('.project-market-completed')).toBeNull()
-    expect(Number.parseFloat(completed.style.getPropertyValue('--start-position'))).toBeLessThan(60)
-    expect(Number.parseFloat(completed.style.getPropertyValue('--start-position'))).toBe(Number.parseFloat(completed.style.getPropertyValue('--candle-top')))
+    expect(Number.parseFloat(completed.style.getPropertyValue('--start-position'))).toBeGreaterThan(Number.parseFloat(completed.style.getPropertyValue('--candle-top')))
     expect(completed.getAttribute('aria-label')).toContain('selesai')
     expect(completed.getAttribute('title')).toContain('selesai')
   })
@@ -67,6 +66,7 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(container.querySelectorAll('.age-band-swatches > i')).toHaveLength(5)
     expect(container.textContent).toContain('Warna umur: hijau · toska · kuning · oranye · merah')
     expect(container.textContent).toContain('Selesai: warna umur dipertahankan, tanda centang menunjukkan status')
+    expect(container.textContent).toContain('Bulan terbaru di atas; proyek terbaru di kanan')
   })
 
   it('renders four fixed company canvases with active/total summaries and no chart pagination', () => {
@@ -84,7 +84,7 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(container.textContent).not.toContain('Berikutnya')
   })
 
-  it('renders each month axis ahead of the candle layer with 12 unique, fully spaced positions', () => {
+  it('renders the newest month at the top and the oldest month at the bottom', () => {
     const { container } = render(<ProjectLifecycleMarketChart projects={projects} transactions={transactions} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={vi.fn()} />)
 
     for (const canvas of container.querySelectorAll('.project-market-canvas')) {
@@ -99,12 +99,10 @@ describe('ProjectLifecycleMarketChart', () => {
       const positions = months.map((month) => month.position)
 
       expect(axis.compareDocumentPosition(columns) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-      expect(months).toHaveLength(12)
+      expect(months.map((month) => month.label)).toEqual(['DES', 'NOV', 'OKT', 'SEP', 'AGU', 'JUL', 'JUN', 'MEI', 'APR', 'MAR', 'FEB', 'JAN'])
       expect(new Set(positions)).toHaveLength(12)
       expect(positions.every((position, index) => index === 0 || position > positions[index - 1])).toBe(true)
-      expect(months[0].label).toBe('JAN')
       expect(months[0].position).toBe(0)
-      expect(months.at(-1)?.label).toBe('DES')
       expect(months.at(-1)?.position).toBeGreaterThan(90)
       expect(Number.parseFloat(chart.style.getPropertyValue('--market-height'))).toBeGreaterThanOrEqual(624)
     }
@@ -245,8 +243,10 @@ describe('ProjectLifecycleMarketChart', () => {
     fireEvent.click(candle, { detail: 1 })
     expect(onOpen).not.toHaveBeenCalled()
 
+    viewport.scrollTop = 300
     fireEvent.click(screen.getByRole('button', { name: 'Kembali ke proyek terbaru Holla' }))
     expect(viewport.scrollLeft).toBe(700)
+    expect(viewport.scrollTop).toBe(0)
     const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame')
     const scheduleFrame = vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(91)
     viewport.scrollLeft = 100

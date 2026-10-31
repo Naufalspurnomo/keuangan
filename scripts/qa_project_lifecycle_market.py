@@ -53,8 +53,11 @@ def assert_month_axis_geometry(page, label):
               && rect.top < Math.min(viewport.bottom, window.innerHeight)
               && rect.right > 0
               && rect.left < window.innerWidth;
-            const topmost = visible ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) : null;
+            const visibleTop = Math.max(rect.top, viewport.top, 0);
+            const visibleBottom = Math.min(rect.bottom, viewport.bottom, window.innerHeight);
+            const topmost = visible ? document.elementFromPoint(rect.left + rect.width / 2, visibleTop + (visibleBottom - visibleTop) / 2) : null;
             return {
+              label: el.textContent.trim(),
               top: rect.top,
               bottom: rect.bottom,
               left: rect.left,
@@ -114,6 +117,7 @@ def assert_month_axis_geometry(page, label):
         }""")
         month_boxes = canvas["monthBoxes"]
         assert len(month_boxes) == 12, (label, canvas["company"], "month count", len(month_boxes))
+        assert [box["label"] for box in month_boxes] == ["DES", "NOV", "OKT", "SEP", "AGU", "JUL", "JUN", "MEI", "APR", "MAR", "FEB", "JAN"], (label, canvas["company"], "month order", month_boxes)
         assert canvas["visibleMonthBoxes"], (label, canvas["company"], "no visible month labels; layer assertion would be vacuous")
         assert all(box["z"] >= 10 for box in month_boxes), (label, canvas["company"], "month z-index", month_boxes)
         assert all(month_boxes[position + 1]["top"] - month_boxes[position]["top"] >= 24 for position in range(len(month_boxes) - 1)), (label, canvas["company"], "month spacing", month_boxes)
@@ -332,9 +336,10 @@ with sync_playwright() as p:
 
         page.get_by_role("button", name="Kembali ke proyek terbaru Holla").click()
         page.wait_for_timeout(80)
-        latest = viewport.evaluate("el => ({left: el.scrollLeft, max: el.scrollWidth - el.clientWidth, rightGap: el.scrollWidth - el.clientWidth - el.scrollLeft})")
+        latest = viewport.evaluate("el => ({left: el.scrollLeft, top: el.scrollTop, max: el.scrollWidth - el.clientWidth, rightGap: el.scrollWidth - el.clientWidth - el.scrollLeft})")
         # stable both-edges reserves one scrollbar gutter at the right edge (about 20px).
         assert latest["rightGap"] <= 24, (name, latest)
+        assert latest["top"] <= 1, (name, "latest control did not return to newest month at top", latest)
         axis_box = canvases.first.locator('.project-market-month b').first.bounding_box()
         viewport_box = viewport.bounding_box()
         assert axis_box and viewport_box
