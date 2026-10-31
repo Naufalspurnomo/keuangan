@@ -82,7 +82,7 @@ header('Cache-Control: no-store');
 
         <section class="proof-panel" aria-labelledby="location-title">
           <div class="proof-head">
-            <div><span class="step-number">2</span><div><h3 id="location-title">Lokasi proyek</h3><p>Lokasi dibaca satu kali saat selfie diambil, bukan dilacak terus.</p></div></div>
+            <div><span class="step-number">2</span><div><h3 id="location-title">Lokasi aktual</h3><p>Lokasi dibaca satu kali saat selfie diambil, bukan dilacak terus.</p></div></div>
             <span id="location-state" class="state-pill">Belum siap</span>
           </div>
           <div class="location-card">

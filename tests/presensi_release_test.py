@@ -18,6 +18,8 @@ class PresensiReleaseTests(unittest.TestCase):
         page = (ABSEN / "presensi" / "index.php").read_text(encoding="utf-8")
         script = (ABSEN / "assets" / "presensi.js").read_text(encoding="utf-8")
         self.assertIn("Presensi Hollawall", page)
+        self.assertIn("Lokasi aktual", page)
+        self.assertNotIn("Lokasi proyek", page)
         self.assertIn("navigator.mediaDevices.getUserMedia", script)
         self.assertIn("facingMode", script)
         self.assertIn("navigator.geolocation.getCurrentPosition", script)
