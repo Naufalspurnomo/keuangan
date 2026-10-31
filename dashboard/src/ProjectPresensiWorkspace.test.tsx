@@ -61,6 +61,14 @@ describe('project presensi detail', () => {
     expect(screen.getByText('Pegawai 2')).toBeTruthy()
   })
 
+  it('keeps the empty-state title and guidance visually separated', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ version: 'presensi.admin.v1', records: [] }) } as Response)
+    renderWorkspace()
+    fireEvent.click(screen.getByRole('tab', { name: 'Presensi' }))
+    const title = await screen.findByText('Belum ada presensi untuk Griya Wellness Center')
+    expect(title.parentElement?.textContent).toContain('Griya Wellness Center Check-in')
+  })
+
   it('does not leak stale data when the admin endpoint fails', async () => {
     vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 503 } as Response)
     renderWorkspace()

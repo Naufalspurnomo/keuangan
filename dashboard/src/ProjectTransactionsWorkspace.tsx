@@ -118,7 +118,7 @@ function PresensiPanel({ project }: { project: FinanceProject }) {
         <EvidenceCard label="Check-out" employee={record.employee_name} evidence={record.check_out} />
       </div>
       <footer><Clock3 size={15} /><span>Durasi kerja</span><strong>{durationLabel(record.duration_minutes)}</strong></footer>
-    </article>)}</div> : <div className="project-detail-empty"><strong>Belum ada presensi untuk {project.name}</strong><span>Check-in pegawai dari /absen/presensi akan muncul di sini.</span></div>}
+    </article>)}</div> : <div className="project-detail-empty"><strong>Belum ada presensi untuk {project.name}</strong><span>{' '}Check-in pegawai dari /absen/presensi akan muncul di sini.</span></div>}
   </div>
 }
 
