@@ -99,6 +99,11 @@ UPDATED_SNAPSHOT["transactions"] = [
 
 
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):  # noqa: N802
+        if self.path.startswith('/admin/'):
+            self.path = self.path.removeprefix('/admin')
+        super().do_GET()
+
     def log_message(self, format, *args):  # noqa: A002
         return
 
@@ -238,6 +243,10 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 expect(navigation.get_by_role("button", name=re.compile(r"^Transaksi"))).to_have_count(0)
                 navigation.get_by_role("button", name=re.compile(r"^Proyek")).click()
                 page.get_by_role("heading", name="Umur dan status proyek").wait_for()
+                breadcrumb = page.locator(".breadcrumbs strong")
+                expect(breadcrumb).to_have_text("Proyek")
+                breadcrumb_metrics = breadcrumb.evaluate("node => ({ client: node.clientWidth, scroll: node.scrollWidth })")
+                self.assertGreaterEqual(breadcrumb_metrics["client"], breadcrumb_metrics["scroll"], breadcrumb_metrics)
                 overflow = page.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth")
                 self.assertFalse(overflow)
                 page.screenshot(path=str(ARTIFACTS / f"mobile-{theme}-390x844.png"), full_page=True)
@@ -514,6 +523,38 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                         self.assertGreater(nav.evaluate("element => element.scrollTop"), 0)
                 self.assertEqual(errors, [])
                 context.close()
+
+    def test_mobile_project_detail_keeps_title_actions_and_ledger_fully_usable(self):
+        context, page, errors = self.new_page(390, 844)
+        page.goto(f"{self.base_url}/#projects?project=p25-umbara", wait_until="networkidle")
+        page.get_by_role("heading", name="Umbara Headquarters", exact=True).wait_for()
+        metrics = page.evaluate("""() => {
+          const size = selector => {
+            const element = document.querySelector(selector);
+            const rect = element?.getBoundingClientRect();
+            return rect ? { width: rect.width, height: rect.height } : null;
+          };
+          const wrap = document.querySelector('.project-transaction-detail .workspace-table-wrap');
+          const actions = [...document.querySelectorAll('.project-transaction-detail .row-actions button')].map(element => element.getBoundingClientRect().height);
+          return {
+            breadcrumb: document.querySelector('.breadcrumbs strong')?.textContent?.trim(),
+            back: size('.project-detail-back'),
+            add: size('.project-detail-head .primary-button'),
+            tableClient: wrap?.clientWidth ?? 0,
+            tableScroll: wrap?.scrollWidth ?? 0,
+            actionHeights: actions,
+            document: document.documentElement.scrollWidth,
+            viewport: document.documentElement.clientWidth,
+          };
+        }""")
+        self.assertEqual(metrics["breadcrumb"], "Proyek")
+        self.assertGreaterEqual(metrics["back"]["height"], 44)
+        self.assertGreaterEqual(metrics["add"]["height"], 44)
+        self.assertLessEqual(metrics["tableScroll"], metrics["tableClient"])
+        self.assertTrue(metrics["actionHeights"] and all(height >= 44 for height in metrics["actionHeights"]), metrics)
+        self.assertLessEqual(metrics["document"], metrics["viewport"])
+        self.assertEqual(errors, [])
+        context.close()
 
     def test_legacy_transaction_route_canonicalizes_and_preserves_project_owned_crud(self):
         context, page, errors = self.new_page(1440, 1000)

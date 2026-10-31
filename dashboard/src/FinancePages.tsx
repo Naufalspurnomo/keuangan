@@ -86,5 +86,5 @@ export function downloadCsv(workspace: FinanceWorkspace) {
 }
 
 export function ExportButton({ workspace }: { workspace: FinanceWorkspace }) {
-  return <button className="secondary-button" onClick={() => downloadCsv(workspace)}><Download size={16} /> Ekspor CSV</button>
+  return <button className="secondary-button export-button" aria-label="Ekspor CSV" onClick={() => downloadCsv(workspace)}><Download size={16} /><span>Ekspor CSV</span></button>
 }

@@ -14,7 +14,7 @@ import { dateLabel, IDR, projectStatusLabel } from './financeView'
 
 const DAY = 86_400_000
 const BASE_HEIGHT = 624
-const BASE_COLUMN = 76
+const BASE_COLUMN = 108
 const MIN_ZOOM = 1
 const MAX_ZOOM = 2.4
 const MARKET_COMPANIES: CompanyId[] = ['Holla', 'Hojja', 'Texturin Bali', 'Texturin Surabaya']

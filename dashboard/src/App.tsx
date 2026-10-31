@@ -240,7 +240,7 @@ export default function App() {
         <header className="topbar">
           <button ref={menuButtonRef} className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi" aria-controls="app-navigation" aria-expanded={mobile ? menuOpen : undefined}><Menu size={21} /></button>
           <img className="mobile-header-logo" src={hollawallLogo} alt="Hollawall" />
-          <div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{selectedProject?.name ?? meta.title}</strong></div>
+          <div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{mobile ? meta.title : selectedProject?.name ?? meta.title}</strong></div>
           <div className="topbar-actions">
             {active === 'projects' && <ExportButton workspace={finance.workspace} />}
             {active !== 'reports' && <button className="topbar-add" onClick={addAction.run}><Plus size={16} /><span>{addAction.label}</span></button>}

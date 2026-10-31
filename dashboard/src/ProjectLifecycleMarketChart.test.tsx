@@ -72,6 +72,7 @@ describe('ProjectLifecycleMarketChart', () => {
   it('renders four fixed company canvases with active/total summaries and no chart pagination', () => {
     const { container } = render(<ProjectLifecycleMarketChart projects={projects} transactions={transactions} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={vi.fn()} />)
     expect(container.querySelectorAll('.project-market-canvas')).toHaveLength(4)
+    expect(Number.parseFloat((container.querySelector('.project-market-chart') as HTMLElement).style.getPropertyValue('--market-column'))).toBeGreaterThanOrEqual(108)
     for (const company of ['Holla', 'Hojja', 'Texturin Bali', 'Texturin Surabaya']) {
       expect(screen.getByRole('region', { name: `Chart lifecycle ${company}` })).toBeTruthy()
     }
