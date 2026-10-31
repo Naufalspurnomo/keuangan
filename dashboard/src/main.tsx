@@ -16,6 +16,7 @@ import './reference-led-dark.css'
 import './hollawall-brand.css'
 import './finance-workspace-v2.css'
 import './project-lifecycle-market-chart.css'
+import './presensi-dashboard.css'
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 20_000 } } })
 

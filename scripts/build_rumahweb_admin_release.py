@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -26,6 +27,7 @@ def main() -> None:
     admin = OUTPUT / "admin"
     shutil.copytree(TEMPLATE, admin)
     (admin / "config.example.php").unlink()
+    shutil.copy2(ROOT / "deploy" / "rumahweb-presensi" / "api" / "presensi-common.php", admin / "api" / "presensi-common.php")
     shutil.copytree(DASHBOARD / "dist" / "assets", admin / "assets")
     brand = admin / "brand"
     brand.mkdir()
@@ -40,6 +42,9 @@ def main() -> None:
     for token in forbidden:
         if token in guarded:
             raise RuntimeError(f"non-isolated build reference: {token}")
+    files = sorted(path for path in admin.rglob("*") if path.is_file())
+    manifest = "".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(admin).as_posix()}\n" for path in files)
+    (OUTPUT / "SHA256SUMS").write_text(manifest, encoding="utf-8")
     print(OUTPUT)
 
 

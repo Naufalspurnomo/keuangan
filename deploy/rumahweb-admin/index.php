@@ -5,6 +5,9 @@ const ADMIN_PATH = '/admin/';
 const SESSION_KEY = 'hollawall_admin_user';
 const SESSION_LIFETIME = 2592000;
 const SESSION_RENEW_AFTER = 86400;
+const LOGIN_RATE_MAX = 5;
+const LOGIN_RATE_BLOCK_SECONDS = 60;
+const LOGIN_RATE_RETENTION_SECONDS = 86400;
 
 function fail_closed(int $status, string $message): void
 {
@@ -13,6 +16,71 @@ function fail_closed(int $status, string $message): void
     header('Cache-Control: no-store');
     echo $message;
     exit;
+}
+
+function admin_login_rate(string $path, string $accountRoot, string $key, string $action, int $now): array
+{
+    if (is_link($path) || !in_array($action, ['inspect', 'failure', 'success'], true)) {
+        fail_closed(503, 'Admin login protection unavailable.');
+    }
+    $created = !file_exists($path);
+    $handle = @fopen($path, 'c+b');
+    if ($handle === false) {
+        fail_closed(503, 'Admin login protection unavailable.');
+    }
+    if ($created && !chmod($path, 0600)) {
+        fclose($handle);
+        fail_closed(503, 'Admin login protection unavailable.');
+    }
+    clearstatcache(true, $path);
+    $realPath = realpath($path);
+    if ($realPath === false
+        || dirname($realPath) !== $accountRoot
+        || fileowner($realPath) !== fileowner($accountRoot)
+        || ((int) fileperms($realPath) & 0777) !== 0600
+        || !flock($handle, LOCK_EX)) {
+        fclose($handle);
+        fail_closed(503, 'Admin login protection unavailable.');
+    }
+    rewind($handle);
+    $raw = stream_get_contents($handle);
+    $ledger = $raw === '' ? [] : json_decode($raw, true);
+    if (!is_array($ledger)) {
+        flock($handle, LOCK_UN);
+        fclose($handle);
+        fail_closed(503, 'Admin login protection unavailable.');
+    }
+    foreach ($ledger as $entryKey => $entry) {
+        if (!is_array($entry) || (int) ($entry['updated_at'] ?? 0) < $now - LOGIN_RATE_RETENTION_SECONDS) {
+            unset($ledger[$entryKey]);
+        }
+    }
+    $state = $ledger[$key] ?? ['attempts' => 0, 'blocked_until' => 0, 'updated_at' => $now];
+    if ($action === 'success') {
+        unset($ledger[$key]);
+        $state = ['attempts' => 0, 'blocked_until' => 0, 'updated_at' => $now];
+    } elseif ($action === 'failure' && (int) ($state['blocked_until'] ?? 0) <= $now) {
+        $state['attempts'] = (int) ($state['attempts'] ?? 0) + 1;
+        $state['updated_at'] = $now;
+        if ($state['attempts'] >= LOGIN_RATE_MAX) {
+            $state['attempts'] = 0;
+            $state['blocked_until'] = $now + LOGIN_RATE_BLOCK_SECONDS;
+        }
+        $ledger[$key] = $state;
+    }
+    $encoded = json_encode($ledger, JSON_UNESCAPED_SLASHES);
+    if ($encoded === false
+        || !rewind($handle)
+        || !ftruncate($handle, 0)
+        || fwrite($handle, $encoded . "\n") === false
+        || !fflush($handle)) {
+        flock($handle, LOCK_UN);
+        fclose($handle);
+        fail_closed(503, 'Admin login protection unavailable.');
+    }
+    flock($handle, LOCK_UN);
+    fclose($handle);
+    return $state;
 }
 
 $configPath = getenv('HOLLAWALL_ADMIN_CONFIG') ?: dirname(__DIR__, 2) . '/.hollawall-admin.php';
@@ -100,20 +168,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    $blockedUntil = (int) ($_SESSION['blocked_until'] ?? 0);
-    if ($blockedUntil > $now) {
+    $username = trim((string) ($_POST['username'] ?? ''));
+    $password = (string) ($_POST['password'] ?? '');
+    $source = (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
+    $rateKey = hash_hmac('sha256', strtolower($username) . "\0" . $source, (string) $config['password_hash']);
+    $ratePath = $realAccountRoot . '/.hollawall-admin-login-rate.json';
+    $rate = admin_login_rate($ratePath, $realAccountRoot, $rateKey, 'inspect', $now);
+    if ((int) ($rate['blocked_until'] ?? 0) > $now) {
         $loginError = 'Terlalu banyak percobaan. Coba lagi sebentar.';
     } else {
-        $username = trim((string) ($_POST['username'] ?? ''));
-        $password = (string) ($_POST['password'] ?? '');
         $validUser = hash_equals((string) $config['username'], $username);
         $validPassword = password_verify($password, (string) $config['password_hash']);
 
         if ($validUser && $validPassword) {
+            admin_login_rate($ratePath, $realAccountRoot, $rateKey, 'success', $now);
             session_regenerate_id(true);
             $_SESSION[SESSION_KEY] = (string) $config['username'];
             $_SESSION['last_seen'] = $now;
-            $_SESSION['attempts'] = 0;
             $_SESSION['csrf'] = bin2hex(random_bytes(24));
             $_SESSION['cookie_renewed_at'] = $now;
             setcookie(session_name(), session_id(), ['expires' => $now + SESSION_LIFETIME, 'path' => ADMIN_PATH, 'secure' => true, 'httponly' => true, 'samesite' => 'Strict']);
@@ -121,11 +192,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
 
-        $_SESSION['attempts'] = (int) ($_SESSION['attempts'] ?? 0) + 1;
-        if ($_SESSION['attempts'] >= 5) {
-            $_SESSION['blocked_until'] = $now + 60;
-            $_SESSION['attempts'] = 0;
-        }
+        admin_login_rate($ratePath, $realAccountRoot, $rateKey, 'failure', $now);
         usleep(400000);
         $loginError = 'Username atau password tidak cocok.';
     }

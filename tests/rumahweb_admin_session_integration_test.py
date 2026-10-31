@@ -171,6 +171,39 @@ class RumahwebAdminSessionIntegrationTests(unittest.TestCase):
             replay = requests.get(base, headers=self.cookie_header(expiring_id), timeout=5)
             self.assertIn("Masuk ke dashboard", replay.text, "expired session ID must not be revived")
 
+    def test_login_throttle_survives_cookie_reset_and_process_restart(self) -> None:
+        def attempt(base: str, password: str):
+            first = requests.get(base, timeout=5)
+            session_id = first.cookies.get("hollawall_admin")
+            self.assertTrue(session_id)
+            return requests.post(
+                base,
+                headers=self.cookie_header(str(session_id)),
+                data={"username": self.username, "password": password, "csrf": self.csrf_from(first.text)},
+                allow_redirects=False,
+                timeout=5,
+            )
+
+        with self.server() as base:
+            for _ in range(3):
+                response = attempt(base, "wrong-password")
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("Username atau password tidak cocok", response.text)
+
+        with self.server() as base:
+            for _ in range(2):
+                response = attempt(base, "wrong-password")
+                self.assertEqual(response.status_code, 200)
+
+        with self.server() as base:
+            blocked = attempt(base, self.password)
+            self.assertEqual(blocked.status_code, 200)
+            self.assertIn("Terlalu banyak percobaan", blocked.text)
+
+        rate_file = self.account_root / ".hollawall-admin-login-rate.json"
+        self.assertTrue(rate_file.is_file())
+        self.assertEqual(stat.S_IMODE(rate_file.stat().st_mode), 0o600)
+
     def test_session_storage_is_private_and_fails_closed_for_unsafe_paths(self) -> None:
         session_dir = self.account_root / ".hollawall-admin-sessions"
         session_dir.mkdir(mode=0o777)

@@ -1,0 +1,12 @@
+DirectoryIndex index.php
+Options -Indexes
+
+<FilesMatch "^(?:\.|presensi-common\.php)$">
+  Require all denied
+</FilesMatch>
+
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Robots-Tag "noindex, nofollow, noarchive"
+  Header always set Referrer-Policy "no-referrer"
+</IfModule>

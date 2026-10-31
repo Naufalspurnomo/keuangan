@@ -1,0 +1,138 @@
+.project-detail-tabs {
+  display: inline-flex;
+  width: fit-content;
+  padding: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-soft);
+}
+.project-detail-tabs button {
+  min-width: 132px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.project-detail-tabs button[aria-selected="true"] {
+  color: #fff;
+  background: var(--text);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, .16);
+}
+.project-detail-tabs button span {
+  min-width: 22px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: inherit;
+  background: rgba(255, 255, 255, .16);
+  font-size: 10px;
+}
+.project-presensi-panel { display: grid; gap: 18px; }
+.project-detail-back, .project-detail-filter .command-search, .project-detail-filter .command-search input { min-height: 44px; }
+.presensi-summary article { display: grid; align-content: center; gap: 8px; min-height: 90px; padding: 18px; }
+.presensi-summary small { display: block; color: var(--text-secondary); font-size: 10px; font-weight: 800; letter-spacing: .08em; line-height: 1.35; text-transform: uppercase; }
+.presensi-summary strong { display: block; color: var(--text); font-size: 25px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.presensi-summary .presensi-radius { font-size: 18px; }
+.presensi-record-list { display: grid; gap: 14px; }
+.presensi-record {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-soft);
+}
+.presensi-record > header {
+  min-height: 74px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.presensi-avatar {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.presensi-record > header > div:nth-child(2) { min-width: 0; display: grid; gap: 3px; }
+.presensi-record > header strong { color: var(--text); font-size: 14px; }
+.presensi-record > header div span { overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.presensi-status {
+  flex: none;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .025em;
+}
+.presensi-status.active { color: #0e7046; background: #dcf5e7; }
+.presensi-status.completed { color: var(--text-secondary); background: var(--surface-soft); }
+.presensi-evidence-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.presensi-evidence {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 13px;
+  padding: 15px;
+}
+.presensi-evidence + .presensi-evidence { border-left: 1px solid var(--border-subtle); }
+.presensi-evidence img,
+.presensi-photo-placeholder {
+  width: 112px;
+  aspect-ratio: 4 / 3;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--surface-soft);
+}
+.presensi-photo-placeholder { display: grid; place-items: center; color: var(--text-tertiary); }
+.presensi-evidence > div { min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 5px; }
+.presensi-evidence small { color: var(--text-tertiary); font-size: 10px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+.presensi-evidence strong { color: var(--text); font-size: 12px; line-height: 1.4; }
+.presensi-evidence span { display: flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size: 10px; line-height: 1.4; }
+.presensi-evidence.is-empty { opacity: .72; }
+.presensi-record > footer {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 16px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  background: var(--surface-soft);
+  font-size: 11px;
+}
+.presensi-record > footer strong { margin-left: auto; color: var(--text); }
+.presensi-error { border-color: color-mix(in srgb, var(--negative) 26%, var(--border-subtle)); }
+
+@media (max-width: 760px) {
+  .project-detail-tabs { width: 100%; }
+  .project-detail-tabs button { min-width: 0; flex: 1; }
+  .presensi-evidence-grid { grid-template-columns: 1fr; }
+  .presensi-evidence + .presensi-evidence { border-top: 1px solid var(--border-subtle); border-left: 0; }
+}
+
+@media (max-width: 460px) {
+  .presensi-record > header { align-items: flex-start; flex-wrap: wrap; }
+  .presensi-status { margin-left: 0; }
+  .presensi-evidence { grid-template-columns: 92px minmax(0, 1fr); }
+  .presensi-evidence img,
+  .presensi-photo-placeholder { width: 92px; }
+}
