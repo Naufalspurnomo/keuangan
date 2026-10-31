@@ -7,13 +7,13 @@ import { seedFinanceWorkspace } from './financeWorkspace'
 const records = [
   {
     id: 'prs-1', employee_id: 'pegawai-1', employee_name: 'Pegawai 1', project_id: 'p26-griya', project_name: 'Griya Wellness Center',
-    check_in: { id: 'evt-in', occurred_at: '2026-10-31T01:00:00Z', distance_m: 18, accuracy_m: 12, radius_m: 150, photo_url: '/admin/api/presensi-photo.php?id=evt-in' },
-    check_out: { id: 'evt-out', occurred_at: '2026-10-31T09:15:00Z', distance_m: 21, accuracy_m: 9, radius_m: 150, photo_url: '/admin/api/presensi-photo.php?id=evt-out' },
+    check_in: { id: 'evt-in', occurred_at: '2026-10-31T01:00:00Z', latitude: -6.2, longitude: 106.816666, accuracy_m: 12, photo_url: '/admin/api/presensi-photo.php?id=evt-in' },
+    check_out: { id: 'evt-out', occurred_at: '2026-10-31T09:15:00Z', latitude: -7.79558, longitude: 110.36949, accuracy_m: 9, photo_url: '/admin/api/presensi-photo.php?id=evt-out' },
     status: 'completed', duration_minutes: 495,
   },
   {
     id: 'prs-2', employee_id: 'pegawai-2', employee_name: 'Pegawai 2', project_id: 'p26-griya', project_name: 'Griya Wellness Center',
-    check_in: { id: 'evt-in-2', occurred_at: '2026-10-31T02:00:00Z', distance_m: 12, accuracy_m: 8, radius_m: 150, photo_url: '/admin/api/presensi-photo.php?id=evt-in-2' },
+    check_in: { id: 'evt-in-2', occurred_at: '2026-10-31T02:00:00Z', latitude: -7.354647, longitude: 112.782624, accuracy_m: 8, photo_url: '/admin/api/presensi-photo.php?id=evt-in-2' },
     check_out: null, status: 'active', duration_minutes: null,
   },
 ]
@@ -53,7 +53,8 @@ describe('project presensi detail', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Presensi' }))
     await waitFor(() => expect(screen.getByRole('img', { name: 'Selfie check-in Pegawai 1' })).toBeTruthy())
     expect(screen.getByRole('img', { name: 'Selfie check-out Pegawai 1' })).toBeTruthy()
-    expect(screen.getByText('18 m dari titik proyek')).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Buka lokasi Check-in Pegawai 1 di peta' }).getAttribute('href')).toBe('https://www.google.com/maps?q=-6.2%2C106.816666')
+    expect(screen.getByText('-6.200000, 106.816666')).toBeTruthy()
     expect(screen.getByText('Akurasi 12 m')).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Cari presensi'), { target: { value: 'Pegawai 2' } })
     expect(screen.queryByText('Pegawai 1')).toBeNull()
@@ -66,5 +67,20 @@ describe('project presensi detail', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Presensi' }))
     await waitFor(() => expect(screen.getByText('Data presensi belum dapat dimuat.')).toBeTruthy())
     expect(screen.queryByText('Pegawai 1')).toBeNull()
+  })
+
+  it('does not misrepresent legacy evidence without coordinates as Null Island', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        version: 'presensi.admin.v1',
+        records: [{ ...records[1], check_in: { ...records[1].check_in, latitude: null, longitude: null } }],
+      }),
+    } as Response)
+    renderWorkspace()
+    fireEvent.click(screen.getByRole('tab', { name: 'Presensi' }))
+    await waitFor(() => expect(screen.getByText('Lokasi tidak tersedia pada data lama.')).toBeTruthy())
+    expect(screen.queryByText('0.000000, 0.000000')).toBeNull()
+    expect(screen.queryByRole('link', { name: /Buka lokasi/ })).toBeNull()
   })
 })

@@ -28,7 +28,7 @@ header('Cache-Control: no-store');
     <section class="hero" aria-labelledby="page-title">
       <p class="eyebrow">HOLLAWALL CREW</p>
       <h1 id="page-title">Presensi proyek,<br /><em>langsung dari lokasi.</em></h1>
-      <p>Setiap Check-in dan Check-out membutuhkan selfie baru serta lokasi presisi di area proyek.</p>
+      <p>Setiap Check-in dan Check-out membutuhkan selfie baru serta lokasi GPS aktual.</p>
       <div class="trust-row" aria-label="Bukti presensi">
         <span><b>01</b> Kamera langsung</span>
         <span><b>02</b> GPS presisi</span>
@@ -87,7 +87,7 @@ header('Cache-Control: no-store');
           </div>
           <div class="location-card">
             <span class="location-dot" aria-hidden="true"></span>
-            <div><strong id="location-copy">Aktifkan GPS untuk melanjutkan</strong><small id="location-detail">Akurasi dan radius akan diverifikasi server.</small></div>
+            <div><strong id="location-copy">Aktifkan GPS untuk melanjutkan</strong><small id="location-detail">Koordinat dan akurasi GPS akan disimpan bersama selfie.</small></div>
           </div>
         </section>
 

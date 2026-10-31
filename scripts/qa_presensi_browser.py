@@ -49,7 +49,7 @@ return [
     ['id' => 'pegawai-3', 'name' => 'Pegawai 3'],
   ],
   'projects' => [
-    ['id' => '{PROJECT_ID}', 'name' => 'Griya Wellness Center', 'company' => 'Holla', 'location_label' => 'Lokasi uji Hollawall', 'latitude' => {LAT}, 'longitude' => {LON}, 'radius_m' => 150, 'max_accuracy_m' => 75, 'active' => true],
+    ['id' => '{PROJECT_ID}', 'name' => 'Griya Wellness Center', 'company' => 'Holla', 'active' => true],
   ],
 ];
 '''
@@ -236,6 +236,8 @@ def run() -> None:
         results['keyboard_tabs'] = 'PASS'
         assert admin.get_by_text('Selesai', exact=True).count() >= 1
         assert admin.locator('.presensi-evidence img').count() == 2
+        assert admin.get_by_role('link', name='Buka lokasi Check-in Pegawai 1 di peta').get_attribute('href') == 'https://www.google.com/maps?q=-7.354647%2C112.782624'
+        assert admin.get_by_text('-7.354647, 112.782624', exact=True).count() == 2
         for index in range(2):
             assert admin.locator('.presensi-evidence img').nth(index).evaluate('(img) => img.complete && img.naturalWidth > 0')
         admin.screenshot(path=str(OUT / 'dashboard-desktop-presensi.png'), full_page=True)

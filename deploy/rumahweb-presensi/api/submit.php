@@ -36,15 +36,9 @@ if (!in_array($action, ['check_in', 'check_out'], true)) {
     presensi_error(422, 'action_invalid', 'Jenis presensi tidak valid.');
 }
 if ($latitude === false || $longitude === false || $accuracy === false
+    || !is_finite((float) $latitude) || !is_finite((float) $longitude) || !is_finite((float) $accuracy)
     || $latitude < -90 || $latitude > 90 || $longitude < -180 || $longitude > 180 || $accuracy <= 0) {
     presensi_error(422, 'location_required', 'Lokasi presisi wajib diaktifkan.');
-}
-if ($accuracy > (float) $project['max_accuracy_m']) {
-    presensi_error(422, 'location_inaccurate', 'Akurasi lokasi belum cukup. Pindah ke area terbuka dan coba lagi.');
-}
-$distance = presensi_haversine((float) $latitude, (float) $longitude, (float) $project['latitude'], (float) $project['longitude']);
-if ($distance + (float) $accuracy > (float) $project['radius_m']) {
-    presensi_error(422, 'outside_geofence', 'Lokasi beserta akurasinya berada di luar radius proyek.');
 }
 $selfie = presensi_validate_selfie($_FILES['selfie'] ?? []);
 $paths = presensi_store_paths();
@@ -83,9 +77,9 @@ try {
         'project_id' => $project['id'],
         'project_name' => $project['name'],
         'occurred_at' => gmdate('c'),
+        'latitude' => round((float) $latitude, 6),
+        'longitude' => round((float) $longitude, 6),
         'accuracy_m' => round((float) $accuracy, 1),
-        'distance_m' => round($distance, 1),
-        'radius_m' => $project['radius_m'],
         'photo_name' => $photoName,
         'photo_mime' => $selfie['mime'],
         'photo_width' => $selfie['width'],
@@ -121,7 +115,6 @@ presensi_json_response(201, [
         'employee_name' => $event['employee_name'],
         'project_name' => $event['project_name'],
         'occurred_at' => $event['occurred_at'],
-        'distance_m' => $event['distance_m'],
         'accuracy_m' => $event['accuracy_m'],
     ],
     'csrf' => (string) $_SESSION['presensi_csrf'],

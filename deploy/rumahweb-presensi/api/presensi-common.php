@@ -142,27 +142,13 @@ function presensi_config(): array
         if ($row['active'] !== true) {
             continue;
         }
-        $latitude = filter_var($row['latitude'] ?? null, FILTER_VALIDATE_FLOAT);
-        $longitude = filter_var($row['longitude'] ?? null, FILTER_VALIDATE_FLOAT);
-        $radius = filter_var($row['radius_m'] ?? null, FILTER_VALIDATE_FLOAT);
-        $accuracy = filter_var($row['max_accuracy_m'] ?? null, FILTER_VALIDATE_FLOAT);
-        if (trim((string) ($row['company'] ?? '')) === ''
-            || trim((string) ($row['location_label'] ?? '')) === ''
-            || $latitude === false || $latitude < -90 || $latitude > 90
-            || $longitude === false || $longitude < -180 || $longitude > 180
-            || $radius === false || $radius < 50 || $radius > 5000
-            || $accuracy === false || $accuracy < 1 || $accuracy > 200) {
+        if (trim((string) ($row['company'] ?? '')) === '') {
             presensi_error(503, 'configuration_invalid', 'Konfigurasi proyek tidak valid.');
         }
         $projects[] = [
             'id' => $projectId,
             'name' => $projectName,
             'company' => trim((string) $row['company']),
-            'location_label' => trim((string) $row['location_label']),
-            'latitude' => (float) $latitude,
-            'longitude' => (float) $longitude,
-            'radius_m' => (float) $radius,
-            'max_accuracy_m' => (float) $accuracy,
         ];
     }
     if (count(array_unique($allProjectIds)) !== count($allProjectIds)
@@ -303,15 +289,6 @@ function presensi_unlock($lock): void
     fclose($lock);
 }
 
-function presensi_haversine(float $lat1, float $lon1, float $lat2, float $lon2): float
-{
-    $earth = 6_371_000.0;
-    $dLat = deg2rad($lat2 - $lat1);
-    $dLon = deg2rad($lon2 - $lon1);
-    $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLon / 2) ** 2;
-    $a = max(0.0, min(1.0, $a));
-    return $earth * 2 * atan2(sqrt($a), sqrt(1 - $a));
-}
 
 function presensi_rate_limit(array $events, string $employeeId, int $now): void
 {
@@ -566,12 +543,14 @@ function presensi_build_records(array $events, ?string $projectId = null): array
                 'check_out' => null,
             ];
         }
+        $latitude = filter_var($event['latitude'] ?? null, FILTER_VALIDATE_FLOAT);
+        $longitude = filter_var($event['longitude'] ?? null, FILTER_VALIDATE_FLOAT);
         $evidence = [
             'id' => (string) ($event['id'] ?? ''),
             'occurred_at' => (string) ($event['occurred_at'] ?? ''),
+            'latitude' => $latitude === false ? null : (float) $latitude,
+            'longitude' => $longitude === false ? null : (float) $longitude,
             'accuracy_m' => (float) ($event['accuracy_m'] ?? 0),
-            'distance_m' => (float) ($event['distance_m'] ?? 0),
-            'radius_m' => (float) ($event['radius_m'] ?? 0),
             'photo_url' => PRESENSI_ADMIN_PATH . 'api/presensi-photo.php?id=' . rawurlencode((string) ($event['id'] ?? '')),
         ];
         if (($event['action'] ?? null) === 'check_in') {

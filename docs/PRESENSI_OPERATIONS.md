@@ -2,7 +2,7 @@
 
 ## Boundary
 
-`/absen/presensi/` is a demo workflow. The employee dropdown does not authenticate an employee and browser camera/GPS cannot provide cryptographic device attestation. Do not treat these records as authoritative payroll evidence. The server still enforces fresh one-time proof submission, geofence, accuracy, project pairing, sequence, server time, and private photo storage.
+`/absen/presensi/` is a demo workflow. The employee dropdown does not authenticate an employee and browser camera/GPS cannot provide cryptographic device attestation. Do not treat these records as authoritative payroll evidence. The server still enforces fresh one-time proof submission, valid GPS coordinates, project pairing, sequence, server time, and private evidence storage.
 
 ## Prerequisites
 
@@ -14,17 +14,16 @@
   - `.hollawall-presensi-sessions` mode `0700`;
   - existing `.hollawall-admin-sessions` mode `0700`.
 - `upload_max_filesize >= 4M`, `post_max_size >= 5M`; application limit remains lower.
-- Owner-verified latitude, longitude, location label, radius, and maximum accuracy for every active project. Never infer or copy an unverified map result.
+- The active project IDs, names, and companies from the dashboard source of truth.
 
 ## Private configuration
 
 1. Copy `docs/PRESENSI_CONFIG.example.php` to `/home/<hosting-user>/.hollawall-presensi.php`.
-2. Replace every `null` coordinate and `VERIFIED_LABEL_REQUIRED` value with owner-verified data.
-3. Keep the exact demo employee IDs/names and unique project IDs/names.
-4. Run `chmod 0600 /home/<hosting-user>/.hollawall-presensi.php`.
-5. Do not place the config in `public_html`, release archives, Git, logs, or screenshots.
+2. Keep the exact demo employee IDs/names and unique project IDs/names.
+3. Run `chmod 0600 /home/<hosting-user>/.hollawall-presensi.php`.
+4. Do not place the config in `public_html`, release archives, Git, logs, or screenshots.
 
-Missing, malformed, duplicate, symlinked, wrong-owner, wrong-mode, or coordinate-incomplete configuration fails closed with HTTP 503.
+Missing, malformed, duplicate, symlinked, wrong-owner, or wrong-mode configuration fails closed with HTTP 503.
 
 ## Build and local verification
 
@@ -72,13 +71,13 @@ python scripts/deploy_rumahweb_presensi_atomic.py \
 ## Live smoke acceptance
 
 - Anonymous `/absen/presensi/` returns 200 over HTTPS.
-- Bootstrap returns exactly Pegawai 1/2/3 and configured active projects, without center coordinates.
+- Bootstrap returns exactly Pegawai 1/2/3 and configured active projects, without attendance coordinates.
 - Camera denial and GPS denial keep submit disabled.
-- In-fence Check-in writes exactly one event and one private JPEG.
+- Check-in from any valid GPS location writes exactly one event containing the captured coordinates, accuracy, and one private JPEG.
 - Duplicate Check-in and mismatched-project Check-out return 409.
 - Check-out creates the matching second event.
 - Anonymous admin data/photo endpoints return 401.
-- Authenticated project Presensi tab shows the pair and both photos; Transaksi remains default.
+- Authenticated project Presensi tab shows both photos, captured coordinates, accuracy, and map links; Transaksi remains default.
 - Desktop and 320/390 px mobile have no overflow, failed requests, console errors, or targets below 44 px.
 - Public artifact hashes match the candidate manifest.
 

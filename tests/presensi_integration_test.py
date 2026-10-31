@@ -62,8 +62,8 @@ class PresensiIntegrationTests(unittest.TestCase):
         )
         self.config.chmod(0o600)
         self.presensi_config = self.account_root / ".hollawall-presensi.php"
-        project = "['id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','location_label'=>'Lokasi uji','latitude'=>-7.3546465,'longitude'=>112.7826242,'radius_m'=>150,'max_accuracy_m'=>75,'active'=>true]"
-        other = "['id'=>'p26-fajar','name'=>'Fajar Distribution Hub','company'=>'Texturin Surabaya','location_label'=>'Lokasi uji','latitude'=>-7.3546465,'longitude'=>112.7826242,'radius_m'=>150,'max_accuracy_m'=>75,'active'=>true]"
+        project = "['id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','active'=>true]"
+        other = "['id'=>'p26-fajar','name'=>'Fajar Distribution Hub','company'=>'Texturin Surabaya','active'=>true]"
         self.presensi_config.write_text("<?php return ['retention_days'=>90,'employees'=>[['id'=>'pegawai-1','name'=>'Pegawai 1'],['id'=>'pegawai-2','name'=>'Pegawai 2'],['id'=>'pegawai-3','name'=>'Pegawai 3']],'projects'=>[" + project + "," + other + "]];", encoding="utf-8")
         self.presensi_config.chmod(0o600)
 
@@ -147,27 +147,20 @@ class PresensiIntegrationTests(unittest.TestCase):
         self.assertTrue(authenticated)
         return {"Cookie": f"hollawall_admin={authenticated}"}
 
-    def test_geofence_sequence_private_photo_and_admin_readback(self) -> None:
+    def test_location_sequence_private_photo_and_admin_readback(self) -> None:
         with self.server() as origin:
             bootstrap, public_cookie = self.public_bootstrap(origin)
             self.assertEqual([row["name"] for row in bootstrap["employees"]], ["Pegawai 1", "Pegawai 2", "Pegawai 3"])
             self.assertIn("p26-griya", [row["id"] for row in bootstrap["projects"]])
+            self.assertEqual(set(bootstrap["projects"][0]), {"id", "name", "company"})
             csrf = bootstrap["csrf"]
 
             no_checkin = self.submit(origin, public_cookie, csrf, action="check_out")
             self.assertEqual(no_checkin.status_code, 409)
             self.assertEqual(no_checkin.json()["error"]["code"], "check_in_required")
 
-            inaccurate = self.submit(origin, public_cookie, csrf, action="check_in", accuracy=100)
-            self.assertEqual(inaccurate.status_code, 422)
-            self.assertEqual(inaccurate.json()["error"]["code"], "location_inaccurate")
-
-            outside = self.submit(origin, public_cookie, csrf, action="check_in", latitude=-7.25, longitude=112.70)
-            self.assertEqual(outside.status_code, 422)
-            self.assertEqual(outside.json()["error"]["code"], "outside_geofence")
-
             used_capture_token = self.capture_token
-            checked_in = self.submit(origin, public_cookie, csrf, action="check_in")
+            checked_in = self.submit(origin, public_cookie, csrf, action="check_in", latitude=-6.2, longitude=106.816666, accuracy=100)
             self.assertEqual(checked_in.status_code, 201, checked_in.text)
             first = checked_in.json()
             self.assertEqual(first["record"]["action"], "check_in")
@@ -185,7 +178,7 @@ class PresensiIntegrationTests(unittest.TestCase):
             self.assertEqual(wrong_project.status_code, 409)
             self.assertEqual(wrong_project.json()["error"]["code"], "project_mismatch")
 
-            checked_out = self.submit(origin, public_cookie, csrf, action="check_out")
+            checked_out = self.submit(origin, public_cookie, csrf, action="check_out", latitude=-7.79558, longitude=110.36949, accuracy=35)
             self.assertEqual(checked_out.status_code, 201, checked_out.text)
             second = checked_out.json()
             self.assertEqual(second["record"]["action"], "check_out")
@@ -201,6 +194,13 @@ class PresensiIntegrationTests(unittest.TestCase):
             self.assertEqual(records[0]["employee_name"], "Pegawai 1")
             self.assertEqual(records[0]["status"], "completed")
             self.assertIsNotNone(records[0]["check_out"])
+            self.assertEqual(records[0]["check_in"]["latitude"], -6.2)
+            self.assertEqual(records[0]["check_in"]["longitude"], 106.816666)
+            self.assertEqual(records[0]["check_in"]["accuracy_m"], 100)
+            self.assertEqual(records[0]["check_out"]["latitude"], -7.79558)
+            self.assertEqual(records[0]["check_out"]["longitude"], 110.36949)
+            self.assertNotIn("distance_m", records[0]["check_in"])
+            self.assertNotIn("radius_m", records[0]["check_in"])
 
             photo_url = records[0]["check_in"]["photo_url"]
             self.assertEqual(requests.get(origin + photo_url, timeout=5).status_code, 401)
@@ -214,8 +214,10 @@ class PresensiIntegrationTests(unittest.TestCase):
             store = self.account_root / ".hollawall-presensi"
             self.assertTrue((store / "events.json").is_file())
             stored = (store / "events.json").read_text(encoding="utf-8")
-            self.assertNotIn('"latitude"', stored)
-            self.assertNotIn('"longitude"', stored)
+            self.assertIn('"latitude": -6.2', stored)
+            self.assertIn('"longitude": 106.816666', stored)
+            self.assertNotIn('"distance_m"', stored)
+            self.assertNotIn('"radius_m"', stored)
             self.assertNotIn('"ip_hash"', stored)
             self.assertTrue((store / "photos").is_dir())
             self.assertFalse((self.web_root / ".hollawall-presensi").exists())
@@ -259,15 +261,6 @@ class PresensiIntegrationTests(unittest.TestCase):
             self.assertEqual(response.status_code, 401, response.text)
             self.assertEqual(response.json()["error"]["code"], "authentication_required")
 
-    def test_haversine_is_finite_for_antipodal_coordinates(self) -> None:
-        common = ROOT / "deploy" / "rumahweb-presensi" / "api" / "presensi-common.php"
-        script = (
-            f"require {str(common)!r}; "
-            "$distance=presensi_haversine(55.91330994525936,-25.736136154921923,-55.913309942990246,154.26386383522012); "
-            "if (!is_finite($distance)) { exit(9); }"
-        )
-        result = subprocess.run(["php", "-r", script], capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_rejects_black_selfie_without_writing_evidence(self) -> None:
         with self.server() as origin:
@@ -278,6 +271,20 @@ class PresensiIntegrationTests(unittest.TestCase):
             store = self.account_root / ".hollawall-presensi"
             self.assertFalse((store / "events.json").exists())
             self.assertEqual(list((store / "photos").glob("*")), [])
+
+    def test_legacy_event_without_coordinates_does_not_become_null_island(self) -> None:
+        common = ROOT / "deploy" / "rumahweb-presensi" / "api" / "presensi-common.php"
+        script = (
+            f"require {str(common)!r}; "
+            "$events=[['id'=>'evt-legacy','pair_id'=>'prs-legacy','action'=>'check_in',"
+            "'employee_id'=>'pegawai-1','employee_name'=>'Pegawai 1','project_id'=>'p26-griya',"
+            "'project_name'=>'Griya Wellness Center','occurred_at'=>'2026-10-30T00:00:00+00:00',"
+            "'accuracy_m'=>12]]; echo json_encode(presensi_build_records($events));"
+        )
+        result = subprocess.run(["php", "-r", script], capture_output=True, text=True, check=True)
+        evidence = json.loads(result.stdout)[0]["check_in"]
+        self.assertIsNone(evidence["latitude"])
+        self.assertIsNone(evidence["longitude"])
 
     def test_event_commit_failure_removes_photo_and_temporary_file(self) -> None:
         with self.server(fault="event_rename") as origin:
@@ -389,15 +396,15 @@ class PresensiIntegrationTests(unittest.TestCase):
             self.assertEqual(symlinked.json()["error"]["code"], "configuration_insecure")
 
     def test_all_required_employees_plus_duplicate_fail_closed(self) -> None:
-        duplicate = "<?php return ['retention_days'=>90,'employees'=>[['id'=>'pegawai-1','name'=>'Pegawai 1'],['id'=>'pegawai-2','name'=>'Pegawai 2'],['id'=>'pegawai-3','name'=>'Pegawai 3'],['id'=>'pegawai-1','name'=>'Pegawai 1']],'projects'=>[['id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','location_label'=>'Lokasi uji','latitude'=>-7.3546465,'longitude'=>112.7826242,'radius_m'=>150,'max_accuracy_m'=>75,'active'=>true]]];"
+        duplicate = "<?php return ['retention_days'=>90,'employees'=>[['id'=>'pegawai-1','name'=>'Pegawai 1'],['id'=>'pegawai-2','name'=>'Pegawai 2'],['id'=>'pegawai-3','name'=>'Pegawai 3'],['id'=>'pegawai-1','name'=>'Pegawai 1']],'projects'=>[['id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','active'=>true]]];"
         self.assert_config_rejected(duplicate)
 
     def test_active_inactive_duplicate_project_identity_fails_closed(self) -> None:
-        duplicate = "<?php return ['retention_days'=>90,'employees'=>[['id'=>'pegawai-1','name'=>'Pegawai 1'],['id'=>'pegawai-2','name'=>'Pegawai 2'],['id'=>'pegawai-3','name'=>'Pegawai 3']],'projects'=>[['id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','location_label'=>'Lokasi uji','latitude'=>-7.3546465,'longitude'=>112.7826242,'radius_m'=>150,'max_accuracy_m'=>75,'active'=>true],['id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','location_label'=>'Arsip','latitude'=>null,'longitude'=>null,'radius_m'=>null,'max_accuracy_m'=>null,'active'=>false]]];"
+        duplicate = "<?php return ['retention_days'=>90,'employees'=>[['id'=>'pegawai-1','name'=>'Pegawai 1'],['id'=>'pegawai-2','name'=>'Pegawai 2'],['id'=>'pegawai-3','name'=>'Pegawai 3']],'projects'=>[['id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','active'=>true],['id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','active'=>false]]];"
         self.assert_config_rejected(duplicate)
 
     def test_inactive_duplicate_project_names_fail_closed(self) -> None:
-        duplicate = "<?php return ['retention_days'=>90,'employees'=>[['id'=>'pegawai-1','name'=>'Pegawai 1'],['id'=>'pegawai-2','name'=>'Pegawai 2'],['id'=>'pegawai-3','name'=>'Pegawai 3']],'projects'=>[['id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','location_label'=>'Lokasi uji','latitude'=>-7.3546465,'longitude'=>112.7826242,'radius_m'=>150,'max_accuracy_m'=>75,'active'=>true],['id'=>'p26-old-a','name'=>'Arsip Sama','active'=>false],['id'=>'p26-old-b','name'=>'arsip sama','active'=>false]]];"
+        duplicate = "<?php return ['retention_days'=>90,'employees'=>[['id'=>'pegawai-1','name'=>'Pegawai 1'],['id'=>'pegawai-2','name'=>'Pegawai 2'],['id'=>'pegawai-3','name'=>'Pegawai 3']],'projects'=>[['id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','active'=>true],['id'=>'p26-old-a','name'=>'Arsip Sama','active'=>false],['id'=>'p26-old-b','name'=>'arsip sama','active'=>false]]];"
         self.assert_config_rejected(duplicate)
 
 

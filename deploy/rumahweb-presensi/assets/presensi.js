@@ -76,7 +76,7 @@
     locationState.textContent = 'Belum siap'
     locationState.className = 'state-pill'
     locationCopy.textContent = 'Aktifkan GPS untuk melanjutkan'
-    locationDetail.textContent = 'Akurasi dan radius akan diverifikasi server.'
+    locationDetail.textContent = 'Koordinat dan akurasi GPS akan disimpan bersama selfie.'
     updateSubmit()
   }
 
@@ -104,9 +104,6 @@
       const option = document.createElement('option')
       option.value = row.id
       option.textContent = `${row.name} · ${row.company}`
-      option.dataset.location = row.location_label
-      option.dataset.radius = String(row.radius_m)
-      option.dataset.accuracy = String(row.max_accuracy_m)
       project.append(option)
     }
     employee.disabled = false
@@ -226,9 +223,8 @@
       cameraState.className = 'state-pill ready'
       locationState.textContent = 'GPS siap'
       locationState.className = 'state-pill ready'
-      const option = project.selectedOptions[0]
-      locationCopy.textContent = option?.dataset.location || 'Lokasi proyek'
-      locationDetail.textContent = `Akurasi ±${Math.round(position.accuracy)} m · batas server ${option?.dataset.accuracy || '75'} m · radius ${option?.dataset.radius || '150'} m`
+      locationCopy.textContent = `${position.latitude.toFixed(6)}, ${position.longitude.toFixed(6)}`
+      locationDetail.textContent = `Akurasi ±${Math.round(position.accuracy)} m · lokasi akan tersimpan bersama selfie.`
     } catch (error) {
       showNotice(error instanceof Error ? error.message : 'Bukti presensi belum lengkap.')
       selfieBlob = null
@@ -268,7 +264,7 @@
       if (!response.ok) throw new Error(payload?.error?.message || 'Presensi belum dapat dikirim.')
       csrf = payload.csrf
       captureToken = payload.capture_token
-      showNotice(`${payload.record.employee_name} berhasil ${payload.record.action === 'check_in' ? 'Check-in' : 'Check-out'} di ${payload.record.project_name}. Jarak ${Math.round(payload.record.distance_m)} m, akurasi ${Math.round(payload.record.accuracy_m)} m.`, 'success')
+      showNotice(`${payload.record.employee_name} berhasil ${payload.record.action === 'check_in' ? 'Check-in' : 'Check-out'} di ${payload.record.project_name}. Lokasi tersimpan dengan akurasi ±${Math.round(payload.record.accuracy_m)} m.`, 'success')
       await loadStatus(true)
     } catch (error) {
       showNotice(error instanceof Error ? error.message : 'Presensi belum dapat dikirim.')

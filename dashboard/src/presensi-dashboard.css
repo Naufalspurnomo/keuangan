@@ -41,7 +41,7 @@
 .presensi-summary article { display: grid; align-content: center; gap: 8px; min-height: 90px; padding: 18px; }
 .presensi-summary small { display: block; color: var(--text-secondary); font-size: 10px; font-weight: 800; letter-spacing: .08em; line-height: 1.35; text-transform: uppercase; }
 .presensi-summary strong { display: block; color: var(--text); font-size: 25px; line-height: 1.1; font-variant-numeric: tabular-nums; }
-.presensi-summary .presensi-radius { font-size: 18px; }
+.presensi-summary .presensi-location-summary { font-size: 18px; }
 .presensi-record-list { display: grid; gap: 14px; }
 .presensi-record {
   overflow: hidden;
@@ -107,6 +107,7 @@
 .presensi-evidence small { color: var(--text-tertiary); font-size: 10px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
 .presensi-evidence strong { color: var(--text); font-size: 12px; line-height: 1.4; }
 .presensi-evidence span { display: flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size: 10px; line-height: 1.4; }
+.presensi-evidence a { width: fit-content; display: inline-flex; align-items: center; gap: 4px; color: #096b70; font-size: 10px; font-weight: 800; line-height: 1.4; text-decoration: underline; text-underline-offset: 2px; }
 .presensi-evidence.is-empty { opacity: .72; }
 .presensi-record > footer {
   min-height: 42px;

@@ -11,8 +11,8 @@ interface PresensiEvidence {
   id: string
   occurred_at: string
   accuracy_m: number
-  distance_m: number
-  radius_m: number
+  latitude: number | null
+  longitude: number | null
   photo_url: string
 }
 
@@ -43,13 +43,20 @@ function durationLabel(minutes: number | null) {
 
 function EvidenceCard({ label, employee, evidence }: { label: string; employee: string; evidence: PresensiEvidence | null }) {
   if (!evidence) return <article className="presensi-evidence is-empty"><div className="presensi-photo-placeholder"><Clock3 size={24} /></div><div><small>{label}</small><strong>Belum dilakukan</strong><span>Menunggu selfie dan lokasi baru.</span></div></article>
+  const hasLocation = typeof evidence.latitude === 'number' && Number.isFinite(evidence.latitude)
+    && typeof evidence.longitude === 'number' && Number.isFinite(evidence.longitude)
+  const coordinate = hasLocation ? `${evidence.latitude},${evidence.longitude}` : ''
+  const locationLabel = hasLocation ? `${evidence.latitude!.toFixed(6)}, ${evidence.longitude!.toFixed(6)}` : ''
   return <article className="presensi-evidence">
     <img src={evidence.photo_url} alt={`Selfie ${label.toLocaleLowerCase('id-ID')} ${employee}`} loading="lazy" />
     <div>
       <small>{label}</small>
       <strong>{DATE_TIME.format(new Date(evidence.occurred_at))} WIB</strong>
-      <span><LocateFixed size={13} /> {Math.round(evidence.distance_m)} m dari titik proyek</span>
-      <span>Akurasi {Math.round(evidence.accuracy_m)} m</span>
+      {hasLocation ? <>
+        <span>{locationLabel}</span>
+        <span>Akurasi {Math.round(evidence.accuracy_m)} m</span>
+        <a href={`https://www.google.com/maps?q=${encodeURIComponent(coordinate)}`} target="_blank" rel="noreferrer" aria-label={`Buka lokasi ${label} ${employee} di peta`}><LocateFixed size={13} /> Buka peta</a>
+      </> : <span>Lokasi tidak tersedia pada data lama.</span>}
     </div>
   </article>
 }
@@ -85,7 +92,6 @@ function PresensiPanel({ project }: { project: FinanceProject }) {
   }, [query, records])
   const active = records.filter((record) => record.status === 'active').length
   const completed = records.length - active
-  const radius = records[0]?.check_in.radius_m ?? 0
 
   if (error) return <div className="project-detail-empty presensi-error" role="alert"><strong>Data presensi belum dapat dimuat.</strong><span>Coba muat ulang halaman. Data lama tidak ditampilkan.</span></div>
   if (loading) return <div className="project-detail-empty"><strong>Memuat data presensi…</strong><span>Mengambil bukti terbaru dari server.</span></div>
@@ -95,7 +101,7 @@ function PresensiPanel({ project }: { project: FinanceProject }) {
       <article><small>Total presensi</small><strong>{records.length}</strong></article>
       <article><small>Sedang bekerja</small><strong className="positive">{active}</strong></article>
       <article><small>Selesai</small><strong>{completed}</strong></article>
-      <article><small>Radius proyek</small><strong className="presensi-radius">{radius ? `≤ ${Math.round(radius)} m` : 'Belum ada data'}</strong></article>
+      <article><small>Bukti lokasi</small><strong className="presensi-location-summary">GPS per selfie</strong></article>
     </section>
     <section className="workspace-filters project-detail-filter" aria-label="Cari presensi proyek">
       <label className="command-search"><Search size={17} /><input aria-label="Cari presensi" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari nama pegawai" /></label>
