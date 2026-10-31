@@ -72,7 +72,7 @@ describe('demo finance workspace', () => {
     const workspace = seedFinanceWorkspace()
     const project = workspace.projects.find((item) => item.company === 'Texturin Bali')!
     const clean = validateTransactionInput({
-      date: '2026-10-01', direction: 'expense', amount: 500_000, scope: 'project', wallet: 'CV HB', company: 'Holla',
+      date: project.started_on, direction: 'expense', amount: 500_000, scope: 'project', wallet: 'CV HB', company: 'Holla',
       project_id: project.id, office_category: null, notes: 'Material',
     }, workspace)
     expect(clean.wallet).toBe('TX Bali')
@@ -112,6 +112,32 @@ describe('demo finance workspace', () => {
     })).toThrow('belum dapat memiliki transaksi')
   })
 
+  it('cannot complete a project before its latest transaction', () => {
+    const created = createProject(seedFinanceWorkspace(), newProject({ name: 'Batas Selesai' }))
+    const project = created.projects.at(-1)!
+    const withTransaction = createTransaction(created, {
+      date: '2026-06-10', direction: 'income', amount: 500_000, scope: 'project', wallet: project.wallet,
+      company: project.company, project_id: project.id, office_category: null, notes: 'Pembayaran terakhir',
+    })
+
+    expect(() => updateProject(withTransaction, project.id, {
+      ...project, status: 'completed', completed_on: '2026-06-09',
+    })).toThrow('Tanggal selesai tidak boleh sebelum transaksi terakhir.')
+    expect(() => updateProject(withTransaction, project.id, {
+      ...project, status: 'completed', completed_on: '2026-06-10',
+    })).not.toThrow()
+  })
+
+  it('rejects project transactions after completion', () => {
+    const workspace = seedFinanceWorkspace()
+    const project = workspace.projects.find((item) => item.status === 'completed')!
+
+    expect(() => createTransaction(workspace, {
+      date: '2026-12-31', direction: 'income', amount: 500_000, scope: 'project', wallet: project.wallet,
+      company: project.company, project_id: project.id, office_category: null, notes: 'Pembayaran terlambat',
+    })).toThrow('Tanggal transaksi tidak boleh setelah proyek selesai.')
+  })
+
   it('blocks deletion of a project that still has financial records', () => {
     const workspace = seedFinanceWorkspace()
     const linked = workspace.projects.find((project) => workspace.transactions.some((transaction) => transaction.project_id === project.id))!
@@ -146,6 +172,11 @@ describe('demo finance workspace', () => {
     expect(isFinanceWorkspace({ ...workspace, transactions: [{ ...workspace.transactions[0], project_id: 'missing-project' }] })).toBe(false)
     expect(isFinanceWorkspace({ ...workspace, transactions: [{ ...workspace.transactions[0], wallet: 'TX Bali' }] })).toBe(false)
     expect(isFinanceWorkspace({ ...workspace, transactions: [{ ...workspace.transactions[0], company: 'Texturin Bali' }] })).toBe(false)
+    const completed = workspace.projects.find((project) => project.status === 'completed')!
+    const completedTransaction = workspace.transactions.find((transaction) => transaction.project_id === completed.id)!
+    expect(isFinanceWorkspace({ ...workspace, transactions: workspace.transactions.map((transaction) => transaction.id === completedTransaction.id
+      ? { ...transaction, date: '2026-12-31' }
+      : transaction) })).toBe(false)
     expect(isFinanceWorkspace({ ...workspace, debts: [{ ...workspace.debts[0], repaid: workspace.debts[0].amount + 1 }] })).toBe(false)
     expect(isFinanceWorkspace({ ...workspace, transactions: [{ ...workspace.transactions[0], amount: Number.MAX_SAFE_INTEGER + 1 }] })).toBe(false)
   })

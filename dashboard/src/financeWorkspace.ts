@@ -166,6 +166,7 @@ export function updateProject(workspace: FinanceWorkspace, id: string, input: Pr
   const linkedTransactions = workspace.transactions.filter((row) => row.project_id === id)
   if (clean.status === 'planned' && linkedTransactions.length) throw new FinanceValidationError('Proyek yang sudah memiliki transaksi tidak dapat berstatus Direncanakan.')
   if (linkedTransactions.some((row) => row.date < clean.started_on)) throw new FinanceValidationError('Tanggal mulai proyek tidak boleh setelah transaksi pertamanya.')
+  if (clean.completed_on && linkedTransactions.some((row) => row.date > clean.completed_on!)) throw new FinanceValidationError('Tanggal selesai tidak boleh sebelum transaksi terakhir.')
   const nextProject = { ...current, ...clean, wallet: COMPANY_WALLET[clean.company], updated_at: nowIso() }
   const transactions = workspace.transactions.map((transaction) => transaction.project_id === id
     ? { ...transaction, wallet: nextProject.wallet, company: nextProject.company, updated_at: nowIso() }
@@ -191,6 +192,7 @@ export function validateTransactionInput(input: TransactionInput, workspace: Fin
     if (!project) throw new FinanceValidationError('Proyek wajib dipilih.')
     if (project.status === 'planned') throw new FinanceValidationError('Proyek Direncanakan belum dapat memiliki transaksi.')
     if (date < project.started_on) throw new FinanceValidationError('Tanggal transaksi tidak boleh sebelum proyek dimulai.')
+    if (project.completed_on && date > project.completed_on) throw new FinanceValidationError('Tanggal transaksi tidak boleh setelah proyek selesai.')
     return { ...input, date, amount, notes, wallet: project.wallet, company: project.company, project_id: project.id, office_category: null }
   }
   if (input.scope !== 'office') throw new FinanceValidationError('Aktivitas transaksi tidak valid.')
@@ -310,7 +312,7 @@ export function isFinanceWorkspace(value: unknown): value is FinanceWorkspace {
     if (!isRecord(row) || typeof row.id !== 'string' || transactionIds.has(row.id) || !validIsoDate(row.date) || !['income', 'expense'].includes(String(row.direction)) || !validMoney(row.amount, false) || !['project', 'office'].includes(String(row.scope)) || !WALLETS.includes(row.wallet as WalletId) || typeof row.notes !== 'string' || !validTimestamp(row.created_at) || !validTimestamp(row.updated_at)) return false
     const linkedProject = typeof row.project_id === 'string' ? projectMap.get(row.project_id) : undefined
     const rowDate = String(row.date)
-    if (row.scope === 'project' && (!linkedProject || linkedProject.status === 'planned' || rowDate < String(linkedProject.started_on) || row.company !== linkedProject.company || row.wallet !== linkedProject.wallet || row.office_category !== null)) return false
+    if (row.scope === 'project' && (!linkedProject || linkedProject.status === 'planned' || rowDate < String(linkedProject.started_on) || (linkedProject.completed_on !== null && rowDate > String(linkedProject.completed_on)) || row.company !== linkedProject.company || row.wallet !== linkedProject.wallet || row.office_category !== null)) return false
     if (row.scope === 'office' && (row.direction !== 'expense' || row.company !== null || row.project_id !== null || !OFFICE_CATEGORIES.includes(row.office_category as OfficeCategory))) return false
     transactionIds.add(row.id)
   }

@@ -187,11 +187,12 @@ export default function App() {
   const pushRoute = (page: Page, projectId?: string) => {
     if (active === page && projectFilter === projectId) return
     window.history.replaceState({ ...window.history.state, page: active, projectId: projectFilter, scrollY: window.scrollY }, '', window.location.href)
-    window.history.pushState({ page, projectId, scrollY: 0 }, '', routeHash(page, projectId))
+    window.history.pushState({ page, projectId, scrollY: 0, fromPage: active }, '', routeHash(page, projectId))
     setRoute({ page, projectId })
     window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'auto' }))
   }
   const navigate = (page: Page) => pushRoute(page)
+  const backToProjects = () => window.history.state?.fromPage === 'projects' ? window.history.back() : pushRoute('projects')
   const closeMenu = () => { setMenuOpen(false); if (mobile) window.requestAnimationFrame(() => menuButtonRef.current?.focus()) }
   const commit = (action: () => void, success: string) => { action(); setNotice(success) }
   const safe = (action: () => void, success: string) => { try { commit(action, success) } catch (error) { setNotice(error instanceof Error ? error.message : 'Tindakan belum dapat diproses.') } }
@@ -227,7 +228,7 @@ export default function App() {
     ? <OverviewWorkspace workspace={finance.workspace} onAddTransaction={() => setModal({ kind: 'transaction' })} onAddProject={() => setModal({ kind: 'project' })} onAddOffice={() => setModal({ kind: 'transaction', scope: 'office' })} />
     : active === 'cashflow' ? <CashflowWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
       : active === 'wallets' ? <WalletWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
-        : active === 'projects' && selectedProject ? <ProjectTransactionsWorkspace workspace={finance.workspace} project={selectedProject} onBack={() => pushRoute('projects')} onAdd={(project) => setModal({ kind: 'transaction', projectId: project.id })} onEdit={(value) => setModal({ kind: 'transaction', value, projectId: selectedProject.id })} onDelete={(value) => confirmDelete('transaksi', () => finance.removeTransaction(value.id))} />
+        : active === 'projects' && selectedProject ? <ProjectTransactionsWorkspace workspace={finance.workspace} project={selectedProject} onBack={backToProjects} onAdd={(project) => setModal({ kind: 'transaction', projectId: project.id })} onEdit={(value) => setModal({ kind: 'transaction', value, projectId: selectedProject.id })} onDelete={(value) => confirmDelete('transaksi', () => finance.removeTransaction(value.id))} />
           : active === 'projects' ? <ProjectCommandCenter workspace={finance.workspace} onAdd={() => setModal({ kind: 'project' })} onEdit={(value) => setModal({ kind: 'project', value })} onComplete={(value) => setModal({ kind: 'complete-project', value })} onDelete={(value) => confirmDelete(`proyek ${value.name}`, () => finance.removeProject(value.id))} onOpen={openProject} />
             : active === 'office' ? <OfficeWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'transaction', scope: 'office' })} onEdit={(value) => setModal({ kind: 'transaction', value })} onDelete={(value) => confirmDelete('biaya kantor', () => finance.removeTransaction(value.id))} />
               : active === 'debts' ? <DebtWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'debt' })} onEdit={(value) => setModal({ kind: 'debt', value })} onDelete={(value) => confirmDelete('hutang internal', () => finance.removeDebt(value.id))} />

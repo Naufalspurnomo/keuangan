@@ -148,7 +148,8 @@ describe('Hollawall demo finance workspace', () => {
 
     fireEvent.click(screen.getByRole('button', { name: `Selesaikan ${project.name}` }))
     const dialog = screen.getByRole('dialog')
-    fireEvent.change(within(dialog).getByLabelText('Tanggal selesai *'), { target: { value: project.started_on } })
+    const latestTransactionDate = workspace.transactions.reduce((latest, row) => row.date > latest ? row.date : latest, project.started_on)
+    fireEvent.change(within(dialog).getByLabelText('Tanggal selesai *'), { target: { value: latestTransactionDate } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Selesaikan proyek' }))
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
@@ -183,14 +184,20 @@ describe('Hollawall demo finance workspace', () => {
     expect(screen.getAllByRole('button', { name: /transaksi pertama .* transaksi terakhir/ }).length).toBeGreaterThan(0)
   })
 
-  it('opens project detail under Projects and returns with the explicit back action', async () => {
+  it('opens project detail under Projects and restores view state with the explicit back action', async () => {
+    vi.spyOn(window, 'scrollY', 'get').mockReturnValue(640)
     renderApp()
     nav('Proyek')
+    fireEvent.click(screen.getByRole('button', { name: 'Tahun sebelumnya' }))
+    fireEvent.change(screen.getByLabelText('Perusahaan'), { target: { value: 'Holla' } })
     fireEvent.click(document.querySelector('button[data-project-candle]')!)
     expect(window.location.hash).toMatch(/^#projects\?project=/)
     fireEvent.click(screen.getByRole('button', { name: 'Kembali ke Proyek' }))
     await waitFor(() => expect(window.location.hash).toBe('#projects'))
     expect(screen.getByRole('heading', { name: 'Umur dan status proyek' })).toBeTruthy()
+    expect((screen.getByLabelText('Perusahaan') as HTMLSelectElement).value).toBe('Holla')
+    expect(screen.getByRole('button', { name: '2025, 12 selesai dari 15 proyek' }).getAttribute('aria-current')).toBe('page')
+    await waitFor(() => expect(window.scrollTo).toHaveBeenCalledWith({ top: 640, behavior: 'auto' }))
   })
 
   it('returns from a project drilldown to the Projects page with its view state', async () => {
