@@ -143,7 +143,7 @@ def run() -> None:
         camera_page.locator('#employee').select_option(EMPLOYEE_ID)
         camera_page.locator('#project').select_option(PROJECT_ID)
         camera_page.get_by_role('button', name='Aktifkan kamera').click()
-        expect(camera_page.locator('#notice')).to_contain_text('Izin kamera ditolak', timeout=10000)
+        expect(camera_page.locator('#notice')).to_contain_text('Buka pengaturan situs', timeout=10000)
         assert camera_page.locator('#submit-presensi').is_disabled()
         assert camera_page.evaluate('document.documentElement.scrollWidth <= document.documentElement.clientWidth')
         camera_page.screenshot(path=str(OUT / 'employee-camera-denied-320.png'), full_page=True)
@@ -157,7 +157,7 @@ def run() -> None:
         location_page.locator('#project').select_option(PROJECT_ID)
         location_page.get_by_role('button', name='Aktifkan kamera').click()
         location_page.get_by_role('button', name='Ambil selfie & lokasi').click()
-        expect(location_page.locator('#notice')).to_contain_text('Lokasi presisi tidak dapat dibaca', timeout=10000)
+        expect(location_page.locator('#notice')).to_contain_text('izinkan Lokasi', timeout=10000)
         assert location_page.locator('#submit-presensi').is_disabled()
         location_page.screenshot(path=str(OUT / 'employee-location-denied-390.png'), full_page=True)
         location_denied.close()
@@ -176,11 +176,23 @@ def run() -> None:
         page.goto(base + '/absen/presensi/', wait_until='networkidle')
         assert page.get_by_role('heading', name='Presensi proyek, langsung dari lokasi.').is_visible()
         assert page.locator('#submit-presensi').is_disabled()
+        assert page.locator('#open-camera').is_disabled()
+        assert page.locator('#camera-requirements').inner_text() == 'Pilih pegawai dan proyek terlebih dahulu.'
         assert page.locator('#employee option').all_text_contents() == ['Pilih pegawai', 'Pegawai 1', 'Pegawai 2', 'Pegawai 3']
         assert page.locator('#project option').all_text_contents() == ['Pilih proyek', 'Griya Wellness Center · Holla', 'Fajar Distribution Hub · Texturin Surabaya']
         page.locator('#employee').select_option(EMPLOYEE_ID)
+        assert page.locator('#open-camera').is_disabled()
         page.locator('#project').select_option(PROJECT_ID)
-        page.get_by_role('button', name='Aktifkan kamera').click()
+        expect(page.locator('#open-camera')).to_be_enabled()
+        page.evaluate("""() => {
+          const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices)
+          window.__cameraCalls = 0
+          navigator.mediaDevices.getUserMedia = (...args) => { window.__cameraCalls += 1; return original(...args) }
+          document.querySelector('#open-camera').click()
+          document.querySelector('#open-camera').click()
+        }""")
+        expect(page.get_by_role('button', name='Ambil selfie & lokasi')).to_be_enabled(timeout=10000)
+        assert page.evaluate('window.__cameraCalls') == 1
         page.get_by_role('button', name='Ambil selfie & lokasi').click()
         expect(page.locator('#submit-presensi')).to_be_enabled(timeout=20000)
         assert 'Akurasi' in page.locator('#location-detail').inner_text()
