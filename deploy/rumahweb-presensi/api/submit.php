@@ -83,6 +83,7 @@ try {
     $event = [
         'id' => $eventId,
         'submission_id' => $submissionId,
+        'recovery_hash' => hash_hmac('sha256', $submissionId, (string) $_SESSION['presensi_recovery_key']),
         'pair_id' => $pairId,
         'action' => $action,
         'employee_id' => $employee['id'],

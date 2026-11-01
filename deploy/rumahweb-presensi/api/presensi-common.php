@@ -461,6 +461,9 @@ function presensi_public_session(): void
     if (empty($_SESSION['presensi_csrf'])) {
         $_SESSION['presensi_csrf'] = bin2hex(random_bytes(24));
     }
+    if (empty($_SESSION['presensi_recovery_key'])) {
+        $_SESSION['presensi_recovery_key'] = bin2hex(random_bytes(32));
+    }
 }
 
 function presensi_admin_session(): void

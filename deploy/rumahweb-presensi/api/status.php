@@ -6,7 +6,11 @@ presensi_require_method('GET');
 presensi_public_session();
 $employeeId = trim((string) ($_GET['employee_id'] ?? ''));
 $submissionId = trim((string) ($_GET['submission_id'] ?? ''));
-if ($submissionId !== '' && !preg_match('/^sub-[a-f0-9]{32}$/', $submissionId)) {
+$submissionAction = trim((string) ($_GET['submission_action'] ?? ''));
+$submissionProject = trim((string) ($_GET['submission_project'] ?? ''));
+if ($submissionId !== '' && (!preg_match('/^sub-[a-f0-9]{32}$/', $submissionId)
+    || !in_array($submissionAction, ['check_in', 'check_out'], true)
+    || $submissionProject === '')) {
     presensi_error(422, 'submission_invalid', 'Identitas pengiriman tidak valid.');
 }
 $config = presensi_config();
@@ -18,9 +22,13 @@ $events = presensi_read_events(presensi_store_paths());
 $open = presensi_open_event($events, $employeeId);
 $submissionReceived = false;
 if ($submissionId !== '') {
+    $expectedRecoveryHash = hash_hmac('sha256', $submissionId, (string) $_SESSION['presensi_recovery_key']);
     foreach ($events as $event) {
         if (hash_equals((string) ($event['submission_id'] ?? ''), $submissionId)
-            && hash_equals((string) ($event['employee_id'] ?? ''), $employeeId)) {
+            && hash_equals((string) ($event['employee_id'] ?? ''), $employeeId)
+            && hash_equals((string) ($event['action'] ?? ''), $submissionAction)
+            && hash_equals((string) ($event['project_id'] ?? ''), $submissionProject)
+            && hash_equals((string) ($event['recovery_hash'] ?? ''), $expectedRecoveryHash)) {
             $submissionReceived = true;
             break;
         }

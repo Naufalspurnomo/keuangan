@@ -140,8 +140,10 @@
     project.disabled = !hasActiveProjects
   }
 
-  async function fetchStatus(selectedEmployee, exactSubmissionId = null) {
-    const submissionQuery = exactSubmissionId ? `&submission_id=${encodeURIComponent(exactSubmissionId)}` : ''
+  async function fetchStatus(selectedEmployee, exactSubmissionId = null, exactAction = '', exactProject = '') {
+    const submissionQuery = exactSubmissionId
+      ? `&submission_id=${encodeURIComponent(exactSubmissionId)}&submission_action=${encodeURIComponent(exactAction)}&submission_project=${encodeURIComponent(exactProject)}`
+      : ''
     const response = await fetch(`/absen/api/status.php?employee_id=${encodeURIComponent(selectedEmployee)}${submissionQuery}`, { credentials: 'same-origin', cache: 'no-store' })
     const payload = await response.json()
     if (!response.ok) throw new Error(payload?.error?.message || 'Status presensi belum tersedia.')
@@ -364,7 +366,7 @@
     } catch (error) {
       if (error?.authoritative) {
         try {
-          const state = await fetchStatus(submitted.employeeId, submitted.submissionId)
+          const state = await fetchStatus(submitted.employeeId, submitted.submissionId, submitted.action, submitted.projectId)
           if (state.submission_received && state.recovery?.csrf && state.recovery?.capture_token) {
             csrf = state.recovery.csrf
             captureToken = state.recovery.capture_token
@@ -381,7 +383,7 @@
         }
       } else {
         try {
-          const state = await fetchStatus(submitted.employeeId, submitted.submissionId)
+          const state = await fetchStatus(submitted.employeeId, submitted.submissionId, submitted.action, submitted.projectId)
           if (state.submission_received && state.recovery?.csrf && state.recovery?.capture_token) {
             csrf = state.recovery.csrf
             captureToken = state.recovery.capture_token

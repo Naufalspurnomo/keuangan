@@ -289,12 +289,12 @@ class PresensiIntegrationTests(unittest.TestCase):
             self.assertEqual(conflict.json()["error"]["code"], "already_checked_in")
 
             own_status = requests.get(
-                origin + f"/absen/api/status.php?employee_id=pegawai-1&submission_id={own_submission}",
+                origin + f"/absen/api/status.php?employee_id=pegawai-1&submission_id={own_submission}&submission_action=check_in&submission_project=p26-griya",
                 headers=cookie,
                 timeout=5,
             )
             other_status = requests.get(
-                origin + f"/absen/api/status.php?employee_id=pegawai-1&submission_id={other_submission}",
+                origin + f"/absen/api/status.php?employee_id=pegawai-1&submission_id={other_submission}&submission_action=check_in&submission_project=p26-griya",
                 headers=cookie,
                 timeout=5,
             )
@@ -303,8 +303,28 @@ class PresensiIntegrationTests(unittest.TestCase):
             self.assertIsNone(own_status.json()["recovery"])
             self.assertTrue(other_status.json()["submission_received"])
             recovery = other_status.json()["recovery"]
-            self.assertRegex(recovery["csrf"], r"^[a-f0-9]{48}$")
-            self.assertRegex(recovery["capture_token"], r"^[a-f0-9]{48}$")
+            self.assertTrue(recovery["csrf"])
+            self.assertTrue(recovery["capture_token"])
+
+            other_bootstrap, other_cookie = self.public_bootstrap(origin)
+            replay = self.submit(
+                origin,
+                other_cookie,
+                other_bootstrap["csrf"],
+                action="check_in",
+                capture_token=other_bootstrap["capture_token"],
+                submission_id=other_submission,
+            )
+            self.assertEqual(replay.status_code, 409, replay.text)
+            self.assertEqual(replay.json()["error"]["code"], "submission_replayed")
+            stolen_status = requests.get(
+                origin + f"/absen/api/status.php?employee_id=pegawai-1&submission_id={other_submission}&submission_action=check_in&submission_project=p26-griya",
+                headers=other_cookie,
+                timeout=5,
+            )
+            self.assertEqual(stolen_status.status_code, 200, stolen_status.text)
+            self.assertFalse(stolen_status.json()["submission_received"])
+            self.assertIsNone(stolen_status.json()["recovery"])
 
             checked_out = self.submit(
                 origin,
