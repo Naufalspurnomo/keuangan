@@ -66,6 +66,24 @@ class PresensiReleaseTests(unittest.TestCase):
             files = [path.relative_to(payload).as_posix() for path in sorted(payload.rglob("*")) if path.is_file()]
             self.assertEqual(rows, files)
 
+    def test_employee_page_uses_hollawall_brand_system(self) -> None:
+        page = (ABSEN / "presensi" / "index.php").read_text(encoding="utf-8")
+        css = (ABSEN / "assets" / "presensi.css").read_text(encoding="utf-8")
+        self.assertIn('<meta name="theme-color" content="#FB9202" />', page)
+        self.assertIn("--orange: #FB9202;", css)
+        self.assertIn("--cyan: #18B8C6;", css)
+        self.assertIn("font-family: 'Montserrat'", css)
+        self.assertIn("font-family: 'Staatliches'", css)
+        self.assertNotIn("font-family: Inter", css)
+        self.assertNotIn("font-family: Georgia", css)
+        for font in (
+            "Montserrat-Regular.ttf",
+            "Montserrat-SemiBold.ttf",
+            "Montserrat-Bold.ttf",
+            "Staatliches-Regular.ttf",
+        ):
+            self.assertTrue((ABSEN / "fonts" / font).is_file(), font)
+
     def test_employee_primary_actions_use_accessible_ink_on_orange(self) -> None:
         css = (ABSEN / "assets" / "presensi.css").read_text(encoding="utf-8")
         self.assertIn(".primary-button { color: var(--ink); background: var(--orange); }", css)
