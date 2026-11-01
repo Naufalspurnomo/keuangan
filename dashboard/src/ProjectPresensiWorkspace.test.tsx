@@ -120,6 +120,19 @@ describe('project presensi detail', () => {
     expect(screen.getByText('Pegawai 1')).toBeTruthy()
   })
 
+  it('refreshes presensi when the presenter returns to the dashboard window', async () => {
+    vi.mocked(fetch).mockReset()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ version: 'presensi.admin.v1', records: [records[0]] }) } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ version: 'presensi.admin.v1', records }) } as Response)
+    renderWorkspace()
+    fireEvent.click(screen.getByRole('tab', { name: 'Presensi' }))
+    await screen.findByText('Pegawai 1')
+    expect(screen.queryByText('Pegawai 2')).toBeNull()
+    fireEvent.focus(window)
+    await screen.findByText('Pegawai 2')
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
   it('announces loading and gives an actionable link for a truly empty project', async () => {
     vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ version: 'presensi.admin.v1', records: [] }) } as Response)
     renderWorkspace()

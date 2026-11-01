@@ -15,9 +15,13 @@ if ($csrf === '' || !hash_equals((string) ($_SESSION['presensi_csrf'] ?? ''), $c
 }
 presensi_validate_capture_token((string) ($_POST['capture_token'] ?? ''));
 
+$submissionId = trim((string) ($_POST['submission_id'] ?? ''));
 $employeeId = trim((string) ($_POST['employee_id'] ?? ''));
 $projectId = trim((string) ($_POST['project_id'] ?? ''));
 $action = trim((string) ($_POST['action'] ?? ''));
+if (!preg_match('/^sub-[a-f0-9]{32}$/', $submissionId)) {
+    presensi_error(422, 'submission_invalid', 'Identitas pengiriman tidak valid. Muat ulang halaman.');
+}
 $latitude = filter_var($_POST['latitude'] ?? null, FILTER_VALIDATE_FLOAT);
 $longitude = filter_var($_POST['longitude'] ?? null, FILTER_VALIDATE_FLOAT);
 $accuracy = filter_var($_POST['accuracy_m'] ?? null, FILTER_VALIDATE_FLOAT);
@@ -48,6 +52,11 @@ $storageFailure = null;
 $now = time();
 try {
     $events = presensi_read_events($paths);
+    foreach ($events as $existing) {
+        if (hash_equals((string) ($existing['submission_id'] ?? ''), $submissionId)) {
+            presensi_error(409, 'submission_replayed', 'Pengiriman ini sudah diterima server.');
+        }
+    }
     presensi_rate_limit($events, $employeeId, $now);
     $open = presensi_open_event($events, $employeeId);
     if ($action === 'check_in' && $open !== null) {
@@ -73,6 +82,7 @@ try {
     chmod($photoPath, 0600);
     $event = [
         'id' => $eventId,
+        'submission_id' => $submissionId,
         'pair_id' => $pairId,
         'action' => $action,
         'employee_id' => $employee['id'],

@@ -155,9 +155,6 @@ function presensi_config(): array
         || count(array_unique($allProjectNames)) !== count($allProjectNames)) {
         presensi_error(503, 'configuration_invalid', 'Konfigurasi presensi memiliki identitas ganda atau tidak sesuai.');
     }
-    if (!$projects) {
-        presensi_error(503, 'configuration_invalid', 'Konfigurasi presensi belum lengkap.');
-    }
     return ['employees' => $employees, 'projects' => $projects, 'retention_days' => (int) $retentionDays];
 }
 

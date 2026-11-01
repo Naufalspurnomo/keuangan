@@ -170,9 +170,10 @@ def run() -> None:
         )
         page = context.new_page()
         errors: list[str] = []
-        page.on('console', lambda msg: errors.append(f'console:{msg.type}:{msg.text}') if msg.type == 'error' else None)
+        intentional_submit_drop = {'active': False}
+        page.on('console', lambda msg: None if intentional_submit_drop['active'] and msg.type == 'error' and 'ERR_FAILED' in msg.text else errors.append(f'console:{msg.type}:{msg.text}') if msg.type == 'error' else None)
         page.on('pageerror', lambda exc: errors.append(f'page:{exc}'))
-        page.on('requestfailed', lambda req: errors.append(f'request:{req.url}:{req.failure}'))
+        page.on('requestfailed', lambda req: None if intentional_submit_drop['active'] and req.url.endswith('/absen/api/submit.php') else errors.append(f'request:{req.url}:{req.failure}'))
         page.goto(base + '/absen/presensi/', wait_until='networkidle')
         assert page.get_by_role('heading', name='Presensi proyek, langsung dari lokasi.').is_visible()
         assert page.locator('#submit-presensi').is_disabled()
@@ -180,7 +181,17 @@ def run() -> None:
         assert page.locator('#camera-requirements').inner_text() == 'Pilih pegawai dan proyek terlebih dahulu.'
         assert page.locator('#employee option').all_text_contents() == ['Pilih pegawai', 'Pegawai 1', 'Pegawai 2', 'Pegawai 3']
         assert page.locator('#project option').all_text_contents() == ['Pilih proyek', 'Griya Wellness Center · Holla', 'Fajar Distribution Hub · Texturin Surabaya']
+        page.evaluate("""() => {
+          const originalFetch = window.fetch.bind(window)
+          window.fetch = (url, options) => String(url).includes('/absen/api/status.php')
+            ? new Promise((resolve, reject) => { window.__releaseStatus = () => { window.fetch = originalFetch; originalFetch(url, options).then(resolve, reject) } })
+            : originalFetch(url, options)
+        }""")
         page.locator('#employee').select_option(EMPLOYEE_ID)
+        assert page.locator('#project').is_disabled()
+        assert page.locator('#open-camera').is_disabled()
+        page.evaluate('window.__releaseStatus()')
+        expect(page.locator('#project')).to_be_enabled(timeout=10000)
         assert page.locator('#open-camera').is_disabled()
         page.locator('#project').select_option(PROJECT_ID)
         expect(page.locator('#open-camera')).to_be_enabled()
@@ -203,8 +214,15 @@ def run() -> None:
         assert page.locator('#submit-presensi').evaluate('(node) => node.getBoundingClientRect().height >= 44')
         page.screenshot(path=str(OUT / 'employee-proof-ready-320.png'), full_page=True)
         page.set_viewport_size({'width': 390, 'height': 844})
+        def drop_committed_response(route):
+            response = route.fetch()
+            assert response.status == 201
+            route.abort('failed')
+        intentional_submit_drop['active'] = True
+        page.route('**/absen/api/submit.php', drop_committed_response, times=1)
         page.get_by_role('button', name='Kirim Check-in').click()
-        expect(page.locator('#notice')).to_contain_text('berhasil', ignore_case=True, timeout=20000)
+        expect(page.locator('#notice')).to_contain_text('Status telah disinkronkan', timeout=20000)
+        intentional_submit_drop['active'] = False
         page.screenshot(path=str(OUT / 'employee-mobile-checkin.png'), full_page=True)
         event_path = account_root / '.hollawall-presensi' / 'events.json'
         qa_events = json.loads(event_path.read_text(encoding='utf-8'))

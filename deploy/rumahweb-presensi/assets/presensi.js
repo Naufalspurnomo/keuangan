@@ -30,11 +30,19 @@
   let locationObservedAtMs = 0
   let busy = false
   let cameraBusy = false
+  let statusBusy = false
   let statusRequest = 0
   let activeProject = null
+  let submissionId = null
+  let hasActiveProjects = false
+
+  function newSubmissionId() {
+    const bytes = crypto.getRandomValues(new Uint8Array(16))
+    return `sub-${[...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`
+  }
 
   function updateCameraAvailability() {
-    const ready = Boolean(employee.value && project.value && !cameraBusy)
+    const ready = Boolean(employee.value && project.value && !cameraBusy && !statusBusy && !busy)
     openCameraButton.disabled = !ready
     cameraRequirements.textContent = ready
       ? 'Kamera siap diaktifkan untuk pegawai dan proyek terpilih.'
@@ -126,35 +134,49 @@
       option.textContent = `${row.name} · ${row.company}`
       project.append(option)
     }
+    hasActiveProjects = payload.projects.length > 0
+    if (!hasActiveProjects) project.options[0].textContent = 'Tidak ada proyek aktif'
     employee.disabled = false
-    project.disabled = false
+    project.disabled = !hasActiveProjects
   }
 
-  async function fetchStatus(selectedEmployee) {
-    const response = await fetch(`/absen/api/status.php?employee_id=${encodeURIComponent(selectedEmployee)}`, { credentials: 'same-origin', cache: 'no-store' })
+  async function fetchStatus(selectedEmployee, exactSubmissionId = null) {
+    const submissionQuery = exactSubmissionId ? `&submission_id=${encodeURIComponent(exactSubmissionId)}` : ''
+    const response = await fetch(`/absen/api/status.php?employee_id=${encodeURIComponent(selectedEmployee)}${submissionQuery}`, { credentials: 'same-origin', cache: 'no-store' })
     const payload = await response.json()
     if (!response.ok) throw new Error(payload?.error?.message || 'Status presensi belum tersedia.')
     return payload
   }
 
   async function loadStatus(preserveNotice = false) {
+    if (!preserveNotice) submissionId = null
     resetProof()
     activeProject = null
     setAction('check_in')
     const selectedEmployee = employee.value
     const requestId = ++statusRequest
-    project.disabled = !selectedEmployee
+    let resolved = false
     project.value = ''
     for (const option of [...project.options]) {
       if (option.dataset.historical === 'true') option.remove()
       else option.disabled = false
     }
+    if (!selectedEmployee) {
+      statusBusy = false
+      employee.disabled = false
+      project.disabled = !hasActiveProjects
+      updateCameraAvailability()
+      return
+    }
+    statusBusy = true
+    employee.disabled = true
+    project.disabled = true
     updateCameraAvailability()
-    if (!selectedEmployee) return
     if (!preserveNotice) clearNotice()
     try {
       const payload = await fetchStatus(selectedEmployee)
       if (requestId !== statusRequest || employee.value !== selectedEmployee) return
+      resolved = true
       setAction(payload.next_action)
       if (payload.active_project) {
         activeProject = payload.active_project
@@ -166,20 +188,26 @@
           project.append(historical)
         }
         project.value = payload.active_project.id
-        project.disabled = true
         if (!preserveNotice) showNotice(`${payload.employee.name} sedang aktif di ${payload.active_project.name}. Lanjutkan Check-out pada proyek yang sama.`, 'info')
+      } else if (!hasActiveProjects) {
+        showNotice('Tidak ada proyek aktif untuk Check-in baru. Pilih pegawai lain hanya untuk memeriksa status.', 'info')
       }
-      updateCameraAvailability()
     } catch (error) {
       if (requestId !== statusRequest || employee.value !== selectedEmployee) return
-      project.disabled = true
-      updateCameraAvailability()
       showNotice(error instanceof Error ? error.message : 'Status presensi belum tersedia.', 'error', () => loadStatus())
+    } finally {
+      if (requestId === statusRequest && employee.value === selectedEmployee) {
+        statusBusy = false
+        employee.disabled = false
+        project.disabled = !resolved || Boolean(activeProject) || !hasActiveProjects
+        updateCameraAvailability()
+      }
     }
   }
 
   async function openCamera() {
     if (cameraBusy || !employee.value || !project.value) return
+    submissionId = null
     clearNotice()
     cameraBusy = true
     resetProof()
@@ -293,16 +321,27 @@
 
   async function submitPresensi(event) {
     event.preventDefault()
-    if (!selfieBlob || !position || !employee.value || !project.value || busy) return
+    if (!selfieBlob || !position || !employee.value || !project.value || busy || statusBusy) return
+    const submitted = {
+      employeeId: employee.value,
+      projectId: project.value,
+      action: action.value,
+      submissionId: submissionId || newSubmissionId(),
+    }
+    submissionId = submitted.submissionId
     clearNotice()
     busy = true
+    employee.disabled = true
+    project.disabled = true
+    updateCameraAvailability()
     updateSubmit()
     const body = new FormData()
     body.set('csrf', csrf)
     body.set('capture_token', captureToken)
-    body.set('employee_id', employee.value)
-    body.set('project_id', project.value)
-    body.set('action', action.value)
+    body.set('submission_id', submitted.submissionId)
+    body.set('employee_id', submitted.employeeId)
+    body.set('project_id', submitted.projectId)
+    body.set('action', submitted.action)
     body.set('latitude', String(position.latitude))
     body.set('longitude', String(position.longitude))
     body.set('accuracy_m', String(position.accuracy))
@@ -312,33 +351,61 @@
     try {
       const response = await fetch('/absen/api/submit.php', { method: 'POST', body, credentials: 'same-origin', cache: 'no-store' })
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload?.error?.message || 'Presensi belum dapat dikirim.')
+      if (!response.ok) {
+        const failure = new Error(payload?.error?.message || 'Presensi belum dapat dikirim.')
+        failure.authoritative = response.status < 500
+        throw failure
+      }
       csrf = payload.csrf
       captureToken = payload.capture_token
+      submissionId = null
       showNotice(`${payload.record.employee_name} berhasil ${payload.record.action === 'check_in' ? 'Check-in' : 'Check-out'} di ${payload.record.project_name}. Lokasi tersimpan dengan akurasi ±${Math.round(payload.record.accuracy_m)} m.`, 'success')
       await loadStatus(true)
     } catch (error) {
-      const submittedAction = action.value
-      try {
-        const state = await fetchStatus(employee.value)
-        const committed = submittedAction === 'check_in' ? state.next_action === 'check_out' : state.next_action === 'check_in'
-        if (committed) {
-          await loadStatus(true)
-          showNotice(`Presensi sudah diterima server sebagai ${submittedAction === 'check_in' ? 'Check-in' : 'Check-out'}. Status telah disinkronkan.`, 'success')
-        } else {
-          showNotice(error instanceof Error ? error.message : 'Presensi belum dapat dikirim.', 'error', () => submitButton.click())
+      if (error?.authoritative) {
+        try {
+          const state = await fetchStatus(submitted.employeeId, submitted.submissionId)
+          if (state.submission_received && state.recovery?.csrf && state.recovery?.capture_token) {
+            csrf = state.recovery.csrf
+            captureToken = state.recovery.capture_token
+            submissionId = null
+            await loadStatus(true)
+            showNotice(`Presensi sudah diterima server sebagai ${submitted.action === 'check_in' ? 'Check-in' : 'Check-out'}. Status telah disinkronkan.`, 'success')
+          } else {
+            submissionId = null
+            await loadStatus(true)
+            showNotice(error.message, 'error')
+          }
+        } catch {
+          showNotice(error.message, 'error', () => submitButton.click())
         }
-      } catch {
-        showNotice('Koneksi terputus saat konfirmasi. Coba lagi untuk memeriksa status sebelum mengirim ulang.', 'error', () => loadStatus())
+      } else {
+        try {
+          const state = await fetchStatus(submitted.employeeId, submitted.submissionId)
+          if (state.submission_received && state.recovery?.csrf && state.recovery?.capture_token) {
+            csrf = state.recovery.csrf
+            captureToken = state.recovery.capture_token
+            submissionId = null
+            await loadStatus(true)
+            showNotice(`Presensi sudah diterima server sebagai ${submitted.action === 'check_in' ? 'Check-in' : 'Check-out'}. Status telah disinkronkan.`, 'success')
+          } else {
+            showNotice(error instanceof Error ? error.message : 'Presensi belum dapat dikirim.', 'error', () => submitButton.click())
+          }
+        } catch {
+          showNotice('Koneksi terputus saat konfirmasi. Coba lagi untuk memeriksa status sebelum mengirim ulang.', 'error', () => submitButton.click())
+        }
       }
     } finally {
       busy = false
+      employee.disabled = false
+      project.disabled = Boolean(activeProject) || !hasActiveProjects
+      updateCameraAvailability()
       updateSubmit()
     }
   }
 
   employee.addEventListener('change', loadStatus)
-  project.addEventListener('change', () => { resetProof(); clearNotice() })
+  project.addEventListener('change', () => { submissionId = null; resetProof(); clearNotice() })
   openCameraButton.addEventListener('click', openCamera)
   captureButton.addEventListener('click', captureProof)
   retakeButton.addEventListener('click', openCamera)

@@ -2,6 +2,7 @@ import contextlib
 import json
 import os
 import re
+import secrets
 import shutil
 import socket
 import struct
@@ -118,12 +119,13 @@ class PresensiIntegrationTests(unittest.TestCase):
         self.capture_token = payload["capture_token"]
         return payload, {"Cookie": f"hollawall_presensi={session_id}"}
 
-    def submit(self, origin: str, cookie: dict[str, str], csrf: str, *, action: str, project_id: str = "p26-griya", latitude: float = -7.3546465, longitude: float = 112.7826242, accuracy: float = 10, capture_token: str | None = None, observed_at_ms: int | None = None, origin_header: str | None = None, selfie: bytes | None = None):
+    def submit(self, origin: str, cookie: dict[str, str], csrf: str, *, action: str, project_id: str = "p26-griya", latitude: float = -7.3546465, longitude: float = 112.7826242, accuracy: float = 10, capture_token: str | None = None, observed_at_ms: int | None = None, origin_header: str | None = None, selfie: bytes | None = None, submission_id: str | None = None):
         observed_at_ms = observed_at_ms or int(time.time() * 1000)
+        submission_id = submission_id or f"sub-{secrets.token_hex(16)}"
         response = requests.post(
             origin + "/absen/api/submit.php",
             headers={**cookie, "Origin": origin_header or origin, "Sec-Fetch-Site": "same-origin"},
-            data={"csrf": csrf, "capture_token": capture_token or self.capture_token, "employee_id": "pegawai-1", "project_id": project_id, "action": action, "latitude": latitude, "longitude": longitude, "accuracy_m": accuracy, "location_observed_at_ms": observed_at_ms, "selfie_observed_at_ms": observed_at_ms},
+            data={"csrf": csrf, "capture_token": capture_token or self.capture_token, "submission_id": submission_id, "employee_id": "pegawai-1", "project_id": project_id, "action": action, "latitude": latitude, "longitude": longitude, "accuracy_m": accuracy, "location_observed_at_ms": observed_at_ms, "selfie_observed_at_ms": observed_at_ms},
             files={"selfie": ("selfie.png", selfie or self.selfie, "image/png")},
             timeout=10,
         )
@@ -248,6 +250,69 @@ class PresensiIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(checked_out.status_code, 201, checked_out.text)
             self.assertEqual(checked_out.json()["record"]["project_name"], "Griya Wellness Center")
+
+    def test_open_checkin_can_checkout_when_all_projects_are_deactivated(self) -> None:
+        with self.server() as origin:
+            bootstrap, cookie = self.public_bootstrap(origin)
+            checked_in = self.submit(origin, cookie, bootstrap["csrf"], action="check_in")
+            self.assertEqual(checked_in.status_code, 201, checked_in.text)
+
+            current = self.presensi_config.read_text(encoding="utf-8")
+            self.presensi_config.write_text(current.replace("'active'=>true", "'active'=>false"), encoding="utf-8")
+            checked_out = self.submit(
+                origin,
+                cookie,
+                checked_in.json()["csrf"],
+                action="check_out",
+                submission_id="sub-fedcba9876543210fedcba9876543210",
+            )
+            self.assertEqual(checked_out.status_code, 201, checked_out.text)
+            self.assertEqual(checked_out.json()["record"]["project_name"], "Griya Wellness Center")
+
+    def test_submission_status_confirms_only_the_exact_client_submission(self) -> None:
+        with self.server() as origin:
+            bootstrap, cookie = self.public_bootstrap(origin)
+            own_submission = "sub-11111111111111111111111111111111"
+            other_submission = "sub-22222222222222222222222222222222"
+            checked_in = self.submit(origin, cookie, bootstrap["csrf"], action="check_in", submission_id=other_submission)
+            self.assertEqual(checked_in.status_code, 201, checked_in.text)
+            conflict = self.submit(
+                origin,
+                cookie,
+                checked_in.json()["csrf"],
+                action="check_in",
+                submission_id=own_submission,
+            )
+            self.assertEqual(conflict.status_code, 409, conflict.text)
+            self.assertEqual(conflict.json()["error"]["code"], "already_checked_in")
+
+            own_status = requests.get(
+                origin + f"/absen/api/status.php?employee_id=pegawai-1&submission_id={own_submission}",
+                headers=cookie,
+                timeout=5,
+            )
+            other_status = requests.get(
+                origin + f"/absen/api/status.php?employee_id=pegawai-1&submission_id={other_submission}",
+                headers=cookie,
+                timeout=5,
+            )
+            self.assertEqual(own_status.status_code, 200, own_status.text)
+            self.assertFalse(own_status.json()["submission_received"])
+            self.assertIsNone(own_status.json()["recovery"])
+            self.assertTrue(other_status.json()["submission_received"])
+            recovery = other_status.json()["recovery"]
+            self.assertRegex(recovery["csrf"], r"^[a-f0-9]{48}$")
+            self.assertRegex(recovery["capture_token"], r"^[a-f0-9]{48}$")
+
+            checked_out = self.submit(
+                origin,
+                cookie,
+                recovery["csrf"],
+                action="check_out",
+                capture_token=recovery["capture_token"],
+                submission_id="sub-33333333333333333333333333333333",
+            )
+            self.assertEqual(checked_out.status_code, 201, checked_out.text)
 
     def test_rejects_cross_origin_and_stale_observations(self) -> None:
         with self.server() as origin:

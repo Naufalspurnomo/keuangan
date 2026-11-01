@@ -5,6 +5,10 @@ require __DIR__ . '/presensi-common.php';
 presensi_require_method('GET');
 presensi_public_session();
 $employeeId = trim((string) ($_GET['employee_id'] ?? ''));
+$submissionId = trim((string) ($_GET['submission_id'] ?? ''));
+if ($submissionId !== '' && !preg_match('/^sub-[a-f0-9]{32}$/', $submissionId)) {
+    presensi_error(422, 'submission_invalid', 'Identitas pengiriman tidak valid.');
+}
 $config = presensi_config();
 $employee = presensi_find_named($config['employees'], $employeeId);
 if ($employee === null) {
@@ -12,9 +16,25 @@ if ($employee === null) {
 }
 $events = presensi_read_events(presensi_store_paths());
 $open = presensi_open_event($events, $employeeId);
+$submissionReceived = false;
+if ($submissionId !== '') {
+    foreach ($events as $event) {
+        if (hash_equals((string) ($event['submission_id'] ?? ''), $submissionId)
+            && hash_equals((string) ($event['employee_id'] ?? ''), $employeeId)) {
+            $submissionReceived = true;
+            break;
+        }
+    }
+}
+$recoveryCaptureToken = $submissionReceived ? presensi_issue_capture_token() : null;
 presensi_json_response(200, [
     'version' => 'presensi.status.v1',
     'employee' => $employee,
+    'submission_received' => $submissionReceived,
+    'recovery' => $submissionReceived ? [
+        'csrf' => (string) $_SESSION['presensi_csrf'],
+        'capture_token' => $recoveryCaptureToken,
+    ] : null,
     'next_action' => $open === null ? 'check_in' : 'check_out',
     'active_project' => $open === null ? null : [
         'id' => $open['project_id'],
