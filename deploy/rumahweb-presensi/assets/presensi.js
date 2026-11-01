@@ -125,6 +125,12 @@
       setAction(payload.next_action)
       if (payload.active_project) {
         activeProject = payload.active_project
+        if (![...project.options].some((option) => option.value === payload.active_project.id)) {
+          const historical = document.createElement('option')
+          historical.value = payload.active_project.id
+          historical.textContent = `${payload.active_project.name} · proyek ditutup`
+          project.append(historical)
+        }
         project.value = payload.active_project.id
         project.disabled = true
         if (!preserveNotice) showNotice(`${payload.employee.name} sedang aktif di ${payload.active_project.name}. Lanjutkan Check-out pada proyek yang sama.`, 'info')

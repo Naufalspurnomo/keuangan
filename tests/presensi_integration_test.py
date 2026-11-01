@@ -224,6 +224,31 @@ class PresensiIntegrationTests(unittest.TestCase):
             self.assertEqual((store.stat().st_mode & 0o777), 0o700)
             self.assertTrue(all((path.stat().st_mode & 0o777) == 0o600 for path in (store / "photos").iterdir()))
 
+    def test_open_checkin_can_checkout_after_project_is_deactivated(self) -> None:
+        with self.server() as origin:
+            bootstrap, cookie = self.public_bootstrap(origin)
+            checked_in = self.submit(origin, cookie, bootstrap["csrf"], action="check_in")
+            self.assertEqual(checked_in.status_code, 201, checked_in.text)
+
+            current = self.presensi_config.read_text(encoding="utf-8")
+            self.presensi_config.write_text(
+                current.replace("'id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','active'=>true", "'id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','active'=>false"),
+                encoding="utf-8",
+            )
+            status = requests.get(origin + "/absen/api/status.php?employee_id=pegawai-1", headers=cookie, timeout=5)
+            self.assertEqual(status.status_code, 200, status.text)
+            self.assertEqual(status.json()["active_project"]["id"], "p26-griya")
+
+            checked_out = self.submit(
+                origin,
+                cookie,
+                checked_in.json()["csrf"],
+                action="check_out",
+                project_id="p26-griya",
+            )
+            self.assertEqual(checked_out.status_code, 201, checked_out.text)
+            self.assertEqual(checked_out.json()["record"]["project_name"], "Griya Wellness Center")
+
     def test_rejects_cross_origin_and_stale_observations(self) -> None:
         with self.server() as origin:
             bootstrap, cookie = self.public_bootstrap(origin)

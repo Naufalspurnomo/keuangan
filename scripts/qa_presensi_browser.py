@@ -50,6 +50,7 @@ return [
   ],
   'projects' => [
     ['id' => '{PROJECT_ID}', 'name' => 'Griya Wellness Center', 'company' => 'Holla', 'active' => true],
+    ['id' => 'p26-fajar', 'name' => 'Fajar Distribution Hub', 'company' => 'Texturin Surabaya', 'active' => true],
   ],
 ];
 '''
@@ -176,7 +177,7 @@ def run() -> None:
         assert page.get_by_role('heading', name='Presensi proyek, langsung dari lokasi.').is_visible()
         assert page.locator('#submit-presensi').is_disabled()
         assert page.locator('#employee option').all_text_contents() == ['Pilih pegawai', 'Pegawai 1', 'Pegawai 2', 'Pegawai 3']
-        assert page.locator('#project option').all_text_contents() == ['Pilih proyek', 'Griya Wellness Center · Holla']
+        assert page.locator('#project option').all_text_contents() == ['Pilih proyek', 'Griya Wellness Center · Holla', 'Fajar Distribution Hub · Texturin Surabaya']
         page.locator('#employee').select_option(EMPLOYEE_ID)
         page.locator('#project').select_option(PROJECT_ID)
         page.get_by_role('button', name='Aktifkan kamera').click()
@@ -199,8 +200,12 @@ def run() -> None:
         event_path.write_text(json.dumps(qa_events, indent=2) + '\n', encoding='utf-8')
         event_path.chmod(0o600)
 
+        page.evaluate("document.querySelector('#project option[value=\"p26-griya\"]').remove()")
+        page.locator('#employee').select_option(EMPLOYEE_ID)
         expect(page.locator('#action')).to_have_value('check_out', timeout=20000)
         assert page.locator('#project').input_value() == PROJECT_ID
+        historical_label = page.locator('#project option:checked').inner_text()
+        assert historical_label == 'Griya Wellness Center · proyek ditutup', historical_label
         assert page.locator('#project').is_disabled()
         page.get_by_role('button', name='Aktifkan kamera').click()
         page.get_by_role('button', name='Ambil selfie & lokasi').click()

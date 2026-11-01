@@ -29,11 +29,11 @@ $project = presensi_find_named($config['projects'], $projectId);
 if ($employee === null) {
     presensi_error(422, 'employee_invalid', 'Pegawai tidak valid.');
 }
-if ($project === null) {
-    presensi_error(422, 'project_invalid', 'Proyek aktif tidak valid.');
-}
 if (!in_array($action, ['check_in', 'check_out'], true)) {
     presensi_error(422, 'action_invalid', 'Jenis presensi tidak valid.');
+}
+if ($action === 'check_in' && $project === null) {
+    presensi_error(422, 'project_invalid', 'Proyek aktif tidak valid.');
 }
 if ($latitude === false || $longitude === false || $accuracy === false
     || !is_finite((float) $latitude) || !is_finite((float) $longitude) || !is_finite((float) $accuracy)
@@ -58,6 +58,9 @@ try {
     }
     if ($action === 'check_out' && !hash_equals((string) $open['project_id'], $projectId)) {
         presensi_error(409, 'project_mismatch', 'Check-out wajib pada proyek yang sama.');
+    }
+    if ($action === 'check_out') {
+        $project = ['id' => (string) $open['project_id'], 'name' => (string) $open['project_name']];
     }
 
     $eventId = 'evt-' . bin2hex(random_bytes(12));
