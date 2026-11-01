@@ -86,14 +86,16 @@ class PresensiIntegrationTests(unittest.TestCase):
         process = subprocess.Popen(command, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         origin = f"http://127.0.0.1:{port}"
         try:
-            for _ in range(50):
+            for _ in range(200):
+                if process.poll() is not None:
+                    self.fail(f"PHP test server exited before readiness (code {process.returncode})")
                 try:
                     requests.get(origin + "/absen/presensi/", timeout=0.25)
                     break
                 except requests.RequestException:
                     time.sleep(0.05)
             else:
-                self.fail("PHP test server did not become ready")
+                self.fail("PHP test server did not become ready within 10 seconds")
             yield origin
         finally:
             process.terminate()
