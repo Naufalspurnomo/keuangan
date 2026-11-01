@@ -1,5 +1,5 @@
-import { ArrowLeft, Clock3, LocateFixed, Plus, Search, UserRoundCheck } from 'lucide-react'
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
+import { ArrowLeft, Clock3, LocateFixed, Plus, RefreshCw, Search, UserRoundCheck } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 
 import { TransactionRows } from './FinancePages'
 import { projectTotals, type FinanceProject, type FinanceTransaction, type FinanceWorkspace } from './financeWorkspace'
@@ -66,12 +66,15 @@ function PresensiPanel({ project }: { project: FinanceProject }) {
   const [records, setRecords] = useState<PresensiRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  const activeController = useRef<AbortController | null>(null)
 
-  useEffect(() => {
+  const loadRecords = useCallback((clear = false) => {
+    activeController.current?.abort()
     const controller = new AbortController()
+    activeController.current = controller
     setLoading(true)
     setError(false)
-    setRecords([])
+    if (clear) setRecords([])
     fetch(`/admin/api/presensi.php?project_id=${encodeURIComponent(project.id)}`, { credentials: 'same-origin', cache: 'no-store', signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(`Presensi unavailable (${response.status})`)
@@ -83,8 +86,17 @@ function PresensiPanel({ project }: { project: FinanceProject }) {
       })
       .catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === 'AbortError')) setError(true) })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
-    return () => controller.abort()
   }, [project.id])
+
+  useEffect(() => {
+    loadRecords(true)
+    const refreshOnFocus = () => loadRecords()
+    window.addEventListener('focus', refreshOnFocus)
+    return () => {
+      window.removeEventListener('focus', refreshOnFocus)
+      activeController.current?.abort()
+    }
+  }, [loadRecords])
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase('id-ID')
@@ -93,10 +105,14 @@ function PresensiPanel({ project }: { project: FinanceProject }) {
   const active = records.filter((record) => record.status === 'active').length
   const completed = records.length - active
 
-  if (error) return <div className="project-detail-empty presensi-error" role="alert"><strong>Data presensi belum dapat dimuat.</strong><span>Coba muat ulang halaman. Data lama tidak ditampilkan.</span></div>
-  if (loading) return <div className="project-detail-empty"><strong>Memuat data presensi…</strong><span>Mengambil bukti terbaru dari server.</span></div>
+  if (error) return <div className="project-detail-empty presensi-error" role="alert"><strong>Data presensi belum dapat dimuat.</strong><span>Data lama tidak ditampilkan.</span><button type="button" className="secondary-button" onClick={() => loadRecords(true)}>Coba lagi</button></div>
+  if (loading && !records.length) return <div className="project-detail-empty" role="status" aria-live="polite"><strong>Memuat data presensi…</strong><span>Mengambil bukti terbaru dari server.</span></div>
 
-  return <div className="project-presensi-panel">
+  return <div className="project-presensi-panel" aria-busy={loading}>
+    <div className="presensi-panel-actions">
+      <span role="status" aria-live="polite">{loading ? 'Memperbarui data…' : 'Data presensi terbaru'}</span>
+      <button type="button" className="secondary-button" onClick={() => loadRecords()} disabled={loading}><RefreshCw size={15} /> Perbarui presensi</button>
+    </div>
     <section className="project-detail-summary presensi-summary" aria-label={`Ringkasan presensi ${project.name}`}>
       <article><small>Total presensi</small><strong>{records.length}</strong></article>
       <article><small>Sedang bekerja</small><strong className="positive">{active}</strong></article>
@@ -118,7 +134,9 @@ function PresensiPanel({ project }: { project: FinanceProject }) {
         <EvidenceCard label="Check-out" employee={record.employee_name} evidence={record.check_out} />
       </div>
       <footer><Clock3 size={15} /><span>Durasi kerja</span><strong>{durationLabel(record.duration_minutes)}</strong></footer>
-    </article>)}</div> : <div className="project-detail-empty"><strong>Belum ada presensi untuk {project.name}</strong><span>{' '}Check-in pegawai dari /absen/presensi akan muncul di sini.</span></div>}
+    </article>)}</div> : records.length
+      ? <div className="project-detail-empty"><strong>Tidak ada presensi yang cocok dengan pencarian.</strong><span>Coba kata kunci lain atau tampilkan kembali semua data.</span><button type="button" className="secondary-button" onClick={() => setQuery('')}>Hapus pencarian</button></div>
+      : <div className="project-detail-empty"><strong>Belum ada presensi untuk {project.name}</strong><span>Check-in pegawai akan muncul di sini.</span><a className="secondary-button" href="/absen/presensi/" target="_blank" rel="noreferrer">Buka halaman presensi pegawai</a></div>}
   </div>
 }
 
