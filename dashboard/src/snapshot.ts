@@ -1,4 +1,6 @@
 import type { DashboardMeta, Overview, QualityRow, Transaction } from './types'
+import type { CompanyId, FinanceWorkspace, OfficeCategory, WalletId } from './financeWorkspace'
+import { isCanonicalWalletCompanyPair } from './transactionMappings'
 
 export interface WalletSnapshot { source_key: string; name: string; balance: number }
 export interface DebtSnapshot { source_key: string; date: string | null; amount: number; notes: string; borrower: string; lender: string; status: string }
@@ -6,6 +8,8 @@ export interface CashTrendPoint { month: string; balance: number; net_movement: 
 export type ProjectHealth = 'healthy' | 'watch' | 'overdue' | 'completed' | 'unmarked'
 export interface ProjectSummary {
   name: string
+  /** Canonical presensi project identity. Absent means presensi cannot be queried safely. */
+  project_id?: string
   portfolio?: 'Hollawall' | 'Texturin' | 'Belum ditandai' | 'Lintas portfolio'
   net_cashflow: number
   transaction_count?: number
@@ -29,6 +33,67 @@ export interface DashboardSnapshot {
   quality_rows?: QualityRow[]
   cash_trend: CashTrendPoint[]
   project_summaries: ProjectSummary[]
+}
+
+function liveProjectRouteId(project: ProjectSummary, index: number) {
+  return project.source_key_first || project.source_key_latest || `live-project-${index + 1}`
+}
+
+/** Adapt authenticated snapshot data to the existing shell without making it writable. */
+export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWorkspace {
+  const updatedAt = snapshot.meta.as_of
+  const projects = snapshot.project_summaries.map((project, index) => {
+    const matching = snapshot.transactions.filter((row) => row.project === project.name)
+    const first = matching[0]
+    const mappings = new Map(
+      matching
+        .filter((row) => isCanonicalWalletCompanyPair(row.wallet, row.company))
+        .map((row) => [`${row.wallet}\u0000${row.company}`, { wallet: row.wallet, company: row.company, project: project.name }]),
+    )
+    const writeMapping = mappings.size === 1 ? [...mappings.values()][0] : undefined
+    const startedOn = project.started_on || project.first_activity_on || matching.map((row) => row.transaction_date).sort()[0]
+      || snapshot.meta.data_through || updatedAt.slice(0, 10)
+    const completed = project.lifecycle_status === 'completed'
+    return {
+      id: liveProjectRouteId(project, index),
+      name: project.name,
+      company: (first?.company || '') as CompanyId,
+      wallet: (first?.wallet || '') as WalletId,
+      status: completed ? 'completed' as const : 'active' as const,
+      started_on: startedOn,
+      completed_on: completed ? (project.completed_on || project.last_activity_on || null) : null,
+      client: '', contract_value: null, notes: '', created_at: updatedAt, updated_at: updatedAt,
+      ...(project.project_id ? { presensi_project_id: project.project_id } : {}),
+      ...(writeMapping ? { write_mapping: writeMapping } : {}),
+    }
+  })
+  const projectsByName = new Map(projects.map((project) => [project.name, project]))
+  const transactions = snapshot.transactions.map((row) => {
+    const project = projectsByName.get(row.project)
+    const office = !project
+    return {
+      id: row.source_key || `live-transaction-${row.id}`,
+      date: row.transaction_date.slice(0, 10),
+      direction: row.transaction_type === 'Pemasukan' ? 'income' as const : 'expense' as const,
+      amount: row.amount,
+      scope: office ? 'office' as const : 'project' as const,
+      wallet: row.wallet as WalletId,
+      company: row.company as CompanyId,
+      project_id: project?.id ?? null,
+      office_category: office ? (row.office_category || row.project || 'Lainnya') as OfficeCategory : null,
+      notes: row.notes || '', created_at: row.updated_at || updatedAt, updated_at: row.updated_at || updatedAt,
+    }
+  })
+  const debts = snapshot.debts.flatMap((row, index) => row.date ? [{
+    id: row.source_key || `live-debt-${index + 1}`, date: row.date.slice(0, 10),
+    borrower: row.borrower as WalletId, lender: row.lender as WalletId, amount: row.amount,
+    repaid: row.status.toLocaleLowerCase('id-ID') === 'open' ? 0 : row.amount,
+    notes: row.notes, created_at: updatedAt, updated_at: updatedAt,
+  }] : [])
+  return {
+    version: 3, mode: 'live', projects, transactions, debts, audit: [], updated_at: updatedAt,
+    live_wallets: snapshot.wallets, live_cash_trend: snapshot.cash_trend,
+  }
 }
 
 export async function loadSnapshot(local = false): Promise<DashboardSnapshot> {

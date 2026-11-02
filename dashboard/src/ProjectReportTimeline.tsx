@@ -75,7 +75,7 @@ function SectionTimeline({ portfolio, projects, window, selected, onSelect, onNe
   window: ReturnType<typeof quarterWindow>
   selected?: string
   onSelect: (project: ProjectSummary) => void
-  onNew: () => void
+  onNew?: () => void
 }) {
   const [mobile, setMobile] = useState(() => matchMedia('(max-width: 580px)').matches)
   const [page, setPage] = useState(0)
@@ -104,7 +104,7 @@ function SectionTimeline({ portfolio, projects, window, selected, onSelect, onNe
   return <section className={`vertical-project-section ${portfolio.toLocaleLowerCase('id-ID')}`} aria-label={`Timeline proyek ${portfolio}`}>
     <header>
       <div><p>{portfolio.toUpperCase()} SECTION</p><h3>{mobile ? 'Proyek periode ini' : `Rentang proyek ${portfolio}`}</h3></div>
-      <button type="button" className="new-project-button" aria-label={`Tambah proyek ${portfolio}`} onClick={onNew}><Plus size={15} />Proyek Baru</button>
+      <button type="button" hidden={!onNew} className="new-project-button" aria-label={`Tambah proyek ${portfolio}`} onClick={onNew}><Plus size={15} />Proyek Baru</button>
     </header>
     {items.length > 0 && <div className="project-lane-navigation" aria-label={`Navigasi proyek ${portfolio}`}>
       <span>{visibleRange.start}–{Math.min(visibleRange.end, items.length)} dari {items.length} proyek</span>
@@ -187,8 +187,8 @@ export default function ProjectReportTimeline({ transactions, projects, asOf, da
     </div>
 
     <div className="section-timeline-grid">
-      <SectionTimeline portfolio="Hollawall" projects={projects} window={window} selected={selected?.name} onSelect={setSelected} onNew={() => onAddProject ? onAddProject() : setReadOnlyNotice(true)} />
-      <SectionTimeline portfolio="Texturin" projects={projects} window={window} selected={selected?.name} onSelect={setSelected} onNew={() => onAddProject ? onAddProject() : setReadOnlyNotice(true)} />
+      <SectionTimeline portfolio="Hollawall" projects={projects} window={window} selected={selected?.name} onSelect={setSelected} onNew={onAddProject ? () => onAddProject() : undefined} />
+      <SectionTimeline portfolio="Texturin" projects={projects} window={window} selected={selected?.name} onSelect={setSelected} onNew={onAddProject ? () => onAddProject() : undefined} />
     </div>
 
     {selected && <aside className="project-timeline-detail" aria-label={`Detail proyek ${selected.name}`}>

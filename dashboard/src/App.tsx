@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BarChart3,
   BriefcaseBusiness,
@@ -31,7 +31,10 @@ import ProjectCommandCenter from './ProjectCommandCenter'
 import ProjectCompleteDialog from './ProjectCompleteDialog'
 import ProjectTransactionsWorkspace from './ProjectTransactionsWorkspace'
 import ReportsWorkspace from './ReportsWorkspace'
-import type { FinanceDebt, FinanceProject, FinanceTransaction, ProjectInput, TransactionInput, DebtInput } from './financeWorkspace'
+import type { FinanceDebt, FinanceProject, FinanceTransaction, FinanceWorkspace, ProjectInput, TransactionInput, TransactionFormInput, DebtInput } from './financeWorkspace'
+import { snapshotFinanceWorkspace } from './snapshot'
+import { useLiveSnapshot } from './liveSnapshotView'
+import { createTransactionWriteAttempt, jakartaToday, loadTransactionWriteSession, type RecordedTransaction, type TransactionWriteAttempt, type TransactionWriteSession } from './transactionApi'
 import { useFinanceWorkspace } from './useFinanceWorkspace'
 import hollawallLogo from './assets/hollawall-logo.png'
 
@@ -110,8 +113,10 @@ function localIsoDate() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
 
-export default function App() {
-  const finance = useFinanceWorkspace()
+export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, onCreateLiveTransaction }: { suppliedWorkspace?: Readonly<FinanceWorkspace>; liveWriteSession?: TransactionWriteSession; liveWriteStatus?: string; onCreateLiveTransaction?: (input: TransactionFormInput) => Promise<RecordedTransaction> } = {}) {
+  const finance = useFinanceWorkspace(suppliedWorkspace)
+  const readOnly = finance.readOnly
+  const canCreateTransactions = readOnly && liveWriteSession?.writesEnabled === true && Boolean(onCreateLiveTransaction)
   const initialRoute = useRef(currentRoute()).current
   const [route, setRoute] = useState(initialRoute)
   const { page: active, projectId: projectFilter } = route
@@ -203,7 +208,7 @@ export default function App() {
   const navigate = (page: Page) => pushRoute(page)
   const backToProjects = () => window.history.state?.fromPage === 'projects' ? window.history.back() : pushRoute('projects')
   const closeMenu = () => { setMenuOpen(false); if (mobile) window.requestAnimationFrame(() => menuButtonRef.current?.focus()) }
-  const commit = (action: () => void, success: string) => { action(); setNotice(success) }
+  const commit = (action: () => void, success: string) => { if (readOnly) throw new Error('Workspace live hanya baca.'); action(); setNotice(success) }
   const safe = (action: () => void, success: string) => { try { commit(action, success) } catch (error) { setNotice(error instanceof Error ? error.message : 'Tindakan belum dapat diproses.') } }
   const saveProject = (input: ProjectInput) => modal?.kind === 'project' && modal.value
     ? commit(() => finance.editProject(modal.value!.id, input), 'Proyek diperbarui.')
@@ -216,9 +221,18 @@ export default function App() {
     safe(() => finance.editProject(project.id, projectStatusInput(project, 'completed', completedOn)), 'Proyek diselesaikan.')
   }
   const reactivateProject = (project: FinanceProject) => safe(() => finance.editProject(project.id, projectStatusInput(project, 'active', null)), 'Proyek diaktifkan kembali.')
-  const saveTransaction = (input: TransactionInput) => modal?.kind === 'transaction' && modal.value
-    ? commit(() => finance.editTransaction(modal.value!.id, input), 'Transaksi diperbarui.')
-    : commit(() => finance.addTransaction(input), 'Transaksi ditambahkan.')
+  const saveTransaction = (input: TransactionFormInput) => {
+    if (readOnly) {
+      if (!canCreateTransactions || !onCreateLiveTransaction) throw new Error('Pencatatan transaksi belum tersedia.')
+      return onCreateLiveTransaction(input).then((result) => {
+        setNotice(`Transaksi tercatat di ${result.sheetName}, baris ${result.sheetRow}. Data live dimuat ulang.`)
+      })
+    }
+    const { category: _category, ...demoInput } = input
+    return modal?.kind === 'transaction' && modal.value
+      ? commit(() => finance.editTransaction(modal.value!.id, demoInput as TransactionInput), 'Transaksi diperbarui.')
+      : commit(() => finance.addTransaction(demoInput as TransactionInput), 'Transaksi ditambahkan.')
+  }
   const saveDebt = (input: DebtInput) => modal?.kind === 'debt' && modal.value
     ? commit(() => finance.editDebt(modal.value!.id, input), 'Hutang diperbarui.')
     : commit(() => finance.addDebt(input), 'Hutang ditambahkan.')
@@ -240,17 +254,17 @@ export default function App() {
         : { label: 'Tambah transaksi', run: () => setModal({ kind: 'transaction' } as Modal) }
 
   const content = active === 'overview'
-    ? <OverviewWorkspace workspace={finance.workspace} onAddTransaction={() => setModal({ kind: 'transaction' })} onAddProject={() => setModal({ kind: 'project' })} onAddOffice={() => setModal({ kind: 'transaction', scope: 'office' })} />
+    ? <OverviewWorkspace workspace={finance.workspace} readOnly={readOnly} canCreateTransactions={canCreateTransactions} onAddTransaction={() => setModal({ kind: 'transaction' })} onAddProject={() => setModal({ kind: 'project' })} onAddOffice={() => setModal({ kind: 'transaction', scope: 'office' })} />
     : active === 'cashflow' ? <CashflowWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
       : active === 'wallets' ? <WalletWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
-        : active === 'projects' && selectedProject ? <ProjectTransactionsWorkspace workspace={finance.workspace} project={selectedProject} onBack={backToProjects} onAdd={(project) => setModal({ kind: 'transaction', projectId: project.id })} onEdit={(value) => setModal({ kind: 'transaction', value, projectId: selectedProject.id })} onDelete={(value) => confirmDelete('transaksi', () => finance.removeTransaction(value.id))} onComplete={completeProjectNow} onReactivate={reactivateProject} />
-          : active === 'projects' ? <ProjectCommandCenter workspace={finance.workspace} onAdd={() => setModal({ kind: 'project' })} onEdit={(value) => setModal({ kind: 'project', value })} onComplete={(value) => setModal({ kind: 'complete-project', value })} onQuickComplete={completeProjectNow} onDelete={(value) => confirmDelete(`proyek ${value.name}`, () => finance.removeProject(value.id))} onOpen={openProject} />
-            : active === 'office' ? <OfficeWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'transaction', scope: 'office' })} onEdit={(value) => setModal({ kind: 'transaction', value })} onDelete={(value) => confirmDelete('biaya kantor', () => finance.removeTransaction(value.id))} />
+        : active === 'projects' && selectedProject ? <ProjectTransactionsWorkspace workspace={finance.workspace} project={selectedProject} onBack={backToProjects} onAdd={(project) => setModal({ kind: 'transaction', projectId: project.id })} onEdit={readOnly ? () => undefined : (value) => setModal({ kind: 'transaction', value, projectId: selectedProject.id })} onDelete={readOnly ? () => undefined : (value) => confirmDelete('transaksi', () => finance.removeTransaction(value.id))} onComplete={readOnly ? () => undefined : completeProjectNow} onReactivate={readOnly ? () => undefined : reactivateProject} readOnly={readOnly} canCreateTransactions={canCreateTransactions} />
+          : active === 'projects' ? <ProjectCommandCenter workspace={finance.workspace} onAdd={() => setModal({ kind: 'project' })} onEdit={(value) => setModal({ kind: 'project', value })} onComplete={(value) => setModal({ kind: 'complete-project', value })} onQuickComplete={completeProjectNow} onDelete={(value) => confirmDelete(`proyek ${value.name}`, () => finance.removeProject(value.id))} onOpen={openProject} readOnly={readOnly} />
+            : active === 'office' ? <OfficeWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'transaction', scope: 'office' })} onEdit={(value) => setModal({ kind: 'transaction', value })} onDelete={(value) => confirmDelete('biaya kantor', () => finance.removeTransaction(value.id))} readOnly={readOnly} canCreateTransactions={canCreateTransactions} />
               : active === 'debts' ? <DebtWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'debt' })} onEdit={(value) => setModal({ kind: 'debt', value })} onDelete={(value) => confirmDelete('hutang internal', () => finance.removeDebt(value.id))} />
                 : <ReportsWorkspace workspace={finance.workspace} />
 
   return (
-    <div className="app-shell finance-workspace-shell">
+    <div className={`app-shell finance-workspace-shell${readOnly ? ' is-readonly' : ''}`}>
       <Sidebar active={active} open={menuOpen} mobile={mobile} close={closeMenu} navigate={navigate} />
       <main ref={mainRef} className="main-canvas" aria-hidden={mobile && menuOpen ? true : undefined}>
         <header className="topbar">
@@ -259,21 +273,99 @@ export default function App() {
           <div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{mobile ? meta.title : selectedProject?.name ?? meta.title}</strong></div>
           <div className="topbar-actions">
             {active === 'projects' && <ExportButton workspace={finance.workspace} />}
-            {active !== 'reports' && <button className="topbar-add" onClick={addAction.run}><Plus size={16} /><span>{addAction.label}</span></button>}
+            {((!readOnly && active !== 'reports') || (canCreateTransactions && active !== 'reports' && active !== 'debts' && !(active === 'projects' && !selectedProject))) && <button className="topbar-add" onClick={addAction.run}><Plus size={16} /><span>{addAction.label}</span></button>}
             <ThemeToggle theme={theme} setTheme={setTheme} />
           </div>
         </header>
         <div className="content">
-          <DemoBanner updatedAt={finance.workspace.updated_at} onReset={reset} />
+          <p className="demo-mode-label">{readOnly ? canCreateTransactions ? 'Mode live · pencatatan transaksi aktif' : 'Mode live · hanya baca' : 'Mode demo · data browser'}</p>
+          {readOnly && !canCreateTransactions && <p className="form-error">{liveWriteStatus ?? 'Pencatatan transaksi belum tersedia.'}</p>}
+          {!readOnly && <DemoBanner updatedAt={finance.workspace.updated_at} onReset={reset} />}
           {!['overview', 'projects', 'reports'].includes(active) && <header className="page-heading"><div><p className="eyebrow">{meta.eyebrow}</p><h1>{meta.title}</h1><p>{meta.copy}</p></div><span className="demo-badge">DATA DEMO</span></header>}
           {content}
         </div>
       </main>
       {notice && <div className="finance-toast" role="status">{notice}</div>}
-      {modal?.kind === 'project' && <ProjectForm project={modal.value} onSave={saveProject} onClose={() => setModal(null)} />}
-      {modal?.kind === 'complete-project' && <ProjectCompleteDialog project={modal.value} onSave={completeProject} onClose={() => setModal(null)} />}
-      {modal?.kind === 'transaction' && <TransactionForm projects={finance.workspace.projects} transaction={modal.value} initialScope={modal.scope} lockedProjectId={modal.projectId} onSave={saveTransaction} onClose={() => setModal(null)} />}
-      {modal?.kind === 'debt' && <DebtForm debt={modal.value} onSave={saveDebt} onClose={() => setModal(null)} />}
+      {!readOnly && modal?.kind === 'project' && <ProjectForm project={modal.value} onSave={saveProject} onClose={() => setModal(null)} />}
+      {!readOnly && modal?.kind === 'complete-project' && <ProjectCompleteDialog project={modal.value} onSave={completeProject} onClose={() => setModal(null)} />}
+      {(!readOnly || canCreateTransactions) && modal?.kind === 'transaction' && <TransactionForm projects={finance.workspace.projects} transaction={modal.value} initialScope={modal.scope} lockedProjectId={modal.projectId} onSave={saveTransaction} onClose={() => setModal(null)} liveWrite={readOnly} currentDate={readOnly ? jakartaToday() : undefined} />}
+      {!readOnly && modal?.kind === 'debt' && <DebtForm debt={modal.value} onSave={saveDebt} onClose={() => setModal(null)} />}
     </div>
   )
+}
+
+export default function App() {
+  return new URLSearchParams(window.location.search).get('source') === 'demo'
+    ? <DemoApp />
+    : <LiveDashboardApp />
+}
+
+function LiveDashboardApp() {
+  const state = useLiveSnapshot({ endpoint: '/admin/api/snapshot.php' })
+  const [writeSession, setWriteSession] = useState<TransactionWriteSession>()
+  const [writeStatus, setWriteStatus] = useState('Memeriksa kemampuan pencatatan transaksi…')
+  const pendingAttempt = useRef<TransactionWriteAttempt | null>(null)
+  const workspace = useMemo(() => state.status === 'ready' ? snapshotFinanceWorkspace(state.data) : null, [state])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    loadTransactionWriteSession().then((session) => {
+      if (controller.signal.aborted) return
+      setWriteSession(session)
+      setWriteStatus(session.writesEnabled
+        ? ''
+        : 'Pencatatan transaksi belum tersedia sampai konfigurasi produksi diaktifkan.')
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return
+      setWriteSession(undefined)
+      setWriteStatus(error instanceof Error ? error.message : 'Pencatatan transaksi belum tersedia.')
+    })
+    return () => controller.abort()
+  }, [])
+
+  const createLiveTransaction = async (input: TransactionFormInput) => {
+    if (!writeSession?.writesEnabled) throw new Error(writeStatus || 'Pencatatan transaksi belum tersedia.')
+    if (!Number.isSafeInteger(input.amount) || input.amount <= 0) throw new Error('Jumlah harus berupa rupiah bulat lebih dari nol.')
+    if (input.date !== jakartaToday()) throw new Error('Tanggal transaksi harus tanggal Jakarta hari ini.')
+    if (!input.wallet || !input.company || !input.category) throw new Error('Pemetaan kanonis transaksi belum lengkap.')
+    const description = input.notes
+    if (!description || description !== description.trim() || description !== description.split(/\s+/).join(' ')) {
+      throw new Error('Keterangan wajib diisi tanpa spasi berlebih di awal, akhir, atau tengah.')
+    }
+    if (/^[=+\-@]/.test(description)) throw new Error('Keterangan tidak boleh diawali =, +, -, atau @.')
+    const selectedProject = input.scope === 'project'
+      ? workspace?.projects.find((project) => project.id === input.project_id)
+      : undefined
+    if (input.scope === 'project' && (!selectedProject?.write_mapping || selectedProject.status !== 'active')) {
+      throw new Error('Pemetaan kanonis proyek belum tersedia untuk pencatatan.')
+    }
+    if (!pendingAttempt.current) {
+      pendingAttempt.current = createTransactionWriteAttempt({
+        date: input.date,
+        scope: input.scope,
+        direction: input.direction === 'income' ? 'Pemasukan' : 'Pengeluaran',
+        amount: input.amount,
+        description,
+        wallet: input.wallet,
+        company: input.company,
+        category: input.category,
+        ...(input.scope === 'project' ? { project: selectedProject!.write_mapping!.project } : {}),
+      })
+    }
+    try {
+      const result = await pendingAttempt.current.submit(writeSession)
+      pendingAttempt.current = null
+      state.reload()
+      return result
+    } catch (error) {
+      if (!(error && typeof error === 'object' && 'uncertain' in error && error.uncertain)) {
+        pendingAttempt.current = null
+      }
+      throw error
+    }
+  }
+
+  if (state.status === 'loading') return <main role="status">Menghubungkan data keuangan live</main>
+  if (state.status === 'error') return <main role="alert"><h1>Data live belum tersedia</h1><p>Data demo tidak ditampilkan sebagai pengganti.</p><button onClick={state.reload}>Coba lagi</button></main>
+  return workspace ? <DemoApp suppliedWorkspace={workspace} liveWriteSession={writeSession} liveWriteStatus={writeStatus} onCreateLiveTransaction={createLiveTransaction} /> : null
 }

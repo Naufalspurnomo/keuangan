@@ -1,0 +1,260 @@
+export const WRITE_SESSION_ENDPOINT = '/admin/api/write-session.php'
+export const TRANSACTIONS_ENDPOINT = '/admin/api/transactions.php'
+
+export type TransactionWriteScope = 'project' | 'office'
+export type TransactionWriteDirection = 'Pemasukan' | 'Pengeluaran'
+
+export interface TransactionWritePayload {
+  date: string
+  scope: TransactionWriteScope
+  direction: TransactionWriteDirection
+  amount: number
+  description: string
+  wallet: string
+  company: string
+  category: string
+  project?: string
+}
+
+export interface TransactionWriteSession {
+  csrfToken: string
+  writesEnabled: boolean
+}
+
+export interface RecordedTransaction {
+  recorded: true
+  transactionId: string
+  sheetName: string
+  sheetRow: number
+  sourceBlock: string
+  sheetMessageId: string
+  projectionStatus: string
+  duplicate: boolean
+}
+
+export interface TransactionWriteAttempt {
+  readonly idempotencyKey: string
+  readonly payload: Readonly<TransactionWritePayload>
+  submit: (session: TransactionWriteSession) => Promise<RecordedTransaction>
+}
+
+export class TransactionWriteError extends Error {
+  readonly code: string
+  readonly uncertain: boolean
+  readonly retryable: boolean
+  readonly status?: number
+
+  constructor(message: string, options: { code: string; uncertain?: boolean; retryable?: boolean; status?: number }) {
+    super(message)
+    this.name = 'TransactionWriteError'
+    this.code = options.code
+    this.uncertain = options.uncertain ?? false
+    this.retryable = options.retryable ?? false
+    this.status = options.status
+  }
+}
+
+interface ApiOptions {
+  endpoint?: string
+  request?: typeof fetch
+}
+
+interface WriteAttemptOptions extends ApiOptions {
+  keyFactory?: () => string
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function sameOriginPath(endpoint: string) {
+  const target = new URL(endpoint, window.location.origin)
+  if (target.origin !== window.location.origin) {
+    throw new TransactionWriteError('Endpoint pencatatan harus same-origin.', { code: 'cross_origin_endpoint' })
+  }
+  return target.pathname + target.search
+}
+
+async function jsonResponse(response: Response, contract: string): Promise<Record<string, unknown>> {
+  if (!response.headers.get('content-type')?.toLocaleLowerCase('en-US').includes('application/json')) {
+    throw new TransactionWriteError(`Respons ${contract} bukan JSON.`, {
+      code: 'invalid_response',
+      uncertain: contract === 'pencatatan' && response.ok,
+      retryable: contract === 'pencatatan' && response.ok,
+      status: response.status,
+    })
+  }
+  try {
+    const body = record(await response.json())
+    if (!body) throw new Error('not an object')
+    return body
+  } catch {
+    throw new TransactionWriteError(`Respons ${contract} tidak valid.`, {
+      code: 'invalid_response',
+      uncertain: contract === 'pencatatan' && response.ok,
+      retryable: contract === 'pencatatan' && response.ok,
+      status: response.status,
+    })
+  }
+}
+
+function apiError(body: Record<string, unknown>, status: number) {
+  const error = record(body.error)
+  const code = typeof error?.code === 'string' ? error.code : 'transaction_failed'
+  const serverMessage = typeof error?.message === 'string' ? error.message : ''
+  const uncertain = status >= 500
+  const fallback = uncertain
+    ? 'Hasil pencatatan belum dapat dipastikan. Coba lagi dengan permintaan yang sama.'
+    : 'Transaksi ditolak dan belum dicatat.'
+  return new TransactionWriteError(serverMessage || fallback, {
+    code,
+    uncertain,
+    retryable: uncertain,
+    status,
+  })
+}
+
+export async function loadTransactionWriteSession(options: ApiOptions = {}): Promise<TransactionWriteSession> {
+  const endpoint = sameOriginPath(options.endpoint ?? WRITE_SESSION_ENDPOINT)
+  const request = options.request ?? fetch
+  let response: Response
+  try {
+    response = await request(endpoint, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      redirect: 'error',
+      headers: { Accept: 'application/json' },
+    })
+  } catch {
+    throw new TransactionWriteError('Status pencatatan tidak dapat dimuat.', {
+      code: 'write_session_unavailable',
+      retryable: true,
+    })
+  }
+  const body = await jsonResponse(response, 'sesi pencatatan')
+  if (!response.ok) throw apiError(body, response.status)
+  const data = record(body.data)
+  const capabilities = record(data?.capabilities)
+  if (body.api_version !== 'dashboard.v1'
+      || typeof data?.csrf_token !== 'string'
+      || data.csrf_token.length < 16
+      || typeof capabilities?.writes_enabled !== 'boolean') {
+    throw new TransactionWriteError('Kontrak sesi pencatatan tidak cocok.', { code: 'invalid_write_session' })
+  }
+  return {
+    csrfToken: data.csrf_token,
+    writesEnabled: capabilities.writes_enabled,
+  }
+}
+
+function generateIdempotencyKey() {
+  if (typeof crypto?.randomUUID === 'function') return crypto.randomUUID()
+  const bytes = new Uint8Array(24)
+  crypto.getRandomValues(bytes)
+  return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('')
+}
+
+function recordedTransaction(body: Record<string, unknown>, response: Response): RecordedTransaction {
+  const data = record(body.data)
+  const valid = response.status === 201
+    && body.api_version === 'dashboard.v1'
+    && data?.recorded === true
+    && typeof data.transaction_id === 'string'
+    && data.transaction_id.length > 0
+    && typeof data.sheet_name === 'string'
+    && data.sheet_name.length > 0
+    && Number.isSafeInteger(data.sheet_row)
+    && Number(data.sheet_row) > 0
+    && typeof data.source_block === 'string'
+    && data.source_block.length > 0
+    && typeof data.sheet_message_id === 'string'
+    && data.sheet_message_id.length > 0
+    && typeof data.projection_status === 'string'
+    && data.projection_status.length > 0
+    && typeof data.duplicate === 'boolean'
+  if (!valid || !data) {
+    throw new TransactionWriteError('Server belum memberikan bukti pencatatan yang lengkap.', {
+      code: 'unverified_recording',
+      uncertain: true,
+      retryable: true,
+      status: response.status,
+    })
+  }
+  return {
+    recorded: true,
+    transactionId: data.transaction_id as string,
+    sheetName: data.sheet_name as string,
+    sheetRow: data.sheet_row as number,
+    sourceBlock: data.source_block as string,
+    sheetMessageId: data.sheet_message_id as string,
+    projectionStatus: data.projection_status as string,
+    duplicate: data.duplicate as boolean,
+  }
+}
+
+export function createTransactionWriteAttempt(
+  payload: TransactionWritePayload,
+  options: WriteAttemptOptions = {},
+): TransactionWriteAttempt {
+  const endpoint = sameOriginPath(options.endpoint ?? TRANSACTIONS_ENDPOINT)
+  const request = options.request ?? fetch
+  const idempotencyKey = (options.keyFactory ?? generateIdempotencyKey)()
+  if (!/^\S{16,128}$/.test(idempotencyKey)) {
+    throw new TransactionWriteError('Idempotency key tidak valid.', { code: 'invalid_idempotency_key' })
+  }
+  const immutablePayload = Object.freeze({ ...payload })
+  const body = JSON.stringify({ idempotency_key: idempotencyKey, ...immutablePayload })
+
+  return Object.freeze({
+    idempotencyKey,
+    payload: immutablePayload,
+    async submit(session: TransactionWriteSession) {
+      if (!session.writesEnabled) {
+        throw new TransactionWriteError('Pencatatan transaksi belum diaktifkan.', {
+          code: 'transaction_writes_disabled',
+        })
+      }
+      if (typeof session.csrfToken !== 'string' || session.csrfToken.length < 16) {
+        throw new TransactionWriteError('Sesi pencatatan tidak valid.', { code: 'invalid_write_session' })
+      }
+      let response: Response
+      try {
+        response = await request(endpoint, {
+          method: 'POST',
+          credentials: 'same-origin',
+          cache: 'no-store',
+          redirect: 'error',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': session.csrfToken,
+            'Idempotency-Key': idempotencyKey,
+          },
+          body,
+        })
+      } catch {
+        throw new TransactionWriteError('Koneksi terputus setelah permintaan dikirim. Status pencatatan belum pasti.', {
+          code: 'transaction_outcome_unknown',
+          uncertain: true,
+          retryable: true,
+        })
+      }
+      const responseBody = await jsonResponse(response, 'pencatatan')
+      if (!response.ok) throw apiError(responseBody, response.status)
+      return recordedTransaction(responseBody, response)
+    },
+  })
+}
+
+export function jakartaToday(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now)
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${value.year}-${value.month}-${value.day}`
+}

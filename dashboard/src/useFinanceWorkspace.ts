@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   createDebt,
@@ -38,18 +38,26 @@ function loadWorkspace() {
   }
 }
 
-export function useFinanceWorkspace() {
-  const [workspace, setWorkspaceState] = useState<FinanceWorkspace>(loadWorkspace)
+export function useFinanceWorkspace(externalWorkspace?: Readonly<FinanceWorkspace>) {
+  const readOnly = externalWorkspace !== undefined
+  const [workspace, setWorkspaceState] = useState<FinanceWorkspace>(() => (externalWorkspace as FinanceWorkspace | undefined) ?? loadWorkspace())
   const workspaceRef = useRef(workspace)
+  useEffect(() => {
+    if (!externalWorkspace) return
+    workspaceRef.current = externalWorkspace as FinanceWorkspace
+    setWorkspaceState(externalWorkspace as FinanceWorkspace)
+  }, [externalWorkspace])
   const setWorkspace = useCallback((updater: (current: FinanceWorkspace) => FinanceWorkspace) => {
+    if (readOnly) throw new Error('Workspace live hanya baca.')
     const next = updater(workspaceRef.current)
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
     workspaceRef.current = next
     setWorkspaceState(next)
-  }, [])
+  }, [readOnly])
 
   return {
     workspace,
+    readOnly,
     addProject: (input: ProjectInput) => setWorkspace((current) => createProject(current, input)),
     editProject: (id: string, input: ProjectInput) => setWorkspace((current) => updateProject(current, id, input)),
     removeProject: (id: string) => setWorkspace((current) => deleteProject(current, id)),

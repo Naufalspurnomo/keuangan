@@ -7,7 +7,7 @@ import { seedFinanceWorkspace } from './financeWorkspace'
 beforeEach(() => {
   localStorage.clear()
   sessionStorage.clear()
-  window.history.replaceState(null, '', '/')
+  window.history.replaceState(null, '', '/?source=demo')
   vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
   vi.stubGlobal('confirm', vi.fn(() => true))
   vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)

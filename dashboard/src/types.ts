@@ -27,6 +27,7 @@ export interface Transaction {
   transfer_scope?: 'internal' | 'external'
   invalid_reason?: string
   updated_at?: string
+  office_category?: string
 }
 
 export interface QualityRow {
