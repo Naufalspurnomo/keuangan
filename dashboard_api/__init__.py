@@ -9,7 +9,6 @@ from typing import Any, Optional
 from flask import Flask
 
 from dashboard_api.repository import DashboardRepository
-from dashboard_api.routes import create_dashboard_blueprint
 
 
 # SHA-256 verifier for the owner VPS reverse proxy. The 384-bit bearer token
@@ -24,6 +23,8 @@ def register_dashboard(
     transaction_service: Optional[Any] = None,
 ) -> None:
     """Register dashboard routes without modifying existing webhook behavior."""
+    # Import lazily so standalone transaction services can import contracts.
+    from dashboard_api.routes import create_dashboard_blueprint
 
     app.config.setdefault("DASHBOARD_OWNER_EMAIL", os.getenv("DASHBOARD_OWNER_EMAIL", ""))
     app.config.setdefault(
