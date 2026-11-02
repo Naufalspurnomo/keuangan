@@ -67,7 +67,7 @@ function currentRoute(): { page: Page; projectId?: string } {
 }
 
 const pageMeta: Record<Page, { eyebrow: string; title: string; copy: string }> = {
-  overview: { eyebrow: 'RINGKASAN', title: 'Ringkasan', copy: 'Posisi keuangan dari seluruh data demo.' },
+  overview: { eyebrow: 'RINGKASAN', title: 'Ringkasan', copy: 'Posisi keuangan dari seluruh sumber data.' },
   cashflow: { eyebrow: 'ARUS KAS', title: 'Arus Kas', copy: 'Pemasukan dan pengeluaran per bulan.' },
   wallets: { eyebrow: 'SUMBER DANA', title: 'Dompet', copy: 'Posisi CV HB, TX SBY, dan TX Bali.' },
 
@@ -88,7 +88,7 @@ function useMobileNavigation() {
   return mobile
 }
 
-function Sidebar({ active, open, mobile, close, navigate }: { active: Page; open: boolean; mobile: boolean; close: () => void; navigate: (page: Page) => void }) {
+function Sidebar({ active, open, mobile, live, close, navigate }: { active: Page; open: boolean; mobile: boolean; live: boolean; close: () => void; navigate: (page: Page) => void }) {
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   useEffect(() => { if (mobile && open) closeButtonRef.current?.focus() }, [mobile, open])
   const items = [
@@ -97,7 +97,7 @@ function Sidebar({ active, open, mobile, close, navigate }: { active: Page; open
     ['debts', 'Hutang Internal', Landmark], ['reports', 'Laporan', FileBarChart],
   ] as const
   const hidden = mobile && !open
-  return <>{mobile && open && <button type="button" className="mobile-overlay is-open" onClick={close} aria-label="Tutup navigasi" />}<aside id="app-navigation" className={`sidebar ${open ? 'is-open' : ''}`} aria-hidden={hidden || undefined}><div className="sidebar-head"><img src={hollawallLogo} alt="Hollawall" /><button ref={closeButtonRef} tabIndex={hidden ? -1 : 0} className="icon-button mobile-only" onClick={close} aria-label="Tutup navigasi"><X size={20} /></button></div><div className="workspace-switch"><Building2 size={18} /><span><small>Ruang kerja</small>Hollawall Group</span></div><nav aria-label="Menu utama">{items.map(([key, label, Icon]) => <button type="button" tabIndex={hidden ? -1 : 0} key={key} className={active === key ? 'active' : ''} aria-current={active === key ? 'page' : undefined} onClick={() => { navigate(key); close() }}><Icon size={18} /><span>{label}</span></button>)}</nav><div className="sidebar-bottom"><div className="profile workspace-profile"><span><LockKeyhole size={15} /></span><div><strong>Workspace demo</strong><small>Data lokal · Teraudit</small></div></div></div></aside></>
+  return <>{mobile && open && <button type="button" className="mobile-overlay is-open" onClick={close} aria-label="Tutup navigasi" />}<aside id="app-navigation" className={`sidebar ${open ? 'is-open' : ''}`} aria-hidden={hidden || undefined}><div className="sidebar-head"><img src={hollawallLogo} alt="Hollawall" /><button ref={closeButtonRef} tabIndex={hidden ? -1 : 0} className="icon-button mobile-only" onClick={close} aria-label="Tutup navigasi"><X size={20} /></button></div><div className="workspace-switch"><Building2 size={18} /><span><small>Ruang kerja</small>Hollawall Group</span></div><nav aria-label="Menu utama">{items.map(([key, label, Icon]) => <button type="button" tabIndex={hidden ? -1 : 0} key={key} className={active === key ? 'active' : ''} aria-current={active === key ? 'page' : undefined} onClick={() => { navigate(key); close() }}><Icon size={18} /><span>{label}</span></button>)}</nav><div className="sidebar-bottom"><div className="profile workspace-profile"><span><LockKeyhole size={15} /></span><div><strong>{live ? 'Workspace live' : 'Workspace demo'}</strong><small>{live ? 'Data server · Terautentikasi' : 'Data lokal · Teraudit'}</small></div></div></div></aside></>
 }
 
 function ThemeToggle({ theme, setTheme }: { theme: string; setTheme: (theme: string) => void }) {
@@ -265,7 +265,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
 
   return (
     <div className={`app-shell finance-workspace-shell${readOnly ? ' is-readonly' : ''}`}>
-      <Sidebar active={active} open={menuOpen} mobile={mobile} close={closeMenu} navigate={navigate} />
+      <Sidebar active={active} open={menuOpen} mobile={mobile} live={readOnly} close={closeMenu} navigate={navigate} />
       <main ref={mainRef} className="main-canvas" aria-hidden={mobile && menuOpen ? true : undefined}>
         <header className="topbar">
           <button ref={menuButtonRef} className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi" aria-controls="app-navigation" aria-expanded={mobile ? menuOpen : undefined}><Menu size={21} /></button>
@@ -281,7 +281,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
           <p className="demo-mode-label">{readOnly ? canCreateTransactions ? 'Mode live · pencatatan transaksi aktif' : 'Mode live · hanya baca' : 'Mode demo · data browser'}</p>
           {readOnly && !canCreateTransactions && <p className="form-error">{liveWriteStatus ?? 'Pencatatan transaksi belum tersedia.'}</p>}
           {!readOnly && <DemoBanner updatedAt={finance.workspace.updated_at} onReset={reset} />}
-          {!['overview', 'projects', 'reports'].includes(active) && <header className="page-heading"><div><p className="eyebrow">{meta.eyebrow}</p><h1>{meta.title}</h1><p>{meta.copy}</p></div><span className="demo-badge">DATA DEMO</span></header>}
+          {!['overview', 'projects', 'reports'].includes(active) && <header className="page-heading"><div><p className="eyebrow">{meta.eyebrow}</p><h1>{meta.title}</h1><p>{meta.copy}</p></div><span className="demo-badge">{readOnly ? 'DATA LIVE' : 'DATA DEMO'}</span></header>}
           {content}
         </div>
       </main>
@@ -295,9 +295,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
 }
 
 export default function App() {
-  return new URLSearchParams(window.location.search).get('source') === 'demo'
-    ? <DemoApp />
-    : <LiveDashboardApp />
+  return <LiveDashboardApp />
 }
 
 function LiveDashboardApp() {

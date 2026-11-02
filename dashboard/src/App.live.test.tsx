@@ -111,10 +111,15 @@ describe('production live source mode', () => {
     expect(screen.getByRole('heading', { name: 'Sebaran saldo dompet' })).toBeTruthy()
     expect(screen.getByText('Dompet Tak Terpetakan')).toBeTruthy()
 
+    expect(screen.queryByText('Workspace demo')).toBeNull()
+    expect(screen.getByText('Workspace live')).toBeTruthy()
+
     fireEvent.click(navigation().getByRole('button', { name: 'Operasional Kantor' }))
     expect(window.location.hash).toBe('#office')
     expect(screen.getByText('Kategori Produksi Khusus')).toBeTruthy()
     expect(screen.getByText('Biaya kategori aktual')).toBeTruthy()
+    expect(screen.getByText('DATA LIVE')).toBeTruthy()
+    expect(screen.queryByText('DATA DEMO')).toBeNull()
 
     fireEvent.click(navigation().getByRole('button', { name: 'Laporan' }))
     expect(window.location.hash).toBe('#reports')
@@ -157,20 +162,6 @@ describe('production live source mode', () => {
     expect(screen.getByText(/Data demo tidak ditampilkan sebagai pengganti/)).toBeTruthy()
     expect(document.querySelector('.app-shell')).toBeNull()
     expect(localStorage.getItem('hollawall-finance-demo-v3')).toBeNull()
-  })
-
-  it('isolates the writable demo behind an explicit source query opt-in', () => {
-    window.history.replaceState(null, '', '/admin/?source=demo')
-    const request = vi.fn()
-    vi.stubGlobal('fetch', request)
-
-    render(<App />)
-
-    expect(screen.getByText(/Data keuangan demo tersimpan di browser ini/)).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Tambah transaksi/i })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Reset data demo/i })).toBeTruthy()
-    expect(screen.getByText('Mode demo · data browser')).toBeTruthy()
-    expect(request).not.toHaveBeenCalled()
   })
 
   it('marks presensi unavailable and never queries a generated route key as a canonical project ID', async () => {
