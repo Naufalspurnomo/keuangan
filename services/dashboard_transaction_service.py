@@ -85,7 +85,7 @@ class SheetsTransactionAdapter(Protocol):
     ) -> AuthoritativeSheetRow | None: ...
 
 
-ProjectExists = Callable[[str], bool]
+ProjectExists = Callable[[str, str, str], bool]
 ProjectionRepair = Callable[[dict[str, Any]], Any]
 Today = Callable[[], date]
 _SOURCE_WALLET_RE = re.compile(r"^(?P<description>.*) \[Sumber: (?P<wallet>[^\]]+)\]$")
@@ -262,7 +262,14 @@ class DashboardTransactionService:
         self._today = today
 
     def validate(self, payload: Mapping[str, Any]) -> TransactionRequest:
-        kwargs: dict[str, Any] = {"project_exists": self._project_exists}
+        def project_exists(project: str) -> bool:
+            wallet = payload.get("wallet")
+            company = payload.get("company")
+            if not isinstance(wallet, str) or not isinstance(company, str):
+                return False
+            return self._project_exists(project, wallet, company)
+
+        kwargs: dict[str, Any] = {"project_exists": project_exists}
         if self._today is not None:
             kwargs["today"] = self._today
         return validate_transaction_request(payload, **kwargs)
@@ -307,7 +314,7 @@ class DashboardTransactionService:
         response = self._completion_response(row)
         self._store.complete(claim, response)
         self._repair_projection(request, row)
-        return response
+        return {**response, "duplicate": False}
 
     @staticmethod
     def _sheet_message_id(claim: DashboardWriteClaim) -> str:
@@ -331,7 +338,7 @@ class DashboardTransactionService:
         if stored != expected:
             raise DashboardTransactionConflict("stored completion response conflicts with authoritative Sheet row")
         self._repair_projection(request, row)
-        return dict(stored)
+        return {**stored, "duplicate": True}
 
     @staticmethod
     def _verify_row(

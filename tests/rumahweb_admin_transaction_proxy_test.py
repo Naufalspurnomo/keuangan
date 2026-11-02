@@ -284,6 +284,7 @@ class RumahwebAdminTransactionProxyTests(unittest.TestCase):
                         "sheet_row": 9,
                         "source_block": "operasional",
                         "sheet_message_id": "dashboard:synthetic:hash",
+                        "duplicate": False,
                     }},
                 )
                 self.assertIn("no-store", accepted.headers["Cache-Control"])
@@ -309,6 +310,62 @@ class RumahwebAdminTransactionProxyTests(unittest.TestCase):
             self.assertEqual(headers["x-hollawall-proxy-token"], "synthetic-server-token-0001")
             self.assertNotIn("x-csrf-token", headers)
             self.assertNotIn("cookie", headers)
+
+    def test_http_200_replay_preserves_verified_duplicate_marker(self) -> None:
+        replay = {
+            "api_version": "dashboard.v1",
+            "data": {
+                "recorded": True,
+                "transaction_id": "tx_replay_0001",
+                "sheet_name": "CV HB(101)",
+                "sheet_row": 9,
+                "source_block": "operasional",
+                "sheet_message_id": "dashboard:synthetic:hash",
+                "duplicate": False,
+            },
+        }
+        with self.https_upstream([(200, replay)]) as (upstream, cert, _server):
+            self.write_config(enabled=True, upstream=upstream)
+            with self.php_server(ca_bundle=cert) as base:
+                session_id, csrf = self.login(base)
+                response = requests.post(
+                    self.transaction_url(base),
+                    headers={
+                        **self.cookie(session_id),
+                        "X-CSRF-Token": csrf,
+                        "Idempotency-Key": IDEMPOTENCY_KEY,
+                    },
+                    json=self.payload(),
+                    timeout=5,
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIs(response.json()["data"]["duplicate"], True)
+
+    def test_http_200_error_envelope_is_rejected_as_invalid_upstream_response(self) -> None:
+        malformed_replay = {
+            "error": {
+                "code": "transaction_conflict",
+                "message": "must not be returned with HTTP 200",
+            }
+        }
+        with self.https_upstream([(200, malformed_replay)]) as (upstream, cert, _server):
+            self.write_config(enabled=True, upstream=upstream)
+            with self.php_server(ca_bundle=cert) as base:
+                session_id, csrf = self.login(base)
+                response = requests.post(
+                    self.transaction_url(base),
+                    headers={
+                        **self.cookie(session_id),
+                        "X-CSRF-Token": csrf,
+                        "Idempotency-Key": IDEMPOTENCY_KEY,
+                    },
+                    json=self.payload(),
+                    timeout=5,
+                )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "invalid_upstream_response")
 
 
 if __name__ == "__main__":

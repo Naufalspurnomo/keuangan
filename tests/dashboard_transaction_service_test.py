@@ -158,7 +158,7 @@ def make_service(store=None, sheets=None, projection=None):
     service = DashboardTransactionService(
         store=store,
         sheets=sheets,
-        project_exists=lambda project: project == "PROJECT-001",
+        project_exists=lambda project, wallet, company: (project, wallet, company) == ("PROJECT-001", "CV HB(101)", "HOLLA"),
         projection_repair=projection,
         today=lambda: TODAY,
     )
@@ -196,8 +196,9 @@ def test_project_request_claims_appends_reads_back_completes_and_projects():
         "sheet_row": 22,
         "source_block": "pemasukan",
         "sheet_message_id": sheet_message_id,
+        "duplicate": False,
     }
-    assert store.complete_calls[0][1] == response
+    assert store.complete_calls[0][1] == {key: value for key, value in response.items() if key != "duplicate"}
     assert projection.rows[0]["sheet_name"] == "CV HB(101)"
     assert projection.rows[0]["company"] == "HOLLA"
     assert projection.rows[0]["kategori"] == "Lain-lain"
@@ -289,7 +290,8 @@ def test_completed_replay_verifies_sheet_and_repairs_projection_without_append()
 
     replay = service.record(valid_payload(), actor={"role": "owner"}, message_id="http:2")
 
-    assert replay == first
+    assert first["duplicate"] is False
+    assert replay == {**first, "duplicate": True}
     assert len(sheets.append_calls) == 1
     assert len(projection.rows) == 1
 

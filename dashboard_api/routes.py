@@ -153,11 +153,14 @@ def create_dashboard_blueprint(
     def selected_transaction_service():
         if transaction_service is not None:
             return transaction_service
-        projects = frozenset(
-            str(project)
-            for project in repository.fetch_filter_options().get("projects", ())
+        project_identities = repository.fetch_project_identities()
+        return DashboardTransactionService(
+            project_exists=lambda project, wallet, company: (
+                project,
+                wallet,
+                company,
+            ) in project_identities
         )
-        return DashboardTransactionService(project_exists=projects.__contains__)
 
     @blueprint.after_request
     def prevent_transaction_write_caching(response: Response):
@@ -269,7 +272,7 @@ def create_dashboard_blueprint(
             )
 
         response = jsonify({"api_version": API_VERSION, "data": _json_safe(result)})
-        response.status_code = 201
+        response.status_code = 200 if result.get("duplicate") is True else 201
         response.headers["Cache-Control"] = "no-store"
         return response
 

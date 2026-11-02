@@ -186,7 +186,7 @@ $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
 $upstreamContentType = (string) curl_getinfo($curl, CURLINFO_CONTENT_TYPE);
 curl_close($curl);
 
-$allowedStatuses = [201, 400, 401, 403, 409, 422, 503];
+$allowedStatuses = [200, 201, 400, 401, 403, 409, 422, 503];
 if ($executed === false
     || $responseTooLarge
     || !in_array($status, $allowedStatuses, true)
@@ -200,7 +200,7 @@ try {
     json_error(502, 'invalid_upstream_response', 'Transaction service unavailable.');
 }
 
-if ($status === 201
+if (in_array($status, [200, 201], true)
     && is_array($decoded)
     && ($decoded['api_version'] ?? null) === 'dashboard.v1'
     && is_array($decoded['data'] ?? null)
@@ -220,9 +220,10 @@ if ($status === 201
             'sheet_row' => $decoded['data']['sheet_row'],
             'source_block' => $decoded['data']['source_block'],
             'sheet_message_id' => $decoded['data']['sheet_message_id'],
+            'duplicate' => $status === 200,
         ],
     ];
-} elseif ($status !== 201
+} elseif (!in_array($status, [200, 201], true)
     && is_array($decoded)
     && is_array($decoded['error'] ?? null)
     && is_string($decoded['error']['code'] ?? null)

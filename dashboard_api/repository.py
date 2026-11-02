@@ -167,6 +167,27 @@ class DashboardRepository:
             "projects": sorted({row[2] for row in rows if row[2]}),
         }
 
+    def fetch_project_identities(self) -> frozenset[tuple[str, str, str]]:
+        """Return exact project/wallet/company identities accepted for writes."""
+
+        sql = """
+            SELECT DISTINCT project, wallet, company
+            FROM financial_ledger
+            WHERE project IS NOT NULL
+              AND wallet IS NOT NULL
+              AND company IS NOT NULL
+              AND is_valid = TRUE
+        """
+        with self._connect() as connection:
+            with connection.cursor() as db_cursor:
+                db_cursor.execute(sql)
+                rows = db_cursor.fetchall()
+        return frozenset(
+            (str(project), str(wallet), str(company))
+            for project, wallet, company in rows
+            if project and wallet and company
+        )
+
     def fetch_freshness(self) -> dict[str, Any]:
         sql = """
             SELECT MAX(updated_at), COUNT(*), COUNT(*) FILTER (WHERE NOT is_valid)
