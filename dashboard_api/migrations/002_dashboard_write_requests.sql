@@ -16,5 +16,9 @@ CREATE TABLE IF NOT EXISTS dashboard_write_requests (
     completed_at TIMESTAMPTZ
 );
 
+-- Repair an earlier additive draft that may have omitted this nullable runtime column.
+ALTER TABLE dashboard_write_requests
+    ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_dashboard_write_requests_status_created
     ON dashboard_write_requests (status, created_at);

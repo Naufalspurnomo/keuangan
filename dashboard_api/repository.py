@@ -172,6 +172,12 @@ class DashboardRepository:
 
         sql = """
             SELECT DISTINCT project, wallet, company
+            FROM financial_projects
+            WHERE project IS NOT NULL
+              AND wallet IS NOT NULL
+              AND company IS NOT NULL
+            UNION
+            SELECT DISTINCT project, wallet, company
             FROM financial_ledger
             WHERE project IS NOT NULL
               AND wallet IS NOT NULL

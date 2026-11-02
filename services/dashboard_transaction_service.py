@@ -291,6 +291,8 @@ class DashboardTransactionService:
             raise DashboardTransactionConflict(f"write request has unsupported terminal status: {claim.status}")
 
         row = self._sheets.read_by_message_id(request, message_id=sheet_message_id)
+        if not claim.claimed and row is None:
+            raise DashboardTransactionConflict("write request is already in progress")
         if row is None:
             try:
                 self._sheets.append(
@@ -311,10 +313,10 @@ class DashboardTransactionService:
         if row is None:
             raise DashboardTransactionUnavailable("authoritative Sheet row is missing after append")
         self._verify_row(request, row, sheet_message_id=sheet_message_id)
-        response = self._completion_response(row)
+        projection_status = "converged" if self._repair_projection(request, row) else "pending"
+        response = {**self._completion_response(row), "projection_status": projection_status}
         self._store.complete(claim, response)
-        self._repair_projection(request, row)
-        return {**response, "duplicate": False}
+        return {**response, "duplicate": not claim.claimed}
 
     @staticmethod
     def _sheet_message_id(claim: DashboardWriteClaim) -> str:
@@ -335,9 +337,13 @@ class DashboardTransactionService:
             raise DashboardTransactionConflict("completed request authoritative Sheet row is missing")
         self._verify_row(request, row, sheet_message_id=sheet_message_id)
         expected = self._completion_response(row)
-        if stored != expected:
+        stored_authority = {key: value for key, value in stored.items() if key != "projection_status"}
+        if stored_authority != expected:
             raise DashboardTransactionConflict("stored completion response conflicts with authoritative Sheet row")
-        self._repair_projection(request, row)
+        projection_status = "converged" if self._repair_projection(request, row) else "pending"
+        if stored.get("projection_status") != projection_status:
+            stored = {**stored, "projection_status": projection_status}
+            self._store.complete(claim, stored)
         return {**stored, "duplicate": True}
 
     @staticmethod
@@ -380,7 +386,7 @@ class DashboardTransactionService:
             "sheet_message_id": row.message_id,
         }
 
-    def _repair_projection(self, request: TransactionRequest, row: AuthoritativeSheetRow) -> None:
+    def _repair_projection(self, request: TransactionRequest, row: AuthoritativeSheetRow) -> bool:
         projection = {
             "tanggal": row.transaction_date.isoformat(),
             "jumlah": row.amount,
@@ -405,8 +411,10 @@ class DashboardTransactionService:
         }
         try:
             self._projection_repair(projection)
+            return True
         except Exception as exc:
             secure_log(
                 "WARNING",
                 f"Dashboard transaction projection repair failed: {type(exc).__name__}: {exc}",
             )
+            return False

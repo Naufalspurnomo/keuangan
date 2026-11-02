@@ -18,6 +18,7 @@ class FakeDatabase:
         self.rows = {}
         self.executions = []
         self.next_id = 1
+        self.stale_keys = set()
 
     def connect(self, dsn):
         assert dsn == "postgresql://isolated-test"
@@ -71,6 +72,22 @@ class FakeCursor:
         if normalized.startswith("SELECT id, idempotency_key_hash"):
             stored = self.database.rows.get(params[0])
             self.row = tuple(stored) if stored else None
+            return
+
+        if normalized.startswith("UPDATE dashboard_write_requests SET updated_at = NOW()"):
+            key_hash, request_hash, _lease_seconds = params
+            stored = self.database.rows.get(key_hash)
+            if (
+                key_hash not in self.database.stale_keys
+                or stored is None
+                or stored[2] != request_hash
+                or stored[6] != "claimed"
+                or stored[7] is not None
+            ):
+                self.row = None
+                return
+            self.database.stale_keys.remove(key_hash)
+            self.row = tuple(stored)
             return
 
         if normalized.startswith("UPDATE dashboard_write_requests"):
@@ -178,6 +195,45 @@ def test_duplicate_same_request_replays_stored_claim_without_replacing_evidence(
     assert replay.status == "claimed"
 
 
+def test_duplicate_matching_stale_claim_is_not_taken_over_without_fencing():
+    store, database = make_store()
+    first = store.claim(
+        transaction(),
+        actor={"email": "first@example.com", "role": "owner"},
+        message_id="dashboard:first",
+    )
+    database.stale_keys.add(first.idempotency_key_hash)
+
+    replay = store.claim(
+        transaction(),
+        actor={"email": "second@example.com", "role": "owner"},
+        message_id="dashboard:second",
+    )
+
+    assert replay.claimed is False
+    assert replay.request_id == first.request_id
+    assert replay.actor == first.actor
+    assert not any("updated_at < NOW()" in sql for sql, _ in database.executions)
+
+
+def test_duplicate_matching_fresh_claim_is_not_taken_over():
+    store, _ = make_store()
+    first = store.claim(
+        transaction(),
+        actor={"email": "first@example.com", "role": "owner"},
+        message_id="dashboard:first",
+    )
+
+    replay = store.claim(
+        transaction(),
+        actor={"email": "second@example.com", "role": "owner"},
+        message_id="dashboard:second",
+    )
+
+    assert replay.claimed is False
+    assert replay.request_id == first.request_id
+
+
 def test_same_idempotency_key_with_different_canonical_request_conflicts():
     store, _ = make_store()
     store.claim(
@@ -274,3 +330,75 @@ def test_migration_is_additive_and_does_not_write_financial_ledger():
     assert "completion_response JSONB" in sql
     assert "INSERT INTO financial_ledger" not in sql
     assert "ALTER TABLE financial_ledger" not in sql
+
+
+def test_ensure_schema_applies_migration_and_reads_back_required_contract(monkeypatch):
+    import services.dashboard_write_requests as module
+
+    executed = []
+
+    class SchemaCursor:
+        def execute(self, sql, params=()):
+            executed.append((" ".join(sql.split()), tuple(params)))
+
+        def fetchone(self):
+            return (True, True, True)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class SchemaConnection:
+        def cursor(self):
+            return SchemaCursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(module, "_default_connection_factory", lambda _dsn: SchemaConnection())
+    status = module.ensure_dashboard_write_schema("postgresql://isolated-test")
+
+    assert status == {"ready": True, "table": True, "columns": True, "unique_index": True}
+    assert "CREATE TABLE IF NOT EXISTS dashboard_write_requests" in executed[0][0]
+    assert "information_schema.columns" in executed[1][0]
+    assert "completed_at" in executed[1][0]
+
+
+def test_read_only_schema_health_never_executes_migration_ddl(monkeypatch):
+    import services.dashboard_write_requests as module
+
+    executed = []
+
+    class Cursor:
+        def execute(self, sql, params=()):
+            executed.append(" ".join(sql.split()))
+
+        def fetchone(self):
+            return (True, True, True)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(module, "_default_connection_factory", lambda _dsn: Connection())
+    status = module.dashboard_write_schema_health("postgresql://isolated-test")
+
+    assert status["ready"] is True
+    assert all("CREATE TABLE" not in sql and "CREATE INDEX" not in sql for sql in executed)

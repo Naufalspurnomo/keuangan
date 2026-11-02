@@ -158,7 +158,7 @@ function generateIdempotencyKey() {
 
 function recordedTransaction(body: Record<string, unknown>, response: Response): RecordedTransaction {
   const data = record(body.data)
-  const valid = response.status === 201
+  const valid = (response.status === 200 || response.status === 201)
     && body.api_version === 'dashboard.v1'
     && data?.recorded === true
     && typeof data.transaction_id === 'string'

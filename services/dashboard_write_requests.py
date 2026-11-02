@@ -12,6 +12,7 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 from dashboard_api.write_contracts import TransactionRequest
@@ -56,6 +57,88 @@ def _default_connection_factory(dsn: str):
     import psycopg
 
     return psycopg.connect(dsn)
+
+
+_SCHEMA_HEALTH_QUERY = """
+    SELECT
+        to_regclass('public.dashboard_write_requests') IS NOT NULL AS table_ready,
+        (
+            SELECT COUNT(*) = 11
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'dashboard_write_requests'
+              AND column_name IN (
+                  'id', 'idempotency_key_hash', 'request_hash',
+                  'canonical_request', 'actor', 'message_id', 'status',
+                  'completion_response', 'created_at', 'updated_at', 'completed_at'
+              )
+        ) AS columns_ready,
+        EXISTS (
+            SELECT 1 FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND tablename = 'dashboard_write_requests'
+              AND indexdef ILIKE '%UNIQUE%idempotency_key_hash%'
+        ) AS unique_index_ready
+"""
+
+
+def _schema_status(row: Any) -> dict[str, bool]:
+    table_ready, columns_ready, unique_index_ready = map(bool, row or (False, False, False))
+    return {
+        "ready": table_ready and columns_ready and unique_index_ready,
+        "table": table_ready,
+        "columns": columns_ready,
+        "unique_index": unique_index_ready,
+    }
+
+
+def dashboard_write_schema_health(dsn: str | None = None) -> dict[str, bool]:
+    """Read the schema contract without executing migration DDL."""
+    selected_dsn = str(dsn or _database_url()).strip()
+    if not selected_dsn:
+        raise DashboardWriteRequestUnavailable(
+            "Dashboard write request schema requires STATE_DATABASE_URL or DATABASE_URL"
+        )
+    try:
+        with _default_connection_factory(selected_dsn) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(_SCHEMA_HEALTH_QUERY)
+                row = cursor.fetchone()
+    except DashboardWriteRequestUnavailable:
+        raise
+    except Exception as exc:
+        raise DashboardWriteRequestUnavailable(
+            f"Dashboard write request schema health unavailable: {type(exc).__name__}"
+        ) from exc
+    return _schema_status(row)
+
+
+def ensure_dashboard_write_schema(dsn: str | None = None) -> dict[str, bool]:
+    """Apply the additive write-request migration once, then read back its contract."""
+    selected_dsn = str(dsn or _database_url()).strip()
+    if not selected_dsn:
+        raise DashboardWriteRequestUnavailable(
+            "Dashboard write request schema requires STATE_DATABASE_URL or DATABASE_URL"
+        )
+    migration = (
+        Path(__file__).parents[1]
+        / "dashboard_api"
+        / "migrations"
+        / "002_dashboard_write_requests.sql"
+    ).read_text(encoding="utf-8")
+    try:
+        with _default_connection_factory(selected_dsn) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(migration)
+                cursor.execute(_SCHEMA_HEALTH_QUERY)
+                row = cursor.fetchone()
+    except DashboardWriteRequestUnavailable:
+        raise
+    except Exception as exc:
+        raise DashboardWriteRequestUnavailable(
+            f"Dashboard write request migration unavailable: {type(exc).__name__}"
+        ) from exc
+    return _schema_status(row)
 
 
 def _canonical_json(value: Any, *, label: str) -> tuple[str, Any]:
@@ -188,6 +271,10 @@ class DashboardWriteRequestStore:
                                 "idempotency claim disappeared before replay"
                             )
                         claim = _claim_from_row(existing, claimed=False)
+                        if claim.request_hash != request_hash or claim.canonical_request != canonical_request:
+                            raise DashboardWriteRequestConflict(
+                                "idempotency key already belongs to a different canonical request"
+                            )
         except (DashboardWriteRequestConflict, DashboardWriteRequestUnavailable):
             raise
         except Exception as exc:

@@ -210,7 +210,8 @@ if (in_array($status, [200, 201], true)
     && is_int($decoded['data']['sheet_row'] ?? null)
     && ($decoded['data']['sheet_row'] ?? 0) > 0
     && is_string($decoded['data']['source_block'] ?? null)
-    && is_string($decoded['data']['sheet_message_id'] ?? null)) {
+    && is_string($decoded['data']['sheet_message_id'] ?? null)
+    && in_array($decoded['data']['projection_status'] ?? null, ['converged', 'pending'], true)) {
     $sanitized = [
         'api_version' => 'dashboard.v1',
         'data' => [
@@ -220,6 +221,7 @@ if (in_array($status, [200, 201], true)
             'sheet_row' => $decoded['data']['sheet_row'],
             'source_block' => $decoded['data']['source_block'],
             'sheet_message_id' => $decoded['data']['sheet_message_id'],
+            'projection_status' => $decoded['data']['projection_status'],
             'duplicate' => $status === 200,
         ],
     ];

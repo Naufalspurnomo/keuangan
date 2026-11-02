@@ -196,6 +196,7 @@ def test_project_request_claims_appends_reads_back_completes_and_projects():
         "sheet_row": 22,
         "source_block": "pemasukan",
         "sheet_message_id": sheet_message_id,
+        "projection_status": "converged",
         "duplicate": False,
     }
     assert store.complete_calls[0][1] == {key: value for key, value in response.items() if key != "duplicate"}
@@ -235,6 +236,31 @@ def test_same_key_different_body_conflicts_before_any_second_sheet_access():
     assert len(sheets.read_calls) == reads_after_first
 
 
+def test_non_owner_replay_never_appends_when_authoritative_row_is_absent():
+    service, store, sheets, _ = make_service()
+    request = service.validate(valid_payload())
+    store.claim(request, actor={"role": "owner"}, message_id="http:first")
+
+    with pytest.raises(DashboardTransactionConflict, match="already in progress"):
+        service.record(valid_payload(), actor={"role": "owner"}, message_id="http:retry")
+
+    assert sheets.append_calls == []
+
+
+def test_non_owner_replay_reconciles_existing_authoritative_row_without_append():
+    service, store, sheets, projection = make_service()
+    request = service.validate(valid_payload())
+    first = store.claim(request, actor={"role": "owner"}, message_id="http:first")
+    sheet_message_id = service._sheet_message_id(first)
+    sheets.rows[sheet_message_id] = make_authoritative_row(request, sheet_message_id)
+
+    response = service.record(valid_payload(), actor={"role": "owner"}, message_id="http:retry")
+
+    assert response["duplicate"] is True
+    assert sheets.append_calls == []
+    assert len(projection.rows) == 1
+
+
 def test_authoritative_mismatch_fails_closed_without_completing():
     service, store, sheets, projection = make_service()
     original_append = sheets.append
@@ -269,7 +295,9 @@ def test_replay_recovers_crash_after_sheet_append_without_duplicate():
     assert response["recorded"] is True
     assert len(sheets.append_calls) == 1
     assert len(store.complete_calls) == 2
-    assert len(projection.rows) == 1
+    # Projection repair is idempotent by deterministic Sheet message ID; retrying
+    # after a completion-store crash is allowed to reconcile it again.
+    assert len(projection.rows) == 2
 
 
 def test_ambiguous_append_error_recovers_from_authoritative_readback():
@@ -296,14 +324,16 @@ def test_completed_replay_verifies_sheet_and_repairs_projection_without_append()
     assert len(projection.rows) == 1
 
 
-def test_projection_repair_is_best_effort_after_authority_is_verified():
+def test_projection_repair_failure_is_reported_without_undoing_sheet_authority():
     projection = FakeProjection(fail=True)
     service, store, _, _ = make_service(projection=projection)
 
     response = service.record(valid_payload(), actor={"role": "owner"}, message_id="http:1")
 
     assert response["recorded"] is True
+    assert response["projection_status"] == "pending"
     assert len(store.complete_calls) == 1
+    assert store.complete_calls[-1][1]["projection_status"] == "pending"
     assert len(projection.rows) == 1
 
 

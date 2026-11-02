@@ -22,7 +22,7 @@ export function filterTransactions(rows: Transaction[], query: string, type: Tra
     if (type === 'projects' && (isInternal(row) || !row.project || ['saldo umum', 'umum'].includes(row.project.trim().toLocaleLowerCase('id-ID')))) return false
     if ((type === 'Pemasukan' || type === 'Pengeluaran') && row.transaction_type !== type) return false
     if (projectTarget) {
-      const exactName = row.project.trim().toLocaleLowerCase('id-ID') === projectTarget.name.trim().toLocaleLowerCase('id-ID')
+      const exactName = (row.project ?? '').trim().toLocaleLowerCase('id-ID') === projectTarget.name.trim().toLocaleLowerCase('id-ID')
       const exactPortfolio = !projectTarget.portfolio || transactionPortfolio(row) === projectTarget.portfolio
       return exactName && exactPortfolio
     }

@@ -221,6 +221,7 @@ class RumahwebAdminTransactionProxyTests(unittest.TestCase):
                 "sheet_row": 9,
                 "source_block": "operasional",
                 "sheet_message_id": "dashboard:synthetic:hash",
+                "projection_status": "converged",
                 "internal_note": "must-not-leak",
             },
             "debug": {"proxy_token": "must-not-leak"},
@@ -284,6 +285,7 @@ class RumahwebAdminTransactionProxyTests(unittest.TestCase):
                         "sheet_row": 9,
                         "source_block": "operasional",
                         "sheet_message_id": "dashboard:synthetic:hash",
+                        "projection_status": "converged",
                         "duplicate": False,
                     }},
                 )
@@ -321,6 +323,7 @@ class RumahwebAdminTransactionProxyTests(unittest.TestCase):
                 "sheet_row": 9,
                 "source_block": "operasional",
                 "sheet_message_id": "dashboard:synthetic:hash",
+                "projection_status": "converged",
                 "duplicate": False,
             },
         }

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
-import App from './App'
+import { DemoApp } from './App'
 import { seedFinanceWorkspace } from './financeWorkspace'
 
 beforeEach(() => {
@@ -22,7 +22,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-const renderApp = () => render(<App />)
+const renderApp = () => render(<DemoApp />)
 const nav = (name: string) => fireEvent.click(within(screen.getByRole('navigation', { name: 'Menu utama' })).getByRole('button', { name: new RegExp(`^${name}`) }))
 
 describe('Hollawall demo finance workspace', () => {

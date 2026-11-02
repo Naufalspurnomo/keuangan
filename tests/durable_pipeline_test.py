@@ -365,6 +365,29 @@ class DurablePipelineTests(unittest.TestCase):
         self.assertTrue(finished)
         self.assertTrue(calls[0]["has_media"])
 
+    def test_health_reports_dashboard_schema_readiness(self):
+        import main
+
+        provider = {
+            "configured": True, "reachable": True, "connected": True,
+            "logged_in": True, "state": "connected", "error": "",
+            "checked_at": "2026-09-02T00:00:00+00:00",
+        }
+        with main.app.test_request_context("/health"), \
+             patch.object(main, "inbox_health", return_value={"durable": True, "backend": "postgres"}), \
+             patch.object(main, "get_wuzapi_status", return_value=provider), \
+             patch.object(main, "dashboard_write_schema_health", return_value={
+                 "writes_enabled": True, "ready": True, "table": True,
+                 "columns": True, "unique_index": True,
+             }):
+            response, status_code = main.health_check()
+
+        body = response.get_json()
+        self.assertEqual(status_code, 200)
+        self.assertTrue(body["dashboard_write_schema"]["ready"])
+        self.assertTrue(body["dashboard_write_schema"]["writes_enabled"])
+        self.assertNotIn("hermes_ai", body)
+
     def test_health_reports_memory_inbox_as_degraded(self):
         import main
 

@@ -21,7 +21,9 @@ export interface Transaction {
   amount: number
   wallet: string
   company: string
-  project: string
+  project: string | null
+  project_raw?: string | null
+  scope?: 'project' | 'office' | 'internal_transfer'
   notes?: string
   internal_movement?: boolean
   transfer_scope?: 'internal' | 'external'

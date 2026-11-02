@@ -30,7 +30,7 @@ function isInternal(row: Transaction) {
 
 function matrixUnit(row: Transaction): MatrixUnit | null {
   const company = row.company.trim().toLocaleLowerCase('id-ID')
-  const project = row.project.trim().toLocaleLowerCase('id-ID')
+  const project = (row.project ?? '').trim().toLocaleLowerCase('id-ID')
   if (project.startsWith('hojja') || company === 'hojja') return 'HOJJA'
   if (project.startsWith('holla') || company === 'holla' || company.startsWith('cv hb')) return 'HOLLA'
   if (company.startsWith('texturin') || company.startsWith('tx sby') || company.startsWith('tx bali')) return 'TX'
@@ -172,7 +172,7 @@ export default function ProjectReportTimeline({ transactions, projects, asOf, da
   }, [monthKey, previousKey, transactions])
 
   const selectedTransactions = selected
-    ? transactions.filter((row) => row.project.trim().toLocaleLowerCase('id-ID') === selected.name.trim().toLocaleLowerCase('id-ID'))
+    ? transactions.filter((row) => (row.project ?? '').trim().toLocaleLowerCase('id-ID') === selected.name.trim().toLocaleLowerCase('id-ID'))
     : []
   const incoming = selectedTransactions.filter((row) => row.transaction_type === 'Pemasukan' && !isInternal(row)).reduce((sum, row) => sum + row.amount, 0)
   const outgoing = selectedTransactions.filter((row) => row.transaction_type === 'Pengeluaran' && !isInternal(row)).reduce((sum, row) => sum + row.amount, 0)
