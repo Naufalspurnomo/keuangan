@@ -15,9 +15,13 @@ if ($csrf === '' || !hash_equals((string) ($_SESSION['presensi_csrf'] ?? ''), $c
 }
 presensi_validate_capture_token((string) ($_POST['capture_token'] ?? ''));
 
+$submissionId = trim((string) ($_POST['submission_id'] ?? ''));
 $employeeId = trim((string) ($_POST['employee_id'] ?? ''));
 $projectId = trim((string) ($_POST['project_id'] ?? ''));
 $action = trim((string) ($_POST['action'] ?? ''));
+if (!preg_match('/^sub-[a-f0-9]{32}$/', $submissionId)) {
+    presensi_error(422, 'submission_invalid', 'Identitas pengiriman tidak valid. Muat ulang halaman.');
+}
 $latitude = filter_var($_POST['latitude'] ?? null, FILTER_VALIDATE_FLOAT);
 $longitude = filter_var($_POST['longitude'] ?? null, FILTER_VALIDATE_FLOAT);
 $accuracy = filter_var($_POST['accuracy_m'] ?? null, FILTER_VALIDATE_FLOAT);
@@ -29,11 +33,11 @@ $project = presensi_find_named($config['projects'], $projectId);
 if ($employee === null) {
     presensi_error(422, 'employee_invalid', 'Pegawai tidak valid.');
 }
-if ($project === null) {
-    presensi_error(422, 'project_invalid', 'Proyek aktif tidak valid.');
-}
 if (!in_array($action, ['check_in', 'check_out'], true)) {
     presensi_error(422, 'action_invalid', 'Jenis presensi tidak valid.');
+}
+if ($action === 'check_in' && $project === null) {
+    presensi_error(422, 'project_invalid', 'Proyek aktif tidak valid.');
 }
 if ($latitude === false || $longitude === false || $accuracy === false
     || !is_finite((float) $latitude) || !is_finite((float) $longitude) || !is_finite((float) $accuracy)
@@ -48,6 +52,11 @@ $storageFailure = null;
 $now = time();
 try {
     $events = presensi_read_events($paths);
+    foreach ($events as $existing) {
+        if (hash_equals((string) ($existing['submission_id'] ?? ''), $submissionId)) {
+            presensi_error(409, 'submission_replayed', 'Pengiriman ini sudah diterima server.');
+        }
+    }
     presensi_rate_limit($events, $employeeId, $now);
     $open = presensi_open_event($events, $employeeId);
     if ($action === 'check_in' && $open !== null) {
@@ -58,6 +67,9 @@ try {
     }
     if ($action === 'check_out' && !hash_equals((string) $open['project_id'], $projectId)) {
         presensi_error(409, 'project_mismatch', 'Check-out wajib pada proyek yang sama.');
+    }
+    if ($action === 'check_out') {
+        $project = ['id' => (string) $open['project_id'], 'name' => (string) $open['project_name']];
     }
 
     $eventId = 'evt-' . bin2hex(random_bytes(12));
@@ -70,6 +82,8 @@ try {
     chmod($photoPath, 0600);
     $event = [
         'id' => $eventId,
+        'submission_id' => $submissionId,
+        'recovery_hash' => hash_hmac('sha256', $submissionId, (string) $_SESSION['presensi_recovery_key']),
         'pair_id' => $pairId,
         'action' => $action,
         'employee_id' => $employee['id'],

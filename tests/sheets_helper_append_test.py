@@ -1,4 +1,5 @@
 import unittest
+from datetime import date
 from unittest.mock import patch
 
 from config.constants import (
@@ -7,7 +8,11 @@ from config.constants import (
     SPLIT_PEMASUKAN,
     SPLIT_PENGELUARAN,
 )
-from sheets_helper import _split_append_metadata, append_operational_transaction
+from sheets_helper import (
+    _split_append_metadata,
+    append_operational_transaction,
+    append_project_transaction,
+)
 
 
 class SheetsHelperAppendTests(unittest.TestCase):
@@ -96,6 +101,85 @@ class SheetsHelperAppendTests(unittest.TestCase):
         self.assertEqual(row["source_block"], "operasional")
         self.assertEqual(row["sheet_name"], "Operasional Kantor")
         self.assertEqual(row["message_id"], "mirror-1")
+
+    def test_project_append_uses_explicit_transaction_date(self):
+        class FakeSheet:
+            row_count = 100
+
+            def get(self, _range_name):
+                return []
+
+            def update_cells(self, cells, value_input_option=None):
+                self.cells = cells
+
+        sheet = FakeSheet()
+        transaction = {
+            "jumlah": 125000,
+            "keterangan": "Pembayaran termin",
+            "tipe": "Pemasukan",
+            "message_id": "dashboard-project-1",
+        }
+        with patch("sheets_helper.get_dompet_sheet", return_value=sheet), \
+             patch("sheets_helper.invalidate_dashboard_cache"), \
+             patch("sheets_helper._remember_project_exact_match"), \
+             patch("sheets_helper._mirror_financial_ledger") as mirror, \
+             patch("services.ledger_lock._database_url", return_value=""):
+            append_project_transaction(
+                transaction,
+                "Dashboard",
+                "Dashboard",
+                "CV HB(101)",
+                "PROJECT-001",
+                allow_queue=False,
+                transaction_date=date(2026, 10, 2),
+            )
+
+        written = {cell.col: cell.value for cell in sheet.cells}
+        self.assertEqual(written[SPLIT_PEMASUKAN["TANGGAL"]], "2026-10-02")
+        self.assertEqual(mirror.call_args.args[0]["tanggal"], "2026-10-02")
+
+    def test_operational_append_uses_explicit_transaction_date(self):
+        class FakeSheet:
+            def col_values(self, _column):
+                return ["header"]
+
+            def append_row(self, row, value_input_option=None):
+                self.row = row
+
+        sheet = FakeSheet()
+        transaction = {
+            "jumlah": 450000,
+            "keterangan": "Fee Rio",
+            "message_id": "dashboard-office-1",
+        }
+        with patch("sheets_helper.get_or_create_operational_sheet", return_value=sheet), \
+             patch("sheets_helper.invalidate_dashboard_cache"), \
+             patch("sheets_helper._mirror_financial_ledger") as mirror, \
+             patch("services.ledger_lock._database_url", return_value=""):
+            append_operational_transaction(
+                transaction,
+                "Dashboard",
+                "Dashboard",
+                "CV HB(101)",
+                "Gaji",
+                allow_queue=False,
+                transaction_date=date(2026, 10, 2),
+            )
+
+        self.assertEqual(sheet.row[OPERASIONAL_COLS["TANGGAL"] - 1], "2026-10-02")
+        self.assertEqual(mirror.call_args.args[0]["tanggal"], "2026-10-02")
+
+    def test_append_helpers_reject_non_date_transaction_date(self):
+        with patch("services.ledger_lock._database_url", return_value=""):
+            with self.assertRaisesRegex(TypeError, "transaction_date must be datetime.date"):
+                append_operational_transaction(
+                    {},
+                    "Dashboard",
+                    "Dashboard",
+                    "CV HB(101)",
+                    allow_queue=False,
+                    transaction_date="2026-10-02",
+                )
 
     def test_operational_failure_is_queued_and_never_reports_success(self):
         class FailingSheet:

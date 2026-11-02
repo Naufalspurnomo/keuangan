@@ -21,12 +21,15 @@ export interface Transaction {
   amount: number
   wallet: string
   company: string
-  project: string
+  project: string | null
+  project_raw?: string | null
+  scope?: 'project' | 'office' | 'internal_transfer'
   notes?: string
   internal_movement?: boolean
   transfer_scope?: 'internal' | 'external'
   invalid_reason?: string
   updated_at?: string
+  office_category?: string
 }
 
 export interface QualityRow {

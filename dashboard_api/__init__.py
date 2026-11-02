@@ -9,7 +9,6 @@ from typing import Any, Optional
 from flask import Flask
 
 from dashboard_api.repository import DashboardRepository
-from dashboard_api.routes import create_dashboard_blueprint
 
 
 # SHA-256 verifier for the owner VPS reverse proxy. The 384-bit bearer token
@@ -17,8 +16,15 @@ from dashboard_api.routes import create_dashboard_blueprint
 DEFAULT_DASHBOARD_PROXY_TOKEN_HASH = "4e27151b079d42b5347a988f0a4c24280bd38af3ff23f971a47e4e6a890cc26c"
 
 
-def register_dashboard(app: Flask, *, repository: Optional[Any] = None) -> None:
+def register_dashboard(
+    app: Flask,
+    *,
+    repository: Optional[Any] = None,
+    transaction_service: Optional[Any] = None,
+) -> None:
     """Register dashboard routes without modifying existing webhook behavior."""
+    # Import lazily so standalone transaction services can import contracts.
+    from dashboard_api.routes import create_dashboard_blueprint
 
     app.config.setdefault("DASHBOARD_OWNER_EMAIL", os.getenv("DASHBOARD_OWNER_EMAIL", ""))
     app.config.setdefault(
@@ -28,6 +34,11 @@ def register_dashboard(app: Flask, *, repository: Optional[Any] = None) -> None:
     app.config.setdefault(
         "DASHBOARD_PROXY_TOKEN_HASH",
         os.getenv("DASHBOARD_PROXY_TOKEN_HASH", DEFAULT_DASHBOARD_PROXY_TOKEN_HASH),
+    )
+    app.config.setdefault(
+        "DASHBOARD_TRANSACTION_WRITES_ENABLED",
+        str(os.getenv("DASHBOARD_TRANSACTION_WRITES_ENABLED") or "").strip().casefold()
+        in {"1", "true", "yes", "on"},
     )
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
     app.config["SESSION_COOKIE_SECURE"] = True
@@ -43,7 +54,12 @@ def register_dashboard(app: Flask, *, repository: Optional[Any] = None) -> None:
             # tooling can inject a repository without a database.
             return
         selected_repository = DashboardRepository(dsn)
-    app.register_blueprint(create_dashboard_blueprint(selected_repository))
+    app.register_blueprint(
+        create_dashboard_blueprint(
+            selected_repository,
+            transaction_service=transaction_service,
+        )
+    )
 
 
 __all__ = ["register_dashboard"]

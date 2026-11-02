@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
-import App from './App'
+import { DemoApp } from './App'
 import { seedFinanceWorkspace } from './financeWorkspace'
 
 beforeEach(() => {
   localStorage.clear()
   sessionStorage.clear()
-  window.history.replaceState(null, '', '/')
+  window.history.replaceState(null, '', '/?source=demo')
   vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
   vi.stubGlobal('confirm', vi.fn(() => true))
   vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
@@ -22,7 +22,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-const renderApp = () => render(<App />)
+const renderApp = () => render(<DemoApp />)
 const nav = (name: string) => fireEvent.click(within(screen.getByRole('navigation', { name: 'Menu utama' })).getByRole('button', { name: new RegExp(`^${name}`) }))
 
 describe('Hollawall demo finance workspace', () => {
@@ -159,6 +159,43 @@ describe('Hollawall demo finance workspace', () => {
     expect(screen.queryByRole('button', { name: `Selesaikan ${project.name}` })).toBeNull()
     nav('Ringkasan')
     expect(screen.getByText(`Memperbarui proyek ${project.name}`)).toBeTruthy()
+  })
+
+  it('quick-completes an active project from the candle context menu without opening a dialog', async () => {
+    const workspace = seedFinanceWorkspace()
+    const project = workspace.projects.find((item) => item.status === 'active' && item.started_on.startsWith('2026'))!
+    workspace.projects = [project]
+    workspace.transactions = workspace.transactions.filter((row) => row.project_id === project.id)
+    localStorage.setItem('hollawall-finance-demo-v3', JSON.stringify(workspace))
+    renderApp()
+    nav('Proyek')
+
+    fireEvent.contextMenu(document.querySelector(`[data-project-id="${project.id}"]`)!)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Selesaikan proyek' }))
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Proyek diselesaikan.'))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.querySelector(`[data-project-id="${project.id}"]`)?.classList.contains('is-completed')).toBe(true)
+    expect(JSON.parse(localStorage.getItem('hollawall-finance-demo-v3')!).projects[0].status).toBe('completed')
+  })
+
+  it('reactivates an accidentally completed project from project detail', async () => {
+    const workspace = seedFinanceWorkspace()
+    const project = workspace.projects.find((item) => item.status === 'completed' && item.started_on.startsWith('2026'))!
+    workspace.projects = [project]
+    workspace.transactions = workspace.transactions.filter((row) => row.project_id === project.id)
+    localStorage.setItem('hollawall-finance-demo-v3', JSON.stringify(workspace))
+    renderApp()
+    nav('Proyek')
+    fireEvent.click(document.querySelector(`[data-project-id="${project.id}"]`)!)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Aktifkan kembali' }))
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Proyek diaktifkan kembali.'))
+    expect(screen.getByRole('region', { name: 'Status proyek' }).textContent).toContain('Aktif')
+    const stored = JSON.parse(localStorage.getItem('hollawall-finance-demo-v3')!).projects[0]
+    expect(stored.status).toBe('active')
+    expect(stored.completed_on).toBeNull()
   })
 
   it('navigates annual project data and exposes explicit completion ratios', () => {

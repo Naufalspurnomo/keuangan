@@ -116,6 +116,35 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(holla.querySelector('.project-market-wick')).toBeTruthy()
   })
 
+  it('keeps left click for detail and exposes desktop context actions on a project candle', () => {
+    const onOpen = vi.fn()
+    const onQuickComplete = vi.fn()
+    const { container } = render(<ProjectLifecycleMarketChart projects={projects} transactions={transactions} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={onOpen} onQuickComplete={onQuickComplete} />)
+    const active = container.querySelector('[data-project-id="h-active"]') as HTMLButtonElement
+
+    fireEvent.click(active)
+    expect(onOpen).toHaveBeenCalledWith(projects[1])
+
+    fireEvent.contextMenu(active, { clientX: 240, clientY: 180 })
+    const menu = screen.getByRole('menu', { name: 'Aksi Holla Terbaru' })
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Lihat detail' }))
+    expect(onOpen).toHaveBeenCalledTimes(2)
+    expect(menu.isConnected).toBe(false)
+
+    fireEvent.contextMenu(active, { clientX: 240, clientY: 180 })
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Selesaikan proyek' }))
+    expect(onQuickComplete).toHaveBeenCalledWith(projects[1])
+    expect(screen.queryByRole('menu', { name: 'Aksi Holla Terbaru' })).toBeNull()
+  })
+
+  it('does not expose quick completion for a project that is already completed', () => {
+    const { container } = render(<ProjectLifecycleMarketChart projects={projects} transactions={transactions} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={vi.fn()} onQuickComplete={vi.fn()} />)
+    fireEvent.contextMenu(container.querySelector('[data-project-id="h-old"]') as HTMLButtonElement)
+
+    expect(screen.getByRole('menuitem', { name: 'Lihat detail' })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: 'Selesaikan proyek' })).toBeNull()
+  })
+
   it('uses ordinary wheel for local zoom, Shift or dominant-X wheel for horizontal pan, and leaves outside wheel to the page', () => {
     const { container } = render(<ProjectLifecycleMarketChart projects={projects} transactions={transactions} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={vi.fn()} />)
     const canvases = [...container.querySelectorAll<HTMLElement>('.project-market-canvas')]

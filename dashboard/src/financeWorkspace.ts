@@ -34,6 +34,14 @@ export interface FinanceProject {
   notes: string
   created_at: string
   updated_at: string
+  /** Canonical identity from the live snapshot; never inferred from a route id. */
+  presensi_project_id?: string
+  /** Exact backend write identifiers. Absent means writes for this project fail closed. */
+  write_mapping?: {
+    wallet: string
+    company: string
+    project: string
+  }
 }
 
 export interface FinanceTransaction {
@@ -74,16 +82,23 @@ export interface FinanceDebt {
 
 export interface FinanceWorkspace {
   version: 3
-  mode: 'demo'
+  mode: 'demo' | 'live'
   projects: FinanceProject[]
   transactions: FinanceTransaction[]
   debts: FinanceDebt[]
   audit: FinanceAuditEvent[]
   updated_at: string
+  live_wallets?: Array<{ source_key: string; name: string; balance: number }>
+  live_cash_trend?: Array<{ month: string; balance: number; net_movement: number }>
 }
 
 export type ProjectInput = Omit<FinanceProject, 'id' | 'wallet' | 'created_at' | 'updated_at'>
 export type TransactionInput = Omit<FinanceTransaction, 'id' | 'wallet' | 'company' | 'created_at' | 'updated_at'> & { wallet?: WalletId; company?: CompanyId | null }
+export type TransactionFormInput = Omit<TransactionInput, 'wallet' | 'company'> & {
+  wallet?: string
+  company?: string | null
+  category?: string
+}
 export type DebtInput = Omit<FinanceDebt, 'id' | 'created_at' | 'updated_at'>
 
 export class FinanceValidationError extends Error {

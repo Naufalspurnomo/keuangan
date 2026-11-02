@@ -154,6 +154,22 @@ class DashboardRepositoryTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in page.items], [5, 4])
         self.assertEqual(decode_cursor(page.next_cursor), (date(2026, 10, 4), 4))
 
+    def test_project_identities_include_registry_entries_without_prior_ledger_rows(self):
+        repository, cursor = self.make_repository([
+            [
+                ("Fresh Project", "CV HB(101)", "HOLLA"),
+                ("Legacy Project", "TX SBY(216)", "TEXTURIN-Surabaya"),
+            ]
+        ])
+
+        identities = repository.fetch_project_identities()
+
+        self.assertIn(("Fresh Project", "CV HB(101)", "HOLLA"), identities)
+        sql, _params = cursor.executions[0]
+        self.assertIn("FROM financial_projects", sql)
+        self.assertIn("UNION", sql)
+        self.assertIn("FROM financial_ledger", sql)
+
     def test_filter_options_and_freshness_are_read_only(self):
         repository, cursor = self.make_repository(
             [

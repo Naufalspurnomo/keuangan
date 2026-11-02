@@ -6,7 +6,7 @@ import hashlib
 import threading
 from functools import wraps
 import gspread
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 from typing import List, Dict, Optional
@@ -1072,6 +1072,15 @@ def _count_entries_in_block(sheet, no_column: int, start_row: int = 9) -> int:
         return 0
 
 
+def _validated_transaction_date(transaction_date: Optional[date], fallback: date) -> date:
+    """Return an explicit ledger date or the caller's single-clock fallback."""
+    if transaction_date is None:
+        return fallback
+    if isinstance(transaction_date, datetime) or not isinstance(transaction_date, date):
+        raise TypeError("transaction_date must be datetime.date or None")
+    return transaction_date
+
+
 @_serialized_ledger_write
 def append_project_transaction(
     transaction: Dict,
@@ -1080,6 +1089,7 @@ def append_project_transaction(
     dompet_sheet: str,
     project_name: str,
     allow_queue: bool = True,
+    transaction_date: Optional[date] = None,
 ) -> Dict:
     """
     Append transaction to Split Layout dompet sheet.
@@ -1098,6 +1108,8 @@ def append_project_transaction(
     Returns:
         Dict with success status and row info
     """
+    now = now_wib()
+    ledger_date = _validated_transaction_date(transaction_date, now.date())
     try:
         sheet = get_dompet_sheet(dompet_sheet)
         tipe = transaction.get('tipe', 'Pengeluaran')
@@ -1131,7 +1143,6 @@ def append_project_transaction(
                 }
         
         # Build row data
-        now = now_wib()
         jumlah = abs(int(transaction.get('jumlah', 0)))
         keterangan = sanitize_input(str(transaction.get('keterangan', '')))[:200]
         safe_sender = sanitize_input(sender_name)[:50]
@@ -1139,7 +1150,7 @@ def append_project_transaction(
         row_data = [
             entry_count + 1,                    # No
             now.strftime('%H:%M:%S'),           # Waktu
-            now.strftime('%Y-%m-%d'),           # Waktu/Tanggal
+            ledger_date.isoformat(),             # Waktu/Tanggal
             jumlah,                             # Jumlah
             safe_project,                       # Project
             keterangan,                         # Keterangan
@@ -1165,7 +1176,7 @@ def append_project_transaction(
 
         _mirror_financial_ledger({
             **transaction,
-            'tanggal': now.strftime('%Y-%m-%d'),
+            'tanggal': ledger_date.isoformat(),
             'jumlah': jumlah,
             'tipe': tipe,
             'keterangan': keterangan,
@@ -1287,6 +1298,7 @@ def append_operational_transaction(
     source_wallet: str,
     category: str = 'Lain Lain',
     allow_queue: bool = True,
+    transaction_date: Optional[date] = None,
 ) -> Dict:
     """
     Append operational expense to Operasional Ktr sheet.
@@ -1302,6 +1314,8 @@ def append_operational_transaction(
     Returns:
         Dict with success status and row info
     """
+    now = now_wib()
+    ledger_date = _validated_transaction_date(transaction_date, now.date())
     try:
         sheet = get_or_create_operational_sheet()
         
@@ -1332,7 +1346,7 @@ def append_operational_transaction(
         
         row_data = [
             entry_count + 1,                        # No
-            now_wib().strftime('%Y-%m-%d'),    # Tanggal
+            ledger_date.isoformat(),              # Tanggal
             jumlah,                                 # JUMLAH
             keterangan_with_source,                 # KETERANGAN with [Sumber: X]
             safe_sender,                            # Oleh
@@ -1346,7 +1360,7 @@ def append_operational_transaction(
 
         _mirror_financial_ledger({
             **transaction,
-            'tanggal': now_wib().strftime('%Y-%m-%d'),
+            'tanggal': ledger_date.isoformat(),
             'jumlah': jumlah,
             'tipe': 'Pengeluaran',
             'keterangan': keterangan_with_source,

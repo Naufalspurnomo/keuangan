@@ -47,6 +47,7 @@ TRANSACTIONS = [
     {"id": 4, "transaction_date": "2026-10-18", "transaction_type": "Pengeluaran", "amount": 26_750_000, "wallet": "TX SBY(216)", "company": "Hollawall", "project": "Surabaya Office", "notes": "Operasional lapangan"},
     {"id": 5, "transaction_date": "2026-10-17", "transaction_type": "Pemasukan", "amount": 70_000_000, "wallet": "BCA(056)", "company": "Hollawall", "project": "Grand Galaxy", "notes": "Termin kedua"},
     {"id": 6, "transaction_date": "2026-10-16", "transaction_type": "Pengeluaran", "amount": 35_400_000, "wallet": "KPR BRI(031)", "company": "Hollawall", "project": "Mawar Residence", "notes": "Pembelian material"},
+    {"id": 9, "source_key": "CV HB(101):project:completed", "transaction_date": "2026-05-02", "transaction_type": "Pemasukan", "amount": 12_500_000, "wallet": "CV HB(101)", "company": "HOLLA", "project": "Proyek Selesai", "notes": "Pelunasan proyek", "scope": "project"},
     *[
         {"id": 100 + index, "source_key": f"CV HB(101):acceptance:{100 + index}", "transaction_date": f"2026-10-{15 - index:02d}", "transaction_type": "Pemasukan" if index % 3 == 0 else "Pengeluaran", "amount": 1_000_000 + index * 125_000, "wallet": "CV HB(101)", "company": "Hollawall", "project": f"Audit Wallet {index + 1}", "notes": f"Mutasi acceptance {index + 1}", "internal_movement": index == 1, "transfer_scope": "internal" if index == 1 else "external"}
         for index in range(10)
@@ -75,11 +76,11 @@ SNAPSHOT = {
         {"month": "2026-10", "balance": 790_350_000, "net_movement": 305_350_000},
     ],
     "project_summaries": [
-        {"name": "Proyek Bola", "portfolio": "Hollawall", "net_cashflow": 98_250_000, "age_days": 4, "health": "healthy", "lifecycle_status": "active", "started_on": "2026-10-17", "first_activity_on": "2026-10-17", "transaction_count": 12, "last_activity_on": "2026-10-21"},
-        {"name": "Texturin Prima", "portfolio": "Texturin", "net_cashflow": 70_400_000, "age_days": 10, "health": "healthy", "lifecycle_status": "active", "started_on": "2026-10-11", "first_activity_on": "2026-10-12", "transaction_count": 14, "last_activity_on": "2026-10-20"},
-        {"name": "Hollawall Proyek", "portfolio": "Hollawall", "net_cashflow": 52_100_000, "age_days": 21, "health": "watch", "lifecycle_status": "active", "started_on": "2026-09-30", "first_activity_on": "2026-10-01", "transaction_count": 19, "last_activity_on": "2026-10-19"},
+        {"name": "Surabaya Office", "portfolio": "Hollawall", "net_cashflow": 98_250_000, "age_days": 4, "health": "healthy", "lifecycle_status": "active", "started_on": "2026-10-17", "first_activity_on": "2026-10-17", "transaction_count": 12, "last_activity_on": "2026-10-21"},
+        {"name": "Grand Galaxy", "portfolio": "Hollawall", "net_cashflow": 70_400_000, "age_days": 10, "health": "healthy", "lifecycle_status": "active", "started_on": "2026-10-11", "first_activity_on": "2026-10-12", "transaction_count": 14, "last_activity_on": "2026-10-20"},
+        {"name": "Mawar Residence", "portfolio": "Hollawall", "net_cashflow": 52_100_000, "age_days": 21, "health": "watch", "lifecycle_status": "active", "started_on": "2026-09-30", "first_activity_on": "2026-10-01", "transaction_count": 19, "last_activity_on": "2026-10-19"},
         {"name": "Texturin Sisipan", "portfolio": "Texturin", "net_cashflow": 31_900_000, "age_days": 45, "health": "overdue", "lifecycle_status": "active", "started_on": "2026-09-06", "first_activity_on": "2026-09-08", "transaction_count": 21, "last_activity_on": "2026-10-18"},
-        {"name": "Proyek Selesai", "portfolio": "Hollawall", "net_cashflow": 12_500_000, "age_days": 999, "health": "completed", "lifecycle_status": "completed", "started_on": "2024-01-01", "transaction_count": 9, "last_activity_on": "2026-05-02"}
+        {"name": "Proyek Selesai", "portfolio": "Hollawall", "net_cashflow": 12_500_000, "age_days": 999, "health": "completed", "lifecycle_status": "completed", "started_on": "2024-01-01", "completed_on": "2026-05-02", "transaction_count": 9, "last_activity_on": "2026-05-02", "source_key_first": "CV HB(101):project:completed"}
     ],
 }
 
@@ -149,7 +150,26 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         def route_api(route):
             route.fulfill(status=200, content_type="application/json", body=json.dumps(SNAPSHOT))
 
-        context.route("**/live-api/snapshot", route_api)
+        context.route("**/admin/api/snapshot.php", route_api)
+        context.route(
+            "**/admin/api/write-session.php",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({
+                    "api_version": "dashboard.v1",
+                    "data": {
+                        "csrf_token": "acceptance-csrf-token-0001",
+                        "capabilities": {"writes_enabled": False},
+                    },
+                }),
+            ),
+        )
+        context.route(
+            "**/admin/api/presensi.php**",
+            lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps({"version": "presensi.admin.v1", "records": []})),
+        )
+        context.route("**/favicon.ico", lambda route: route.fulfill(status=204, body=""))
         page = context.new_page()
         console_errors = []
         page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
@@ -172,7 +192,26 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             state["calls"] += 1
             route.fulfill(status=200, content_type="application/json", body=json.dumps(SNAPSHOT if state["calls"] == 1 else UPDATED_SNAPSHOT))
 
-        context.route("**/live-api/snapshot", route_api)
+        context.route("**/admin/api/snapshot.php", route_api)
+        context.route(
+            "**/admin/api/write-session.php",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({
+                    "api_version": "dashboard.v1",
+                    "data": {
+                        "csrf_token": "acceptance-csrf-token-0001",
+                        "capabilities": {"writes_enabled": False},
+                    },
+                }),
+            ),
+        )
+        context.route(
+            "**/admin/api/presensi.php**",
+            lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps({"version": "presensi.admin.v1", "records": []})),
+        )
+        context.route("**/favicon.ico", lambda route: route.fulfill(status=204, body=""))
         return context, page, console_errors, state
 
     def assert_clean_render(self, page, errors):
@@ -298,7 +337,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 self.assertEqual(metrics["completedMarkers"], metrics["completed"])
                 self.assertEqual(metrics["maskedAxes"], 4)
                 self.assertGreater(metrics["rows"], 0)
-                self.assertGreater(metrics["quickComplete"], 0)
+                self.assertEqual(metrics["quickComplete"], 0)
                 self.assertTrue(metrics["ordered"])
                 if width <= 760:
                     self.assertTrue(metrics["internalHorizontalOverflow"], metrics)
@@ -321,17 +360,17 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         page.locator(".sidebar nav button").filter(has_text="Dompet").click()
         page.get_by_role("heading", name="Posisi kas per sumber").wait_for()
         expect(page.locator(".wallet-workspace")).to_have_count(1)
-        expect(page.get_by_text(re.compile(r"Dompet 1 dari 3", re.I))).to_be_visible()
+        expect(page.get_by_text(re.compile(r"Dompet 1 dari 7", re.I))).to_be_visible()
         expect(page.get_by_role("navigation", name="Filter mutasi")).to_be_visible()
 
         ledger = page.locator(".ops-ledger article")
         self.assertEqual(ledger.count(), 8)
-        expect(page.get_by_text(re.compile(r"Halaman 1 dari 7"))).to_be_visible()
+        expect(page.get_by_text(re.compile(r"Halaman 1 dari 2"))).to_be_visible()
         first_page = ledger.first.text_content()
         page.get_by_role("button", name="Berikutnya").click()
-        expect(page.get_by_text(re.compile(r"Halaman 2 dari 7"))).to_be_visible()
+        expect(page.get_by_text(re.compile(r"Halaman 2 dari 2"))).to_be_visible()
         self.assertNotEqual(ledger.first.text_content(), first_page)
-        self.assertEqual(ledger.count(), 8)
+        self.assertEqual(ledger.count(), 3)
 
         page.get_by_role("button", name="Internal", exact=True).click()
         self.assertEqual(ledger.count(), 1)
@@ -415,6 +454,8 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             }""")
             self.assertEqual(failures, [], {"route": route_name or "Ringkasan", "failures": failures})
 
+        page.locator(".sidebar nav button").filter(has_text="Proyek").click()
+        page.locator(".project-command-center").wait_for()
         titles = page.locator(".project-market-candle").evaluate_all("elements => elements.map(element => element.title)")
         self.assertTrue(titles)
         self.assertTrue(all(title and "mulai" in title and "umur" in title for title in titles))
@@ -526,8 +567,8 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
 
     def test_mobile_project_detail_keeps_title_actions_and_ledger_fully_usable(self):
         context, page, errors = self.new_page(390, 844)
-        page.goto(f"{self.base_url}/#projects?project=p25-umbara", wait_until="networkidle")
-        page.get_by_role("heading", name="Umbara Headquarters", exact=True).wait_for()
+        page.goto(f"{self.base_url}/#projects?project=live-project-1", wait_until="networkidle")
+        page.get_by_role("heading", name="Surabaya Office", exact=True).wait_for()
         metrics = page.evaluate("""() => {
           const size = selector => {
             const element = document.querySelector(selector);
@@ -539,7 +580,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
           return {
             breadcrumb: document.querySelector('.breadcrumbs strong')?.textContent?.trim(),
             back: size('.project-detail-back'),
-            add: size('.project-detail-head .primary-button'),
+            addCount: document.querySelectorAll('.project-detail-head .primary-button').length,
             tableClient: wrap?.clientWidth ?? 0,
             tableScroll: wrap?.scrollWidth ?? 0,
             actionHeights: actions,
@@ -549,46 +590,20 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         }""")
         self.assertEqual(metrics["breadcrumb"], "Proyek")
         self.assertGreaterEqual(metrics["back"]["height"], 44)
-        self.assertGreaterEqual(metrics["add"]["height"], 44)
+        self.assertEqual(metrics["addCount"], 0)
         self.assertLessEqual(metrics["tableScroll"], metrics["tableClient"])
-        self.assertTrue(metrics["actionHeights"] and all(height >= 44 for height in metrics["actionHeights"]), metrics)
+        self.assertEqual(metrics["actionHeights"], [])
         self.assertLessEqual(metrics["document"], metrics["viewport"])
         self.assertEqual(errors, [])
         context.close()
 
-    def test_legacy_transaction_route_canonicalizes_and_preserves_project_owned_crud(self):
+    def test_legacy_transaction_route_canonicalizes_to_live_read_only_project(self):
         context, page, errors = self.new_page(1440, 1000)
-        page.goto(f"{self.base_url}/#transactions?project=p26-dahayu", wait_until="networkidle")
-        page.get_by_role("heading", name="Dahayu Boutique Hotel", exact=True).wait_for()
-        self.assertEqual(page.evaluate("window.location.hash"), "#projects?project=p26-dahayu")
-
-        page.locator(".project-detail-head").get_by_role("button", name="Tambah transaksi", exact=True).click()
-        dialog = page.get_by_role("dialog")
-        expect(dialog.get_by_text("Dahayu Boutique Hotel", exact=True)).to_be_visible()
-        dialog.get_by_label("Jenis *").select_option("income")
-        dialog.get_by_label("Jumlah *").fill("1234567")
-        dialog.get_by_label("Keterangan *").fill("QA Detail Ownership")
-        dialog.get_by_role("button", name="Simpan transaksi").click()
-        expect(page.get_by_text("QA Detail Ownership", exact=True)).to_be_visible()
-
-        stored = json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
-        created = next(row for row in stored["transactions"] if row["notes"] == "QA Detail Ownership")
-        self.assertEqual((created["project_id"], created["company"], created["wallet"]), ("p26-dahayu", "Hojja", "CV HB"))
-
-        page.get_by_role("button", name="Ubah transaksi QA Detail Ownership").click()
-        dialog = page.get_by_role("dialog")
-        dialog.get_by_label("Keterangan *").fill("QA Detail Updated")
-        dialog.get_by_role("button", name="Simpan perubahan").click()
-        expect(page.get_by_text("QA Detail Updated", exact=True)).to_be_visible()
-        stored = json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
-        updated = next(row for row in stored["transactions"] if row["notes"] == "QA Detail Updated")
-        self.assertEqual((updated["id"], updated["project_id"], updated["company"], updated["wallet"]), (created["id"], "p26-dahayu", "Hojja", "CV HB"))
-
-        page.once("dialog", lambda prompt: prompt.accept())
-        page.get_by_role("button", name="Hapus transaksi QA Detail Updated").click()
-        expect(page.get_by_text("QA Detail Updated", exact=True)).to_have_count(0)
-        stored = json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
-        self.assertTrue(all(row["id"] != created["id"] for row in stored["transactions"]))
+        page.goto(f"{self.base_url}/#transactions?project=live-project-1", wait_until="networkidle")
+        page.get_by_role("heading", name="Surabaya Office", exact=True).wait_for()
+        self.assertEqual(page.evaluate("window.location.hash"), "#projects?project=live-project-1")
+        expect(page.locator(".project-detail-head").get_by_role("button", name="Tambah transaksi", exact=True)).to_have_count(0)
+        self.assertIsNone(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
 
         page.get_by_role("button", name="Kembali ke Proyek").click()
         page.get_by_role("heading", name="Umur dan status proyek", exact=True).wait_for()

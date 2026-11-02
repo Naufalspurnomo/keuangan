@@ -23,6 +23,11 @@ from flask import Flask, g, request, jsonify
 from dotenv import load_dotenv
 
 from dashboard_api import register_dashboard
+from services.dashboard_write_requests import (
+    DashboardWriteRequestUnavailable,
+    dashboard_write_schema_health as read_dashboard_write_schema_health,
+    ensure_dashboard_write_schema,
+)
 from werkzeug.exceptions import RequestEntityTooLarge
 
 # Load environment variables
@@ -183,6 +188,62 @@ from config.wallets import (
 # Initialize Flask app
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY') or os.getenv('SECRET_KEY') or os.urandom(32)
+
+
+def dashboard_write_schema_health():
+    """Read back the dashboard-write schema without executing DDL."""
+    writes_enabled = str(os.getenv('DASHBOARD_TRANSACTION_WRITES_ENABLED') or '').strip().casefold() in {
+        '1', 'true', 'yes', 'on',
+    }
+    dsn = str(os.getenv('STATE_DATABASE_URL') or os.getenv('DATABASE_URL') or '').strip()
+    if not dsn:
+        return {
+            'configured': False,
+            'writes_enabled': writes_enabled,
+            'ready': False,
+            'table': False,
+            'columns': False,
+            'unique_index': False,
+        }
+    try:
+        return {
+            'configured': True,
+            'writes_enabled': writes_enabled,
+            **read_dashboard_write_schema_health(dsn),
+        }
+    except DashboardWriteRequestUnavailable as exc:
+        secure_log("ERROR", f"Dashboard write schema unavailable: {type(exc).__name__}")
+        return {
+            'configured': True,
+            'writes_enabled': writes_enabled,
+            'ready': False,
+            'table': False,
+            'columns': False,
+            'unique_index': False,
+            'error': type(exc).__name__,
+        }
+
+
+def migrate_dashboard_write_schema_at_startup():
+    """Run the additive migration once before dashboard routes can accept writes."""
+    dsn = str(os.getenv('STATE_DATABASE_URL') or os.getenv('DATABASE_URL') or '').strip()
+    if not dsn:
+        return {
+            'configured': False, 'ready': False, 'table': False,
+            'columns': False, 'unique_index': False,
+        }
+    try:
+        return {'configured': True, **ensure_dashboard_write_schema(dsn)}
+    except DashboardWriteRequestUnavailable as exc:
+        secure_log("ERROR", f"Dashboard write migration unavailable: {type(exc).__name__}")
+        return {
+            'configured': True, 'ready': False, 'table': False,
+            'columns': False, 'unique_index': False,
+            'error': type(exc).__name__,
+        }
+
+
+_DASHBOARD_WRITE_SCHEMA_AT_STARTUP = migrate_dashboard_write_schema_at_startup()
 
 # Register the optional private dashboard only when its database is configured.
 # This does not alter /health, /webhook_wuzapi, or /telegram behavior.
@@ -358,6 +419,7 @@ def health_check():
     try:
         inbox = inbox_health()
         durable = bool(inbox.get('durable'))
+        dashboard_schema = dashboard_write_schema_health()
         try:
             whatsapp_provider = get_wuzapi_status()
         except Exception as exc:
@@ -392,8 +454,12 @@ def health_check():
             if not os.getenv('TELEGRAM_WEBHOOK_SECRET', '').strip():
                 security_missing.append('TELEGRAM_WEBHOOK_SECRET')
         security_ready = not security_missing
-        serving = (durable or not inbox_required()) and security_ready
+        dashboard_writes_enabled = bool(app.config.get('DASHBOARD_TRANSACTION_WRITES_ENABLED', False))
+        dashboard_schema_ready = not dashboard_writes_enabled or bool(dashboard_schema.get('ready'))
+        serving = (durable or not inbox_required()) and security_ready and dashboard_schema_ready
         if not security_ready:
+            overall_status = 'unhealthy'
+        elif not dashboard_schema_ready:
             overall_status = 'unhealthy'
         elif durable and whatsapp_ready:
             overall_status = 'healthy'
@@ -404,6 +470,7 @@ def health_check():
             'timestamp': datetime.now().isoformat(),
             'transaction_inbox': inbox,
             'whatsapp_provider': whatsapp_provider,
+            'dashboard_write_schema': dashboard_schema,
             'security': {
                 'ready': security_ready,
                 'required': security_required,

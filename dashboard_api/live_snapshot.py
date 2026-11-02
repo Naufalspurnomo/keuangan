@@ -57,7 +57,7 @@ def _build_project_summaries(rows: Sequence[Mapping[str, Any]], observed_at: dat
     for row in sorted(rows, key=_project_row_order):
         if row["internal_movement"]:
             continue
-        name, marker = _project_identity(row["project"])
+        name, marker = _project_identity(row.get("project_raw") or row["project"])
         if name.casefold() in {"operasional", "tanpa proyek"}:
             continue
         project = projects.setdefault(
@@ -185,6 +185,11 @@ def build_live_snapshot(
         if transaction_date is None or amount <= 0 or direction not in (_INCOME_TYPES | _EXPENSE_TYPES):
             quality_rows.append({"source_key": source_key, "invalid_reason": "invalid_date_or_amount"})
             continue
+        project_raw = str(raw.get("nama_projek") or raw.get("project") or "").strip()
+        project_name, _marker = _project_identity(project_raw)
+        internal_movement = bool(raw.get("internal_movement"))
+        office_row = project_name.casefold() in {"operasional", "tanpa proyek"}
+        scope = "internal_transfer" if internal_movement else "office" if office_row else "project"
         valid_rows.append(
             {
                 "source_key": source_key,
@@ -193,10 +198,15 @@ def build_live_snapshot(
                 "amount": amount,
                 "wallet": str(raw.get("sheet_name") or "").strip(),
                 "company": str(raw.get("company_sheet") or "").strip(),
-                "project": str(raw.get("nama_projek") or raw.get("project") or "").strip(),
+                "project": project_name if scope == "project" else None,
+                "project_raw": project_raw or None,
+                "scope": scope,
+                "office_category": (
+                    str(raw.get("kategori") or raw.get("category") or "").strip() or None
+                ) if scope == "office" else None,
                 "notes": str(raw.get("keterangan") or raw.get("notes") or "").strip(),
-                "internal_movement": bool(raw.get("internal_movement")),
-                "transfer_scope": "internal" if bool(raw.get("internal_movement")) else "external",
+                "internal_movement": internal_movement,
+                "transfer_scope": "internal" if internal_movement else "external",
             }
         )
 

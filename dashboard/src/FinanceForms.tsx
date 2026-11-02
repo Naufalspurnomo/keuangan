@@ -16,11 +16,12 @@ import {
   type ProjectInput,
   type ProjectStatus,
   type TransactionDirection,
-  type TransactionInput,
+  type TransactionFormInput,
   type TransactionScope,
   type WalletId,
 } from './financeWorkspace'
 import { projectStatusLabel } from './financeView'
+import { CANONICAL_WALLET_COMPANY_PAIRS, OFFICE_WRITE_CATEGORIES, PROJECT_WRITE_CATEGORIES } from './transactionMappings'
 
 const today = () => new Date().toISOString().slice(0, 10)
 
@@ -93,43 +94,76 @@ export function ProjectForm({ project, onSave, onClose }: { project?: FinancePro
   </Modal>
 }
 
-export function TransactionForm({ projects, transaction, initialScope = 'project', lockedProjectId, onSave, onClose }: { projects: FinanceProject[]; transaction?: FinanceTransaction; initialScope?: TransactionScope; lockedProjectId?: string; onSave: (input: TransactionInput) => void; onClose: () => void }) {
+export function TransactionForm({ projects, transaction, initialScope = 'project', lockedProjectId, onSave, onClose, liveWrite = false, currentDate }: { projects: FinanceProject[]; transaction?: FinanceTransaction; initialScope?: TransactionScope; lockedProjectId?: string; onSave: (input: TransactionFormInput) => void | Promise<void>; onClose: () => void; liveWrite?: boolean; currentDate?: string }) {
   const submitting = useRef(false)
-  const selectable = projects.filter((project) => project.status !== 'planned')
+  const selectable = projects.filter((project) => liveWrite ? project.status === 'active' : project.status !== 'planned')
+  const firstWritable = selectable.find((project) => project.write_mapping)
   const lockedProject = projects.find((project) => project.id === lockedProjectId)
   const locked = Boolean(lockedProjectId)
-  const [date, setDate] = useState(transaction?.date ?? today())
+  const [date, setDate] = useState(transaction?.date ?? currentDate ?? today())
   const [scope, setScope] = useState<TransactionScope>(locked ? 'project' : transaction?.scope ?? initialScope)
   const [direction, setDirection] = useState<TransactionDirection>(transaction?.direction ?? 'expense')
-  const [projectId, setProjectId] = useState(lockedProjectId ?? transaction?.project_id ?? selectable[0]?.id ?? '')
+  const [projectId, setProjectId] = useState(lockedProjectId ?? transaction?.project_id ?? (liveWrite ? firstWritable?.id : selectable[0]?.id) ?? '')
   const [wallet, setWallet] = useState<WalletId>(transaction?.wallet ?? 'CV HB')
+  const [writePair, setWritePair] = useState(0)
   const [category, setCategory] = useState<OfficeCategory>(transaction?.office_category ?? 'Listrik & utilitas')
+  const [writeCategory, setWriteCategory] = useState<string>(initialScope === 'office' ? OFFICE_WRITE_CATEGORIES[0] : PROJECT_WRITE_CATEGORIES[0])
   const [amount, setAmount] = useState<number | null>(transaction?.amount ?? null)
   const [notes, setNotes] = useState(transaction?.notes ?? '')
   const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [retryOnly, setRetryOnly] = useState(false)
   useEffect(() => { if (scope === 'office') setDirection('expense') }, [scope])
   const selected = lockedProject ?? projects.find((project) => project.id === projectId)
+  const writeMappingAvailable = !liveWrite || (scope === 'office' ? Boolean(CANONICAL_WALLET_COMPANY_PAIRS[writePair]) : Boolean(selected?.write_mapping))
+  const fail = (reason: unknown) => {
+    submitting.current = false
+    setBusy(false)
+    setRetryOnly(Boolean(reason && typeof reason === 'object' && 'uncertain' in reason && reason.uncertain))
+    setError(reason instanceof Error ? reason.message : 'Data belum dapat disimpan.')
+  }
   const submit = (event: FormEvent) => {
     event.preventDefault()
     if (submitting.current) return
     submitting.current = true
+    setBusy(true)
+    setError('')
     try {
       if (locked && (!lockedProject || lockedProject.status === 'planned')) throw new Error('Proyek terkunci tidak tersedia untuk transaksi.')
       const projectScoped = locked || scope === 'project'
-      onSave({ date, direction, amount: amount ?? 0, scope: projectScoped ? 'project' : 'office', wallet: projectScoped ? selected?.wallet ?? wallet : wallet, company: projectScoped ? selected?.company ?? null : null, project_id: projectScoped ? selected?.id ?? projectId : null, office_category: projectScoped ? null : category, notes })
-      onClose()
-    } catch (reason) { submitting.current = false; setError(reason instanceof Error ? reason.message : 'Data belum dapat disimpan.') }
+      if (liveWrite && date !== currentDate) throw new Error('Tanggal transaksi harus tanggal Jakarta hari ini.')
+      if (!writeMappingAvailable) throw new Error('Pemetaan kanonis dompet, perusahaan, dan proyek belum tersedia.')
+      const pair = CANONICAL_WALLET_COMPANY_PAIRS[writePair]
+      const result = onSave({
+        date,
+        direction,
+        amount: amount ?? 0,
+        scope: projectScoped ? 'project' : 'office',
+        wallet: liveWrite ? (projectScoped ? selected?.write_mapping?.wallet : pair.wallet) : (projectScoped ? selected?.wallet ?? wallet : wallet),
+        company: liveWrite ? (projectScoped ? selected?.write_mapping?.company : pair.company) : (projectScoped ? selected?.company ?? null : null),
+        project_id: projectScoped ? selected?.id ?? projectId : null,
+        office_category: projectScoped ? null : category,
+        category: liveWrite ? writeCategory : undefined,
+        notes,
+      })
+      if (result instanceof Promise) result.then(onClose).catch(fail)
+      else onClose()
+    } catch (reason) { fail(reason) }
   }
   const title = transaction ? `Ubah transaksi${lockedProject ? ` · ${lockedProject.name}` : ''}` : lockedProject ? `Tambah transaksi · ${lockedProject.name}` : scope === 'office' ? 'Catat biaya kantor' : 'Tambah transaksi'
-  return <Modal title={title} copy="Transaksi demo langsung memperbarui seluruh ringkasan dan laporan." onClose={onClose}>
+  return <Modal title={title} copy={liveWrite ? 'Transaksi hanya dinyatakan berhasil setelah server memverifikasi baris buku besar.' : 'Transaksi demo langsung memperbarui seluruh ringkasan dan laporan.'} onClose={onClose}>
     <form className="finance-form" onSubmit={submit}>
-      {!locked && <div className="scope-selector" role="group" aria-label="Pilih aktivitas"><button type="button" className={scope === 'project' ? 'active' : ''} aria-pressed={scope === 'project'} onClick={() => setScope('project')}>Proyek</button><button type="button" className={scope === 'office' ? 'active' : ''} aria-pressed={scope === 'office'} onClick={() => setScope('office')}>Operasional Kantor</button></div>}
-      <div className="form-grid"><label><span>Tanggal *</span><input type="date" required value={date} min={lockedProject?.started_on} max={lockedProject?.completed_on ?? undefined} onChange={(event) => setDate(event.target.value)} /></label>
+      <fieldset disabled={busy || retryOnly} style={{ border: 0, margin: 0, padding: 0 }}>
+      {!locked && <div className="scope-selector" role="group" aria-label="Pilih aktivitas"><button type="button" className={scope === 'project' ? 'active' : ''} aria-pressed={scope === 'project'} onClick={() => { setScope('project'); setWriteCategory(PROJECT_WRITE_CATEGORIES[0]) }}>Proyek</button><button type="button" className={scope === 'office' ? 'active' : ''} aria-pressed={scope === 'office'} onClick={() => { setScope('office'); setWriteCategory(OFFICE_WRITE_CATEGORIES[0]) }}>Operasional Kantor</button></div>}
+      <div className="form-grid"><label><span>Tanggal *</span><input type="date" required value={date} min={liveWrite ? currentDate : lockedProject?.started_on} max={liveWrite ? currentDate : lockedProject?.completed_on ?? undefined} onChange={(event) => setDate(event.target.value)} />{liveWrite && <small>Wajib tanggal Jakarta hari ini: {currentDate}</small>}</label>
         <label><span>Jenis *</span><select value={direction} disabled={!locked && scope === 'office'} onChange={(event) => setDirection(event.target.value as TransactionDirection)}><option value="income">Pemasukan</option><option value="expense">Pengeluaran</option></select></label>
-        {(locked || scope === 'project') ? <>{lockedProject ? <div className="wide locked-project-context" aria-label="Proyek terkunci"><small>Proyek</small><strong>{lockedProject.name}</strong><span>{lockedProject.company} · {lockedProject.wallet}</span></div> : <label className="wide"><span>Proyek *</span><select value={projectId} onChange={(event) => setProjectId(event.target.value)}>{selectable.map((project) => <option value={project.id} key={project.id}>{project.name} · {project.company}</option>)}</select></label>}<label><span>Perusahaan</span><input readOnly value={selected?.company ?? ''} /></label><label><span>Dompet</span><input readOnly value={selected?.wallet ?? ''} /></label></> : <><label><span>Dompet *</span><select value={wallet} onChange={(event) => setWallet(event.target.value as WalletId)}>{WALLETS.map((item) => <option key={item}>{item}</option>)}</select></label><label><span>Kategori *</span><select value={category} onChange={(event) => setCategory(event.target.value as OfficeCategory)}>{OFFICE_CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></label></>}
+        {(locked || scope === 'project') ? <>{lockedProject ? <div className="wide locked-project-context" aria-label="Proyek terkunci"><small>Proyek</small><strong>{lockedProject.name}</strong><span>{selected?.write_mapping ? `${selected.write_mapping.company} · ${selected.write_mapping.wallet}` : 'Pemetaan pencatatan belum tersedia'}</span></div> : <label className="wide"><span>Proyek *</span><select value={projectId} onChange={(event) => setProjectId(event.target.value)}>{selectable.map((project) => <option value={project.id} key={project.id} disabled={liveWrite && !project.write_mapping}>{project.name} · {project.write_mapping ? project.write_mapping.company : liveWrite ? 'pemetaan belum tersedia' : project.company}</option>)}</select></label>}<label><span>Perusahaan</span><input readOnly value={liveWrite ? selected?.write_mapping?.company ?? '' : selected?.company ?? ''} /></label><label><span>Dompet</span><input readOnly value={liveWrite ? selected?.write_mapping?.wallet ?? '' : selected?.wallet ?? ''} /></label></> : liveWrite ? <label className="wide"><span>Dompet dan perusahaan *</span><select value={writePair} onChange={(event) => setWritePair(Number(event.target.value))}>{CANONICAL_WALLET_COMPANY_PAIRS.map((pair, index) => <option value={index} key={`${pair.wallet}:${pair.company}`}>{pair.company} · {pair.wallet}</option>)}</select></label> : <><label><span>Dompet *</span><select value={wallet} onChange={(event) => setWallet(event.target.value as WalletId)}>{WALLETS.map((item) => <option key={item}>{item}</option>)}</select></label><label><span>Kategori *</span><select value={category} onChange={(event) => setCategory(event.target.value as OfficeCategory)}>{OFFICE_CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></label></>}
+        {liveWrite && <label><span>Kategori *</span><select value={writeCategory} onChange={(event) => setWriteCategory(event.target.value)}>{((locked || scope === 'project') ? PROJECT_WRITE_CATEGORIES : OFFICE_WRITE_CATEGORIES).map((item) => <option key={item}>{item}</option>)}</select></label>}
         <AmountInput label="Jumlah" value={amount} onChange={setAmount} />
-        <label className="wide"><span>Keterangan *</span><textarea autoFocus rows={3} required value={notes} onChange={(event) => setNotes(event.target.value)} /></label></div>
-      <ErrorNote error={error} /><footer><button type="button" className="secondary-button" onClick={onClose}>Batal</button><button className="primary-button">{transaction ? 'Simpan perubahan' : 'Simpan transaksi'}</button></footer>
+        <label className="wide"><span>Keterangan *</span><textarea autoFocus rows={3} required maxLength={liveWrite ? ((locked || scope === 'project') ? 200 : 150) : undefined} value={notes} onChange={(event) => setNotes(event.target.value)} /></label></div>
+      </fieldset>
+      {!writeMappingAvailable && <p className="form-error" role="status">Pencatatan belum tersedia: pemetaan kanonis belum dikonfigurasi.</p>}
+      <ErrorNote error={error} /><footer><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>Batal</button><button className="primary-button" disabled={busy || !writeMappingAvailable}>{busy ? 'Memverifikasi pencatatan…' : retryOnly ? 'Coba lagi permintaan yang sama' : transaction ? 'Simpan perubahan' : 'Simpan transaksi'}</button></footer>
     </form>
   </Modal>
 }

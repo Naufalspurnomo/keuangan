@@ -1,5 +1,5 @@
-import { ArrowLeft, Clock3, LocateFixed, Plus, Search, UserRoundCheck } from 'lucide-react'
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
+import { ArrowLeft, CheckCircle2, Clock3, LocateFixed, Plus, RefreshCw, RotateCcw, Search, UserRoundCheck } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 
 import { TransactionRows } from './FinancePages'
 import { projectTotals, type FinanceProject, type FinanceTransaction, type FinanceWorkspace } from './financeWorkspace'
@@ -61,17 +61,21 @@ function EvidenceCard({ label, employee, evidence }: { label: string; employee: 
   </article>
 }
 
-function PresensiPanel({ project }: { project: FinanceProject }) {
+export function PresensiPanel({ project }: { project: { id?: string; name: string } }) {
   const [query, setQuery] = useState('')
   const [records, setRecords] = useState<PresensiRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  const activeController = useRef<AbortController | null>(null)
 
-  useEffect(() => {
+  const loadRecords = useCallback((clear = false) => {
+    if (!project.id) { setLoading(false); return }
+    activeController.current?.abort()
     const controller = new AbortController()
+    activeController.current = controller
     setLoading(true)
     setError(false)
-    setRecords([])
+    if (clear) setRecords([])
     fetch(`/admin/api/presensi.php?project_id=${encodeURIComponent(project.id)}`, { credentials: 'same-origin', cache: 'no-store', signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(`Presensi unavailable (${response.status})`)
@@ -83,8 +87,17 @@ function PresensiPanel({ project }: { project: FinanceProject }) {
       })
       .catch((reason: unknown) => { if (!(reason instanceof DOMException && reason.name === 'AbortError')) setError(true) })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
-    return () => controller.abort()
   }, [project.id])
+
+  useEffect(() => {
+    loadRecords(true)
+    const refreshOnFocus = () => loadRecords()
+    window.addEventListener('focus', refreshOnFocus)
+    return () => {
+      window.removeEventListener('focus', refreshOnFocus)
+      activeController.current?.abort()
+    }
+  }, [loadRecords])
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase('id-ID')
@@ -93,10 +106,15 @@ function PresensiPanel({ project }: { project: FinanceProject }) {
   const active = records.filter((record) => record.status === 'active').length
   const completed = records.length - active
 
-  if (error) return <div className="project-detail-empty presensi-error" role="alert"><strong>Data presensi belum dapat dimuat.</strong><span>Coba muat ulang halaman. Data lama tidak ditampilkan.</span></div>
-  if (loading) return <div className="project-detail-empty"><strong>Memuat data presensi…</strong><span>Mengambil bukti terbaru dari server.</span></div>
+  if (!project.id) return <div className="project-detail-empty" role="status"><strong>Presensi belum tersedia</strong><span>ID proyek presensi kanonis tidak tersedia pada snapshot live.</span></div>
+  if (error) return <div className="project-detail-empty presensi-error" role="alert"><strong>Data presensi belum dapat dimuat.</strong><span>Data lama tidak ditampilkan.</span><button type="button" className="secondary-button" onClick={() => loadRecords(true)}>Coba lagi</button></div>
+  if (loading && !records.length) return <div className="project-detail-empty" role="status" aria-live="polite"><strong>Memuat data presensi…</strong><span>Mengambil bukti terbaru dari server.</span></div>
 
-  return <div className="project-presensi-panel">
+  return <div className="project-presensi-panel" aria-busy={loading}>
+    <div className="presensi-panel-actions">
+      <span role="status" aria-live="polite">{loading ? 'Memperbarui data…' : 'Data presensi terbaru'}</span>
+      <button type="button" className="secondary-button" onClick={() => loadRecords()} disabled={loading}><RefreshCw size={15} /> Perbarui presensi</button>
+    </div>
     <section className="project-detail-summary presensi-summary" aria-label={`Ringkasan presensi ${project.name}`}>
       <article><small>Total presensi</small><strong>{records.length}</strong></article>
       <article><small>Sedang bekerja</small><strong className="positive">{active}</strong></article>
@@ -118,17 +136,23 @@ function PresensiPanel({ project }: { project: FinanceProject }) {
         <EvidenceCard label="Check-out" employee={record.employee_name} evidence={record.check_out} />
       </div>
       <footer><Clock3 size={15} /><span>Durasi kerja</span><strong>{durationLabel(record.duration_minutes)}</strong></footer>
-    </article>)}</div> : <div className="project-detail-empty"><strong>Belum ada presensi untuk {project.name}</strong><span>{' '}Check-in pegawai dari /absen/presensi akan muncul di sini.</span></div>}
+    </article>)}</div> : records.length
+      ? <div className="project-detail-empty"><strong>Tidak ada presensi yang cocok dengan pencarian.</strong><span>Coba kata kunci lain atau tampilkan kembali semua data.</span><button type="button" className="secondary-button" onClick={() => setQuery('')}>Hapus pencarian</button></div>
+      : <div className="project-detail-empty"><strong>Belum ada presensi untuk {project.name}</strong><span>Check-in pegawai akan muncul di sini.</span><a className="secondary-button" href="/absen/presensi/" target="_blank" rel="noreferrer">Buka halaman presensi pegawai</a></div>}
   </div>
 }
 
-export default function ProjectTransactionsWorkspace({ workspace, project, onBack, onAdd, onEdit, onDelete }: {
+export default function ProjectTransactionsWorkspace({ workspace, project, onBack, onAdd, onEdit, onDelete, onComplete, onReactivate, readOnly = false, canCreateTransactions = false }: {
   workspace: FinanceWorkspace
   project: FinanceProject
   onBack: () => void
   onAdd: (project: FinanceProject) => void
   onEdit: (row: FinanceTransaction) => void
   onDelete: (row: FinanceTransaction) => void
+  onComplete: (project: FinanceProject) => void
+  onReactivate: (project: FinanceProject) => void
+  readOnly?: boolean
+  canCreateTransactions?: boolean
 }) {
   const [tab, setTab] = useState<ProjectDetailTab>('transactions')
   const [query, setQuery] = useState('')
@@ -158,14 +182,20 @@ export default function ProjectTransactionsWorkspace({ workspace, project, onBac
     <header className="project-detail-head">
       <button type="button" className="secondary-button project-detail-back" onClick={onBack}><ArrowLeft size={17} /> Kembali ke Proyek</button>
       <div className="project-detail-identity"><p className="eyebrow">DETAIL PROYEK · DATA DEMO</p><h1>{project.name}</h1><p>{project.company} · {project.wallet} · <span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span>{project.client ? ` · ${project.client}` : ''}</p></div>
-      {tab === 'transactions' && <button type="button" className="primary-button" onClick={() => onAdd(project)}><Plus size={16} /> Tambah transaksi</button>}
+      {(!readOnly || (canCreateTransactions && project.write_mapping)) && tab === 'transactions' && <button type="button" className="primary-button" onClick={() => onAdd(project)}><Plus size={16} /> Tambah transaksi</button>}
     </header>
+    {readOnly && canCreateTransactions && !project.write_mapping && <p className="form-error" role="status">Pencatatan proyek belum tersedia: pemetaan kanonis dompet/perusahaan belum dikonfigurasi.</p>}
+    <section className="project-status-control" aria-label="Status proyek">
+      <div><small>STATUS PROYEK</small><span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span><p>{project.status === 'active' ? 'Proyek sedang berjalan dan dapat diselesaikan.' : project.status === 'completed' ? 'Proyek telah selesai. Aktifkan kembali jika status ini terpilih tanpa sengaja.' : 'Proyek belum dimulai.'}</p></div>
+      {!readOnly && project.status === 'active' && <button type="button" className="primary-button" onClick={() => onComplete(project)}><CheckCircle2 size={16} /> Selesaikan proyek</button>}
+      {!readOnly && project.status === 'completed' && <button type="button" className="secondary-button" onClick={() => onReactivate(project)}><RotateCcw size={16} /> Aktifkan kembali</button>}
+    </section>
     <div className="project-detail-tabs" role="tablist" aria-label={`Data ${project.name}`}>
       <button id="project-transactions-tab" type="button" role="tab" aria-label="Transaksi" aria-selected={tab === 'transactions'} aria-controls="project-transactions-panel" tabIndex={tab === 'transactions' ? 0 : -1} onKeyDown={handleTabKey} onClick={() => setTab('transactions')}>Transaksi <span>{projectRows.length}</span></button>
       <button id="project-presensi-tab" type="button" role="tab" aria-label="Presensi" aria-selected={tab === 'presensi'} aria-controls="project-presensi-panel" tabIndex={tab === 'presensi' ? 0 : -1} onKeyDown={handleTabKey} onClick={() => setTab('presensi')}>Presensi</button>
     </div>
     {tab === 'presensi'
-      ? <div id="project-presensi-panel" role="tabpanel" aria-labelledby="project-presensi-tab"><PresensiPanel project={project} /></div>
+      ? <div id="project-presensi-panel" role="tabpanel" aria-labelledby="project-presensi-tab"><PresensiPanel project={{ id: project.presensi_project_id ?? (workspace.mode === 'demo' ? project.id : undefined), name: project.name }} /></div>
       : <div id="project-transactions-panel" role="tabpanel" aria-labelledby="project-transactions-tab">
         <section className="project-detail-summary" aria-label={`Ringkasan ${project.name}`}>
           <article><small>Pemasukan</small><strong className="positive">{IDR.format(totals.income)}</strong></article>
@@ -178,7 +208,7 @@ export default function ProjectTransactionsWorkspace({ workspace, project, onBac
           <span><strong>{rows.length}</strong> transaksi</span>
         </section>
         {rows.length
-          ? <TransactionRows rows={rows} projects={[project]} onEdit={onEdit} onDelete={onDelete} />
+          ? <TransactionRows rows={rows} projects={workspace.projects} onEdit={readOnly ? undefined : onEdit} onDelete={readOnly ? undefined : onDelete} />
           : <div className="project-detail-empty"><strong>Belum ada transaksi untuk {project.name}</strong><span>Tambahkan transaksi pertama untuk memulai ledger proyek ini.</span></div>}
       </div>}
   </section>

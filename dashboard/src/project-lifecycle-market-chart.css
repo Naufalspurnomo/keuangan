@@ -325,6 +325,36 @@ html[data-theme='dark'] .project-market-snapshot b { color: var(--text-secondary
 .project-market-empty { position: sticky; left: 82px; align-self: center; width: min(280px, calc(100vw - 130px)); display: flex; flex-direction: column; gap: 4px; padding: 18px; border: 1px dashed var(--border); border-radius: 8px; background: var(--surface-raised); color: var(--text-secondary); text-align: center; }
 .project-market-empty strong { color: var(--text); font-size: 12px; }
 .project-market-empty span { font-size: 9px; }
+.project-context-menu {
+  width: 208px;
+  position: fixed;
+  z-index: 1300;
+  display: grid;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-raised);
+  box-shadow: 0 18px 48px rgba(0,0,0,.24);
+}
+.project-context-menu button {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 720;
+  text-align: left;
+  cursor: pointer;
+}
+.project-context-menu button:hover,
+.project-context-menu button:focus-visible { outline: 0; background: var(--surface-muted); }
+.project-context-menu button.complete { color: var(--positive); }
 .project-market-legend { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
 .project-market-legend > div { min-width: 0; display: flex; align-items: center; gap: 9px; padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface-raised); }
 .project-market-legend p { margin: 0; }

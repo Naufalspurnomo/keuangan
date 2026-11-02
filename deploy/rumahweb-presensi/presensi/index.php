@@ -13,7 +13,7 @@ header('Cache-Control: no-store');
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#f97316" />
+  <meta name="theme-color" content="#FB9202" />
   <link rel="icon" href="/absen/brand/hollawall-logo.png" />
   <title>Presensi Hollawall</title>
   <link rel="stylesheet" href="/absen/assets/presensi.css" />
@@ -74,10 +74,11 @@ header('Cache-Control: no-store');
             </div>
           </div>
           <div class="camera-actions">
-            <button id="open-camera" type="button" class="secondary-button">Aktifkan kamera</button>
+            <button id="open-camera" type="button" class="secondary-button" disabled>Aktifkan kamera</button>
             <button id="capture-selfie" type="button" class="primary-button" disabled>Ambil selfie & lokasi</button>
             <button id="retake-selfie" type="button" class="text-button" hidden>Ambil ulang</button>
           </div>
+          <p id="camera-requirements" class="proof-requirements">Pilih pegawai dan proyek terlebih dahulu.</p>
         </section>
 
         <section class="proof-panel" aria-labelledby="location-title">

@@ -33,7 +33,7 @@ describe('projectAsOf', () => {
     expect(projectSnapshotDate(workspace).getMonth()).toBe(0)
     expect(projectSnapshotDate(workspace).getDate()).toBe(1)
     expect(projectYearOptions(workspace)).toContain(2026)
-    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
+    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onQuickComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
     expect(screen.getByText('TAHUN PROYEK').parentElement?.textContent).toContain('2026')
     for (const company of ['Holla', 'Hojja', 'Texturin Bali', 'Texturin Surabaya']) {
       expect(screen.getByRole('region', { name: `Chart lifecycle ${company}` })).toBeTruthy()
@@ -47,7 +47,7 @@ describe('projectAsOf', () => {
     workspace.projects = [carry]
     expect(projectYearOptions(workspace)).toEqual([2025, 2026])
     expect(projectOverlapsYear(carry, 2026, '2026-10-28')).toBe(true)
-    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
+    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onQuickComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
     expect(screen.getAllByRole('button', { name: /Carry Over/ }).length).toBeGreaterThanOrEqual(2)
     expect(document.querySelector('[data-project-candle="Carry Over"]')).toBeTruthy()
   })
@@ -55,7 +55,7 @@ describe('projectAsOf', () => {
   it('paginates the project registry independently from the four lifecycle canvases', () => {
     const workspace = seedFinanceWorkspace()
     const onOpen = vi.fn()
-    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onDelete: vi.fn(), onOpen }))
+    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onQuickComplete: vi.fn(), onDelete: vi.fn(), onOpen }))
 
     expect(screen.getByRole('navigation', { name: 'Pagination proyek' })).toBeTruthy()
     expect(screen.getByText('Halaman 1 / 2')).toBeTruthy()
@@ -68,7 +68,7 @@ describe('projectAsOf', () => {
 
   it('places registry filters after the lifecycle chart and directly before the project registry', () => {
     const workspace = seedFinanceWorkspace()
-    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
+    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onQuickComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
 
     const chart = screen.getByRole('region', { name: /Project lifecycle market/ })
     const filters = screen.getByRole('region', { name: 'Filter daftar proyek' })
@@ -84,7 +84,7 @@ describe('projectAsOf', () => {
     const yearProjects = workspace.projects.filter((project) => projectOverlapsYear(project, snapshotYear, snapshotDate))
     const company = yearProjects[0].company
     const expected = yearProjects.filter((project) => project.company === company).length
-    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
+    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onQuickComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
 
     const candleCount = document.querySelectorAll('[data-project-candle]').length
     fireEvent.change(screen.getByRole('combobox', { name: 'Perusahaan' }), { target: { value: company } })
@@ -98,7 +98,7 @@ describe('projectAsOf', () => {
 
   it('gives every registry row and action an explicit accessible label', () => {
     const workspace = seedFinanceWorkspace()
-    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
+    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onQuickComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
 
     const registry = screen.getByRole('region', { name: /Daftar proyek/ })
     for (const row of registry.querySelectorAll(':scope > article')) {
@@ -120,7 +120,7 @@ describe('projectAsOf', () => {
     workspace.projects = [active, completed, planned]
     workspace.updated_at = `${active.started_on.slice(0, 4)}-12-31T10:00:00.000Z`
     const onComplete = vi.fn()
-    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete, onDelete: vi.fn(), onOpen: vi.fn() }))
+    render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete, onQuickComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
 
     const action = screen.getByRole('button', { name: `Selesaikan ${active.name}` })
     expect(screen.getAllByRole('button', { name: `Selesaikan ${active.name}` })).toHaveLength(1)

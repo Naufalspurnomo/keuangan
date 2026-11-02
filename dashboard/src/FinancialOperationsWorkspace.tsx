@@ -85,7 +85,7 @@ function MovementLedger({ rows, onOpenProject }: { rows: Transaction[]; onOpenPr
     {visible.map((row) => <article key={row.id}>
       <time>{day(row.transaction_date)}</time>
       <div><strong>{row.notes || row.project || 'Transaksi umum'}</strong><span>{[row.company, row.wallet].filter((value, index, all) => value && all.indexOf(value) === index).join(' · ')}</span></div>
-      {row.project && !['-', 'Operasional Kantor', 'Hutang internal'].includes(row.project) ? <button type="button" onClick={() => onOpenProject?.(row.project)}>{row.project}</button> : <span>{isInternal(row) ? 'Hutang internal' : 'Tanpa proyek'}</span>}
+      {row.project && !['-', 'Operasional Kantor', 'Hutang internal'].includes(row.project) ? <button type="button" onClick={() => onOpenProject?.(row.project!)}>{row.project}</button> : <span>{isInternal(row) ? 'Hutang internal' : 'Tanpa proyek'}</span>}
       <em className={row.transaction_type === 'Pemasukan' ? 'positive' : 'negative'}>{row.transaction_type === 'Pemasukan' ? '+' : '−'}{amount(row.amount)}</em>
       <small>{isInternal(row) ? 'Internal' : 'Eksternal'} · Source {row.source_key || `ID ${row.id}`}</small>
     </article>)}

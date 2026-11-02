@@ -40,13 +40,14 @@ export function scopeLabel(scope: TransactionScope) {
 }
 
 export function walletBalances(workspace: FinanceWorkspace) {
-  return WALLETS.map((wallet) => {
+  const wallets = workspace.live_wallets?.map((wallet) => wallet.name) ?? WALLETS
+  return wallets.map((wallet) => {
     const rows = workspace.transactions.filter((row) => row.wallet === wallet)
     const income = sumMoney(rows.filter((row) => row.direction === 'income').map((row) => row.amount), `pemasukan ${wallet}`)
     const expense = sumMoney(rows.filter((row) => row.direction === 'expense').map((row) => row.amount), `pengeluaran ${wallet}`)
     const lent = sumMoney(workspace.debts.filter((debt) => debt.lender === wallet).map((debt) => debt.amount - debt.repaid), `piutang ${wallet}`)
     const borrowed = sumMoney(workspace.debts.filter((debt) => debt.borrower === wallet).map((debt) => debt.amount - debt.repaid), `hutang ${wallet}`)
-    const balance = income - expense
+    const balance = workspace.live_wallets?.find((item) => item.name === wallet)?.balance ?? income - expense
     const adjusted = sumMoney([balance, lent, -borrowed], `saldo penyesuaian ${wallet}`)
     return { wallet, income, expense, balance, lent, borrowed, adjusted }
   })
@@ -204,7 +205,7 @@ export function chartTransactions(workspace: FinanceWorkspace, includeInternal =
 
 export function chartWallets(workspace: FinanceWorkspace): WalletSnapshot[] {
   return walletBalances(workspace).map((row) => ({
-    source_key: `demo-wallet:${row.wallet}`,
+    source_key: workspace.live_wallets?.find((item) => item.name === row.wallet)?.source_key ?? `demo-wallet:${row.wallet}`,
     name: row.wallet,
     balance: row.balance,
   }))
@@ -231,6 +232,7 @@ export function chartProjects(workspace: FinanceWorkspace): ProjectSummary[] {
 }
 
 export function cashTrend(workspace: FinanceWorkspace, months = 12): CashTrendPoint[] {
+  if (workspace.live_cash_trend) return workspace.live_cash_trend
   const ordered = [...workspace.transactions].sort((left, right) => left.date.localeCompare(right.date))
   const latest = ordered.at(-1)?.date ?? new Date().toISOString().slice(0, 10)
   const latestDate = new Date(`${latest.slice(0, 7)}-01T00:00:00Z`)

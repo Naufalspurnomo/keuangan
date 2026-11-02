@@ -31,6 +31,17 @@ class RumahwebAdminReleaseTests(unittest.TestCase):
         self.assertIn("method_not_allowed", proxy)
         self.assertIn("X-Hollawall-Proxy-Token", proxy)
 
+    def test_release_has_fail_closed_transaction_proxy(self) -> None:
+        proxy = (RELEASE / "api" / "transactions.php").read_text(encoding="utf-8")
+        self.assertIn("transaction_writes_enabled", proxy)
+        self.assertIn("transaction_writes_disabled", proxy)
+        self.assertIn("X-CSRF-Token", proxy)
+        self.assertIn("Idempotency-Key", proxy)
+        self.assertIn("X-Hollawall-Proxy-Token", proxy)
+        self.assertIn("CURLOPT_FOLLOWLOCATION => false", proxy)
+        self.assertIn("CURLOPT_SSL_VERIFYPEER => true", proxy)
+        self.assertIn("Cache-Control: no-store", proxy)
+
     def test_login_session_is_secure_persistent_and_rolling(self) -> None:
         login = (RELEASE / "index.php").read_text(encoding="utf-8")
         proxy = (RELEASE / "api" / "snapshot.php").read_text(encoding="utf-8")

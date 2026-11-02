@@ -27,7 +27,7 @@ describe('project presensi detail', () => {
   function renderWorkspace() {
     const workspace = seedFinanceWorkspace()
     const project = workspace.projects.find((item) => item.id === 'p26-griya')!
-    render(<ProjectTransactionsWorkspace workspace={workspace} project={project} onBack={vi.fn()} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />)
+    render(<ProjectTransactionsWorkspace workspace={workspace} project={project} onBack={vi.fn()} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onComplete={vi.fn()} onReactivate={vi.fn()} />)
   }
 
   it('defaults to Transaksi and switches to project-scoped Presensi', async () => {
@@ -66,7 +66,8 @@ describe('project presensi detail', () => {
     renderWorkspace()
     fireEvent.click(screen.getByRole('tab', { name: 'Presensi' }))
     const title = await screen.findByText('Belum ada presensi untuk Griya Wellness Center')
-    expect(title.parentElement?.textContent).toContain('Griya Wellness Center Check-in')
+    expect(title.parentElement?.querySelector('span')?.textContent).toBe('Check-in pegawai akan muncul di sini.')
+    expect(screen.getByRole('link', { name: 'Buka halaman presensi pegawai' })).toBeTruthy()
   })
 
   it('does not leak stale data when the admin endpoint fails', async () => {
@@ -90,5 +91,54 @@ describe('project presensi detail', () => {
     await waitFor(() => expect(screen.getByText('Lokasi tidak tersedia pada data lama.')).toBeTruthy())
     expect(screen.queryByText('0.000000, 0.000000')).toBeNull()
     expect(screen.queryByRole('link', { name: /Buka lokasi/ })).toBeNull()
+  })
+
+  it('retries a failed request in context without reloading the page', async () => {
+    vi.mocked(fetch).mockReset()
+      .mockResolvedValueOnce({ ok: false, status: 503 } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ version: 'presensi.admin.v1', records }) } as Response)
+    renderWorkspace()
+    fireEvent.click(screen.getByRole('tab', { name: 'Presensi' }))
+    await screen.findByText('Data presensi belum dapat dimuat.')
+    fireEvent.click(screen.getByRole('button', { name: 'Coba lagi' }))
+    await screen.findByText('Pegawai 1')
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('refreshes live presensi and distinguishes no search results from no data', async () => {
+    vi.mocked(fetch).mockReset()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ version: 'presensi.admin.v1', records: [records[0]] }) } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ version: 'presensi.admin.v1', records }) } as Response)
+    renderWorkspace()
+    fireEvent.click(screen.getByRole('tab', { name: 'Presensi' }))
+    await screen.findByText('Pegawai 1')
+    fireEvent.click(screen.getByRole('button', { name: 'Perbarui presensi' }))
+    await screen.findByText('Pegawai 2')
+    fireEvent.change(screen.getByLabelText('Cari presensi'), { target: { value: 'tidak-ada' } })
+    expect(screen.getByText('Tidak ada presensi yang cocok dengan pencarian.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Hapus pencarian' }))
+    expect(screen.getByText('Pegawai 1')).toBeTruthy()
+  })
+
+  it('refreshes presensi when the presenter returns to the dashboard window', async () => {
+    vi.mocked(fetch).mockReset()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ version: 'presensi.admin.v1', records: [records[0]] }) } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ version: 'presensi.admin.v1', records }) } as Response)
+    renderWorkspace()
+    fireEvent.click(screen.getByRole('tab', { name: 'Presensi' }))
+    await screen.findByText('Pegawai 1')
+    expect(screen.queryByText('Pegawai 2')).toBeNull()
+    fireEvent.focus(window)
+    await screen.findByText('Pegawai 2')
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('announces loading and gives an actionable link for a truly empty project', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ version: 'presensi.admin.v1', records: [] }) } as Response)
+    renderWorkspace()
+    fireEvent.click(screen.getByRole('tab', { name: 'Presensi' }))
+    expect(screen.getByRole('status').getAttribute('aria-live')).toBe('polite')
+    const link = await screen.findByRole('link', { name: 'Buka halaman presensi pegawai' })
+    expect(link.getAttribute('href')).toBe('/absen/presensi/')
   })
 })
