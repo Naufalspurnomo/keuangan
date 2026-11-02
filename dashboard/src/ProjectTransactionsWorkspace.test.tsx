@@ -1,12 +1,22 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+// @ts-expect-error Vitest runs in Node; the browser app tsconfig intentionally omits Node types.
+import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import ProjectTransactionsWorkspace from './ProjectTransactionsWorkspace'
 import { seedFinanceWorkspace } from './financeWorkspace'
 
+const presensiDashboardCss = readFileSync('src/presensi-dashboard.css', 'utf8')
+
 afterEach(cleanup)
 
 describe('ProjectTransactionsWorkspace', () => {
+  it('keeps the selected detail tab legible in both color themes', () => {
+    expect(presensiDashboardCss).toMatch(
+      /\.project-detail-tabs button\[aria-selected="true"\]\s*\{[^}]*color:\s*var\(--surface-raised\);[^}]*background:\s*var\(--text\);/s,
+    )
+  })
+
   it('renders exact project identity and strict project-owned rows', () => {
     const seeded = seedFinanceWorkspace()
     const project = seeded.projects.find((item) => seeded.transactions.some((row) => row.project_id === item.id))!

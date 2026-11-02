@@ -24,7 +24,7 @@
   cursor: pointer;
 }
 .project-detail-tabs button[aria-selected="true"] {
-  color: #fff;
+  color: var(--surface-raised);
   background: var(--text);
   box-shadow: 0 6px 16px rgba(15, 23, 42, .16);
 }
