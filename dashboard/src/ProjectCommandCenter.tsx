@@ -49,11 +49,12 @@ export function projectAsOf(year: number, now = new Date()) {
   return new Date(Math.min(now.getTime(), yearEnd.getTime()))
 }
 
-export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onComplete, onDelete, onOpen }: {
+export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onComplete, onQuickComplete, onDelete, onOpen }: {
   workspace: FinanceWorkspace
   onAdd: () => void
   onEdit: (project: FinanceProject) => void
   onComplete: (project: FinanceProject) => void
+  onQuickComplete: (project: FinanceProject) => void
   onDelete: (project: FinanceProject) => void
   onOpen: (project: FinanceProject) => void
 }) {
@@ -118,7 +119,7 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onCompl
 
     <p className="project-status-note"><strong>Lingkup {year}.</strong> Selesai: pekerjaan ditutup. Aktif: sedang berjalan. Direncanakan: belum dimulai.</p>
 
-    <ProjectLifecycleMarketChart projects={allYear} transactions={workspace.transactions} year={year} asOf={asOf} onOpen={onOpen} />
+    <ProjectLifecycleMarketChart projects={allYear} transactions={workspace.transactions} year={year} asOf={asOf} onOpen={onOpen} onQuickComplete={onQuickComplete} />
 
     <section className="project-controls" aria-label="Filter daftar proyek"><label className="command-search"><Search size={17} /><span className="sr-only">Cari proyek</span><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(0) }} placeholder="Cari proyek atau klien" /></label><label><span className="sr-only">Perusahaan</span><select value={company} onChange={(event) => { setCompany(event.target.value as 'all' | CompanyId); setPage(0) }}><option value="all">Semua perusahaan</option>{COMPANIES.map((item) => <option key={item}>{item}</option>)}</select></label><label><span className="sr-only">Status</span><select value={status} onChange={(event) => { setStatus(event.target.value as 'all' | ProjectStatus); setPage(0) }}><option value="all">Semua status</option>{statusOrder.map((item) => <option key={item} value={item}>{projectStatusLabel(item)}</option>)}</select></label><span aria-live="polite"><strong>{filtered.length}</strong> proyek</span></section>
 

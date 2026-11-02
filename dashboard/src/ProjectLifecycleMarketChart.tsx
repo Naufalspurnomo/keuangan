@@ -5,9 +5,10 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { Check, ChevronsRight, Minus, Move, Plus, RotateCcw } from 'lucide-react'
+import { Check, CheckCircle2, ChevronsRight, Eye, Minus, Move, Plus, RotateCcw } from 'lucide-react'
 
 import { type CompanyId, type FinanceProject, type FinanceTransaction } from './financeWorkspace'
 import { dateLabel, IDR, projectStatusLabel } from './financeView'
@@ -100,11 +101,12 @@ type CompanyCanvasProps = {
   asOf: Date
   register: (company: CompanyId, api: ViewportApi | null) => void
   onOpen: (project: FinanceProject) => void
+  onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>, project: FinanceProject) => void
 }
 
 type ZoomAnchor = { x: number; y: number; xRatio: number; yRatio: number }
 
-function CompanyCanvas({ company, projects, transactions, year, asOf, register, onOpen }: CompanyCanvasProps) {
+function CompanyCanvas({ company, projects, transactions, year, asOf, register, onOpen, onContextMenu }: CompanyCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const drag = useRef({ active: false, moved: false, pointerId: 0, x: 0, y: 0, left: 0, top: 0, lastX: 0, lastY: 0, lastAt: 0, velocityX: 0, velocityY: 0 })
   const momentumFrame = useRef<number | null>(null)
@@ -333,6 +335,7 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
               style={{ '--candle-top': `${candleTop}%`, '--candle-span': `${candleSpan}%`, '--start-position': `${startPosition}%`, '--activity-top': `${activityTop}%`, '--activity-span': `${activitySpan}%`, ...candleTone(project, asOf) } as CSSProperties}
               onPointerDown={() => { drag.current.moved = false }}
               onClick={(event) => { if (event.detail === 0 || !drag.current.moved) onOpen(project); drag.current.moved = false }}
+              onContextMenu={(event) => onContextMenu(event, project)}
               aria-label={`Buka ${project.name}, ${accessible}`}
               title={`${project.name} · ${accessible}`}
             >
@@ -349,13 +352,55 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
   </section>
 }
 
-export default function ProjectLifecycleMarketChart({ projects, transactions, year, asOf, onOpen }: { projects: FinanceProject[]; transactions: FinanceTransaction[]; year: number; asOf: Date; onOpen: (project: FinanceProject) => void }) {
+type ProjectContextMenu = { project: FinanceProject; x: number; y: number }
+
+export default function ProjectLifecycleMarketChart({ projects, transactions, year, asOf, onOpen, onQuickComplete }: {
+  projects: FinanceProject[]
+  transactions: FinanceTransaction[]
+  year: number
+  asOf: Date
+  onOpen: (project: FinanceProject) => void
+  onQuickComplete?: (project: FinanceProject) => void
+}) {
   const api = useRef(new Map<CompanyId, ViewportApi>())
+  const menuRef = useRef<HTMLDivElement>(null)
+  const [contextMenu, setContextMenu] = useState<ProjectContextMenu | null>(null)
   const register = (company: CompanyId, value: ViewportApi | null) => { if (value) api.current.set(company, value); else api.current.delete(company) }
   const zoomAll = (factor: number) => api.current.forEach((value) => value.zoomBy(factor))
   const resetAll = () => api.current.forEach((value) => value.reset())
   const latestAll = () => api.current.forEach((value) => value.latest())
   const active = projects.filter((project) => project.status === 'active').length
+  const openContextMenu = (event: ReactMouseEvent<HTMLButtonElement>, project: FinanceProject) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const menuHeight = project.status === 'active' && onQuickComplete ? 104 : 56
+    setContextMenu({
+      project,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 224)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+    })
+  }
+
+  useEffect(() => {
+    if (!contextMenu) return
+    const dismissOutside = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setContextMenu(null)
+    }
+    const dismissOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setContextMenu(null) }
+    const dismiss = () => setContextMenu(null)
+    window.addEventListener('pointerdown', dismissOutside)
+    window.addEventListener('keydown', dismissOnEscape)
+    window.addEventListener('resize', dismiss)
+    window.addEventListener('blur', dismiss)
+    window.addEventListener('scroll', dismiss, true)
+    return () => {
+      window.removeEventListener('pointerdown', dismissOutside)
+      window.removeEventListener('keydown', dismissOnEscape)
+      window.removeEventListener('resize', dismiss)
+      window.removeEventListener('blur', dismiss)
+      window.removeEventListener('scroll', dismiss, true)
+    }
+  }, [contextMenu])
 
   return <section className="project-market-report" aria-label={`Project lifecycle market ${year}`}>
     <header className="project-market-report-head"><div><p className="eyebrow">PROJECT LIFECYCLE MARKET · {year}</p><h3>Umur dan status proyek</h3><p>Empat canvas tahunan. Bulan terbaru di atas; proyek terbaru di kanan. Geser bebas, zoom, dan klik candle untuk melihat transaksi.</p></div><strong>{active} / {projects.length} aktif</strong></header>
@@ -366,12 +411,16 @@ export default function ProjectLifecycleMarketChart({ projects, transactions, ye
       <button type="button" onClick={resetAll} aria-label="Reset tampilan semua chart"><RotateCcw size={15} /> Reset</button>
       <button type="button" onClick={latestAll} aria-label="Kembali ke proyek terbaru semua chart"><ChevronsRight size={15} /> Terbaru</button>
     </div>
-    <div className="project-market-grid">{MARKET_COMPANIES.map((company) => <CompanyCanvas key={company} company={company} projects={projects} transactions={transactions} year={year} asOf={asOf} register={register} onOpen={onOpen} />)}</div>
+    <div className="project-market-grid">{MARKET_COMPANIES.map((company) => <CompanyCanvas key={company} company={company} projects={projects} transactions={transactions} year={year} asOf={asOf} register={register} onOpen={onOpen} onContextMenu={openContextMenu} />)}</div>
     <footer className="project-market-legend" aria-label="Keterangan project lifecycle">
       <div><span className="age-band-swatches" aria-hidden="true"><i /><i /><i /><i /><i /></span><p><strong>Warna umur: hijau · toska · kuning · oranye · merah</strong><small>0–14 · 15–30 · 31–60 · 61–90 · 91+ hari</small></p></div>
       <div><span className="completed-key" aria-hidden="true"><Check size={11} /></span><p><strong>Selesai</strong><small>Selesai: warna umur dipertahankan, tanda centang menunjukkan status</small></p></div>
       <div><span className="planned-key" aria-hidden="true" /><p><strong>Direncanakan</strong><small>Marker putus-putus pada tanggal mulai</small></p></div>
       <div><span className="activity-key" aria-hidden="true" /><p><strong>Garis putih = rentang transaksi</strong><small>Transaksi pertama sampai transaksi terakhir</small></p></div>
     </footer>
+    {contextMenu && <div ref={menuRef} className="project-context-menu" role="menu" aria-label={`Aksi ${contextMenu.project.name}`} style={{ left: contextMenu.x, top: contextMenu.y }}>
+      <button type="button" role="menuitem" onClick={() => { const project = contextMenu.project; setContextMenu(null); onOpen(project) }}><Eye size={16} /> Lihat detail</button>
+      {contextMenu.project.status === 'active' && onQuickComplete && <button type="button" role="menuitem" className="complete" onClick={() => { const project = contextMenu.project; setContextMenu(null); onQuickComplete(project) }}><CheckCircle2 size={16} /> Selesaikan proyek</button>}
+    </div>}
   </section>
 }
