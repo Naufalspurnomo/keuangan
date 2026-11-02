@@ -42,6 +42,19 @@
 .presensi-panel-actions .secondary-button { min-height: 40px; }
 .project-detail-empty .secondary-button { width: fit-content; min-height: 40px; margin-top: 6px; text-decoration: none; }
 .project-detail-back, .project-detail-filter .command-search, .project-detail-filter .command-search input { min-height: 44px; }
+.project-status-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+.project-status-control > div { min-width: 0; display: grid; grid-template-columns: auto auto; align-items: center; justify-content: start; gap: 7px 10px; }
+.project-status-control small { color: var(--text-secondary); font-size: 10px; font-weight: 800; letter-spacing: .08em; }
+.project-status-control p { grid-column: 1 / -1; margin: 0; color: var(--text-secondary); font-size: 11px; line-height: 1.45; }
+.project-status-control > button { flex: none; min-height: 44px; }
 .presensi-summary article { display: grid; align-content: center; gap: 8px; min-height: 90px; padding: 18px; }
 .presensi-summary small { display: block; color: var(--text-secondary); font-size: 10px; font-weight: 800; letter-spacing: .08em; line-height: 1.35; text-transform: uppercase; }
 .presensi-summary strong { display: block; color: var(--text); font-size: 25px; line-height: 1.1; font-variant-numeric: tabular-nums; }
@@ -132,6 +145,8 @@
   .presensi-panel-actions .secondary-button { width: 100%; min-height: 44px; }
   .project-detail-tabs { width: 100%; }
   .project-detail-tabs button { min-width: 0; flex: 1; }
+  .project-status-control { align-items: stretch; flex-direction: column; }
+  .project-status-control > button { width: 100%; }
   .presensi-evidence-grid { grid-template-columns: 1fr; }
   .presensi-evidence + .presensi-evidence { border-top: 1px solid var(--border-subtle); border-left: 0; }
 }

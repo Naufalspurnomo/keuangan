@@ -27,7 +27,7 @@ describe('project presensi detail', () => {
   function renderWorkspace() {
     const workspace = seedFinanceWorkspace()
     const project = workspace.projects.find((item) => item.id === 'p26-griya')!
-    render(<ProjectTransactionsWorkspace workspace={workspace} project={project} onBack={vi.fn()} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />)
+    render(<ProjectTransactionsWorkspace workspace={workspace} project={project} onBack={vi.fn()} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onComplete={vi.fn()} onReactivate={vi.fn()} />)
   }
 
   it('defaults to Transaksi and switches to project-scoped Presensi', async () => {

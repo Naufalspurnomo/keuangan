@@ -19,7 +19,7 @@ describe('ProjectTransactionsWorkspace', () => {
     }
     const ownRows = workspace.transactions.filter((row) => row.project_id === project.id)
     const foreignRow = workspace.transactions.find((row) => row.project_id && row.project_id !== project.id)!
-    render(<ProjectTransactionsWorkspace workspace={workspace} project={project} onBack={vi.fn()} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />)
+    render(<ProjectTransactionsWorkspace workspace={workspace} project={project} onBack={vi.fn()} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onComplete={vi.fn()} onReactivate={vi.fn()} />)
 
     expect(screen.getByRole('heading', { name: project.name })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Kembali ke Proyek' })).toBeTruthy()
@@ -36,7 +36,7 @@ describe('ProjectTransactionsWorkspace', () => {
     const onAdd = vi.fn()
     const onEdit = vi.fn()
     const onDelete = vi.fn()
-    render(<ProjectTransactionsWorkspace workspace={workspace} project={project} onBack={vi.fn()} onAdd={onAdd} onEdit={onEdit} onDelete={onDelete} />)
+    render(<ProjectTransactionsWorkspace workspace={workspace} project={project} onBack={vi.fn()} onAdd={onAdd} onEdit={onEdit} onDelete={onDelete} onComplete={vi.fn()} onReactivate={vi.fn()} />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Tambah transaksi' }))
     expect(onAdd).toHaveBeenCalledWith(project)
@@ -52,8 +52,32 @@ describe('ProjectTransactionsWorkspace', () => {
   it('shows a project-specific empty state', () => {
     const workspace = seedFinanceWorkspace()
     const project = workspace.projects.find((item) => !workspace.transactions.some((row) => row.project_id === item.id))!
-    render(<ProjectTransactionsWorkspace workspace={workspace} project={project} onBack={vi.fn()} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />)
+    render(<ProjectTransactionsWorkspace workspace={workspace} project={project} onBack={vi.fn()} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onComplete={vi.fn()} onReactivate={vi.fn()} />)
     expect(screen.getByText(`Belum ada transaksi untuk ${project.name}`)).toBeTruthy()
     expect(within(screen.getByLabelText(`Ringkasan ${project.name}`)).getByText('0')).toBeTruthy()
+  })
+
+  it('exposes an explicit completion action for an active project', () => {
+    const workspace = seedFinanceWorkspace()
+    const project = workspace.projects.find((item) => item.status === 'active')!
+    const onComplete = vi.fn()
+    render(<ProjectTransactionsWorkspace workspace={workspace} project={project} onBack={vi.fn()} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onComplete={onComplete} onReactivate={vi.fn()} />)
+
+    expect(within(screen.getByRole('region', { name: 'Status proyek' })).getByText('Aktif')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Selesaikan proyek' }))
+    expect(onComplete).toHaveBeenCalledWith(project)
+    expect(screen.queryByRole('button', { name: 'Aktifkan kembali' })).toBeNull()
+  })
+
+  it('lets a completed project be reactivated from its detail page', () => {
+    const workspace = seedFinanceWorkspace()
+    const project = workspace.projects.find((item) => item.status === 'completed')!
+    const onReactivate = vi.fn()
+    render(<ProjectTransactionsWorkspace workspace={workspace} project={project} onBack={vi.fn()} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onComplete={vi.fn()} onReactivate={onReactivate} />)
+
+    expect(within(screen.getByRole('region', { name: 'Status proyek' })).getByText('Selesai')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Aktifkan kembali' }))
+    expect(onReactivate).toHaveBeenCalledWith(project)
+    expect(screen.queryByRole('button', { name: 'Selesaikan proyek' })).toBeNull()
   })
 })

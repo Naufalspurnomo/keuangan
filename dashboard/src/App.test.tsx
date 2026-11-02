@@ -161,6 +161,43 @@ describe('Hollawall demo finance workspace', () => {
     expect(screen.getByText(`Memperbarui proyek ${project.name}`)).toBeTruthy()
   })
 
+  it('quick-completes an active project from the candle context menu without opening a dialog', async () => {
+    const workspace = seedFinanceWorkspace()
+    const project = workspace.projects.find((item) => item.status === 'active' && item.started_on.startsWith('2026'))!
+    workspace.projects = [project]
+    workspace.transactions = workspace.transactions.filter((row) => row.project_id === project.id)
+    localStorage.setItem('hollawall-finance-demo-v3', JSON.stringify(workspace))
+    renderApp()
+    nav('Proyek')
+
+    fireEvent.contextMenu(document.querySelector(`[data-project-id="${project.id}"]`)!)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Selesaikan proyek' }))
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Proyek diselesaikan.'))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.querySelector(`[data-project-id="${project.id}"]`)?.classList.contains('is-completed')).toBe(true)
+    expect(JSON.parse(localStorage.getItem('hollawall-finance-demo-v3')!).projects[0].status).toBe('completed')
+  })
+
+  it('reactivates an accidentally completed project from project detail', async () => {
+    const workspace = seedFinanceWorkspace()
+    const project = workspace.projects.find((item) => item.status === 'completed' && item.started_on.startsWith('2026'))!
+    workspace.projects = [project]
+    workspace.transactions = workspace.transactions.filter((row) => row.project_id === project.id)
+    localStorage.setItem('hollawall-finance-demo-v3', JSON.stringify(workspace))
+    renderApp()
+    nav('Proyek')
+    fireEvent.click(document.querySelector(`[data-project-id="${project.id}"]`)!)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Aktifkan kembali' }))
+
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Proyek diaktifkan kembali.'))
+    expect(screen.getByRole('region', { name: 'Status proyek' }).textContent).toContain('Aktif')
+    const stored = JSON.parse(localStorage.getItem('hollawall-finance-demo-v3')!).projects[0]
+    expect(stored.status).toBe('active')
+    expect(stored.completed_on).toBeNull()
+  })
+
   it('navigates annual project data and exposes explicit completion ratios', () => {
     renderApp()
     nav('Proyek')

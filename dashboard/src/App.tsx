@@ -101,6 +101,15 @@ function ThemeToggle({ theme, setTheme }: { theme: string; setTheme: (theme: str
   return <button type="button" className="theme-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={`Gunakan tema ${theme === 'dark' ? 'terang' : 'gelap'}`}><Sun size={16} /><span className={theme} /><Moon size={16} /></button>
 }
 
+function projectStatusInput(project: FinanceProject, status: 'active' | 'completed', completedOn: string | null): ProjectInput {
+  return { name: project.name, company: project.company, status, started_on: project.started_on, completed_on: completedOn, client: project.client, contract_value: project.contract_value, notes: project.notes }
+}
+
+function localIsoDate() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
 export default function App() {
   const finance = useFinanceWorkspace()
   const initialRoute = useRef(currentRoute()).current
@@ -201,6 +210,13 @@ export default function App() {
     : commit(() => finance.addProject(input), 'Proyek ditambahkan.')
   const completeProject = (input: ProjectInput) => modal?.kind === 'complete-project'
     && commit(() => finance.editProject(modal.value.id, input), 'Proyek diselesaikan.')
+  const completeProjectNow = (project: FinanceProject) => {
+    const latestTransaction = finance.workspace.transactions.filter((row) => row.project_id === project.id).reduce((latest, row) => row.date > latest ? row.date : latest, project.started_on)
+    const currentYearEnd = `${new Date().getFullYear()}-12-31`
+    const completedOn = [localIsoDate(), project.started_on, latestTransaction].sort().at(-1)!
+    safe(() => finance.editProject(project.id, projectStatusInput(project, 'completed', completedOn > currentYearEnd ? currentYearEnd : completedOn)), 'Proyek diselesaikan.')
+  }
+  const reactivateProject = (project: FinanceProject) => safe(() => finance.editProject(project.id, projectStatusInput(project, 'active', null)), 'Proyek diaktifkan kembali.')
   const saveTransaction = (input: TransactionInput) => modal?.kind === 'transaction' && modal.value
     ? commit(() => finance.editTransaction(modal.value!.id, input), 'Transaksi diperbarui.')
     : commit(() => finance.addTransaction(input), 'Transaksi ditambahkan.')
@@ -228,8 +244,8 @@ export default function App() {
     ? <OverviewWorkspace workspace={finance.workspace} onAddTransaction={() => setModal({ kind: 'transaction' })} onAddProject={() => setModal({ kind: 'project' })} onAddOffice={() => setModal({ kind: 'transaction', scope: 'office' })} />
     : active === 'cashflow' ? <CashflowWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
       : active === 'wallets' ? <WalletWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
-        : active === 'projects' && selectedProject ? <ProjectTransactionsWorkspace workspace={finance.workspace} project={selectedProject} onBack={backToProjects} onAdd={(project) => setModal({ kind: 'transaction', projectId: project.id })} onEdit={(value) => setModal({ kind: 'transaction', value, projectId: selectedProject.id })} onDelete={(value) => confirmDelete('transaksi', () => finance.removeTransaction(value.id))} />
-          : active === 'projects' ? <ProjectCommandCenter workspace={finance.workspace} onAdd={() => setModal({ kind: 'project' })} onEdit={(value) => setModal({ kind: 'project', value })} onComplete={(value) => setModal({ kind: 'complete-project', value })} onDelete={(value) => confirmDelete(`proyek ${value.name}`, () => finance.removeProject(value.id))} onOpen={openProject} />
+        : active === 'projects' && selectedProject ? <ProjectTransactionsWorkspace workspace={finance.workspace} project={selectedProject} onBack={backToProjects} onAdd={(project) => setModal({ kind: 'transaction', projectId: project.id })} onEdit={(value) => setModal({ kind: 'transaction', value, projectId: selectedProject.id })} onDelete={(value) => confirmDelete('transaksi', () => finance.removeTransaction(value.id))} onComplete={completeProjectNow} onReactivate={reactivateProject} />
+          : active === 'projects' ? <ProjectCommandCenter workspace={finance.workspace} onAdd={() => setModal({ kind: 'project' })} onEdit={(value) => setModal({ kind: 'project', value })} onComplete={(value) => setModal({ kind: 'complete-project', value })} onQuickComplete={completeProjectNow} onDelete={(value) => confirmDelete(`proyek ${value.name}`, () => finance.removeProject(value.id))} onOpen={openProject} />
             : active === 'office' ? <OfficeWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'transaction', scope: 'office' })} onEdit={(value) => setModal({ kind: 'transaction', value })} onDelete={(value) => confirmDelete('biaya kantor', () => finance.removeTransaction(value.id))} />
               : active === 'debts' ? <DebtWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'debt' })} onEdit={(value) => setModal({ kind: 'debt', value })} onDelete={(value) => confirmDelete('hutang internal', () => finance.removeDebt(value.id))} />
                 : <ReportsWorkspace workspace={finance.workspace} />

@@ -1,4 +1,4 @@
-import { ArrowLeft, Clock3, LocateFixed, Plus, RefreshCw, Search, UserRoundCheck } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, Clock3, LocateFixed, Plus, RefreshCw, RotateCcw, Search, UserRoundCheck } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 
 import { TransactionRows } from './FinancePages'
@@ -140,13 +140,15 @@ function PresensiPanel({ project }: { project: FinanceProject }) {
   </div>
 }
 
-export default function ProjectTransactionsWorkspace({ workspace, project, onBack, onAdd, onEdit, onDelete }: {
+export default function ProjectTransactionsWorkspace({ workspace, project, onBack, onAdd, onEdit, onDelete, onComplete, onReactivate }: {
   workspace: FinanceWorkspace
   project: FinanceProject
   onBack: () => void
   onAdd: (project: FinanceProject) => void
   onEdit: (row: FinanceTransaction) => void
   onDelete: (row: FinanceTransaction) => void
+  onComplete: (project: FinanceProject) => void
+  onReactivate: (project: FinanceProject) => void
 }) {
   const [tab, setTab] = useState<ProjectDetailTab>('transactions')
   const [query, setQuery] = useState('')
@@ -178,6 +180,11 @@ export default function ProjectTransactionsWorkspace({ workspace, project, onBac
       <div className="project-detail-identity"><p className="eyebrow">DETAIL PROYEK · DATA DEMO</p><h1>{project.name}</h1><p>{project.company} · {project.wallet} · <span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span>{project.client ? ` · ${project.client}` : ''}</p></div>
       {tab === 'transactions' && <button type="button" className="primary-button" onClick={() => onAdd(project)}><Plus size={16} /> Tambah transaksi</button>}
     </header>
+    <section className="project-status-control" aria-label="Status proyek">
+      <div><small>STATUS PROYEK</small><span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span><p>{project.status === 'active' ? 'Proyek sedang berjalan dan dapat diselesaikan.' : project.status === 'completed' ? 'Proyek telah selesai. Aktifkan kembali jika status ini terpilih tanpa sengaja.' : 'Proyek belum dimulai.'}</p></div>
+      {project.status === 'active' && <button type="button" className="primary-button" onClick={() => onComplete(project)}><CheckCircle2 size={16} /> Selesaikan proyek</button>}
+      {project.status === 'completed' && <button type="button" className="secondary-button" onClick={() => onReactivate(project)}><RotateCcw size={16} /> Aktifkan kembali</button>}
+    </section>
     <div className="project-detail-tabs" role="tablist" aria-label={`Data ${project.name}`}>
       <button id="project-transactions-tab" type="button" role="tab" aria-label="Transaksi" aria-selected={tab === 'transactions'} aria-controls="project-transactions-panel" tabIndex={tab === 'transactions' ? 0 : -1} onKeyDown={handleTabKey} onClick={() => setTab('transactions')}>Transaksi <span>{projectRows.length}</span></button>
       <button id="project-presensi-tab" type="button" role="tab" aria-label="Presensi" aria-selected={tab === 'presensi'} aria-controls="project-presensi-panel" tabIndex={tab === 'presensi' ? 0 : -1} onKeyDown={handleTabKey} onClick={() => setTab('presensi')}>Presensi</button>
