@@ -293,3 +293,10 @@ def test_accepts_idempotency_key_boundaries_and_formula_characters_as_opaque_dat
     assert validate(valid_payload(idempotency_key="=" * 16)).idempotency_key == "=" * 16
     assert validate(valid_payload(idempotency_key="é" * 16)).idempotency_key == "é" * 16
     assert validate(valid_payload(idempotency_key="x" * 128)).idempotency_key == "x" * 128
+
+
+def test_description_rejects_repeated_spaces_before_sheet_sanitization():
+    assert_invalid(
+        valid_payload(description="Pembayaran  termin"),
+        r"description: must use single spaces to preserve exact Sheet readback",
+    )

@@ -95,6 +95,8 @@ def _validate_text(
     maximum = limit if limit is not None else TEXT_LIMITS[field]
     if not 1 <= len(value) <= maximum:
         _fail(field, f"length must be 1..{maximum}")
+    if field == "description" and value != " ".join(value.split()):
+        _fail(field, "must use single spaces to preserve exact Sheet readback")
     if value.startswith(FORMULA_PREFIXES):
         _fail(field, "must not start with =, +, -, or @")
     if any(ord(character) < 32 or ord(character) == 127 for character in value):
