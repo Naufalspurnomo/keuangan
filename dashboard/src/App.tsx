@@ -212,9 +212,8 @@ export default function App() {
     && commit(() => finance.editProject(modal.value.id, input), 'Proyek diselesaikan.')
   const completeProjectNow = (project: FinanceProject) => {
     const latestTransaction = finance.workspace.transactions.filter((row) => row.project_id === project.id).reduce((latest, row) => row.date > latest ? row.date : latest, project.started_on)
-    const currentYearEnd = `${new Date().getFullYear()}-12-31`
     const completedOn = [localIsoDate(), project.started_on, latestTransaction].sort().at(-1)!
-    safe(() => finance.editProject(project.id, projectStatusInput(project, 'completed', completedOn > currentYearEnd ? currentYearEnd : completedOn)), 'Proyek diselesaikan.')
+    safe(() => finance.editProject(project.id, projectStatusInput(project, 'completed', completedOn)), 'Proyek diselesaikan.')
   }
   const reactivateProject = (project: FinanceProject) => safe(() => finance.editProject(project.id, projectStatusInput(project, 'active', null)), 'Proyek diaktifkan kembali.')
   const saveTransaction = (input: TransactionInput) => modal?.kind === 'transaction' && modal.value
