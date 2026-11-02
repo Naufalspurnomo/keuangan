@@ -181,7 +181,7 @@ export default function ProjectTransactionsWorkspace({ workspace, project, onBac
   return <section className="finance-page-stack project-transaction-detail">
     <header className="project-detail-head">
       <button type="button" className="secondary-button project-detail-back" onClick={onBack}><ArrowLeft size={17} /> Kembali ke Proyek</button>
-      <div className="project-detail-identity"><p className="eyebrow">DETAIL PROYEK · DATA DEMO</p><h1>{project.name}</h1><p>{project.company} · {project.wallet} · <span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span>{project.client ? ` · ${project.client}` : ''}</p></div>
+      <div className="project-detail-identity"><p className="eyebrow">DETAIL PROYEK · {workspace.mode === 'live' ? 'DATA LIVE' : 'DATA DEMO'}</p><h1>{project.name}</h1><p>{project.company} · {project.wallet} · <span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span>{project.client ? ` · ${project.client}` : ''}</p></div>
       {(!readOnly || (canCreateTransactions && project.write_mapping)) && tab === 'transactions' && <button type="button" className="primary-button" onClick={() => onAdd(project)}><Plus size={16} /> Tambah transaksi</button>}
     </header>
     {readOnly && canCreateTransactions && !project.write_mapping && <p className="form-error" role="status">Pencatatan proyek belum tersedia: pemetaan kanonis dompet/perusahaan belum dikonfigurasi.</p>}

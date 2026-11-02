@@ -93,6 +93,7 @@ export interface ReportRow {
 }
 
 export interface ReportModel {
+  mode: FinanceWorkspace['mode']
   generatedAt: string
   filters: ReportFilters
   rows: ReportRow[]
@@ -135,7 +136,7 @@ export function buildReportModel(workspace: FinanceWorkspace, filters: ReportFil
     filters.direction === 'all' ? 'Pemasukan & pengeluaran' : directionLabel(filters.direction),
     filters.projectStatus === 'all' ? 'Semua status proyek' : `Status: ${projectStatusLabel(filters.projectStatus)}`,
   ]
-  return { generatedAt, filters, rows, totals: { income, expense, net: income - expense, projectExpense, officeExpense }, scopeText }
+  return { mode: workspace.mode, generatedAt, filters, rows, totals: { income, expense, net: income - expense, projectExpense, officeExpense }, scopeText }
 }
 
 export function availableReportOptions(workspace: FinanceWorkspace) {

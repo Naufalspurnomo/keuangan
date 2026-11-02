@@ -126,6 +126,9 @@ describe('production live source mode', () => {
     expect(screen.getByRole('heading', { name: 'Pratinjau dan ekspor PDF' })).toBeTruthy()
     expect(screen.getByText('Texturin Regional Baru')).toBeTruthy()
     expect(screen.getByText('Unit Operasional Baru')).toBeTruthy()
+    expect(screen.getAllByText(/DATA LIVE/i).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/DATA DEMO/i)).toBeNull()
+    expect(screen.queryByText(/^DEMO$/i)).toBeNull()
     expect(request).toHaveBeenCalledWith('/admin/api/snapshot.php', expect.objectContaining({ credentials: 'same-origin' }))
   })
 
