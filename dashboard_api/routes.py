@@ -1,4 +1,4 @@
-"""Versioned, GET-only finance dashboard routes."""
+"""Versioned private finance dashboard routes."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from flask import Blueprint, Response, jsonify, make_response, request
+from flask import Blueprint, Response, current_app, jsonify, make_response, request
 
 from dashboard_api.auth import (
     authenticate_owner,
@@ -15,10 +15,21 @@ from dashboard_api.auth import (
     establish_owner_session,
     owner_identity,
     owner_required,
+    write_csrf_valid,
 )
 from dashboard_api import live_source
 from dashboard_api.contracts import DashboardContractError, parse_filters
 from dashboard_api.service import build_overview
+from dashboard_api.write_contracts import TransactionValidationError
+from services.dashboard_transaction_service import (
+    DashboardTransactionConflict,
+    DashboardTransactionService,
+    DashboardTransactionUnavailable,
+)
+from services.dashboard_write_requests import (
+    DashboardWriteRequestConflict,
+    DashboardWriteRequestUnavailable,
+)
 
 
 API_VERSION = "dashboard.v1"
@@ -126,8 +137,33 @@ def _envelope(data: Any, filters: Any, repository: Any, *, completeness: int | N
     }
 
 
-def create_dashboard_blueprint(repository: Any) -> Blueprint:
+def create_dashboard_blueprint(
+    repository: Any,
+    *,
+    transaction_service: Any | None = None,
+) -> Blueprint:
     blueprint = Blueprint("dashboard_api", __name__, url_prefix="/api/dashboard/v1")
+
+    def write_error(code: str, message: str, status: int):
+        response = jsonify({"error": {"code": code, "message": message}})
+        response.status_code = status
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    def selected_transaction_service():
+        if transaction_service is not None:
+            return transaction_service
+        projects = frozenset(
+            str(project)
+            for project in repository.fetch_filter_options().get("projects", ())
+        )
+        return DashboardTransactionService(project_exists=projects.__contains__)
+
+    @blueprint.after_request
+    def prevent_transaction_write_caching(response: Response):
+        if request.method == "POST" and request.path == "/api/dashboard/v1/transactions":
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
     @blueprint.post("/auth/login")
     def login():
@@ -136,8 +172,17 @@ def create_dashboard_blueprint(repository: Any) -> Blueprint:
         password = str(body.get("password") or "")
         if not authenticate_owner(email, password):
             return jsonify({"error": {"code": "invalid_credentials", "message": "Invalid email or password"}}), 401
-        establish_owner_session(email)
-        return jsonify({"api_version": API_VERSION, "data": {"email": email.casefold(), "role": "owner"}})
+        csrf_token = establish_owner_session(email)
+        return jsonify(
+            {
+                "api_version": API_VERSION,
+                "data": {
+                    "email": email.casefold(),
+                    "role": "owner",
+                    "csrf_token": csrf_token,
+                },
+            }
+        )
 
     @blueprint.post("/auth/logout")
     def logout():
@@ -154,6 +199,79 @@ def create_dashboard_blueprint(repository: Any) -> Blueprint:
                 "data": {"email": email, "role": role},
             }
         )
+
+    @blueprint.post("/transactions")
+    @owner_required
+    def create_transaction():
+        if not current_app.config.get("DASHBOARD_TRANSACTION_WRITES_ENABLED", False):
+            return write_error(
+                "transaction_writes_disabled",
+                "Transaction writes are disabled",
+                503,
+            )
+        if not write_csrf_valid():
+            return write_error(
+                "csrf_validation_failed",
+                "CSRF validation failed",
+                403,
+            )
+        if request.mimetype != "application/json":
+            return write_error("json_required", "Content-Type must be application/json", 422)
+        try:
+            raw_body = request.get_data(cache=True).decode("utf-8")
+            body = json.loads(raw_body)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return write_error("invalid_json", "Request body must be valid JSON", 422)
+        if not isinstance(body, dict):
+            return write_error("json_object_required", "Request body must be a JSON object", 422)
+
+        idempotency_key = request.headers.get("Idempotency-Key")
+        if not idempotency_key:
+            return write_error(
+                "idempotency_key_required",
+                "Idempotency-Key header is required",
+                422,
+            )
+        if body.get("idempotency_key") != idempotency_key:
+            return write_error(
+                "idempotency_key_mismatch",
+                "Idempotency-Key header must match the request body",
+                422,
+            )
+
+        identity = owner_identity()
+        if identity is None:
+            return write_error("authentication_required", "Sign in required", 401)
+        message_id = "dashboard-api:" + hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+        try:
+            result = selected_transaction_service().record(
+                body,
+                actor={"email": identity[0], "role": identity[1]},
+                message_id=message_id,
+            )
+        except TransactionValidationError:
+            return write_error(
+                "invalid_transaction",
+                "Transaction request is invalid",
+                422,
+            )
+        except (DashboardWriteRequestConflict, DashboardTransactionConflict):
+            return write_error(
+                "transaction_conflict",
+                "Transaction conflicts with an existing request",
+                409,
+            )
+        except (DashboardWriteRequestUnavailable, DashboardTransactionUnavailable, Exception):
+            return write_error(
+                "transaction_unavailable",
+                "Transaction service temporarily unavailable",
+                503,
+            )
+
+        response = jsonify({"api_version": API_VERSION, "data": _json_safe(result)})
+        response.status_code = 201
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @blueprint.get("/snapshot")
     @owner_required

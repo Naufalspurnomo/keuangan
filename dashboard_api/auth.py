@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import secrets
 from functools import wraps
 from typing import Any, Callable, TypeVar, cast
 
@@ -14,6 +15,7 @@ from werkzeug.security import check_password_hash
 F = TypeVar("F", bound=Callable[..., Any])
 SESSION_USER_KEY = "dashboard_user"
 SESSION_ROLE_KEY = "dashboard_role"
+SESSION_CSRF_KEY = "dashboard_csrf_token"
 
 
 def authenticate_owner(email: str, password: str) -> bool:
@@ -26,18 +28,21 @@ def authenticate_owner(email: str, password: str) -> bool:
     return check_password_hash(password_hash, supplied_password)
 
 
-def establish_owner_session(email: str) -> None:
+def establish_owner_session(email: str) -> str:
     session.clear()
     session[SESSION_USER_KEY] = str(email).strip().casefold()
     session[SESSION_ROLE_KEY] = "owner"
+    csrf_token = secrets.token_urlsafe(32)
+    session[SESSION_CSRF_KEY] = csrf_token
     session.permanent = True
+    return csrf_token
 
 
 def clear_owner_session() -> None:
     session.clear()
 
 
-def _proxy_owner_authenticated() -> bool:
+def proxy_owner_authenticated() -> bool:
     expected_hash = str(current_app.config.get("DASHBOARD_PROXY_TOKEN_HASH") or "").strip().casefold()
     if len(expected_hash) != 64 or any(character not in "0123456789abcdef" for character in expected_hash):
         return False
@@ -48,8 +53,20 @@ def _proxy_owner_authenticated() -> bool:
     return hmac.compare_digest(supplied_hash, expected_hash)
 
 
+def write_csrf_valid() -> bool:
+    """Accept trusted proxy writes or verify the direct browser session token."""
+
+    if proxy_owner_authenticated():
+        return True
+    expected = session.get(SESSION_CSRF_KEY)
+    supplied = request.headers.get("X-CSRF-Token")
+    if not isinstance(expected, str) or not expected or not supplied:
+        return False
+    return hmac.compare_digest(expected, str(supplied))
+
+
 def owner_identity() -> tuple[str, str] | None:
-    if _proxy_owner_authenticated():
+    if proxy_owner_authenticated():
         email = str(current_app.config.get("DASHBOARD_OWNER_EMAIL") or "owner@proxy.local").strip().casefold()
         return email, "owner"
     email = session.get(SESSION_USER_KEY)
