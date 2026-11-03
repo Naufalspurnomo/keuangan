@@ -866,6 +866,74 @@ class ProjectDocumentRepository:
                 f"Project document database unavailable: {type(exc).__name__}"
             ) from exc
 
+    def get_project_commercial_totals(self, project_id: str) -> dict[str, int]:
+        """Return an issuance-safe prefill view for a FINAL invoice draft.
+
+        This is a read model only. ``issue_document`` re-locks and revalidates the
+        same commercial invariants before allocating an official number.
+        """
+
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT 1 FROM projects WHERE id = %s", (project_id,))
+                    if not cursor.fetchone():
+                        raise ProjectDocumentNotFound("project not found")
+                    cursor.execute(
+                        """
+                        SELECT immutable_snapshot
+                        FROM project_documents
+                        WHERE project_id = %s
+                          AND document_type = 'sales_order'
+                          AND status = 'issued'
+                        ORDER BY id
+                        """,
+                        (project_id,),
+                    )
+                    sales_orders = cursor.fetchall()
+                    if len(sales_orders) != 1:
+                        raise ProjectDocumentConflict(
+                            "FINAL invoice requires exactly one active issued Sales Order"
+                        )
+                    contract_total = self._issued_snapshot_total(
+                        sales_orders[0][0], label="Sales Order"
+                    )
+                    cursor.execute(
+                        """
+                        SELECT invoice_kind, immutable_snapshot
+                        FROM project_documents
+                        WHERE project_id = %s
+                          AND document_type = 'invoice'
+                          AND status = 'issued'
+                        ORDER BY id
+                        """,
+                        (project_id,),
+                    )
+                    invoices = cursor.fetchall()
+                    if any(str(kind) == "FINAL" for kind, _snapshot in invoices):
+                        raise ProjectDocumentConflict("a live FINAL invoice already exists")
+                    invoiced_non_final = sum(
+                        self._issued_snapshot_total(snapshot, label="prior invoice")
+                        for kind, snapshot in invoices
+                        if str(kind) in {"DP", "PROGRESS"}
+                    )
+                    residual = contract_total - invoiced_non_final
+                    if residual <= 0:
+                        raise ProjectDocumentConflict(
+                            "FINAL invoice residual must be positive"
+                        )
+                    return {
+                        "contract_total": contract_total,
+                        "invoiced_non_final": invoiced_non_final,
+                        "residual": residual,
+                    }
+        except ProjectDocumentError:
+            raise
+        except Exception as exc:
+            raise ProjectDocumentUnavailable(
+                f"Project document database unavailable: {type(exc).__name__}"
+            ) from exc
+
     def project_exists(self, project_id: str, wallet: str | None = None, company: str | None = None) -> bool:
         try:
             uuid.UUID(str(project_id))

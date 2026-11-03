@@ -9,6 +9,7 @@ Postgres remains a best-effort projection and is never treated as authority.
 from __future__ import annotations
 
 import re
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -86,6 +87,7 @@ class SheetsTransactionAdapter(Protocol):
 
 
 ProjectExists = Callable[[str, str, str], bool]
+ProjectUuidExists = Callable[[str, str, str], bool]
 ProjectionRepair = Callable[[dict[str, Any]], Any]
 Today = Callable[[], date]
 _SOURCE_WALLET_RE = re.compile(r"^(?P<description>.*) \[Sumber: (?P<wallet>[^\]]+)\]$")
@@ -252,12 +254,14 @@ class DashboardTransactionService:
         store: WriteRequestStore | None = None,
         sheets: SheetsTransactionAdapter | None = None,
         project_exists: ProjectExists,
+        project_uuid_exists: ProjectUuidExists | None = None,
         projection_repair: ProjectionRepair | None = None,
         today: Today | None = None,
     ) -> None:
         self._store = store or DashboardWriteRequestStore()
         self._sheets = sheets or GoogleSheetsTransactionAdapter()
         self._project_exists = project_exists
+        self._project_uuid_exists = project_uuid_exists
         self._projection_repair = projection_repair or _default_projection_repair
         self._today = today
 
@@ -267,6 +271,13 @@ class DashboardTransactionService:
             company = payload.get("company")
             if not isinstance(wallet, str) or not isinstance(company, str):
                 return False
+            if self._project_uuid_exists is not None:
+                try:
+                    uuid.UUID(project)
+                except (TypeError, ValueError):
+                    pass
+                else:
+                    return self._project_uuid_exists(project, wallet, company)
             return self._project_exists(project, wallet, company)
 
         kwargs: dict[str, Any] = {"project_exists": project_exists}

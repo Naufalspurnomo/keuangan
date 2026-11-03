@@ -1,0 +1,202 @@
+"""PostgreSQL integration for the project-document service boundary."""
+
+from __future__ import annotations
+
+import json
+import os
+from datetime import date, datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from services.project_document_repository import (
+    ProjectDocumentConflict,
+    ProjectDocumentRepository,
+)
+from services.project_documents import ProjectDocumentService
+
+
+pytestmark = pytest.mark.skipif(
+    not os.getenv("PROJECT_DOCUMENT_TEST_DATABASE_URL"),
+    reason="PROJECT_DOCUMENT_TEST_DATABASE_URL is not configured",
+)
+
+ACTOR = {"email": "owner@example.com"}
+FIXED_NOW = datetime(2026, 11, 3, 4, 0, tzinfo=ZoneInfo("UTC"))
+
+
+def renderer(snapshot):
+    payload = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
+    return b"%PDF-1.7\n" + payload + b"\n%%EOF\n", "service-test/1"
+
+
+@pytest.fixture()
+def repository():
+    import psycopg
+
+    dsn = os.environ["PROJECT_DOCUMENT_TEST_DATABASE_URL"]
+    migration = (
+        Path(__file__).parents[1]
+        / "dashboard_api/migrations/003_project_documents.sql"
+    ).read_text(encoding="utf-8")
+    with psycopg.connect(dsn, autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
+            cursor.execute(
+                """
+                CREATE TABLE financial_ledger (
+                    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    source_key TEXT NOT NULL UNIQUE,
+                    source_sheet TEXT NOT NULL,
+                    source_row INTEGER,
+                    source_block TEXT NOT NULL,
+                    message_id TEXT,
+                    transaction_date DATE,
+                    amount BIGINT,
+                    transaction_type TEXT NOT NULL,
+                    company TEXT,
+                    wallet TEXT,
+                    project TEXT,
+                    category TEXT,
+                    description TEXT,
+                    recorded_by TEXT,
+                    input_source TEXT,
+                    source_wallet TEXT,
+                    is_valid BOOLEAN NOT NULL DEFAULT TRUE,
+                    payload JSONB NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cursor.execute(migration)
+    store = ProjectDocumentRepository(
+        dsn,
+        now=lambda: FIXED_NOW,
+        renderer=renderer,
+    )
+    store.upsert_issuer_profile(
+        issuer_key="hollawall",
+        legal_name="CV Holla Berkreasi",
+        display_name="Hollawall",
+        number_code="HW",
+        address="Surabaya",
+        actor=ACTOR,
+        expected_version=0,
+        idempotency_key="service-issuer-create-0001",
+    )
+    return store
+
+
+def service(repository):
+    return ProjectDocumentService(
+        repository,
+        today=lambda: date(2026, 11, 3),
+        now=lambda: FIXED_NOW,
+    )
+
+
+def set_total(repository, document, amount, key):
+    return repository.update_draft(
+        document["id"],
+        {
+            "lines": [
+                {
+                    "description": "Commercial amount",
+                    "quantity": "1",
+                    "unit": "unit",
+                    "unit_price": amount,
+                }
+            ]
+        },
+        expected_version=document["lock_version"],
+        idempotency_key=key,
+        actor=ACTOR,
+    )
+
+
+def issue(repository, document, key):
+    return repository.issue_document(
+        document["id"],
+        expected_version=document["lock_version"],
+        idempotency_key=key,
+        actor=ACTOR,
+    )
+
+
+def test_service_prefills_final_from_authoritative_issued_sales_order_and_invoices(repository):
+    subject = service(repository)
+    created = subject.create_project(
+        {
+            "name": "Fredding Universe",
+            "client_name": "Stefano",
+            "issuer_key": "hollawall",
+            "wallet": "CV HB(101)",
+            "company": "HOLLA",
+        },
+        idempotency_key="service-project-create-0001",
+        actor=ACTOR,
+    )
+    sales_order = set_total(
+        repository,
+        created["sales_order"],
+        12_668_400,
+        "service-sales-order-update-0001",
+    )
+    issue(repository, sales_order, "service-sales-order-issue-0001")
+
+    dp = subject.create_invoice(
+        created["project"]["id"],
+        kind="DP",
+        values={
+            "lines": [
+                {
+                    "description": "DP",
+                    "quantity": "1",
+                    "unit": "termin",
+                    "unit_price": 5_000_000,
+                }
+            ]
+        },
+        idempotency_key="service-dp-create-0001",
+        actor=ACTOR,
+    )
+    issue(repository, dp, "service-dp-issue-0001")
+
+    final = subject.create_invoice(
+        created["project"]["id"],
+        kind="FINAL",
+        values={},
+        idempotency_key="service-final-create-0001",
+        actor=ACTOR,
+    )
+
+    assert final["invoice_kind"] == "FINAL"
+    assert final["lines"][0]["line_total"] == 7_668_400
+    issued_final = issue(repository, final, "service-final-issue-0001")
+    assert issued_final["immutable_snapshot"]["totals"]["total"] == 7_668_400
+
+
+def test_service_final_prefill_fails_closed_without_issued_sales_order(repository):
+    subject = service(repository)
+    created = subject.create_project(
+        {
+            "name": "No Order",
+            "client_name": "Client",
+            "issuer_key": "hollawall",
+            "wallet": "CV HB(101)",
+            "company": "HOLLA",
+        },
+        idempotency_key="service-project-create-0002",
+        actor=ACTOR,
+    )
+
+    with pytest.raises(ProjectDocumentConflict, match="exactly one active issued Sales Order"):
+        subject.create_invoice(
+            created["project"]["id"],
+            kind="FINAL",
+            values={},
+            idempotency_key="service-final-create-0002",
+            actor=ACTOR,
+        )
