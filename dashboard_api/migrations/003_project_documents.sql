@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS project_issuer_profiles (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_project_issuer_profiles_number_code
+    ON project_issuer_profiles ((UPPER(TRIM(number_code))));
+
 CREATE TABLE IF NOT EXISTS projects (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL CHECK (LENGTH(TRIM(name)) BETWEEN 1 AND 200),
@@ -48,7 +51,7 @@ CREATE INDEX IF NOT EXISTS idx_projects_legacy_identity ON projects(wallet, comp
 
 CREATE TABLE IF NOT EXISTS project_scopes (
     id UUID PRIMARY KEY,
-    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    project_id UUID NOT NULL REFERENCES projects(id),
     position INTEGER NOT NULL CHECK (position > 0),
     description TEXT NOT NULL CHECK (LENGTH(TRIM(description)) > 0),
     quantity NUMERIC(18,4),
@@ -56,6 +59,11 @@ CREATE TABLE IF NOT EXISTS project_scopes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(project_id, position)
 );
+
+-- Upgrade an earlier local application of this not-yet-deployed migration safely.
+ALTER TABLE project_scopes DROP CONSTRAINT IF EXISTS project_scopes_project_id_fkey;
+ALTER TABLE project_scopes ADD CONSTRAINT project_scopes_project_id_fkey
+    FOREIGN KEY (project_id) REFERENCES projects(id);
 
 CREATE TABLE IF NOT EXISTS project_documents (
     id UUID PRIMARY KEY,
@@ -82,8 +90,8 @@ CREATE TABLE IF NOT EXISTS project_documents (
     immutable_snapshot JSONB,
     snapshot_sha256 TEXT CHECK (snapshot_sha256 IS NULL OR snapshot_sha256 ~ '^[0-9a-f]{64}$'),
     renderer_version TEXT,
-    revision_of_id UUID REFERENCES project_documents(id),
-    superseded_by_id UUID REFERENCES project_documents(id),
+    revision_of_id UUID REFERENCES project_documents(id) DEFERRABLE INITIALLY DEFERRED,
+    superseded_by_id UUID REFERENCES project_documents(id) DEFERRABLE INITIALLY DEFERRED,
     void_reason TEXT,
     lock_version INTEGER NOT NULL DEFAULT 1 CHECK (lock_version > 0),
     issued_at TIMESTAMPTZ,
@@ -95,23 +103,37 @@ CREATE TABLE IF NOT EXISTS project_documents (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (document_discount_amount = 0 OR document_discount_percent = 0),
     CHECK (
-        (status = 'draft' AND official_number IS NULL AND immutable_snapshot IS NULL AND issued_at IS NULL) OR
-        (status <> 'draft' AND official_number IS NOT NULL AND immutable_snapshot IS NOT NULL AND issued_at IS NOT NULL)
+        (status = 'draft' AND official_number IS NULL AND immutable_snapshot IS NULL
+            AND snapshot_sha256 IS NULL AND renderer_version IS NULL AND issued_at IS NULL) OR
+        (status <> 'draft' AND official_number IS NOT NULL AND immutable_snapshot IS NOT NULL
+            AND snapshot_sha256 IS NOT NULL AND renderer_version IS NOT NULL AND issued_at IS NOT NULL)
     ),
-    CHECK (status <> 'void' OR (void_reason IS NOT NULL AND LENGTH(TRIM(void_reason)) > 0)),
-    CHECK (status <> 'superseded' OR superseded_by_id IS NOT NULL)
+    CHECK (status <> 'void' OR (void_reason IS NOT NULL AND LENGTH(TRIM(void_reason)) > 0 AND voided_at IS NOT NULL)),
+    CHECK (status <> 'superseded' OR (superseded_by_id IS NOT NULL AND superseded_at IS NOT NULL))
 );
+
+ALTER TABLE project_documents DROP CONSTRAINT IF EXISTS project_documents_revision_of_id_fkey;
+ALTER TABLE project_documents ADD CONSTRAINT project_documents_revision_of_id_fkey
+    FOREIGN KEY (revision_of_id) REFERENCES project_documents(id) DEFERRABLE INITIALLY DEFERRED;
+ALTER TABLE project_documents DROP CONSTRAINT IF EXISTS project_documents_superseded_by_id_fkey;
+ALTER TABLE project_documents ADD CONSTRAINT project_documents_superseded_by_id_fkey
+    FOREIGN KEY (superseded_by_id) REFERENCES project_documents(id) DEFERRABLE INITIALLY DEFERRED;
 
 CREATE INDEX IF NOT EXISTS idx_project_documents_project ON project_documents(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_documents_status ON project_documents(status, document_type);
 CREATE INDEX IF NOT EXISTS idx_project_documents_revision ON project_documents(revision_of_id) WHERE revision_of_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_project_live_final_invoice
+DROP INDEX IF EXISTS uq_project_live_final_invoice;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_project_active_final_invoice
     ON project_documents(project_id)
-    WHERE document_type = 'invoice' AND invoice_kind = 'FINAL' AND status IN ('draft', 'issued', 'superseded');
+    WHERE document_type = 'invoice' AND invoice_kind = 'FINAL'
+      AND (status = 'issued' OR (status = 'draft' AND revision_of_id IS NULL));
+CREATE UNIQUE INDEX IF NOT EXISTS uq_project_pending_document_revision
+    ON project_documents(revision_of_id)
+    WHERE revision_of_id IS NOT NULL AND status = 'draft';
 
 CREATE TABLE IF NOT EXISTS project_document_lines (
     id UUID PRIMARY KEY,
-    document_id UUID NOT NULL REFERENCES project_documents(id) ON DELETE CASCADE,
+    document_id UUID NOT NULL REFERENCES project_documents(id),
     position INTEGER NOT NULL CHECK (position > 0),
     description TEXT NOT NULL CHECK (LENGTH(TRIM(description)) > 0),
     quantity NUMERIC(18,4) NOT NULL CHECK (quantity > 0),
@@ -127,9 +149,13 @@ CREATE TABLE IF NOT EXISTS project_document_lines (
     CHECK (line_total = line_gross - line_discount)
 );
 
+ALTER TABLE project_document_lines DROP CONSTRAINT IF EXISTS project_document_lines_document_id_fkey;
+ALTER TABLE project_document_lines ADD CONSTRAINT project_document_lines_document_id_fkey
+    FOREIGN KEY (document_id) REFERENCES project_documents(id);
+
 CREATE TABLE IF NOT EXISTS project_document_allocations (
     id UUID PRIMARY KEY,
-    document_id UUID NOT NULL REFERENCES project_documents(id) ON DELETE CASCADE,
+    document_id UUID NOT NULL REFERENCES project_documents(id),
     ledger_source_key TEXT NOT NULL,
     amount BIGINT NOT NULL CHECK (amount > 0),
     ledger_amount BIGINT NOT NULL CHECK (ledger_amount > 0),
@@ -137,6 +163,10 @@ CREATE TABLE IF NOT EXISTS project_document_allocations (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(document_id, ledger_source_key)
 );
+
+ALTER TABLE project_document_allocations DROP CONSTRAINT IF EXISTS project_document_allocations_document_id_fkey;
+ALTER TABLE project_document_allocations ADD CONSTRAINT project_document_allocations_document_id_fkey
+    FOREIGN KEY (document_id) REFERENCES project_documents(id);
 
 CREATE INDEX IF NOT EXISTS idx_project_document_allocations_source
     ON project_document_allocations(ledger_source_key);
@@ -165,6 +195,19 @@ CREATE INDEX IF NOT EXISTS idx_project_document_events_project_replay
 CREATE INDEX IF NOT EXISTS idx_project_document_events_document_replay
     ON project_document_events(document_id, id) WHERE document_id IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS project_issuer_profile_events (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    issuer_key TEXT NOT NULL REFERENCES project_issuer_profiles(issuer_key),
+    event_type TEXT NOT NULL CHECK (event_type IN ('issuer.created', 'issuer.updated')),
+    profile_version INTEGER NOT NULL CHECK (profile_version > 0),
+    event_data JSONB NOT NULL CHECK (jsonb_typeof(event_data) = 'object'),
+    actor JSONB NOT NULL CHECK (jsonb_typeof(actor) = 'object'),
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_issuer_profile_events_replay
+    ON project_issuer_profile_events(issuer_key, id);
+
 CREATE TABLE IF NOT EXISTS project_document_artifacts (
     document_id UUID PRIMARY KEY REFERENCES project_documents(id),
     mime_type TEXT NOT NULL DEFAULT 'application/pdf' CHECK (mime_type = 'application/pdf'),
@@ -173,8 +216,24 @@ CREATE TABLE IF NOT EXISTS project_document_artifacts (
     renderer_version TEXT NOT NULL CHECK (LENGTH(TRIM(renderer_version)) > 0),
     pdf_bytes BYTEA NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CHECK (octet_length(pdf_bytes) = byte_size)
+    CHECK (octet_length(pdf_bytes) = byte_size),
+    CONSTRAINT project_document_artifacts_pdf_signature_check
+        CHECK (substring(pdf_bytes from 1 for 5) = convert_to('%PDF-', 'UTF8'))
 );
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'project_document_artifacts_pdf_signature_check'
+          AND conrelid = 'project_document_artifacts'::regclass
+    ) THEN
+        ALTER TABLE project_document_artifacts
+            ADD CONSTRAINT project_document_artifacts_pdf_signature_check
+            CHECK (substring(pdf_bytes from 1 for 5) = convert_to('%PDF-', 'UTF8'));
+    END IF;
+END;
+$$;
 
 CREATE TABLE IF NOT EXISTS project_document_commands (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -186,38 +245,83 @@ CREATE TABLE IF NOT EXISTS project_document_commands (
     completed_at TIMESTAMPTZ
 );
 
-CREATE OR REPLACE FUNCTION prevent_project_document_mutation() RETURNS TRIGGER AS $$
+CREATE OR REPLACE FUNCTION prevent_project_delete() RETURNS TRIGGER AS $$
 BEGIN
-    IF OLD.status <> 'draft' THEN
-        IF NEW.id IS DISTINCT FROM OLD.id
-           OR NEW.project_id IS DISTINCT FROM OLD.project_id
-           OR NEW.issuer_key IS DISTINCT FROM OLD.issuer_key
-           OR NEW.document_type IS DISTINCT FROM OLD.document_type
-           OR NEW.invoice_kind IS DISTINCT FROM OLD.invoice_kind
-           OR NEW.official_number IS DISTINCT FROM OLD.official_number
-           OR NEW.issue_date IS DISTINCT FROM OLD.issue_date
-           OR NEW.due_date IS DISTINCT FROM OLD.due_date
-           OR NEW.valid_until IS DISTINCT FROM OLD.valid_until
-           OR NEW.document_discount_amount IS DISTINCT FROM OLD.document_discount_amount
-           OR NEW.document_discount_percent IS DISTINCT FROM OLD.document_discount_percent
-           OR NEW.tax_percent IS DISTINCT FROM OLD.tax_percent
-           OR NEW.notes IS DISTINCT FROM OLD.notes
-           OR NEW.payment_terms IS DISTINCT FROM OLD.payment_terms
-           OR NEW.immutable_snapshot IS DISTINCT FROM OLD.immutable_snapshot
-           OR NEW.snapshot_sha256 IS DISTINCT FROM OLD.snapshot_sha256
-           OR NEW.renderer_version IS DISTINCT FROM OLD.renderer_version
-           OR NEW.revision_of_id IS DISTINCT FROM OLD.revision_of_id
-           OR NEW.issued_at IS DISTINCT FROM OLD.issued_at
-           OR NEW.created_by IS DISTINCT FROM OLD.created_by
-           OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
-            RAISE EXCEPTION 'issued project document content is immutable';
+    RAISE EXCEPTION 'projects cannot be hard deleted';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_projects_no_delete ON projects;
+CREATE TRIGGER trg_projects_no_delete
+BEFORE DELETE ON projects
+FOR EACH ROW EXECUTE FUNCTION prevent_project_delete();
+
+CREATE OR REPLACE FUNCTION prevent_project_document_delete() RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'project documents cannot be hard deleted';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_project_documents_no_delete ON project_documents;
+CREATE TRIGGER trg_project_documents_no_delete
+BEFORE DELETE ON project_documents
+FOR EACH ROW EXECUTE FUNCTION prevent_project_document_delete();
+
+CREATE OR REPLACE FUNCTION prevent_project_document_mutation() RETURNS TRIGGER AS $$
+DECLARE
+    old_stable JSONB;
+    new_stable JSONB;
+BEGIN
+    IF OLD.status = 'draft' AND NEW.status = 'draft' THEN
+        old_stable := to_jsonb(OLD) - ARRAY[
+            'issue_date', 'due_date', 'valid_until', 'document_discount_amount',
+            'document_discount_percent', 'tax_percent', 'notes', 'payment_terms',
+            'lock_version', 'updated_by', 'updated_at'
+        ]::TEXT[];
+        new_stable := to_jsonb(NEW) - ARRAY[
+            'issue_date', 'due_date', 'valid_until', 'document_discount_amount',
+            'document_discount_percent', 'tax_percent', 'notes', 'payment_terms',
+            'lock_version', 'updated_by', 'updated_at'
+        ]::TEXT[];
+        IF new_stable IS DISTINCT FROM old_stable THEN
+            RAISE EXCEPTION 'invalid draft project document mutation';
         END IF;
-        IF NOT (
-            NEW.status = OLD.status OR
-            (OLD.status = 'issued' AND NEW.status IN ('void', 'superseded'))
-        ) THEN
-            RAISE EXCEPTION 'invalid project document transition % to %', OLD.status, NEW.status;
+    ELSIF OLD.status = 'draft' AND NEW.status = 'issued' THEN
+        old_stable := to_jsonb(OLD) - ARRAY[
+            'status', 'official_number', 'immutable_snapshot', 'snapshot_sha256',
+            'renderer_version', 'issued_at', 'lock_version', 'updated_by', 'updated_at'
+        ]::TEXT[];
+        new_stable := to_jsonb(NEW) - ARRAY[
+            'status', 'official_number', 'immutable_snapshot', 'snapshot_sha256',
+            'renderer_version', 'issued_at', 'lock_version', 'updated_by', 'updated_at'
+        ]::TEXT[];
+        IF new_stable IS DISTINCT FROM old_stable THEN
+            RAISE EXCEPTION 'invalid draft to issued mutation';
         END IF;
+    ELSIF OLD.status = 'issued' AND NEW.status = 'void' THEN
+        old_stable := to_jsonb(OLD) - ARRAY[
+            'status', 'void_reason', 'voided_at', 'lock_version', 'updated_by', 'updated_at'
+        ]::TEXT[];
+        new_stable := to_jsonb(NEW) - ARRAY[
+            'status', 'void_reason', 'voided_at', 'lock_version', 'updated_by', 'updated_at'
+        ]::TEXT[];
+        IF new_stable IS DISTINCT FROM old_stable THEN
+            RAISE EXCEPTION 'invalid issued to void mutation';
+        END IF;
+    ELSIF OLD.status = 'issued' AND NEW.status = 'superseded' THEN
+        old_stable := to_jsonb(OLD) - ARRAY[
+            'status', 'superseded_by_id', 'superseded_at', 'lock_version', 'updated_by', 'updated_at'
+        ]::TEXT[];
+        new_stable := to_jsonb(NEW) - ARRAY[
+            'status', 'superseded_by_id', 'superseded_at', 'lock_version', 'updated_by', 'updated_at'
+        ]::TEXT[];
+        IF new_stable IS DISTINCT FROM old_stable THEN
+            RAISE EXCEPTION 'invalid issued to superseded mutation';
+        END IF;
+    ELSIF OLD.status IN ('void', 'superseded') THEN
+        RAISE EXCEPTION 'terminal project document is immutable';
+    ELSE
+        RAISE EXCEPTION 'invalid project document transition % to %', OLD.status, NEW.status;
     END IF;
     RETURN NEW;
 END;
@@ -233,12 +337,18 @@ DECLARE
     owner_id UUID;
     owner_status TEXT;
 BEGIN
-    owner_id := COALESCE(NEW.document_id, OLD.document_id);
+    IF TG_OP = 'UPDATE' AND NEW.document_id IS DISTINCT FROM OLD.document_id THEN
+        RAISE EXCEPTION 'project document children cannot change owner';
+    END IF;
+    owner_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.document_id ELSE NEW.document_id END;
     SELECT status INTO owner_status FROM project_documents WHERE id = owner_id FOR UPDATE;
+    IF owner_status IS NULL THEN
+        RAISE EXCEPTION 'project document owner is missing';
+    END IF;
     IF owner_status <> 'draft' THEN
         RAISE EXCEPTION 'issued project document children are immutable';
     END IF;
-    RETURN COALESCE(NEW, OLD);
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -263,6 +373,11 @@ CREATE TRIGGER trg_project_document_events_append_only
 BEFORE UPDATE OR DELETE ON project_document_events
 FOR EACH ROW EXECUTE FUNCTION prevent_project_document_event_mutation();
 
+DROP TRIGGER IF EXISTS trg_project_issuer_profile_events_append_only ON project_issuer_profile_events;
+CREATE TRIGGER trg_project_issuer_profile_events_append_only
+BEFORE UPDATE OR DELETE ON project_issuer_profile_events
+FOR EACH ROW EXECUTE FUNCTION prevent_project_document_event_mutation();
+
 CREATE OR REPLACE FUNCTION prevent_project_document_artifact_mutation() RETURNS TRIGGER AS $$
 BEGIN
     RAISE EXCEPTION 'project document artifacts are immutable';
@@ -273,6 +388,3 @@ DROP TRIGGER IF EXISTS trg_project_document_artifacts_immutable ON project_docum
 CREATE TRIGGER trg_project_document_artifacts_immutable
 BEFORE UPDATE OR DELETE ON project_document_artifacts
 FOR EACH ROW EXECUTE FUNCTION prevent_project_document_artifact_mutation();
-
--- Allocation issue-time revalidation uses row locks against financial_ledger:
--- SELECT ... FROM financial_ledger WHERE source_key = $1 FOR UPDATE;

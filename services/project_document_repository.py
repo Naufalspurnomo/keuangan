@@ -12,7 +12,7 @@ import json
 import os
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any
@@ -57,6 +57,7 @@ class ProjectDocumentNotFound(ProjectDocumentError):
 
 
 ConnectionFactory = Callable[[str], Any]
+DocumentRenderer = Callable[[Mapping[str, Any]], tuple[bytes, str]]
 
 
 def _database_url() -> str:
@@ -179,7 +180,13 @@ _DOCUMENT_COLUMNS = _columns(_SELECT_DOCUMENT)
 _SCHEMA_HEALTH_QUERY = """
 SELECT
     (
-        SELECT COUNT(*) = 10
+        SELECT ARRAY_AGG(table_name ORDER BY table_name) = ARRAY[
+            'project_document_allocations', 'project_document_artifacts',
+            'project_document_commands', 'project_document_events',
+            'project_document_lines', 'project_document_number_counters',
+            'project_documents', 'project_issuer_profile_events',
+            'project_issuer_profiles', 'project_scopes', 'projects'
+        ]::information_schema.sql_identifier[]
         FROM information_schema.tables
         WHERE table_schema = 'public'
           AND table_name IN (
@@ -187,26 +194,52 @@ SELECT
               'project_documents', 'project_document_lines',
               'project_document_allocations', 'project_document_number_counters',
               'project_document_events', 'project_document_artifacts',
-              'project_document_commands'
+              'project_document_commands', 'project_issuer_profile_events'
           )
     ) AS tables_ready,
-    EXISTS (
-        SELECT 1 FROM information_schema.table_constraints
-        WHERE table_schema = 'public' AND table_name = 'project_documents'
-          AND constraint_type = 'CHECK'
+    (
+        SELECT COUNT(*) = 6
+        FROM pg_constraint c
+        JOIN pg_class r ON r.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = r.relnamespace
+        WHERE n.nspname = 'public'
+          AND c.conname IN (
+              'project_scopes_project_id_fkey',
+              'project_document_lines_document_id_fkey',
+              'project_document_allocations_document_id_fkey',
+              'project_documents_revision_of_id_fkey',
+              'project_documents_superseded_by_id_fkey',
+              'project_document_artifacts_pdf_signature_check'
+          )
+          AND c.confdeltype <> 'c'
     ) AS constraints_ready,
-    EXISTS (
-        SELECT 1 FROM pg_indexes
-        WHERE schemaname = 'public' AND indexname = 'uq_project_live_final_invoice'
+    (
+        SELECT COUNT(*) = 4
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND indexname IN (
+              'uq_project_issuer_profiles_number_code',
+              'uq_project_active_final_invoice',
+              'idx_project_document_allocations_source',
+              'idx_project_document_events_project_replay'
+          )
     ) AS indexes_ready,
     (
-        SELECT COUNT(*) >= 4
-        FROM information_schema.triggers
-        WHERE trigger_schema = 'public'
-          AND event_object_table IN (
-              'project_documents', 'project_document_lines',
-              'project_document_allocations', 'project_document_events',
-              'project_document_artifacts'
+        SELECT COUNT(DISTINCT t.tgname) = 8
+        FROM pg_trigger t
+        JOIN pg_class r ON r.oid = t.tgrelid
+        JOIN pg_namespace n ON n.oid = r.relnamespace
+        JOIN pg_proc p ON p.oid = t.tgfoid
+        WHERE n.nspname = 'public' AND NOT t.tgisinternal
+          AND (t.tgname, p.proname) IN (
+              ('trg_projects_no_delete', 'prevent_project_delete'),
+              ('trg_project_documents_no_delete', 'prevent_project_document_delete'),
+              ('trg_project_document_immutable', 'prevent_project_document_mutation'),
+              ('trg_project_document_lines_draft_only', 'prevent_non_draft_document_child_mutation'),
+              ('trg_project_document_allocations_draft_only', 'prevent_non_draft_document_child_mutation'),
+              ('trg_project_document_events_append_only', 'prevent_project_document_event_mutation'),
+              ('trg_project_issuer_profile_events_append_only', 'prevent_project_document_event_mutation'),
+              ('trg_project_document_artifacts_immutable', 'prevent_project_document_artifact_mutation')
           )
     ) AS triggers_ready
 """
@@ -275,10 +308,12 @@ class ProjectDocumentRepository:
         *,
         connection_factory: ConnectionFactory | None = None,
         now: Callable[[], datetime] | None = None,
+        renderer: DocumentRenderer | None = None,
     ) -> None:
         self._dsn = str(dsn or "").strip()
         self._connection_factory = connection_factory or _default_connection_factory
         self._now = now or (lambda: datetime.now(timezone.utc))
+        self._renderer = renderer
 
     def _connect(self):
         dsn = self._dsn or _database_url()
@@ -383,6 +418,8 @@ class ProjectDocumentRepository:
         tax_identity: str | None = None,
         bank_details: Mapping[str, Any] | None = None,
         logo_path: str | None = None,
+        expected_version: int,
+        idempotency_key: str,
     ) -> dict[str, Any]:
         actor_json, _ = _actor(actor)
         bank_json, _ = _json(dict(bank_details or {}), label="bank_details")
@@ -401,48 +438,105 @@ class ProjectDocumentRepository:
         )
         if not all(values[:5]):
             raise ValueError("issuer identity fields are required")
+        if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer")
+        request = {
+            "issuer_key": values[0],
+            "legal_name": values[1],
+            "display_name": values[2],
+            "number_code": values[3],
+            "address": values[4],
+            "phone": phone,
+            "email": email,
+            "tax_identity": tax_identity,
+            "bank_details": dict(bank_details or {}),
+            "logo_path": logo_path,
+            "expected_version": expected_version,
+        }
+        columns = [
+            "issuer_key", "legal_name", "display_name", "number_code", "address",
+            "phone", "email", "tax_identity", "bank_details", "logo_path",
+            "profile_version", "created_at", "updated_at",
+        ]
         try:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
+                    key_hash, _, replay = self._claim(
+                        cursor, "issuer.upsert", idempotency_key, request
+                    )
+                    if replay is not None:
+                        return replay
+                    cursor.execute(
+                        "SELECT profile_version FROM project_issuer_profiles "
+                        "WHERE issuer_key = %s FOR UPDATE",
+                        (values[0],),
+                    )
+                    current = cursor.fetchone()
+                    if current is None:
+                        if expected_version != 0:
+                            raise ProjectDocumentConflict("issuer profile version conflict")
+                        cursor.execute(
+                            """
+                            INSERT INTO project_issuer_profiles (
+                                issuer_key, legal_name, display_name, number_code, address,
+                                phone, email, tax_identity, bank_details, logo_path,
+                                created_by, updated_by
+                            ) VALUES (
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s,
+                                %s::jsonb, %s::jsonb
+                            )
+                            RETURNING issuer_key, legal_name, display_name, number_code,
+                                      address, phone, email, tax_identity, bank_details,
+                                      logo_path, profile_version, created_at, updated_at
+                            """,
+                            (*values, actor_json),
+                        )
+                        event_type = "issuer.created"
+                    else:
+                        if int(current[0]) != expected_version:
+                            raise ProjectDocumentConflict("issuer profile version conflict")
+                        cursor.execute(
+                            """
+                            UPDATE project_issuer_profiles SET
+                                legal_name = %s, display_name = %s, number_code = %s,
+                                address = %s, phone = %s, email = %s, tax_identity = %s,
+                                bank_details = %s::jsonb, logo_path = %s,
+                                profile_version = profile_version + 1,
+                                updated_by = %s::jsonb, updated_at = NOW()
+                            WHERE issuer_key = %s AND profile_version = %s
+                            RETURNING issuer_key, legal_name, display_name, number_code,
+                                      address, phone, email, tax_identity, bank_details,
+                                      logo_path, profile_version, created_at, updated_at
+                            """,
+                            (
+                                values[1], values[2], values[3], values[4], phone, email,
+                                tax_identity, bank_json, logo_path, actor_json, values[0],
+                                expected_version,
+                            ),
+                        )
+                        if cursor.rowcount != 1:
+                            raise ProjectDocumentConflict("issuer profile version conflict")
+                        event_type = "issuer.updated"
+                    row = cursor.fetchone()
+                    profile = _row_dict(None, columns, row) or {}
+                    profile_json, _ = _json(profile, label="issuer profile")
                     cursor.execute(
                         """
-                        INSERT INTO project_issuer_profiles (
-                            issuer_key, legal_name, display_name, number_code, address,
-                            phone, email, tax_identity, bank_details, logo_path,
-                            created_by, updated_by
-                        ) VALUES (
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s,
-                            %s::jsonb, %s::jsonb
-                        )
-                        ON CONFLICT (issuer_key) DO UPDATE SET
-                            legal_name = EXCLUDED.legal_name,
-                            display_name = EXCLUDED.display_name,
-                            number_code = EXCLUDED.number_code,
-                            address = EXCLUDED.address,
-                            phone = EXCLUDED.phone,
-                            email = EXCLUDED.email,
-                            tax_identity = EXCLUDED.tax_identity,
-                            bank_details = EXCLUDED.bank_details,
-                            logo_path = EXCLUDED.logo_path,
-                            profile_version = project_issuer_profiles.profile_version + 1,
-                            updated_by = EXCLUDED.updated_by,
-                            updated_at = NOW()
-                        RETURNING issuer_key, legal_name, display_name, number_code,
-                                  address, phone, email, tax_identity, bank_details,
-                                  logo_path, profile_version, created_at, updated_at
+                        INSERT INTO project_issuer_profile_events (
+                            issuer_key, event_type, profile_version, event_data, actor
+                        ) VALUES (%s, %s, %s, %s::jsonb, %s::jsonb)
                         """,
-                        (*values, actor_json),
+                        (
+                            values[0], event_type, profile["profile_version"],
+                            profile_json, actor_json,
+                        ),
                     )
-                    row = cursor.fetchone()
-            columns = [
-                "issuer_key", "legal_name", "display_name", "number_code", "address",
-                "phone", "email", "tax_identity", "bank_details", "logo_path",
-                "profile_version", "created_at", "updated_at",
-            ]
-            return _row_dict(None, columns, row) or {}
+                    return self._complete(cursor, key_hash, profile)
         except (ProjectDocumentError, ValueError):
             raise
         except Exception as exc:
+            if "uq_project_issuer_profiles_number_code" in str(exc):
+                raise ProjectDocumentConflict("issuer number_code already exists") from exc
             raise ProjectDocumentUnavailable(
                 f"Project document database unavailable: {type(exc).__name__}"
             ) from exc
@@ -535,10 +629,13 @@ class ProjectDocumentRepository:
                         issuer_key=issuer_key,
                         document_type="sales_order",
                         invoice_kind=None,
-                        values={
-                            "valid_until": command.get("sales_order_valid_until"),
-                            "tax_percent": command.get("tax_percent", 0),
-                        },
+                        values=self._with_document_defaults(
+                            "sales_order",
+                            {
+                                "valid_until": command.get("sales_order_valid_until"),
+                                "tax_percent": command.get("tax_percent", 0),
+                            },
+                        ),
                         actor_json=actor_json,
                     )
                     self._event(
@@ -726,6 +823,22 @@ class ProjectDocumentRepository:
         )
         return _row_dict(cursor, _DOCUMENT_COLUMNS, cursor.fetchone()) or {}
 
+    def _with_document_defaults(
+        self, document_type: str, values: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        prepared = dict(values)
+        issue_date = prepared.get("issue_date")
+        if issue_date is None:
+            issue_date = _instant(self._now()).astimezone(JAKARTA).date()
+            prepared["issue_date"] = issue_date
+        elif isinstance(issue_date, str):
+            issue_date = date.fromisoformat(issue_date)
+        if document_type == "sales_order" and prepared.get("valid_until") is None:
+            prepared["valid_until"] = issue_date + timedelta(days=14)
+        if document_type == "invoice" and prepared.get("due_date") is None:
+            prepared["due_date"] = issue_date + timedelta(days=7)
+        return prepared
+
     def create_document_draft(
         self,
         project_id: str,
@@ -755,10 +868,18 @@ class ProjectDocumentRepository:
                     key_hash, _, replay = self._claim(cursor, "document.create", idempotency_key, request)
                     if replay is not None:
                         return replay
-                    cursor.execute("SELECT issuer_key FROM projects WHERE id = %s FOR UPDATE", (project_id,))
+                    cursor.execute(
+                        "SELECT issuer_key, status FROM projects WHERE id = %s FOR UPDATE",
+                        (project_id,),
+                    )
                     project = cursor.fetchone()
                     if not project:
                         raise ProjectDocumentNotFound("project not found")
+                    if document_type == "invoice" and str(project[1]) not in {"planned", "active"}:
+                        raise ProjectDocumentConflict(
+                            "invoices require a planned or active project"
+                        )
+                    prepared_values = self._with_document_defaults(document_type, values)
                     document = self._insert_document(
                         cursor,
                         document_id=document_id,
@@ -766,11 +887,11 @@ class ProjectDocumentRepository:
                         issuer_key=str(project[0]),
                         document_type=document_type,
                         invoice_kind=str(invoice_kind) if invoice_kind else None,
-                        values=values,
+                        values=prepared_values,
                         actor_json=actor_json,
                     )
-                    if values.get("lines"):
-                        self._replace_lines(cursor, document_id, values["lines"])
+                    if prepared_values.get("lines"):
+                        self._replace_lines(cursor, document_id, prepared_values["lines"])
                     self._event(
                         cursor,
                         project_id=project_id,
@@ -1014,7 +1135,7 @@ class ProjectDocumentRepository:
             JOIN project_documents d ON d.id = a.document_id
             WHERE a.ledger_source_key = %s
               AND a.document_id <> %s
-              AND d.status IN ('issued', 'superseded')
+              AND d.status <> 'void'
             """,
             (source_key, excluding_document_id),
         )
@@ -1052,12 +1173,15 @@ class ProjectDocumentRepository:
                     issuer = _row_dict(cursor, ["wallet", "company"], cursor.fetchone()) or {}
                     prepared = []
                     seen = set()
+                    normalized = []
                     for allocation in materialized:
                         source_key = str(allocation.get("ledger_source_key") or "").strip()
                         amount = allocation.get("amount")
                         if not source_key or source_key in seen or isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
                             raise ValueError("receipt allocation is invalid")
                         seen.add(source_key)
+                        normalized.append((source_key, amount))
+                    for source_key, amount in sorted(normalized):
                         ledger = self._ledger_row(cursor, source_key)
                         self._validate_income_row(ledger, project_id=document["project_id"], issuer=issuer)
                         available = int(ledger["amount"]) - self._allocated_amount(
@@ -1120,7 +1244,7 @@ class ProjectDocumentRepository:
             (document["project_id"],),
         )
         issuer = _row_dict(cursor, ["wallet", "company"], cursor.fetchone()) or {}
-        for allocation in allocations:
+        for allocation in sorted(allocations, key=lambda item: str(item["ledger_source_key"])):
             ledger = self._ledger_row(cursor, allocation["ledger_source_key"])
             self._validate_income_row(ledger, project_id=document["project_id"], issuer=issuer)
             available = int(ledger["amount"]) - self._allocated_amount(
@@ -1131,38 +1255,107 @@ class ProjectDocumentRepository:
             if int(allocation["ledger_amount"]) != int(ledger["amount"]):
                 raise ProjectDocumentConflict("receipt allocation source amount changed")
 
+    @staticmethod
+    def _calculate_totals(document: Mapping[str, Any]) -> dict[str, int | str]:
+        subtotal = sum(int(line["line_total"]) for line in document.get("lines") or [])
+        if document["document_type"] == "receipt":
+            subtotal = sum(int(item["amount"]) for item in document.get("allocations") or [])
+        fixed_discount = int(document.get("document_discount_amount") or 0)
+        percent = Decimal(str(document.get("document_discount_percent") or "0"))
+        percentage_discount = int(
+            (Decimal(subtotal) * percent / Decimal("100")).quantize(
+                Decimal("1"), rounding=ROUND_HALF_UP
+            )
+        )
+        discount = fixed_discount or percentage_discount
+        taxable_base = subtotal - discount
+        if taxable_base < 0:
+            raise ProjectDocumentConflict("document discount exceeds subtotal")
+        tax_percent = Decimal(str(document.get("tax_percent") or "0"))
+        tax = int(
+            (Decimal(taxable_base) * tax_percent / Decimal("100")).quantize(
+                Decimal("1"), rounding=ROUND_HALF_UP
+            )
+        )
+        return {
+            "subtotal": subtotal,
+            "document_discount": discount,
+            "taxable_base": taxable_base,
+            "tax_percent": str(tax_percent),
+            "tax": tax,
+            "total": taxable_base + tax,
+        }
+
+    @staticmethod
+    def _canonical_snapshot(
+        *,
+        document: Mapping[str, Any],
+        project: Mapping[str, Any],
+        issuer: Mapping[str, Any],
+        official_number: str,
+        issue_date: date,
+        instant: datetime,
+    ) -> dict[str, Any]:
+        document_data = {
+            key: value
+            for key, value in document.items()
+            if key not in {
+                "immutable_snapshot", "snapshot_sha256", "renderer_version",
+                "official_number", "status", "issued_at", "voided_at",
+                "superseded_at", "void_reason", "superseded_by_id", "lines",
+                "allocations", "created_by", "updated_by",
+            }
+        }
+        document_data.update(
+            {
+                "status": "issued",
+                "official_number": official_number,
+                "issue_date": issue_date,
+            }
+        )
+        project_data = {
+            key: value
+            for key, value in project.items()
+            if key not in {"created_by", "updated_by"}
+        }
+        issuer_data = dict(issuer)
+        return _plain(
+            {
+                "schema_version": 1,
+                "issued_at": instant,
+                "issuer": issuer_data,
+                "project": project_data,
+                "document": document_data,
+                "lines": list(document.get("lines") or []),
+                "allocations": list(document.get("allocations") or []),
+                "totals": ProjectDocumentRepository._calculate_totals(document),
+            }
+        )
+
     def issue_document(
         self,
         document_id: str,
         *,
-        snapshot: Mapping[str, Any],
-        pdf_bytes: bytes,
-        renderer_version: str,
         expected_version: int,
         idempotency_key: str,
         actor: Mapping[str, Any],
         issued_at: datetime | None = None,
     ) -> dict[str, Any]:
-        if not isinstance(pdf_bytes, bytes) or not pdf_bytes or len(pdf_bytes) > 10 * 1024 * 1024:
-            raise ValueError("pdf_bytes must be 1..10485760 bytes")
-        if not str(renderer_version or "").strip():
-            raise ValueError("renderer_version is required")
+        if self._renderer is None:
+            raise ProjectDocumentUnavailable("document renderer is not configured")
         instant = _instant(issued_at or self._now())
         actor_json, _ = _actor(actor)
-        snapshot_json, canonical_snapshot = _json(dict(snapshot), label="snapshot")
-        snapshot_hash = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
-        pdf_hash = hashlib.sha256(pdf_bytes).hexdigest()
         request = {
             "document_id": document_id,
-            "snapshot_hash": snapshot_hash,
-            "pdf_hash": pdf_hash,
-            "renderer_version": renderer_version,
             "expected_version": expected_version,
+            "issued_at": issued_at,
         }
         try:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
-                    key_hash, _, replay = self._claim(cursor, "document.issue", idempotency_key, request)
+                    key_hash, _, replay = self._claim(
+                        cursor, "document.issue", idempotency_key, request
+                    )
                     if replay is not None:
                         return replay
                     document = self._load_document(cursor, document_id, for_update=True)
@@ -1170,6 +1363,21 @@ class ProjectDocumentRepository:
                         raise ProjectDocumentConflict("only a draft document may be issued")
                     if int(document["lock_version"]) != int(expected_version):
                         raise ProjectDocumentConflict("optimistic lock version conflict")
+                    cursor.execute(
+                        "SELECT " + _SELECT_PROJECT + " FROM projects WHERE id = %s FOR UPDATE",
+                        (document["project_id"],),
+                    )
+                    project = _row_dict(cursor, _PROJECT_COLUMNS, cursor.fetchone())
+                    if not project:
+                        raise ProjectDocumentConflict("document project is missing")
+                    project["created_by"] = _safe_json_object(project.get("created_by"))
+                    project["updated_by"] = _safe_json_object(project.get("updated_by"))
+                    if document["document_type"] == "invoice" and project["status"] not in {
+                        "planned", "active"
+                    }:
+                        raise ProjectDocumentConflict(
+                            "invoices require a planned or active project"
+                        )
                     self._revalidate_allocations(cursor, document)
                     year = instant.astimezone(JAKARTA).year
                     cursor.execute(
@@ -1185,43 +1393,52 @@ class ProjectDocumentRepository:
                         (document["issuer_key"], document["document_type"], year),
                     )
                     sequence = int(cursor.fetchone()[0])
+                    issuer_columns = [
+                        "issuer_key", "legal_name", "display_name", "number_code",
+                        "address", "phone", "email", "tax_identity", "bank_details",
+                        "logo_path", "profile_version",
+                    ]
                     cursor.execute(
-                        "SELECT number_code FROM project_issuer_profiles WHERE issuer_key = %s FOR UPDATE",
+                        "SELECT " + ", ".join(issuer_columns) +
+                        " FROM project_issuer_profiles WHERE issuer_key = %s FOR UPDATE",
                         (document["issuer_key"],),
                     )
-                    profile = cursor.fetchone()
-                    if not profile:
+                    issuer = _row_dict(cursor, issuer_columns, cursor.fetchone())
+                    if not issuer:
                         raise ProjectDocumentConflict("issuer profile is missing")
+                    issuer["bank_details"] = _safe_json_object(issuer.get("bank_details")) or {}
                     official_number = format_official_number(
-                        document["document_type"], str(profile[0]), sequence, instant
+                        document["document_type"], str(issuer["number_code"]), sequence, instant
                     )
-                    cursor.execute(
-                        """
-                        UPDATE project_documents
-                        SET status = 'issued', official_number = %s,
-                            issue_date = COALESCE(issue_date, %s),
-                            immutable_snapshot = %s::jsonb, snapshot_sha256 = %s,
-                            renderer_version = %s, issued_at = %s,
-                            lock_version = lock_version + 1,
-                            updated_by = %s::jsonb, updated_at = NOW()
-                        WHERE id = %s AND status = 'draft' AND lock_version = %s
-                        """,
-                        (
-                            official_number, instant.astimezone(JAKARTA).date(), snapshot_json,
-                            snapshot_hash, renderer_version, instant, actor_json,
-                            document_id, expected_version,
-                        ),
+                    issue_date = document.get("issue_date") or instant.astimezone(JAKARTA).date()
+                    snapshot = self._canonical_snapshot(
+                        document=document,
+                        project=project,
+                        issuer=issuer,
+                        official_number=official_number,
+                        issue_date=date.fromisoformat(issue_date) if isinstance(issue_date, str) else issue_date,
+                        instant=instant,
                     )
-                    if cursor.rowcount != 1:
-                        raise ProjectDocumentConflict("document issuance conflicted")
-                    cursor.execute(
-                        """
-                        INSERT INTO project_document_artifacts (
-                            document_id, byte_size, sha256, renderer_version, pdf_bytes
-                        ) VALUES (%s, %s, %s, %s, %s)
-                        """,
-                        (document_id, len(pdf_bytes), pdf_hash, renderer_version, pdf_bytes),
-                    )
+                    snapshot_json, canonical_snapshot = _json(snapshot, label="snapshot")
+                    snapshot_hash = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
+                    rendered = self._renderer(canonical_snapshot)
+                    if (
+                        not isinstance(rendered, tuple)
+                        or len(rendered) != 2
+                        or not isinstance(rendered[0], bytes)
+                    ):
+                        raise ProjectDocumentUnavailable(
+                            "document renderer must return (pdf_bytes, renderer_version)"
+                        )
+                    pdf_bytes, renderer_version = rendered
+                    renderer_version = str(renderer_version or "").strip()
+                    if (
+                        not pdf_bytes.startswith(b"%PDF-")
+                        or len(pdf_bytes) > 10 * 1024 * 1024
+                        or not renderer_version
+                    ):
+                        raise ProjectDocumentUnavailable("document renderer returned an invalid PDF")
+                    pdf_hash = hashlib.sha256(pdf_bytes).hexdigest()
                     if document.get("revision_of_id"):
                         cursor.execute(
                             """
@@ -1234,7 +1451,34 @@ class ProjectDocumentRepository:
                             (document_id, instant, actor_json, document["revision_of_id"]),
                         )
                         if cursor.rowcount != 1:
-                            raise ProjectDocumentConflict("revision source is not an issued document")
+                            raise ProjectDocumentConflict(
+                                "revision source is not an issued document"
+                            )
+                    cursor.execute(
+                        """
+                        UPDATE project_documents
+                        SET status = 'issued', official_number = %s,
+                            issue_date = %s, immutable_snapshot = %s::jsonb,
+                            snapshot_sha256 = %s, renderer_version = %s, issued_at = %s,
+                            lock_version = lock_version + 1,
+                            updated_by = %s::jsonb, updated_at = NOW()
+                        WHERE id = %s AND status = 'draft' AND lock_version = %s
+                        """,
+                        (
+                            official_number, issue_date, snapshot_json, snapshot_hash,
+                            renderer_version, instant, actor_json, document_id, expected_version,
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise ProjectDocumentConflict("document issuance conflicted")
+                    cursor.execute(
+                        """
+                        INSERT INTO project_document_artifacts (
+                            document_id, byte_size, sha256, renderer_version, pdf_bytes
+                        ) VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (document_id, len(pdf_bytes), pdf_hash, renderer_version, pdf_bytes),
+                    )
                     issued = self._load_document(cursor, document_id)
                     if issued["immutable_snapshot"] != canonical_snapshot:
                         raise ProjectDocumentUnavailable("stored snapshot readback mismatch")
