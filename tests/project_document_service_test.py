@@ -1,4 +1,3 @@
-from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -90,7 +89,7 @@ class FakeRepository:
                 "id": "00000000-0000-4000-8000-000000000003",
                 "document_type": "sales_order",
                 "status": "draft",
-                "valid_until": values["sales_order_valid_until"],
+                "valid_until": "2026-11-17",
                 "tax_percent": values["tax_percent"],
                 "lock_version": 1,
             },
@@ -102,7 +101,12 @@ class FakeRepository:
 
     def create_document_draft(self, project_id, **kwargs):
         self.calls.append(("create_document_draft", project_id, kwargs))
-        return {**self.document, **kwargs["values"], "document_type": kwargs["document_type"]}
+        return {
+            **self.document,
+            **kwargs["values"],
+            "document_type": kwargs["document_type"],
+            "due_date": kwargs["values"].get("due_date") or "2026-11-10",
+        }
 
     def create_receipt_draft(self, project_id, **kwargs):
         self.calls.append(("create_receipt_draft", project_id, kwargs))
@@ -160,14 +164,10 @@ class FakeRepository:
 
 def service(repository=None):
     repository = repository or FakeRepository()
-    return ProjectDocumentService(
-        repository,
-        today=lambda: date(2026, 11, 3),
-        now=lambda: datetime(2026, 11, 3, 4, 0, tzinfo=timezone.utc),
-    ), repository
+    return ProjectDocumentService(repository), repository
 
 
-def test_create_project_defaults_tax_and_atomically_creates_sales_order_valid_14_days():
+def test_create_project_leaves_volatile_defaults_to_atomic_repository_command():
     subject, repository = service()
 
     result = subject.create_project(
@@ -178,10 +178,11 @@ def test_create_project_defaults_tax_and_atomically_creates_sales_order_valid_14
 
     assert result["sales_order"]["valid_until"] == "2026-11-17"
     assert result["sales_order"]["tax_percent"] == "0"
+    assert "sales_order_valid_until" not in repository.calls[0][1]
     assert [call[0] for call in repository.calls] == ["create_project_with_sales_order"]
 
 
-def test_invoice_defaults_due_seven_days_and_final_is_exact_residual():
+def test_invoice_leaves_due_date_and_status_validation_to_atomic_repository_command():
     subject, repository = service()
 
     invoice = subject.create_invoice(
@@ -194,26 +195,30 @@ def test_invoice_defaults_due_seven_days_and_final_is_exact_residual():
 
     call = repository.calls[-1]
     assert call[0] == "create_document_draft"
-    assert call[2]["values"]["due_date"] == "2026-11-10"
+    assert "due_date" not in call[2]["values"]
     assert call[2]["values"]["tax_percent"] == "0"
     assert call[2]["values"]["invoice_kind"] == "FINAL"
     assert call[2]["values"]["lines"][0]["line_total"] == 400_000
+    assert invoice["due_date"] == "2026-11-10"
     assert invoice["invoice_kind"] == "FINAL"
+    assert not any(item[0] == "get_project" for item in repository.calls)
 
 
-def test_invoice_rejects_non_planned_or_active_project():
+def test_invoice_status_is_not_prechecked_outside_repository_transaction():
     repository = FakeRepository()
     repository.project["status"] = "completed"
     subject, _ = service(repository)
 
-    with pytest.raises(ValueError, match="planned or active"):
-        subject.create_invoice(
-            repository.project["id"],
-            kind="DP",
-            values={"lines": [{"description": "DP", "quantity": "1", "unit": "unit", "unit_price": 1}]},
-            idempotency_key="invoice-command-0002",
-            actor={"email": "owner@example.com"},
-        )
+    subject.create_invoice(
+        repository.project["id"],
+        kind="DP",
+        values={"lines": [{"description": "DP", "quantity": "1", "unit": "unit", "unit_price": 1}]},
+        idempotency_key="invoice-command-0002",
+        actor={"email": "owner@example.com"},
+    )
+
+    assert not any(item[0] == "get_project" for item in repository.calls)
+    assert repository.calls[-1][0] == "create_document_draft"
 
 
 def test_receipt_creation_delegates_atomic_allocation_revalidation():
@@ -250,14 +255,13 @@ def test_issue_delegates_atomic_canonical_rendering_to_repository():
         "expected_version": 1,
         "idempotency_key": "issue-command-0001",
         "actor": {"email": "owner@example.com"},
-        "issued_at": datetime(2026, 11, 3, 4, 0, tzinfo=timezone.utc),
     }
     assert "snapshot" not in call[2]
     assert "pdf_bytes" not in call[2]
     assert "pdf_renderer" not in call[2]
 
 
-def test_default_issue_clock_is_timezone_aware():
+def test_service_does_not_generate_issue_time_before_repository_idempotency_claim():
     repository = FakeRepository()
     subject = ProjectDocumentService(repository)
 
@@ -268,9 +272,7 @@ def test_default_issue_clock_is_timezone_aware():
         actor={"email": "owner@example.com"},
     )
 
-    issued_at = repository.calls[-1][2]["issued_at"]
-    assert issued_at.tzinfo is not None
-    assert issued_at.utcoffset() is not None
+    assert "issued_at" not in repository.calls[-1][2]
 
 
 def test_void_revision_and_replay_are_explicit_lifecycle_commands():

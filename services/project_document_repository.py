@@ -13,10 +13,20 @@ import os
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, DecimalException, ROUND_HALF_UP, localcontext
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
+
+from services.project_document_models import (
+    MAX_DOCUMENT_LINES,
+    PERCENT_MAX,
+    QUANTITY_MAX,
+    DocumentCalculationError,
+    bounded_idr,
+    decimal_value,
+    integer_rupiah,
+)
 
 
 JAKARTA = ZoneInfo("Asia/Jakarta")
@@ -793,6 +803,15 @@ class ProjectDocumentRepository:
                         ),
                     )
                     project = _row_dict(cursor, _PROJECT_COLUMNS, cursor.fetchone()) or {}
+                    sales_order_values = self._numeric_document_values(
+                        self._with_document_defaults(
+                            "sales_order",
+                            {
+                                "valid_until": command.get("sales_order_valid_until"),
+                                "tax_percent": command.get("tax_percent", 0),
+                            },
+                        )
+                    )
                     sales_order = self._insert_document(
                         cursor,
                         document_id=document_id,
@@ -800,13 +819,7 @@ class ProjectDocumentRepository:
                         issuer_key=issuer_key,
                         document_type="sales_order",
                         invoice_kind=None,
-                        values=self._with_document_defaults(
-                            "sales_order",
-                            {
-                                "valid_until": command.get("sales_order_valid_until"),
-                                "tax_percent": command.get("tax_percent", 0),
-                            },
-                        ),
+                        values=sales_order_values,
                         actor_json=actor_json,
                     )
                     self._event(
@@ -1025,6 +1038,38 @@ class ProjectDocumentRepository:
         raise ProjectDocumentNotFound(f"{table.rstrip('s')} not found")
 
     @staticmethod
+    def _numeric_document_values(values: Mapping[str, Any]) -> dict[str, Any]:
+        prepared = dict(values)
+        prepared["document_discount_amount"] = integer_rupiah(
+            prepared.get("document_discount_amount", 0),
+            field="document_discount_amount",
+        )
+        prepared["document_discount_percent"] = str(
+            decimal_value(
+                prepared.get("document_discount_percent", "0"),
+                field="document_discount_percent",
+                maximum=PERCENT_MAX,
+                max_fractional_digits=4,
+            )
+        )
+        prepared["tax_percent"] = str(
+            decimal_value(
+                prepared.get("tax_percent", "0"),
+                field="tax_percent",
+                maximum=PERCENT_MAX,
+                max_fractional_digits=4,
+            )
+        )
+        if (
+            prepared["document_discount_amount"]
+            and Decimal(prepared["document_discount_percent"])
+        ):
+            raise DocumentCalculationError(
+                "document discount may be fixed or percentage, never both"
+            )
+        return prepared
+
+    @staticmethod
     def _insert_document(
         cursor: Any,
         *,
@@ -1118,7 +1163,9 @@ class ProjectDocumentRepository:
                         raise ProjectDocumentConflict(
                             "invoices require a planned or active project"
                         )
-                    prepared_values = self._with_document_defaults(document_type, values)
+                    prepared_values = self._numeric_document_values(
+                        self._with_document_defaults(document_type, values)
+                    )
                     document = self._insert_document(
                         cursor,
                         document_id=document_id,
@@ -1152,25 +1199,66 @@ class ProjectDocumentRepository:
     @staticmethod
     def _line_values(line: Mapping[str, Any], position: int) -> tuple[Any, ...]:
         description = str(line.get("description") or "").strip()
-        quantity = Decimal(str(line.get("quantity") or "0"))
         unit = str(line.get("unit") or "unit").strip()
-        unit_price = int(line.get("unit_price") or 0)
-        discount_percent = Decimal(str(line.get("line_discount_percent") or "0"))
-        if not description or quantity <= 0 or unit_price < 0 or not (Decimal("0") <= discount_percent <= Decimal("100")):
-            raise ValueError("document line is invalid")
-        gross = int((quantity * Decimal(unit_price)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-        discount = int(
-            (Decimal(gross) * discount_percent / Decimal("100")).quantize(
-                Decimal("1"), rounding=ROUND_HALF_UP
-            )
-        )
+        if not description or not unit:
+            raise DocumentCalculationError("document line description and unit are required")
+        try:
+            with localcontext() as context:
+                context.prec = 64
+                quantity = decimal_value(
+                    line.get("quantity"),
+                    field=f"line {position} quantity",
+                    minimum=Decimal("0.0001"),
+                    maximum=QUANTITY_MAX,
+                    max_fractional_digits=4,
+                )
+                unit_price = integer_rupiah(
+                    line.get("unit_price"), field=f"line {position} unit_price"
+                )
+                discount_percent = decimal_value(
+                    line.get("line_discount_percent", "0"),
+                    field=f"line {position} line_discount_percent",
+                    maximum=PERCENT_MAX,
+                    max_fractional_digits=4,
+                )
+                gross = bounded_idr(
+                    int(
+                        (quantity * Decimal(unit_price)).quantize(
+                            Decimal("1"), rounding=ROUND_HALF_UP
+                        )
+                    ),
+                    field=f"line {position} line_gross",
+                )
+                discount = bounded_idr(
+                    int(
+                        (Decimal(gross) * discount_percent / Decimal("100")).quantize(
+                            Decimal("1"), rounding=ROUND_HALF_UP
+                        )
+                    ),
+                    field=f"line {position} line_discount",
+                )
+                line_total = bounded_idr(
+                    gross - discount, field=f"line {position} line_total"
+                )
+        except DocumentCalculationError:
+            raise
+        except DecimalException as exc:
+            raise DocumentCalculationError(
+                f"line {position} is outside supported numeric bounds"
+            ) from exc
         return (
             str(uuid.uuid4()), position, description, str(quantity), unit,
-            unit_price, str(discount_percent), gross, discount, gross - discount,
+            unit_price, str(discount_percent), gross, discount, line_total,
         )
 
     @classmethod
     def _replace_lines(cls, cursor: Any, document_id: str, lines: Sequence[Mapping[str, Any]]) -> None:
+        if not isinstance(lines, Sequence) or isinstance(lines, (str, bytes)):
+            raise DocumentCalculationError("document lines must be a sequence")
+        if len(lines) > MAX_DOCUMENT_LINES:
+            raise DocumentCalculationError(
+                f"document may contain at most {MAX_DOCUMENT_LINES} lines"
+            )
         cursor.execute("DELETE FROM project_document_lines WHERE document_id = %s", (document_id,))
         for position, line in enumerate(lines, start=1):
             values = cls._line_values(line, position)
@@ -1277,6 +1365,20 @@ class ProjectDocumentRepository:
         supplied = dict(changes)
         if not supplied or set(supplied) - allowed:
             raise ValueError("document changes are empty or unsupported")
+        if "document_discount_amount" in supplied:
+            supplied["document_discount_amount"] = integer_rupiah(
+                supplied["document_discount_amount"], field="document_discount_amount"
+            )
+        for field in ("document_discount_percent", "tax_percent"):
+            if field in supplied:
+                supplied[field] = str(
+                    decimal_value(
+                        supplied[field],
+                        field=field,
+                        maximum=PERCENT_MAX,
+                        max_fractional_digits=4,
+                    )
+                )
         actor_json, _ = _actor(actor)
         request = {"document_id": document_id, "changes": supplied, "expected_version": expected_version}
         fields = {key: value for key, value in supplied.items() if key != "lines"}
@@ -1502,33 +1604,77 @@ class ProjectDocumentRepository:
 
     @staticmethod
     def _calculate_totals(document: Mapping[str, Any]) -> dict[str, int | str]:
-        subtotal = sum(int(line["line_total"]) for line in document.get("lines") or [])
-        if document["document_type"] == "receipt":
-            subtotal = sum(int(item["amount"]) for item in document.get("allocations") or [])
-        fixed_discount = int(document.get("document_discount_amount") or 0)
-        percent = Decimal(str(document.get("document_discount_percent") or "0"))
-        percentage_discount = int(
-            (Decimal(subtotal) * percent / Decimal("100")).quantize(
-                Decimal("1"), rounding=ROUND_HALF_UP
-            )
-        )
-        discount = fixed_discount or percentage_discount
-        taxable_base = subtotal - discount
-        if taxable_base < 0:
-            raise ProjectDocumentConflict("document discount exceeds subtotal")
-        tax_percent = Decimal(str(document.get("tax_percent") or "0"))
-        tax = int(
-            (Decimal(taxable_base) * tax_percent / Decimal("100")).quantize(
-                Decimal("1"), rounding=ROUND_HALF_UP
-            )
-        )
+        try:
+            with localcontext() as context:
+                context.prec = 64
+                subtotal = 0
+                source_amounts = (
+                    [item["amount"] for item in document.get("allocations") or []]
+                    if document["document_type"] == "receipt"
+                    else [line["line_total"] for line in document.get("lines") or []]
+                )
+                for position, amount in enumerate(source_amounts, start=1):
+                    subtotal = bounded_idr(
+                        subtotal + integer_rupiah(
+                            amount, field=f"document source amount {position}"
+                        ),
+                        field="document subtotal",
+                    )
+                fixed_discount = integer_rupiah(
+                    document.get("document_discount_amount") or 0,
+                    field="document_discount_amount",
+                )
+                percent = decimal_value(
+                    document.get("document_discount_percent") or "0",
+                    field="document_discount_percent",
+                    maximum=PERCENT_MAX,
+                    max_fractional_digits=4,
+                )
+                if fixed_discount and percent:
+                    raise DocumentCalculationError(
+                        "document discount may be fixed or percentage, never both"
+                    )
+                percentage_discount = bounded_idr(
+                    int(
+                        (Decimal(subtotal) * percent / Decimal("100")).quantize(
+                            Decimal("1"), rounding=ROUND_HALF_UP
+                        )
+                    ),
+                    field="document discount",
+                )
+                discount = fixed_discount or percentage_discount
+                taxable_base = subtotal - discount
+                if taxable_base < 0:
+                    raise ProjectDocumentConflict("document discount exceeds subtotal")
+                taxable_base = bounded_idr(taxable_base, field="taxable base")
+                tax_percent = decimal_value(
+                    document.get("tax_percent") or "0",
+                    field="tax_percent",
+                    maximum=PERCENT_MAX,
+                    max_fractional_digits=4,
+                )
+                tax = bounded_idr(
+                    int(
+                        (Decimal(taxable_base) * tax_percent / Decimal("100")).quantize(
+                            Decimal("1"), rounding=ROUND_HALF_UP
+                        )
+                    ),
+                    field="tax",
+                )
+                total = bounded_idr(taxable_base + tax, field="document total")
+        except (DocumentCalculationError, ProjectDocumentConflict):
+            raise
+        except DecimalException as exc:
+            raise DocumentCalculationError(
+                "document calculation is outside supported bounds"
+            ) from exc
         return {
             "subtotal": subtotal,
             "document_discount": discount,
             "taxable_base": taxable_base,
             "tax_percent": str(tax_percent),
             "tax": tax,
-            "total": taxable_base + tax,
+            "total": total,
         }
 
     @staticmethod
@@ -1666,7 +1812,6 @@ class ProjectDocumentRepository:
     ) -> dict[str, Any]:
         if self._renderer is None:
             raise ProjectDocumentUnavailable("document renderer is not configured")
-        instant = _instant(issued_at or self._now())
         actor_json, _ = _actor(actor)
         request = {
             "document_id": document_id,
@@ -1681,6 +1826,7 @@ class ProjectDocumentRepository:
                     )
                     if replay is not None:
                         return replay
+                    instant = _instant(issued_at or self._now())
                     document = self._load_document(cursor, document_id, for_update=True)
                     if document["status"] != "draft":
                         raise ProjectDocumentConflict("only a draft document may be issued")

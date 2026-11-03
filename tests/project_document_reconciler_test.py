@@ -1,6 +1,4 @@
-from datetime import date, datetime
-from pathlib import Path
-from zoneinfo import ZoneInfo
+from datetime import date
 
 import pytest
 
@@ -90,10 +88,7 @@ class ReceiptRepository:
 
 def test_receipt_reconciliation_rejects_office_expense_or_transfer_sources():
     repository = ReceiptRepository()
-    service = ProjectDocumentService(
-        repository,
-        today=lambda: date(2026, 11, 3),
-    )
+    service = ProjectDocumentService(repository)
 
     with pytest.raises(ProjectDocumentConflict, match="project income"):
         service.create_receipt(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, DecimalException
 from typing import Any, Mapping
 
 
@@ -13,6 +13,12 @@ class ProjectDocumentValidationError(ValueError):
 
 class DocumentCalculationError(ProjectDocumentValidationError):
     """A commercial calculation cannot be represented exactly."""
+
+
+BIGINT_MAX = 9_223_372_036_854_775_807
+QUANTITY_MAX = Decimal("99999999999999.9999")
+PERCENT_MAX = Decimal("100")
+MAX_DOCUMENT_LINES = 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,15 +65,42 @@ class DocumentTotals:
         }
 
 
-def decimal_value(value: Any, *, field: str, minimum: Decimal = Decimal("0")) -> Decimal:
+def _fractional_digits(value: Decimal) -> int:
+    digits = list(value.as_tuple().digits)
+    exponent = value.as_tuple().exponent
+    while exponent < 0 and digits and digits[-1] == 0:
+        digits.pop()
+        exponent += 1
+    return max(0, -exponent)
+
+
+def decimal_value(
+    value: Any,
+    *,
+    field: str,
+    minimum: Decimal = Decimal("0"),
+    maximum: Decimal | None = None,
+    max_fractional_digits: int | None = None,
+) -> Decimal:
     if isinstance(value, bool):
         raise DocumentCalculationError(f"{field} must be a decimal number")
     try:
         parsed = Decimal(str(value))
-    except (InvalidOperation, ValueError, TypeError) as exc:
+    except (DecimalException, ValueError, TypeError) as exc:
         raise DocumentCalculationError(f"{field} must be a decimal number") from exc
-    if not parsed.is_finite() or parsed < minimum:
+    if (
+        not parsed.is_finite()
+        or parsed < minimum
+        or (maximum is not None and parsed > maximum)
+    ):
         raise DocumentCalculationError(f"{field} is outside the allowed range")
+    if (
+        max_fractional_digits is not None
+        and _fractional_digits(parsed) > max_fractional_digits
+    ):
+        raise DocumentCalculationError(
+            f"{field} must have at most {max_fractional_digits} fractional digits"
+        )
     return parsed
 
 
@@ -76,14 +109,25 @@ def integer_rupiah(value: Any, *, field: str) -> int:
         raise DocumentCalculationError(f"{field} must be integer rupiah")
     if value < 0:
         raise DocumentCalculationError(f"{field} must not be negative")
+    if value > BIGINT_MAX:
+        raise DocumentCalculationError(f"{field} exceeds PostgreSQL BIGINT")
     return value
 
 
+def bounded_idr(value: int, *, field: str) -> int:
+    """Validate a calculated integer-rupiah intermediate or aggregate."""
+
+    return integer_rupiah(value, field=field)
+
+
 def decimal_text(value: Decimal) -> str:
-    normalized = value.normalize()
-    if normalized == normalized.to_integral():
-        return str(normalized.quantize(Decimal("1")))
-    return format(normalized, "f")
+    try:
+        normalized = value.normalize()
+        if normalized == normalized.to_integral():
+            return str(normalized.quantize(Decimal("1")))
+        return format(normalized, "f")
+    except DecimalException as exc:
+        raise DocumentCalculationError("decimal value cannot be serialized") from exc
 
 
 def require_mapping(value: Any, *, field: str) -> Mapping[str, Any]:

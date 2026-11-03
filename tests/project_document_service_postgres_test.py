@@ -90,11 +90,7 @@ def repository():
 
 
 def service(repository):
-    return ProjectDocumentService(
-        repository,
-        today=lambda: date(2026, 11, 3),
-        now=lambda: FIXED_NOW,
-    )
+    return ProjectDocumentService(repository)
 
 
 def set_total(repository, document, amount, key):
@@ -200,3 +196,168 @@ def test_service_final_prefill_fails_closed_without_issued_sales_order(repositor
             idempotency_key="service-final-create-0002",
             actor=ACTOR,
         )
+
+
+def test_repository_replays_project_and_invoice_after_midnight_and_status_change(repository):
+    moments = iter(
+        [
+            datetime(2026, 11, 3, 16, 59, tzinfo=ZoneInfo("UTC")),
+            datetime(2026, 11, 3, 17, 1, tzinfo=ZoneInfo("UTC")),
+        ]
+    )
+    repository._now = lambda: next(moments)
+    project_key = "service-replay-project-0001"
+    values = {
+        "name": "Midnight Replay",
+        "client_name": "Client",
+        "issuer_key": "hollawall",
+        "wallet": "CV HB(101)",
+        "company": "HOLLA",
+    }
+    first = repository.create_project_with_sales_order(
+        values, idempotency_key=project_key, actor=ACTOR
+    )
+    replay = repository.create_project_with_sales_order(
+        values, idempotency_key=project_key, actor=ACTOR
+    )
+    assert replay == first
+    assert replay["sales_order"]["issue_date"] == "2026-11-03"
+    assert replay["sales_order"]["valid_until"] == "2026-11-17"
+
+    invoice_values = {
+        "invoice_kind": "DP",
+        "tax_percent": "0",
+        "lines": [
+            {
+                "description": "DP",
+                "quantity": "1",
+                "unit": "termin",
+                "unit_price": 100_000,
+            }
+        ],
+    }
+    invoice_key = "service-replay-invoice-0001"
+    invoice = repository.create_document_draft(
+        first["project"]["id"],
+        document_type="invoice",
+        values=invoice_values,
+        idempotency_key=invoice_key,
+        actor=ACTOR,
+    )
+    repository.update_project(
+        first["project"]["id"],
+        {"status": "completed"},
+        expected_version=first["project"]["lock_version"],
+        idempotency_key="service-replay-project-status-0001",
+        actor=ACTOR,
+    )
+    assert repository.create_document_draft(
+        first["project"]["id"],
+        document_type="invoice",
+        values=invoice_values,
+        idempotency_key=invoice_key,
+        actor=ACTOR,
+    ) == invoice
+
+
+def test_issue_replay_does_not_consume_clock_or_recheck_later_project_state(repository):
+    created = repository.create_project_with_sales_order(
+        {
+            "name": "Issue Replay",
+            "client_name": "Client",
+            "issuer_key": "hollawall",
+        },
+        idempotency_key="service-issue-replay-project-0001",
+        actor=ACTOR,
+    )
+    sales_order = set_total(
+        repository,
+        created["sales_order"],
+        100_000,
+        "service-issue-replay-update-0001",
+    )
+    clock_calls = []
+
+    def first_clock():
+        clock_calls.append("called")
+        return FIXED_NOW
+
+    repository._now = first_clock
+    key = "service-issue-replay-command-0001"
+    issued = repository.issue_document(
+        sales_order["id"],
+        expected_version=sales_order["lock_version"],
+        idempotency_key=key,
+        actor=ACTOR,
+    )
+    repository.update_project(
+        created["project"]["id"],
+        {"status": "completed"},
+        expected_version=created["project"]["lock_version"],
+        idempotency_key="service-issue-replay-status-0001",
+        actor=ACTOR,
+    )
+
+    def forbidden_clock():
+        raise AssertionError("idempotent replay must not read the clock")
+
+    repository._now = forbidden_clock
+    replay = repository.issue_document(
+        sales_order["id"],
+        expected_version=sales_order["lock_version"],
+        idempotency_key=key,
+        actor=ACTOR,
+    )
+    assert replay == issued
+    assert clock_calls == ["called"]
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [
+        [
+            {
+                "description": "Excess scale",
+                "quantity": "1.00001",
+                "unit": "unit",
+                "unit_price": 1,
+            }
+        ],
+        [
+            {
+                "description": "Overflow",
+                "quantity": "2",
+                "unit": "unit",
+                "unit_price": 9_223_372_036_854_775_807,
+            }
+        ],
+        [
+            {
+                "description": f"Line {position}",
+                "quantity": "1",
+                "unit": "unit",
+                "unit_price": 0,
+            }
+            for position in range(501)
+        ],
+    ],
+)
+def test_repository_direct_document_create_enforces_numeric_boundaries(repository, lines):
+    created = repository.create_project_with_sales_order(
+        {
+            "name": "Numeric Boundary",
+            "client_name": "Client",
+            "issuer_key": "hollawall",
+        },
+        idempotency_key=f"service-numeric-project-{len(lines):04d}",
+        actor=ACTOR,
+    )
+    with pytest.raises(Exception) as captured:
+        repository.create_document_draft(
+            created["project"]["id"],
+            document_type="invoice",
+            values={"invoice_kind": "DP", "lines": lines},
+            idempotency_key=f"service-numeric-document-{len(lines):04d}",
+            actor=ACTOR,
+        )
+    assert captured.type.__name__ == "DocumentCalculationError"

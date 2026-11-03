@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from collections.abc import Mapping, Sequence
+from decimal import Decimal, DecimalException, ROUND_HALF_UP, localcontext
 from typing import Any, Protocol
 
 from services.project_document_models import (
     DocumentCalculationError,
     DocumentLineTotal,
     DocumentTotals,
+    BIGINT_MAX,
+    MAX_DOCUMENT_LINES,
+    PERCENT_MAX,
+    QUANTITY_MAX,
+    bounded_idr,
     decimal_text,
     decimal_value,
     integer_rupiah,
@@ -23,14 +27,27 @@ class ProjectDocumentStore(Protocol):
     def create_document_draft(self, project_id: str, **kwargs: Any) -> dict[str, Any]: ...
     def create_receipt_draft(self, project_id: str, **kwargs: Any) -> dict[str, Any]: ...
     def get_project_commercial_totals(self, project_id: str) -> dict[str, int]: ...
+    def update_draft(
+        self,
+        document_id: str,
+        changes: Mapping[str, Any],
+        *,
+        expected_version: int,
+        idempotency_key: str,
+        actor: Mapping[str, Any],
+    ) -> dict[str, Any]: ...
     def issue_document(self, document_id: str, **kwargs: Any) -> dict[str, Any]: ...
     def void_document(self, document_id: str, **kwargs: Any) -> dict[str, Any]: ...
     def revise_document(self, document_id: str, **kwargs: Any) -> dict[str, Any]: ...
     def replay_audit(self, **kwargs: Any) -> list[dict[str, Any]]: ...
 
 
-def _round_idr(value: Decimal) -> int:
-    return int(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+def _round_idr(value: Decimal, *, field: str) -> int:
+    try:
+        rounded = int(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    except DecimalException as exc:
+        raise DocumentCalculationError(f"{field} cannot be represented as integer IDR") from exc
+    return bounded_idr(rounded, field=field)
 
 
 def calculate_document_totals(
@@ -42,67 +59,113 @@ def calculate_document_totals(
 ) -> dict[str, Any]:
     """Calculate exact integer-rupiah totals using Decimal and half-up rounding."""
 
-    amount_discount = integer_rupiah(document_discount_amount, field="document_discount_amount")
-    percent_discount = decimal_value(
-        document_discount_percent, field="document_discount_percent"
-    )
-    tax_rate = decimal_value(tax_percent, field="tax_percent")
-    if percent_discount > Decimal("100"):
-        raise DocumentCalculationError("document_discount_percent is outside the allowed range")
-    if tax_rate > Decimal("100"):
-        raise DocumentCalculationError("tax_percent is outside the allowed range")
-    if amount_discount and percent_discount:
-        raise DocumentCalculationError("document discount may be fixed or percentage, never both")
     if not isinstance(lines, Sequence) or isinstance(lines, (str, bytes)) or not lines:
         raise DocumentCalculationError("at least one document line is required")
-
-    calculated: list[DocumentLineTotal] = []
-    for position, raw_line in enumerate(lines, start=1):
-        if not isinstance(raw_line, Mapping):
-            raise DocumentCalculationError(f"line {position} must be an object")
-        description = str(raw_line.get("description") or "").strip()
-        unit = str(raw_line.get("unit") or "").strip()
-        if not description or not unit:
-            raise DocumentCalculationError(f"line {position} description and unit are required")
-        quantity = decimal_value(raw_line.get("quantity"), field=f"line {position} quantity", minimum=Decimal("0.0001"))
-        unit_price = integer_rupiah(raw_line.get("unit_price"), field=f"line {position} unit_price")
-        line_rate = decimal_value(
-            raw_line.get("line_discount_percent", "0"),
-            field=f"line {position} line_discount_percent",
+    if len(lines) > MAX_DOCUMENT_LINES:
+        raise DocumentCalculationError(
+            f"document may contain at most {MAX_DOCUMENT_LINES} lines"
         )
-        if line_rate > Decimal("100"):
-            raise DocumentCalculationError(f"line {position} line_discount_percent is outside the allowed range")
-        gross = _round_idr(quantity * Decimal(unit_price))
-        discount = _round_idr(Decimal(gross) * line_rate / Decimal("100"))
-        calculated.append(
-            DocumentLineTotal(
-                description=description,
-                quantity=quantity,
-                unit=unit,
-                unit_price=unit_price,
-                line_discount_percent=line_rate,
-                line_gross=gross,
-                line_discount=discount,
-                line_total=gross - discount,
+
+    try:
+        with localcontext() as context:
+            context.prec = 64
+            amount_discount = integer_rupiah(
+                document_discount_amount, field="document_discount_amount"
             )
-        )
+            percent_discount = decimal_value(
+                document_discount_percent,
+                field="document_discount_percent",
+                maximum=PERCENT_MAX,
+                max_fractional_digits=4,
+            )
+            tax_rate = decimal_value(
+                tax_percent,
+                field="tax_percent",
+                maximum=PERCENT_MAX,
+                max_fractional_digits=4,
+            )
+            if amount_discount and percent_discount:
+                raise DocumentCalculationError(
+                    "document discount may be fixed or percentage, never both"
+                )
 
-    subtotal = sum(line.line_total for line in calculated)
-    document_discount = amount_discount or _round_idr(
-        Decimal(subtotal) * percent_discount / Decimal("100")
-    )
-    taxable_base = subtotal - document_discount
-    if taxable_base < 0:
-        raise DocumentCalculationError("document discount exceeds taxable base")
-    tax = _round_idr(Decimal(taxable_base) * tax_rate / Decimal("100"))
-    return DocumentTotals(
-        lines=tuple(calculated),
-        subtotal=subtotal,
-        document_discount=document_discount,
-        taxable_base=taxable_base,
-        tax=tax,
-        total=taxable_base + tax,
-    ).to_dict()
+            calculated: list[DocumentLineTotal] = []
+            subtotal = 0
+            for position, raw_line in enumerate(lines, start=1):
+                if not isinstance(raw_line, Mapping):
+                    raise DocumentCalculationError(f"line {position} must be an object")
+                description = str(raw_line.get("description") or "").strip()
+                unit = str(raw_line.get("unit") or "").strip()
+                if not description or not unit:
+                    raise DocumentCalculationError(
+                        f"line {position} description and unit are required"
+                    )
+                quantity = decimal_value(
+                    raw_line.get("quantity"),
+                    field=f"line {position} quantity",
+                    minimum=Decimal("0.0001"),
+                    maximum=QUANTITY_MAX,
+                    max_fractional_digits=4,
+                )
+                unit_price = integer_rupiah(
+                    raw_line.get("unit_price"), field=f"line {position} unit_price"
+                )
+                line_rate = decimal_value(
+                    raw_line.get("line_discount_percent", "0"),
+                    field=f"line {position} line_discount_percent",
+                    maximum=PERCENT_MAX,
+                    max_fractional_digits=4,
+                )
+                gross = _round_idr(
+                    quantity * Decimal(unit_price), field=f"line {position} line_gross"
+                )
+                discount = _round_idr(
+                    Decimal(gross) * line_rate / Decimal("100"),
+                    field=f"line {position} line_discount",
+                )
+                line_total = bounded_idr(
+                    gross - discount, field=f"line {position} line_total"
+                )
+                subtotal = bounded_idr(
+                    subtotal + line_total, field="document subtotal"
+                )
+                calculated.append(
+                    DocumentLineTotal(
+                        description=description,
+                        quantity=quantity,
+                        unit=unit,
+                        unit_price=unit_price,
+                        line_discount_percent=line_rate,
+                        line_gross=gross,
+                        line_discount=discount,
+                        line_total=line_total,
+                    )
+                )
+
+            document_discount = amount_discount or _round_idr(
+                Decimal(subtotal) * percent_discount / Decimal("100"),
+                field="document discount",
+            )
+            taxable_base = subtotal - document_discount
+            if taxable_base < 0:
+                raise DocumentCalculationError("document discount exceeds taxable base")
+            taxable_base = bounded_idr(taxable_base, field="taxable base")
+            tax = _round_idr(
+                Decimal(taxable_base) * tax_rate / Decimal("100"), field="tax"
+            )
+            total = bounded_idr(taxable_base + tax, field="document total")
+            return DocumentTotals(
+                lines=tuple(calculated),
+                subtotal=subtotal,
+                document_discount=document_discount,
+                taxable_base=taxable_base,
+                tax=tax,
+                total=total,
+            ).to_dict()
+    except DocumentCalculationError:
+        raise
+    except DecimalException as exc:
+        raise DocumentCalculationError("document calculation is outside supported bounds") from exc
 
 
 def _actor(actor: Mapping[str, Any]) -> dict[str, Any]:
@@ -114,16 +177,8 @@ def _actor(actor: Mapping[str, Any]) -> dict[str, Any]:
 class ProjectDocumentService:
     """Validate domain commands and delegate each atomic transition to the store."""
 
-    def __init__(
-        self,
-        repository: ProjectDocumentStore,
-        *,
-        today: Callable[[], date] | None = None,
-        now: Callable[[], datetime] | None = None,
-    ) -> None:
+    def __init__(self, repository: ProjectDocumentStore) -> None:
         self._repository = repository
-        self._today = today or date.today
-        self._now = now or (lambda: datetime.now(timezone.utc))
 
     def create_project(
         self,
@@ -133,9 +188,7 @@ class ProjectDocumentService:
         actor: Mapping[str, Any],
     ) -> dict[str, Any]:
         command = dict(values)
-        current = self._today()
         command.setdefault("tax_percent", "0")
-        command.setdefault("sales_order_valid_until", (current + timedelta(days=14)).isoformat())
         return self._repository.create_project_with_sales_order(
             command,
             idempotency_key=idempotency_key,
@@ -154,13 +207,9 @@ class ProjectDocumentService:
         kind = str(kind or "").upper()
         if kind not in {"DP", "PROGRESS", "FINAL"}:
             raise ValueError("invoice kind must be DP, PROGRESS, or FINAL")
-        project = self._repository.get_project(project_id)
-        if project.get("status") not in {"planned", "active"}:
-            raise ValueError("invoices require a planned or active project")
         command = dict(values)
         command["invoice_kind"] = kind
         command.setdefault("tax_percent", "0")
-        command.setdefault("due_date", (self._today() + timedelta(days=7)).isoformat())
         if kind == "FINAL":
             commercial = self._repository.get_project_commercial_totals(project_id)
             residual = int(commercial["contract_total"]) - int(commercial["invoiced_non_final"])
@@ -252,7 +301,6 @@ class ProjectDocumentService:
             expected_version=expected_version,
             idempotency_key=idempotency_key,
             actor=_actor(actor),
-            issued_at=self._now(),
         )
 
     def void_document(self, document_id: str, **kwargs: Any) -> dict[str, Any]:
