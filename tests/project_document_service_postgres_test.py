@@ -203,6 +203,7 @@ def test_repository_replays_project_and_invoice_after_midnight_and_status_change
         [
             datetime(2026, 11, 3, 16, 59, tzinfo=ZoneInfo("UTC")),
             datetime(2026, 11, 3, 17, 1, tzinfo=ZoneInfo("UTC")),
+            datetime(2026, 11, 3, 17, 2, tzinfo=ZoneInfo("UTC")),
         ]
     )
     repository._now = lambda: next(moments)
@@ -236,10 +237,16 @@ def test_repository_replays_project_and_invoice_after_midnight_and_status_change
             }
         ],
     }
+    sales_order = set_total(
+        repository,
+        first["sales_order"],
+        1_000_000,
+        "service-replay-sales-order-update-0001",
+    )
+    issue(repository, sales_order, "service-replay-sales-order-issue-0001")
     invoice_key = "service-replay-invoice-0001"
-    invoice = repository.create_document_draft(
+    invoice = repository.create_invoice_draft(
         first["project"]["id"],
-        document_type="invoice",
         values=invoice_values,
         idempotency_key=invoice_key,
         actor=ACTOR,
@@ -251,9 +258,8 @@ def test_repository_replays_project_and_invoice_after_midnight_and_status_change
         idempotency_key="service-replay-project-status-0001",
         actor=ACTOR,
     )
-    assert repository.create_document_draft(
+    assert repository.create_invoice_draft(
         first["project"]["id"],
-        document_type="invoice",
         values=invoice_values,
         idempotency_key=invoice_key,
         actor=ACTOR,
@@ -302,6 +308,7 @@ def test_issue_replay_does_not_consume_clock_or_recheck_later_project_state(repo
         raise AssertionError("idempotent replay must not read the clock")
 
     repository._now = forbidden_clock
+    repository._renderer = None
     replay = repository.issue_document(
         sales_order["id"],
         expected_version=sales_order["lock_version"],
@@ -310,6 +317,108 @@ def test_issue_replay_does_not_consume_clock_or_recheck_later_project_state(repo
     )
     assert replay == issued
     assert clock_calls == ["called"]
+
+
+def test_repository_invoice_command_applies_dp_progress_and_final_policy(repository):
+    subject = service(repository)
+    created = subject.create_project(
+        {
+            "name": "Invoice Policy",
+            "client_name": "Client",
+            "issuer_key": "hollawall",
+        },
+        idempotency_key="invoice-policy-project-0001",
+        actor=ACTOR,
+    )
+    sales_order = set_total(
+        repository,
+        created["sales_order"],
+        1_000_001,
+        "invoice-policy-sales-order-update-0001",
+    )
+    issue(repository, sales_order, "invoice-policy-sales-order-issue-0001")
+
+    dp = subject.create_invoice(
+        created["project"]["id"],
+        kind="DP",
+        values={},
+        idempotency_key="invoice-policy-dp-create-0001",
+        actor=ACTOR,
+    )
+    assert dp["lines"][0]["line_total"] == 500_001
+
+    with pytest.raises(Exception, match="PROGRESS invoice requires explicit lines"):
+        subject.create_invoice(
+            created["project"]["id"],
+            kind="PROGRESS",
+            values={},
+            idempotency_key="invoice-policy-progress-create-0001",
+            actor=ACTOR,
+        )
+    with pytest.raises(Exception, match="cannot add discount or tax"):
+        subject.create_invoice(
+            created["project"]["id"],
+            kind="FINAL",
+            values={"tax_percent": "1"},
+            idempotency_key="invoice-policy-final-tax-create-0001",
+            actor=ACTOR,
+        )
+
+
+def test_active_final_blocks_later_invoice_until_void(repository):
+    subject = service(repository)
+    created = subject.create_project(
+        {
+            "name": "Final Lifecycle",
+            "client_name": "Client",
+            "issuer_key": "hollawall",
+        },
+        idempotency_key="final-lifecycle-project-0001",
+        actor=ACTOR,
+    )
+    sales_order = set_total(
+        repository,
+        created["sales_order"],
+        900_000,
+        "final-lifecycle-sales-order-update-0001",
+    )
+    issue(repository, sales_order, "final-lifecycle-sales-order-issue-0001")
+    final = subject.create_invoice(
+        created["project"]["id"],
+        kind="FINAL",
+        values={},
+        idempotency_key="final-lifecycle-final-create-0001",
+        actor=ACTOR,
+    )
+    issued_final = issue(repository, final, "final-lifecycle-final-issue-0001")
+    with pytest.raises(ProjectDocumentConflict, match="active FINAL"):
+        subject.create_invoice(
+            created["project"]["id"],
+            kind="DP",
+            values={"lines": [{
+                "description": "Late DP",
+                "quantity": "1",
+                "unit": "termin",
+                "unit_price": 1,
+            }]},
+            idempotency_key="final-lifecycle-late-dp-create-0001",
+            actor=ACTOR,
+        )
+    repository.void_document(
+        issued_final["id"],
+        reason="Commercial correction",
+        expected_version=issued_final["lock_version"],
+        idempotency_key="final-lifecycle-final-void-0001",
+        actor=ACTOR,
+    )
+    replacement = subject.create_invoice(
+        created["project"]["id"],
+        kind="FINAL",
+        values={},
+        idempotency_key="final-lifecycle-final-replacement-0001",
+        actor=ACTOR,
+    )
+    assert replacement["lines"][0]["line_total"] == 900_000
 
 
 @pytest.mark.parametrize(
@@ -352,10 +461,20 @@ def test_repository_direct_document_create_enforces_numeric_boundaries(repositor
         idempotency_key=f"service-numeric-project-{len(lines):04d}",
         actor=ACTOR,
     )
+    sales_order = set_total(
+        repository,
+        created["sales_order"],
+        1_000_000,
+        f"service-numeric-sales-order-update-{len(lines):04d}",
+    )
+    issue(
+        repository,
+        sales_order,
+        f"service-numeric-sales-order-issue-{len(lines):04d}",
+    )
     with pytest.raises(Exception) as captured:
-        repository.create_document_draft(
+        repository.create_invoice_draft(
             created["project"]["id"],
-            document_type="invoice",
             values={"invoice_kind": "DP", "lines": lines},
             idempotency_key=f"service-numeric-document-{len(lines):04d}",
             actor=ACTOR,

@@ -388,6 +388,45 @@ class DurablePipelineTests(unittest.TestCase):
         self.assertTrue(body["dashboard_write_schema"]["writes_enabled"])
         self.assertNotIn("hermes_ai", body)
 
+    def test_health_requires_project_schema_when_transaction_writes_enabled(self):
+        import main
+
+        provider = {
+            "configured": False, "reachable": False, "connected": False,
+            "logged_in": False, "state": "disabled", "error": "",
+            "checked_at": "2026-09-02T00:00:00+00:00",
+        }
+        with main.app.test_request_context("/health"), \
+             patch.dict(main.app.config, {"DASHBOARD_TRANSACTION_WRITES_ENABLED": True}), \
+             patch.object(main, "inbox_health", return_value={"durable": True, "backend": "postgres"}), \
+             patch.object(main, "get_wuzapi_status", return_value=provider), \
+             patch.object(main, "dashboard_write_schema_health", return_value={"ready": True}), \
+             patch.object(main, "project_document_schema_health", return_value={"ready": False}):
+            response, status_code = main.health_check()
+
+        self.assertEqual(status_code, 503)
+        self.assertEqual(response.get_json()["status"], "unhealthy")
+        self.assertFalse(response.get_json()["project_document_schema"]["ready"])
+
+    def test_health_reports_but_does_not_require_project_schema_when_writes_disabled(self):
+        import main
+
+        provider = {
+            "configured": False, "reachable": False, "connected": False,
+            "logged_in": False, "state": "disabled", "error": "",
+            "checked_at": "2026-09-02T00:00:00+00:00",
+        }
+        with main.app.test_request_context("/health"), \
+             patch.dict(main.app.config, {"DASHBOARD_TRANSACTION_WRITES_ENABLED": False}), \
+             patch.object(main, "inbox_health", return_value={"durable": True, "backend": "postgres"}), \
+             patch.object(main, "get_wuzapi_status", return_value=provider), \
+             patch.object(main, "dashboard_write_schema_health", return_value={"ready": False}), \
+             patch.object(main, "project_document_schema_health", return_value={"ready": False}):
+            response, status_code = main.health_check()
+
+        self.assertEqual(status_code, 200)
+        self.assertFalse(response.get_json()["project_document_schema"]["ready"])
+
     def test_health_reports_memory_inbox_as_degraded(self):
         import main
 

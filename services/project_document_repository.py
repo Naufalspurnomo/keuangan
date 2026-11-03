@@ -68,6 +68,7 @@ class ProjectDocumentNotFound(ProjectDocumentError):
 
 ConnectionFactory = Callable[[str], Any]
 DocumentRenderer = Callable[[Mapping[str, Any]], tuple[bytes, str]]
+ReceiptAuthorityReader = Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]]
 
 
 def _database_url() -> str:
@@ -482,11 +483,13 @@ class ProjectDocumentRepository:
         connection_factory: ConnectionFactory | None = None,
         now: Callable[[], datetime] | None = None,
         renderer: DocumentRenderer | None = None,
+        receipt_authority_reader: ReceiptAuthorityReader | None = None,
     ) -> None:
         self._dsn = str(dsn or "").strip()
         self._connection_factory = connection_factory or _default_connection_factory
         self._now = now or (lambda: datetime.now(timezone.utc))
         self._renderer = renderer
+        self._receipt_authority_reader = receipt_authority_reader
 
     def _connect(self):
         dsn = self._dsn or _database_url()
@@ -1123,6 +1126,351 @@ class ProjectDocumentRepository:
             prepared["due_date"] = issue_date + timedelta(days=7)
         return prepared
 
+    @classmethod
+    def _locked_commercial_state(
+        cls,
+        cursor: Any,
+        project_id: str,
+        *,
+        excluding_document_id: str | None = None,
+    ) -> dict[str, Any]:
+        cursor.execute(
+            """
+            SELECT id, immutable_snapshot
+            FROM project_documents
+            WHERE project_id = %s
+              AND document_type = 'sales_order'
+              AND status = 'issued'
+            ORDER BY id
+            FOR UPDATE
+            """,
+            (project_id,),
+        )
+        sales_orders = cursor.fetchall()
+        if len(sales_orders) != 1:
+            raise ProjectDocumentConflict(
+                "invoice requires exactly one active issued Sales Order"
+            )
+        contract_total = cls._issued_snapshot_total(
+            sales_orders[0][1], label="Sales Order"
+        )
+        cursor.execute(
+            """
+            SELECT id, invoice_kind, immutable_snapshot
+            FROM project_documents
+            WHERE project_id = %s
+              AND document_type = 'invoice'
+              AND status = 'issued'
+            ORDER BY id
+            FOR UPDATE
+            """,
+            (project_id,),
+        )
+        invoices = [
+            row for row in cursor.fetchall()
+            if excluding_document_id is None or str(row[0]) != excluding_document_id
+        ]
+        active_final = next(
+            (row for row in invoices if str(row[1]) == "FINAL"), None
+        )
+        prior_total = 0
+        for invoice_id, _kind, snapshot in invoices:
+            prior_total = bounded_idr(
+                prior_total
+                + cls._issued_snapshot_total(snapshot, label="prior invoice"),
+                field="prior invoice total",
+            )
+        if prior_total > contract_total:
+            raise ProjectDocumentConflict(
+                f"commercial amount is overbilled by {prior_total - contract_total}"
+            )
+        return {
+            "contract_total": contract_total,
+            "prior_total": prior_total,
+            "residual": contract_total - prior_total,
+            "active_final_id": str(active_final[0]) if active_final else None,
+        }
+
+    def create_invoice_draft(
+        self,
+        project_id: str,
+        *,
+        values: Mapping[str, Any],
+        idempotency_key: str,
+        actor: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        supplied = dict(values)
+        invoice_kind = str(supplied.get("invoice_kind") or "").upper()
+        if invoice_kind not in INVOICE_KINDS:
+            raise ValueError("invoice_kind must be DP, PROGRESS, or FINAL")
+        actor_json, _ = _actor(actor)
+        request = {
+            "project_id": project_id,
+            "values": supplied,
+        }
+        document_id = str(uuid.uuid4())
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    key_hash, _, replay = self._claim(
+                        cursor, "invoice.create", idempotency_key, request
+                    )
+                    if replay is not None:
+                        return replay
+                    cursor.execute(
+                        "SELECT issuer_key, status FROM projects WHERE id = %s FOR UPDATE",
+                        (project_id,),
+                    )
+                    project = cursor.fetchone()
+                    if not project:
+                        raise ProjectDocumentNotFound("project not found")
+                    if str(project[1]) not in {"planned", "active"}:
+                        raise ProjectDocumentConflict(
+                            "invoices require a planned or active project"
+                        )
+                    commercial = self._locked_commercial_state(cursor, project_id)
+                    if commercial["active_final_id"]:
+                        raise ProjectDocumentConflict("an active FINAL invoice already exists")
+                    residual = int(commercial["residual"])
+                    if residual <= 0:
+                        raise ProjectDocumentConflict(
+                            "invoice residual commercial amount must be positive"
+                        )
+                    command = dict(supplied)
+                    lines = list(command.get("lines") or [])
+                    if invoice_kind == "FINAL":
+                        if lines:
+                            raise DocumentCalculationError(
+                                "FINAL invoice lines are repository-generated"
+                            )
+                        numeric = self._numeric_document_values(command)
+                        if (
+                            numeric["document_discount_amount"]
+                            or Decimal(numeric["document_discount_percent"])
+                            or Decimal(numeric["tax_percent"])
+                        ):
+                            raise DocumentCalculationError(
+                                "FINAL invoice cannot add discount or tax to the residual"
+                            )
+                        command.update(numeric)
+                        lines = [{
+                            "description": "Pelunasan akhir",
+                            "quantity": "1",
+                            "unit": "termin",
+                            "unit_price": residual,
+                            "line_discount_percent": "0",
+                        }]
+                    elif invoice_kind == "DP" and not lines:
+                        suggestion = int(
+                            (Decimal(residual) * Decimal("0.5")).quantize(
+                                Decimal("1"), rounding=ROUND_HALF_UP
+                            )
+                        )
+                        if suggestion <= 0:
+                            raise ProjectDocumentConflict(
+                                "DP suggestion must be positive"
+                            )
+                        lines = [{
+                            "description": "Uang muka 50%",
+                            "quantity": "1",
+                            "unit": "termin",
+                            "unit_price": suggestion,
+                            "line_discount_percent": "0",
+                        }]
+                    elif invoice_kind == "PROGRESS" and not lines:
+                        raise DocumentCalculationError(
+                            "PROGRESS invoice requires explicit lines"
+                        )
+                    command["lines"] = lines
+                    prepared = self._numeric_document_values(
+                        self._with_document_defaults("invoice", command)
+                    )
+                    document = self._insert_document(
+                        cursor,
+                        document_id=document_id,
+                        project_id=project_id,
+                        issuer_key=str(project[0]),
+                        document_type="invoice",
+                        invoice_kind=invoice_kind,
+                        values=prepared,
+                        actor_json=actor_json,
+                    )
+                    self._replace_lines(cursor, document_id, lines)
+                    document = self._load_document(cursor, document_id)
+                    total = int(self._calculate_totals(document)["total"])
+                    if total > residual:
+                        raise ProjectDocumentConflict(
+                            f"invoice total exceeds residual commercial amount {residual}"
+                        )
+                    if invoice_kind == "FINAL" and total != residual:
+                        raise ProjectDocumentConflict(
+                            f"FINAL invoice total must equal residual commercial amount {residual}"
+                        )
+                    self._event(
+                        cursor,
+                        project_id=project_id,
+                        document_id=document_id,
+                        event_type="document.created",
+                        actor_json=actor_json,
+                        data={
+                            "document_type": "invoice",
+                            "invoice_kind": invoice_kind,
+                            "contract_total": commercial["contract_total"],
+                            "prior_invoice_total": commercial["prior_total"],
+                            "residual_before_draft": residual,
+                            "draft_total": total,
+                        },
+                    )
+                    return self._complete(cursor, key_hash, document)
+        except (ProjectDocumentError, DocumentCalculationError, ValueError, TypeError):
+            raise
+        except Exception as exc:
+            if "uq_project_active_final_invoice" in str(exc):
+                raise ProjectDocumentConflict(
+                    "an active FINAL invoice already exists"
+                ) from exc
+            raise ProjectDocumentUnavailable(
+                f"Project document database unavailable: {type(exc).__name__}"
+            ) from exc
+
+    def create_receipt_draft(
+        self,
+        project_id: str,
+        *,
+        values: Mapping[str, Any],
+        allocations: Sequence[Mapping[str, Any]],
+        idempotency_key: str,
+        actor: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        materialized = [dict(item) for item in allocations]
+        normalized_allocations = self._normalize_allocations(materialized)
+        canonical_allocations = [
+            {"ledger_source_key": source_key, "amount": amount}
+            for source_key, amount in normalized_allocations
+        ]
+        supplied = dict(values)
+        if supplied.get("lines"):
+            raise ProjectDocumentConflict(
+                "receipt amount is derived from authoritative allocations"
+            )
+        if (
+            integer_rupiah(
+                supplied.get("document_discount_amount", 0),
+                field="receipt document_discount_amount",
+            )
+            or decimal_value(
+                supplied.get("document_discount_percent", "0"),
+                field="receipt document_discount_percent",
+                maximum=PERCENT_MAX,
+                max_fractional_digits=4,
+            )
+            or decimal_value(
+                supplied.get("tax_percent", "0"),
+                field="receipt tax_percent",
+                maximum=PERCENT_MAX,
+                max_fractional_digits=4,
+            )
+        ):
+            raise ProjectDocumentConflict(
+                "receipt cannot add discount or tax to authoritative allocations"
+            )
+        canonical_values = dict(supplied)
+        canonical_values.pop("lines", None)
+        canonical_values["document_discount_amount"] = 0
+        canonical_values["document_discount_percent"] = "0"
+        canonical_values["tax_percent"] = "0"
+        actor_json, _ = _actor(actor)
+        document_id = str(uuid.uuid4())
+        request = {
+            "project_id": project_id,
+            "values": canonical_values,
+            "allocations": canonical_allocations,
+        }
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    key_hash, _, replay = self._claim(
+                        cursor,
+                        "receipt.create",
+                        idempotency_key,
+                        request,
+                    )
+                    if replay is not None:
+                        return replay
+                    cursor.execute(
+                        "SELECT id, issuer_key, wallet, company FROM projects "
+                        "WHERE id = %s FOR UPDATE",
+                        (project_id,),
+                    )
+                    project = _row_dict(
+                        cursor,
+                        ["id", "issuer_key", "wallet", "company"],
+                        cursor.fetchone(),
+                    )
+                    if not project:
+                        raise ProjectDocumentNotFound("project not found")
+                    prepared_values = self._numeric_document_values(
+                        self._with_document_defaults("receipt", canonical_values)
+                    )
+                    document = self._insert_document(
+                        cursor,
+                        document_id=document_id,
+                        project_id=project_id,
+                        issuer_key=str(project["issuer_key"]),
+                        document_type="receipt",
+                        invoice_kind=None,
+                        values=prepared_values,
+                        actor_json=actor_json,
+                    )
+                    prepared = self._prepare_receipt_allocations(
+                        cursor,
+                        document_id=document_id,
+                        project=project,
+                        allocations=materialized,
+                        stage="draft",
+                    )
+                    self._insert_receipt_allocations(
+                        cursor,
+                        document_id=document_id,
+                        prepared=prepared,
+                    )
+                    allocation_total = bounded_idr(
+                        sum(item[1] for item in prepared),
+                        field="receipt allocation total",
+                    )
+                    self._replace_lines(
+                        cursor,
+                        document_id,
+                        [
+                            {
+                                "description": "Pembayaran diterima",
+                                "quantity": "1",
+                                "unit": "pembayaran",
+                                "unit_price": allocation_total,
+                            }
+                        ],
+                    )
+                    document = self._load_document(cursor, document_id)
+                    self._event(
+                        cursor,
+                        project_id=project_id,
+                        document_id=document_id,
+                        event_type="document.created",
+                        actor_json=actor_json,
+                        data={
+                            "document_type": "receipt",
+                            "allocation_count": len(prepared),
+                            "allocation_total": sum(item[1] for item in prepared),
+                        },
+                    )
+                    return self._complete(cursor, key_hash, document)
+        except (ProjectDocumentError, DocumentCalculationError, ValueError, TypeError):
+            raise
+        except Exception as exc:
+            raise ProjectDocumentUnavailable(
+                f"Project document database unavailable: {type(exc).__name__}"
+            ) from exc
+
     def create_document_draft(
         self,
         project_id: str,
@@ -1132,12 +1480,21 @@ class ProjectDocumentRepository:
         idempotency_key: str,
         actor: Mapping[str, Any],
     ) -> dict[str, Any]:
-        if document_type not in DOCUMENT_TYPES:
+        if document_type == "invoice":
+            return self.create_invoice_draft(
+                project_id,
+                values=values,
+                idempotency_key=idempotency_key,
+                actor=actor,
+            )
+        if document_type == "receipt":
+            raise ProjectDocumentConflict(
+                "receipt drafts require atomic authoritative allocations"
+            )
+        if document_type != "sales_order":
             raise ValueError("unsupported document type")
         invoice_kind = values.get("invoice_kind")
-        if document_type == "invoice" and invoice_kind not in INVOICE_KINDS:
-            raise ValueError("invoice_kind must be DP, PROGRESS, or FINAL")
-        if document_type != "invoice" and invoice_kind is not None:
+        if invoice_kind is not None:
             raise ValueError("invoice_kind is only valid for invoices")
         actor_json, _ = _actor(actor)
         document_id = str(uuid.uuid4())
@@ -1392,6 +1749,28 @@ class ProjectDocumentRepository:
                     key_hash, _, replay = self._claim(cursor, "document.update", idempotency_key, request)
                     if replay is not None:
                         return replay
+                    existing = self._load_document(
+                        cursor,
+                        document_id,
+                        for_update=True,
+                    )
+                    if existing["status"] != "draft":
+                        raise ProjectDocumentConflict(
+                            "only a draft document may be changed"
+                        )
+                    monetary_fields = {
+                        "lines",
+                        "document_discount_amount",
+                        "document_discount_percent",
+                        "tax_percent",
+                    }
+                    if (
+                        existing["document_type"] == "receipt"
+                        and monetary_fields.intersection(supplied)
+                    ):
+                        raise ProjectDocumentConflict(
+                            "receipt amount is derived from authoritative allocations"
+                        )
                     cursor.execute(
                         f"UPDATE project_documents SET {', '.join(assignments)} "
                         "WHERE id = %s AND lock_version = %s AND status = 'draft' RETURNING project_id",
@@ -1488,6 +1867,151 @@ class ProjectDocumentRepository:
         )
         return int(cursor.fetchone()[0] or 0)
 
+    @staticmethod
+    def _normalize_allocations(
+        allocations: Sequence[Mapping[str, Any]],
+    ) -> list[tuple[str, int]]:
+        materialized = [dict(item) for item in allocations]
+        if not materialized:
+            raise ValueError("at least one allocation is required")
+        seen: set[str] = set()
+        normalized: list[tuple[str, int]] = []
+        for allocation in materialized:
+            source_key = str(allocation.get("ledger_source_key") or "").strip()
+            amount = allocation.get("amount")
+            if (
+                not source_key
+                or source_key in seen
+                or isinstance(amount, bool)
+                or not isinstance(amount, int)
+                or amount <= 0
+            ):
+                raise ValueError("receipt allocation is invalid")
+            amount = bounded_idr(amount, field="receipt allocation amount")
+            seen.add(source_key)
+            normalized.append((source_key, amount))
+        return sorted(normalized)
+
+    def _read_receipt_authority(
+        self,
+        ledger: Mapping[str, Any],
+        project: Mapping[str, Any],
+        *,
+        stage: str,
+    ) -> dict[str, Any]:
+        if self._receipt_authority_reader is None:
+            raise ProjectDocumentUnavailable(
+                "receipt authority reader is not configured"
+            )
+        try:
+            observed = dict(self._receipt_authority_reader(ledger, project))
+        except ProjectDocumentError:
+            raise
+        except Exception as exc:
+            raise ProjectDocumentUnavailable(
+                "authoritative receipt Sheet verification failed"
+            ) from exc
+        expected = {
+            "source_key": str(ledger.get("source_key") or ""),
+            "source_sheet": str(ledger.get("source_sheet") or ""),
+            "source_block": "pemasukan",
+            "message_id": str(ledger.get("message_id") or "") or None,
+            "direction": "Pemasukan",
+            "amount": int(ledger.get("amount") or 0),
+            "project_id": str(project.get("id") or ""),
+            "wallet": str(project.get("wallet") or ""),
+            "company": str(project.get("company") or ""),
+        }
+        mismatches = [
+            field
+            for field, value in expected.items()
+            if observed.get(field) != value
+        ]
+        if mismatches:
+            raise ProjectDocumentConflict(
+                "authoritative receipt source mismatch: "
+                + ", ".join(sorted(mismatches))
+            )
+        raw_hash = str(observed.get("raw_cells_sha256") or "")
+        if len(raw_hash) != 64:
+            raise ProjectDocumentConflict(
+                "authoritative receipt source has invalid evidence"
+            )
+        return {
+            "schema_version": 1,
+            "adapter_version": "google-sheets-split-ledger/1",
+            "verification_stage": stage,
+            "verified_at": _instant(self._now()).isoformat(),
+            **observed,
+        }
+
+    def _prepare_receipt_allocations(
+        self,
+        cursor: Any,
+        *,
+        document_id: str,
+        project: Mapping[str, Any],
+        allocations: Sequence[Mapping[str, Any]],
+        stage: str,
+    ) -> list[tuple[str, int, dict[str, Any], dict[str, Any]]]:
+        prepared = []
+        for source_key, amount in self._normalize_allocations(allocations):
+            ledger = self._ledger_row(cursor, source_key)
+            self._validate_income_row(
+                ledger,
+                project_id=str(project["id"]),
+                issuer=project,
+            )
+            authority = self._read_receipt_authority(
+                ledger,
+                project,
+                stage=stage,
+            )
+            available = int(ledger["amount"]) - self._allocated_amount(
+                cursor,
+                source_key,
+                excluding_document_id=document_id,
+            )
+            if amount > available:
+                raise ProjectDocumentConflict(
+                    "receipt allocation exceeds available income"
+                )
+            prepared.append((source_key, amount, ledger, authority))
+        return prepared
+
+    @staticmethod
+    def _insert_receipt_allocations(
+        cursor: Any,
+        *,
+        document_id: str,
+        prepared: Sequence[tuple[str, int, Mapping[str, Any], Mapping[str, Any]]],
+    ) -> None:
+        for source_key, amount, ledger, authority in prepared:
+            snapshot_json, _ = _json(
+                {
+                    "schema_version": 1,
+                    "projection_snapshot": dict(ledger),
+                    "draft_authority": dict(authority),
+                },
+                label="receipt authority snapshot",
+            )
+            cursor.execute(
+                """
+                INSERT INTO project_document_allocations (
+                    id, document_id, ledger_source_key, amount,
+                    ledger_amount, ledger_snapshot
+                ) VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    document_id,
+                    source_key,
+                    amount,
+                    int(ledger["amount"]),
+                    snapshot_json,
+                ),
+            )
+
     def lock_allocations(
         self,
         document_id: str,
@@ -1514,44 +2038,44 @@ class ProjectDocumentRepository:
                     if int(document["lock_version"]) != int(expected_version):
                         raise ProjectDocumentConflict("optimistic lock version conflict")
                     cursor.execute(
-                        "SELECT wallet, company FROM projects WHERE id = %s FOR UPDATE",
+                        "SELECT id, wallet, company FROM projects WHERE id = %s FOR UPDATE",
                         (document["project_id"],),
                     )
-                    issuer = _row_dict(cursor, ["wallet", "company"], cursor.fetchone()) or {}
-                    prepared = []
-                    seen = set()
-                    normalized = []
-                    for allocation in materialized:
-                        source_key = str(allocation.get("ledger_source_key") or "").strip()
-                        amount = allocation.get("amount")
-                        if not source_key or source_key in seen or isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
-                            raise ValueError("receipt allocation is invalid")
-                        seen.add(source_key)
-                        normalized.append((source_key, amount))
-                    for source_key, amount in sorted(normalized):
-                        ledger = self._ledger_row(cursor, source_key)
-                        self._validate_income_row(ledger, project_id=document["project_id"], issuer=issuer)
-                        available = int(ledger["amount"]) - self._allocated_amount(
-                            cursor, source_key, excluding_document_id=document_id
-                        )
-                        if amount > available:
-                            raise ProjectDocumentConflict("receipt allocation exceeds available income")
-                        prepared.append((source_key, amount, ledger))
-                    cursor.execute("DELETE FROM project_document_allocations WHERE document_id = %s", (document_id,))
-                    for source_key, amount, ledger in prepared:
-                        snapshot_json, _ = _json(ledger, label="ledger snapshot")
-                        cursor.execute(
-                            """
-                            INSERT INTO project_document_allocations (
-                                id, document_id, ledger_source_key, amount,
-                                ledger_amount, ledger_snapshot
-                            ) VALUES (%s, %s, %s, %s, %s, %s::jsonb)
-                            """,
-                            (
-                                str(uuid.uuid4()), document_id, source_key, amount,
-                                int(ledger["amount"]), snapshot_json,
-                            ),
-                        )
+                    project = _row_dict(
+                        cursor, ["id", "wallet", "company"], cursor.fetchone()
+                    ) or {}
+                    prepared = self._prepare_receipt_allocations(
+                        cursor,
+                        document_id=document_id,
+                        project=project,
+                        allocations=materialized,
+                        stage="draft",
+                    )
+                    cursor.execute(
+                        "DELETE FROM project_document_allocations WHERE document_id = %s",
+                        (document_id,),
+                    )
+                    self._insert_receipt_allocations(
+                        cursor,
+                        document_id=document_id,
+                        prepared=prepared,
+                    )
+                    allocation_total = bounded_idr(
+                        sum(item[1] for item in prepared),
+                        field="receipt allocation total",
+                    )
+                    self._replace_lines(
+                        cursor,
+                        document_id,
+                        [
+                            {
+                                "description": "Pembayaran diterima",
+                                "quantity": "1",
+                                "unit": "pembayaran",
+                                "unit_price": allocation_total,
+                            }
+                        ],
+                    )
                     cursor.execute(
                         """
                         UPDATE project_documents
@@ -1587,13 +2111,19 @@ class ProjectDocumentRepository:
         if not allocations:
             raise ProjectDocumentConflict("receipt requires verified income allocations")
         cursor.execute(
-            "SELECT wallet, company FROM projects WHERE id = %s FOR UPDATE",
+            "SELECT id, wallet, company FROM projects WHERE id = %s FOR UPDATE",
             (document["project_id"],),
         )
-        issuer = _row_dict(cursor, ["wallet", "company"], cursor.fetchone()) or {}
+        project = _row_dict(
+            cursor, ["id", "wallet", "company"], cursor.fetchone()
+        ) or {}
         for allocation in sorted(allocations, key=lambda item: str(item["ledger_source_key"])):
             ledger = self._ledger_row(cursor, allocation["ledger_source_key"])
-            self._validate_income_row(ledger, project_id=document["project_id"], issuer=issuer)
+            self._validate_income_row(
+                ledger,
+                project_id=document["project_id"],
+                issuer=project,
+            )
             available = int(ledger["amount"]) - self._allocated_amount(
                 cursor, allocation["ledger_source_key"], excluding_document_id=document["id"]
             )
@@ -1601,6 +2131,53 @@ class ProjectDocumentRepository:
                 raise ProjectDocumentConflict("receipt allocation exceeds available income")
             if int(allocation["ledger_amount"]) != int(ledger["amount"]):
                 raise ProjectDocumentConflict("receipt allocation source amount changed")
+            snapshot = _safe_json_object(allocation.get("ledger_snapshot")) or {}
+            draft_authority = snapshot.get("draft_authority")
+            if not isinstance(draft_authority, Mapping):
+                raise ProjectDocumentConflict(
+                    "receipt allocation has no authoritative draft evidence"
+                )
+            issue_authority = self._read_receipt_authority(
+                ledger,
+                project,
+                stage="issue",
+            )
+            for field in (
+                "source_key",
+                "source_sheet",
+                "source_block",
+                "message_id",
+                "direction",
+                "amount",
+                "transaction_date",
+                "project_id",
+                "wallet",
+                "company",
+                "raw_cells_sha256",
+            ):
+                if issue_authority.get(field) != draft_authority.get(field):
+                    raise ProjectDocumentConflict(
+                        f"authoritative receipt source changed after draft: {field}"
+                    )
+            snapshot["issue_authority"] = issue_authority
+            snapshot_json, canonical_snapshot = _json(
+                snapshot,
+                label="receipt authority snapshot",
+            )
+            cursor.execute(
+                "UPDATE project_document_allocations SET ledger_snapshot = %s::jsonb "
+                "WHERE id = %s",
+                (snapshot_json, allocation["id"]),
+            )
+            allocation["ledger_snapshot"] = canonical_snapshot
+        allocation_total = bounded_idr(
+            sum(int(item["amount"]) for item in allocations),
+            field="receipt allocation total",
+        )
+        if int(self._calculate_totals(document)["total"]) != allocation_total:
+            raise ProjectDocumentConflict(
+                "receipt total must equal authoritative allocation total"
+            )
 
     @staticmethod
     def _calculate_totals(document: Mapping[str, Any]) -> dict[str, int | str]:
@@ -1689,12 +2266,12 @@ class ProjectDocumentRepository:
         return total
 
     @classmethod
-    def _validate_final_residual(
+    def _validate_invoice_commercial_state(
         cls,
         cursor: Any,
         document: Mapping[str, Any],
     ) -> None:
-        if document.get("document_type") != "invoice" or document.get("invoice_kind") != "FINAL":
+        if document.get("document_type") != "invoice":
             return
         cursor.execute(
             """
@@ -1711,9 +2288,9 @@ class ProjectDocumentRepository:
         sales_orders = cursor.fetchall()
         if len(sales_orders) != 1:
             raise ProjectDocumentConflict(
-                "FINAL invoice requires exactly one active issued Sales Order"
+                "invoice requires exactly one active issued Sales Order"
             )
-        commercial_total = cls._issued_snapshot_total(
+        contract_total = cls._issued_snapshot_total(
             sales_orders[0][1], label="Sales Order"
         )
         cursor.execute(
@@ -1727,7 +2304,7 @@ class ProjectDocumentRepository:
                 FROM project_documents parent
                 JOIN revision_chain child ON parent.id = child.revision_of_id
             )
-            SELECT d.id, d.immutable_snapshot
+            SELECT d.id, d.invoice_kind, d.immutable_snapshot
             FROM project_documents d
             WHERE d.project_id = %s
               AND d.document_type = 'invoice'
@@ -1740,17 +2317,27 @@ class ProjectDocumentRepository:
             """,
             (document["id"], document["project_id"]),
         )
-        prior_invoice_total = sum(
-            cls._issued_snapshot_total(snapshot, label="prior invoice")
-            for _invoice_id, snapshot in cursor.fetchall()
-        )
-        residual = commercial_total - prior_invoice_total
+        issued = cursor.fetchall()
+        if any(str(kind) == "FINAL" for _invoice_id, kind, _snapshot in issued):
+            raise ProjectDocumentConflict("an active FINAL invoice already exists")
+        prior_invoice_total = 0
+        for _invoice_id, _kind, snapshot in issued:
+            prior_invoice_total = bounded_idr(
+                prior_invoice_total
+                + cls._issued_snapshot_total(snapshot, label="prior invoice"),
+                field="prior invoice total",
+            )
+        residual = contract_total - prior_invoice_total
         if residual < 0:
             raise ProjectDocumentConflict(
                 f"commercial amount is overbilled by {-residual}"
             )
-        final_total = int(cls._calculate_totals(document)["total"])
-        if final_total != residual:
+        invoice_total = int(cls._calculate_totals(document)["total"])
+        if invoice_total > residual:
+            raise ProjectDocumentConflict(
+                f"invoice total exceeds residual commercial amount {residual}"
+            )
+        if document.get("invoice_kind") == "FINAL" and invoice_total != residual:
             raise ProjectDocumentConflict(
                 f"FINAL invoice total must equal residual commercial amount {residual}"
             )
@@ -1810,8 +2397,6 @@ class ProjectDocumentRepository:
         actor: Mapping[str, Any],
         issued_at: datetime | None = None,
     ) -> dict[str, Any]:
-        if self._renderer is None:
-            raise ProjectDocumentUnavailable("document renderer is not configured")
         actor_json, _ = _actor(actor)
         request = {
             "document_id": document_id,
@@ -1826,6 +2411,10 @@ class ProjectDocumentRepository:
                     )
                     if replay is not None:
                         return replay
+                    if self._renderer is None:
+                        raise ProjectDocumentUnavailable(
+                            "document renderer is not configured"
+                        )
                     instant = _instant(issued_at or self._now())
                     document = self._load_document(cursor, document_id, for_update=True)
                     if document["status"] != "draft":
@@ -1848,7 +2437,7 @@ class ProjectDocumentRepository:
                             "invoices require a planned or active project"
                         )
                     self._revalidate_allocations(cursor, document)
-                    self._validate_final_residual(cursor, document)
+                    self._validate_invoice_commercial_state(cursor, document)
                     year = instant.astimezone(JAKARTA).year
                     cursor.execute(
                         """

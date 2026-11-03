@@ -28,6 +28,10 @@ from services.dashboard_write_requests import (
     dashboard_write_schema_health as read_dashboard_write_schema_health,
     ensure_dashboard_write_schema,
 )
+from services.project_document_repository import (
+    ProjectDocumentUnavailable,
+    project_document_schema_health as read_project_document_schema_health,
+)
 from werkzeug.exceptions import RequestEntityTooLarge
 
 # Load environment variables
@@ -220,6 +224,34 @@ def dashboard_write_schema_health():
             'table': False,
             'columns': False,
             'unique_index': False,
+            'error': type(exc).__name__,
+        }
+
+
+def project_document_schema_health():
+    """Read back the authoritative project/document schema without DDL."""
+    writes_enabled = str(
+        os.getenv('DASHBOARD_TRANSACTION_WRITES_ENABLED') or ''
+    ).strip().casefold() in {'1', 'true', 'yes', 'on'}
+    dsn = str(os.getenv('STATE_DATABASE_URL') or os.getenv('DATABASE_URL') or '').strip()
+    if not dsn:
+        return {
+            'configured': False,
+            'writes_enabled': writes_enabled,
+            'ready': False,
+        }
+    try:
+        return {
+            'configured': True,
+            'writes_enabled': writes_enabled,
+            **read_project_document_schema_health(dsn),
+        }
+    except ProjectDocumentUnavailable as exc:
+        secure_log("ERROR", f"Project document schema unavailable: {type(exc).__name__}")
+        return {
+            'configured': True,
+            'writes_enabled': writes_enabled,
+            'ready': False,
             'error': type(exc).__name__,
         }
 
@@ -420,6 +452,7 @@ def health_check():
         inbox = inbox_health()
         durable = bool(inbox.get('durable'))
         dashboard_schema = dashboard_write_schema_health()
+        project_schema = project_document_schema_health()
         try:
             whatsapp_provider = get_wuzapi_status()
         except Exception as exc:
@@ -456,10 +489,16 @@ def health_check():
         security_ready = not security_missing
         dashboard_writes_enabled = bool(app.config.get('DASHBOARD_TRANSACTION_WRITES_ENABLED', False))
         dashboard_schema_ready = not dashboard_writes_enabled or bool(dashboard_schema.get('ready'))
-        serving = (durable or not inbox_required()) and security_ready and dashboard_schema_ready
+        project_schema_ready = not dashboard_writes_enabled or bool(project_schema.get('ready'))
+        serving = (
+            (durable or not inbox_required())
+            and security_ready
+            and dashboard_schema_ready
+            and project_schema_ready
+        )
         if not security_ready:
             overall_status = 'unhealthy'
-        elif not dashboard_schema_ready:
+        elif not dashboard_schema_ready or not project_schema_ready:
             overall_status = 'unhealthy'
         elif durable and whatsapp_ready:
             overall_status = 'healthy'
@@ -471,6 +510,7 @@ def health_check():
             'transaction_inbox': inbox,
             'whatsapp_provider': whatsapp_provider,
             'dashboard_write_schema': dashboard_schema,
+            'project_document_schema': project_schema,
             'security': {
                 'ready': security_ready,
                 'required': security_required,

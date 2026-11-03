@@ -25,8 +25,8 @@ class ProjectDocumentStore(Protocol):
     def create_project_with_sales_order(self, values: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]: ...
     def get_project(self, project_id: str) -> dict[str, Any]: ...
     def create_document_draft(self, project_id: str, **kwargs: Any) -> dict[str, Any]: ...
+    def create_invoice_draft(self, project_id: str, **kwargs: Any) -> dict[str, Any]: ...
     def create_receipt_draft(self, project_id: str, **kwargs: Any) -> dict[str, Any]: ...
-    def get_project_commercial_totals(self, project_id: str) -> dict[str, int]: ...
     def update_draft(
         self,
         document_id: str,
@@ -211,30 +211,29 @@ class ProjectDocumentService:
         command["invoice_kind"] = kind
         command.setdefault("tax_percent", "0")
         if kind == "FINAL":
-            commercial = self._repository.get_project_commercial_totals(project_id)
-            residual = int(commercial["contract_total"]) - int(commercial["invoiced_non_final"])
-            if residual <= 0:
-                raise ValueError("FINAL invoice residual must be positive")
-            command["lines"] = [
-                {
-                    "description": "Pelunasan akhir",
-                    "quantity": "1",
-                    "unit": "termin",
-                    "unit_price": residual,
-                    "line_discount_percent": "0",
-                }
-            ]
-        totals = calculate_document_totals(
-            command.get("lines") or [],
-            document_discount_amount=command.get("document_discount_amount", 0),
-            document_discount_percent=command.get("document_discount_percent", "0"),
-            tax_percent=command.get("tax_percent", "0"),
-        )
-        command["lines"] = totals["lines"]
-        command["totals"] = {key: value for key, value in totals.items() if key != "lines"}
-        return self._repository.create_document_draft(
+            if command.get("lines"):
+                raise DocumentCalculationError("FINAL invoice lines are repository-generated")
+            if (
+                int(command.get("document_discount_amount") or 0)
+                or Decimal(str(command.get("document_discount_percent") or "0"))
+                or Decimal(str(command.get("tax_percent") or "0"))
+            ):
+                raise DocumentCalculationError(
+                    "FINAL invoice cannot add discount or tax to the residual"
+                )
+        elif command.get("lines"):
+            totals = calculate_document_totals(
+                command["lines"],
+                document_discount_amount=command.get("document_discount_amount", 0),
+                document_discount_percent=command.get("document_discount_percent", "0"),
+                tax_percent=command.get("tax_percent", "0"),
+            )
+            command["lines"] = totals["lines"]
+            command["totals"] = {key: value for key, value in totals.items() if key != "lines"}
+        elif kind == "PROGRESS":
+            raise DocumentCalculationError("PROGRESS invoice requires explicit lines")
+        return self._repository.create_invoice_draft(
             project_id,
-            document_type="invoice",
             values=command,
             idempotency_key=idempotency_key,
             actor=_actor(actor),

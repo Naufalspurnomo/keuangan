@@ -20,11 +20,17 @@ def register_dashboard(
     app: Flask,
     *,
     repository: Optional[Any] = None,
+    project_document_repository: Optional[Any] = None,
     transaction_service: Optional[Any] = None,
 ) -> None:
     """Register dashboard routes without modifying existing webhook behavior."""
     # Import lazily so standalone transaction services can import contracts.
     from dashboard_api.routes import create_dashboard_blueprint
+    from services.dashboard_transaction_service import GoogleSheetsTransactionAdapter
+    from services.project_document_repository import (
+        ProjectDocumentRepository,
+        ProjectDocumentUnavailable,
+    )
 
     app.config.setdefault("DASHBOARD_OWNER_EMAIL", os.getenv("DASHBOARD_OWNER_EMAIL", ""))
     app.config.setdefault(
@@ -46,17 +52,33 @@ def register_dashboard(
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["SESSION_COOKIE_NAME"] = "hollawall_owner_session"
 
+    dsn = str(os.getenv("STATE_DATABASE_URL") or os.getenv("DATABASE_URL") or "").strip()
     selected_repository = repository
     if selected_repository is None:
-        dsn = str(os.getenv("STATE_DATABASE_URL") or os.getenv("DATABASE_URL") or "").strip()
         if not dsn:
             # Registration stays explicit and safe in production. Tests and local
             # tooling can inject a repository without a database.
             return
         selected_repository = DashboardRepository(dsn)
+
+    selected_project_documents = project_document_repository
+    if selected_project_documents is None and dsn:
+        selected_project_documents = ProjectDocumentRepository(
+            dsn,
+            receipt_authority_reader=GoogleSheetsTransactionAdapter.read_receipt_authority,
+        )
+
+    def project_uuid_exists(project_id: str, wallet: str, company: str) -> bool:
+        if selected_project_documents is None:
+            raise ProjectDocumentUnavailable(
+                "authoritative project repository is not configured"
+            )
+        return selected_project_documents.project_exists(project_id, wallet, company)
+
     app.register_blueprint(
         create_dashboard_blueprint(
             selected_repository,
+            project_uuid_exists=project_uuid_exists,
             transaction_service=transaction_service,
         )
     )

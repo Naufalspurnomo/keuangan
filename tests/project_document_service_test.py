@@ -108,6 +108,27 @@ class FakeRepository:
             "due_date": kwargs["values"].get("due_date") or "2026-11-10",
         }
 
+    def create_invoice_draft(self, project_id, **kwargs):
+        self.calls.append(("create_invoice_draft", project_id, kwargs))
+        values = dict(kwargs["values"])
+        if values["invoice_kind"] == "FINAL":
+            values["lines"] = [{
+                "description": "Pelunasan akhir",
+                "quantity": "1",
+                "unit": "termin",
+                "unit_price": 400_000,
+                "line_discount_percent": "0",
+                "line_gross": 400_000,
+                "line_discount": 0,
+                "line_total": 400_000,
+            }]
+        return {
+            **self.document,
+            **values,
+            "document_type": "invoice",
+            "due_date": values.get("due_date") or "2026-11-10",
+        }
+
     def create_receipt_draft(self, project_id, **kwargs):
         self.calls.append(("create_receipt_draft", project_id, kwargs))
         return {
@@ -194,11 +215,12 @@ def test_invoice_leaves_due_date_and_status_validation_to_atomic_repository_comm
     )
 
     call = repository.calls[-1]
-    assert call[0] == "create_document_draft"
+    assert call[0] == "create_invoice_draft"
     assert "due_date" not in call[2]["values"]
     assert call[2]["values"]["tax_percent"] == "0"
     assert call[2]["values"]["invoice_kind"] == "FINAL"
-    assert call[2]["values"]["lines"][0]["line_total"] == 400_000
+    assert "lines" not in call[2]["values"]
+    assert invoice["lines"][0]["line_total"] == 400_000
     assert invoice["due_date"] == "2026-11-10"
     assert invoice["invoice_kind"] == "FINAL"
     assert not any(item[0] == "get_project" for item in repository.calls)
@@ -218,7 +240,7 @@ def test_invoice_status_is_not_prechecked_outside_repository_transaction():
     )
 
     assert not any(item[0] == "get_project" for item in repository.calls)
-    assert repository.calls[-1][0] == "create_document_draft"
+    assert repository.calls[-1][0] == "create_invoice_draft"
 
 
 def test_receipt_creation_delegates_atomic_allocation_revalidation():

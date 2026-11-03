@@ -1,5 +1,7 @@
 import hashlib
 import unittest
+import uuid
+from unittest.mock import patch
 
 from flask import Flask
 
@@ -13,6 +15,7 @@ from services.dashboard_write_requests import (
     DashboardWriteRequestConflict,
     DashboardWriteRequestUnavailable,
 )
+from services.project_document_repository import ProjectDocumentUnavailable
 
 
 PROXY_TOKEN = "proxy-test-token"
@@ -22,8 +25,68 @@ CSRF_TOKEN = "csrf-route-test-token"
 
 
 class FakeRepository:
+    def __init__(self, identities=None):
+        self.identities = frozenset(
+            {("Alpha", "CV HB(101)", "HOLLA")}
+            if identities is None
+            else identities
+        )
+
     def fetch_filter_options(self):
         return {"projects": ["Alpha"]}
+
+    def fetch_project_identities(self):
+        return list(self.identities)
+
+
+class FakeProjectDocumentRepository:
+    def __init__(self, *, exists=True, error=None):
+        self.exists = exists
+        self.error = error
+        self.calls = []
+
+    def project_exists(self, project_id, wallet, company):
+        self.calls.append((project_id, wallet, company))
+        if self.error is not None:
+            raise self.error
+        return self.exists
+
+
+class DefaultServiceProbe:
+    instances = []
+
+    def __init__(self, *, project_exists, project_uuid_exists):
+        self.project_exists = project_exists
+        self.project_uuid_exists = project_uuid_exists
+        self.calls = []
+        self.__class__.instances.append(self)
+
+    def record(self, payload, *, actor, message_id):
+        self.calls.append((payload, actor, message_id))
+        project = payload["project"]
+        try:
+            uuid.UUID(project)
+            is_uuid = True
+        except (TypeError, ValueError):
+            is_uuid = False
+        try:
+            if is_uuid:
+                exists = self.project_uuid_exists(
+                    project,
+                    payload["wallet"],
+                    payload["company"],
+                )
+            else:
+                exists = self.project_exists(
+                    project,
+                    payload["wallet"],
+                    payload["company"],
+                )
+        except Exception as exc:
+            raise TransactionValidationError("project: existence validation failed") from exc
+        if not exists:
+            raise TransactionValidationError("project: does not exist for wallet/company")
+        return {"recorded": True, "transaction_id": "probe:1"}
 
 
 class FakeTransactionService:
@@ -191,6 +254,102 @@ class DashboardTransactionRouteTests(unittest.TestCase):
                 self.assertEqual(response.get_json()["error"]["code"], code)
                 self.assertEqual(response.headers["Cache-Control"], "no-store")
                 self.assertEqual(service.calls, [])
+
+    def make_default_app(self, *, project_repository, identities=None, enabled=True):
+        app = Flask(__name__)
+        app.config.update(
+            TESTING=True,
+            SECRET_KEY="test-secret",
+            DASHBOARD_OWNER_EMAIL="naufalspurnomo@gmail.com",
+            DASHBOARD_PROXY_TOKEN_HASH=PROXY_TOKEN_HASH,
+            DASHBOARD_TRANSACTION_WRITES_ENABLED=enabled,
+        )
+        DefaultServiceProbe.instances.clear()
+        patcher = patch(
+            "dashboard_api.routes.DashboardTransactionService",
+            DefaultServiceProbe,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        register_dashboard(
+            app,
+            repository=FakeRepository(identities=identities),
+            project_document_repository=project_repository,
+        )
+        return app
+
+    def test_default_route_accepts_fresh_uuid_only_from_authoritative_project_repository(self):
+        project_id = "00000000-0000-4000-8000-000000000001"
+        project_repository = FakeProjectDocumentRepository(exists=True)
+        app = self.make_default_app(
+            project_repository=project_repository,
+            identities=[],
+        )
+        payload = {**self.payload(), "project": project_id}
+        response = app.test_client().post(
+            "/api/dashboard/v1/transactions",
+            json=payload,
+            headers={
+                "Idempotency-Key": IDEMPOTENCY_KEY,
+                "X-Hollawall-Proxy-Token": PROXY_TOKEN,
+            },
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            project_repository.calls,
+            [(project_id, "CV HB(101)", "HOLLA")],
+        )
+        self.assertEqual(response.get_json()["data"]["recorded"], True)
+
+    def test_uuid_never_falls_back_to_projection_and_database_outage_is_503(self):
+        project_id = "00000000-0000-4000-8000-000000000001"
+        identity = (project_id, "CV HB(101)", "HOLLA")
+        cases = (
+            (FakeProjectDocumentRepository(exists=False), 422, "invalid_transaction"),
+            (
+                FakeProjectDocumentRepository(
+                    error=ProjectDocumentUnavailable("database dsn secret")
+                ),
+                503,
+                "transaction_unavailable",
+            ),
+        )
+        for project_repository, status, code in cases:
+            app = self.make_default_app(
+                project_repository=project_repository,
+                identities=[identity],
+            )
+            payload = {**self.payload(), "project": project_id}
+            response = app.test_client().post(
+                "/api/dashboard/v1/transactions",
+                json=payload,
+                headers={
+                    "Idempotency-Key": IDEMPOTENCY_KEY,
+                    "X-Hollawall-Proxy-Token": PROXY_TOKEN,
+                },
+            )
+            with self.subTest(code=code):
+                self.assertEqual(response.status_code, status)
+                self.assertEqual(response.get_json()["error"]["code"], code)
+                self.assertNotIn("database dsn secret", response.get_data(as_text=True))
+
+    def test_default_route_preserves_legacy_non_uuid_identity_without_uuid_probe(self):
+        project_repository = FakeProjectDocumentRepository(
+            error=AssertionError("UUID lookup must not be called")
+        )
+        app = self.make_default_app(project_repository=project_repository)
+        response = app.test_client().post(
+            "/api/dashboard/v1/transactions",
+            json=self.payload(),
+            headers={
+                "Idempotency-Key": IDEMPOTENCY_KEY,
+                "X-Hollawall-Proxy-Token": PROXY_TOKEN,
+            },
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(project_repository.calls, [])
 
     def test_contract_conflicts_and_unavailability_are_sanitized(self):
         cases = (

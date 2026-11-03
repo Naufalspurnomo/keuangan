@@ -16,6 +16,7 @@ from services.project_document_repository import (
     ProjectDocumentUnavailable,
     project_document_schema_health,
 )
+from services.project_documents import ProjectDocumentService
 
 
 pytestmark = pytest.mark.skipif(
@@ -30,6 +31,26 @@ FIXED_NOW = datetime(2026, 12, 31, 18, 30, tzinfo=ZoneInfo("UTC"))
 def deterministic_renderer(snapshot):
     body = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     return b"%PDF-1.7\n" + body + b"\n%%EOF\n", "test-renderer/1"
+
+
+def deterministic_receipt_authority(ledger, project):
+    observed = {
+        "source_key": str(ledger["source_key"]),
+        "source_sheet": str(ledger["source_sheet"]),
+        "observed_source_row": int(ledger.get("source_row") or 0),
+        "source_block": str(ledger["source_block"]),
+        "message_id": str(ledger.get("message_id") or "") or None,
+        "direction": str(ledger["transaction_type"]),
+        "amount": int(ledger["amount"]),
+        "transaction_date": str(ledger.get("transaction_date") or "") or None,
+        "project_id": str(project["id"]),
+        "wallet": str(project["wallet"]),
+        "company": str(project["company"]),
+    }
+    observed["raw_cells_sha256"] = hashlib.sha256(
+        json.dumps(observed, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return observed
 
 
 @pytest.fixture()
@@ -81,6 +102,7 @@ def repository(dsn):
         dsn,
         now=lambda: FIXED_NOW,
         renderer=deterministic_renderer,
+        receipt_authority_reader=deterministic_receipt_authority,
     )
 
 
@@ -128,10 +150,16 @@ def issue(repository, document, key):
 
 
 def receipt(repository, project_id, key):
-    return repository.create_document_draft(
+    source_key = insert_income(
+        repository._dsn,
         project_id,
-        document_type="receipt",
+        amount=1,
+        source_key=f"placeholder:{uuid.uuid4()}",
+    )
+    return repository.create_receipt_draft(
+        project_id,
         values={},
+        allocations=[{"ledger_source_key": source_key, "amount": 1}],
         idempotency_key=key,
         actor=ACTOR,
     )
@@ -205,14 +233,26 @@ def issue_sales_order(repository, created, total=1_000_000, key="sales-order-rea
 
 
 def invoice_with_total(repository, project_id, kind, total, key):
-    draft = repository.create_document_draft(
+    values = {"invoice_kind": kind}
+    if kind != "FINAL":
+        values["lines"] = [
+            {
+                "description": kind,
+                "quantity": "1",
+                "unit": "termin",
+                "unit_price": total,
+            }
+        ]
+    draft = repository.create_invoice_draft(
         project_id,
-        document_type="invoice",
-        values={"invoice_kind": kind},
+        values=values,
         idempotency_key=f"{key}-create",
         actor=ACTOR,
     )
-    return set_document_total(repository, draft, total, f"{key}-update")
+    current_total = int(repository._calculate_totals(draft)["total"])
+    if current_total != total:
+        return set_document_total(repository, draft, total, f"{key}-update")
+    return draft
 
 
 def test_profile_upsert_is_idempotent_versioned_audited_and_code_unique(repository, dsn):
@@ -380,9 +420,14 @@ def test_project_creation_defaults_and_invoice_status_restrictions(repository):
     assert sales_order["issue_date"] == "2027-01-01"
     assert sales_order["valid_until"] == "2027-01-15"
 
-    invoice = repository.create_document_draft(
+    issue_sales_order(
+        repository,
+        created,
+        1_000_000,
+        "invoice-defaults-sales-order-0001",
+    )
+    invoice = repository.create_invoice_draft(
         created["project"]["id"],
-        document_type="invoice",
         values={"invoice_kind": "DP"},
         idempotency_key="invoice-create-key-0001",
         actor=ACTOR,
@@ -540,6 +585,124 @@ def test_concurrent_numbering_uses_independent_connections_and_replays(repositor
     assert replays[0]["official_number"] == "SO/HW/2027/000003"
 
 
+def test_service_creates_receipt_and_authority_evidence_atomically(repository, dsn):
+    created = project(repository)
+    project_id = created["project"]["id"]
+    source_key = insert_income(dsn, project_id, amount=500_000)
+    second_source_key = insert_income(dsn, project_id, amount=100_000)
+    subject = ProjectDocumentService(repository)
+
+    allocations = [
+        {"ledger_source_key": source_key, "amount": 200_000},
+        {"ledger_source_key": second_source_key, "amount": 100_000},
+    ]
+    draft = subject.create_receipt(
+        project_id,
+        allocations=allocations,
+        values={"notes": "Pembayaran DP"},
+        idempotency_key="atomic-receipt-create-0001",
+        actor=ACTOR,
+    )
+    replay = subject.create_receipt(
+        project_id,
+        allocations=list(reversed(allocations)),
+        values={
+            "notes": "Pembayaran DP",
+            "document_discount_amount": 0,
+            "document_discount_percent": "0",
+            "tax_percent": "0",
+        },
+        idempotency_key="atomic-receipt-create-0001",
+        actor=ACTOR,
+    )
+
+    assert replay == draft
+    assert draft["document_type"] == "receipt"
+    assert draft["lines"][0]["line_total"] == 300_000
+    assert sum(item["amount"] for item in draft["allocations"]) == 300_000
+    assert {
+        item["ledger_snapshot"]["draft_authority"]["source_key"]
+        for item in draft["allocations"]
+    } == {source_key, second_source_key}
+
+    issued = subject.issue_document(
+        draft["id"],
+        expected_version=draft["lock_version"],
+        idempotency_key="atomic-receipt-issue-0001",
+        actor=ACTOR,
+    )
+    assert issued["official_number"] == "KWT/HW/2027/000001"
+    allocation_snapshots = [
+        item["ledger_snapshot"]
+        for item in issued["immutable_snapshot"]["allocations"]
+    ]
+    assert {
+        snapshot["draft_authority"]["source_key"]
+        for snapshot in allocation_snapshots
+    } == {source_key, second_source_key}
+    assert {
+        snapshot["issue_authority"]["source_key"]
+        for snapshot in allocation_snapshots
+    } == {source_key, second_source_key}
+    assert issued["immutable_snapshot"]["totals"]["total"] == 300_000
+
+
+def test_receipt_sheet_drift_or_missing_reader_fails_closed_before_issue(repository, dsn):
+    created = project(repository)
+    project_id = created["project"]["id"]
+    source_key = insert_income(dsn, project_id, amount=500_000)
+    state = {"available": True, "render_calls": 0}
+
+    def authority(ledger, project_row):
+        if not state["available"]:
+            raise ProjectDocumentConflict("authoritative receipt source no longer exists")
+        return deterministic_receipt_authority(ledger, project_row)
+
+    def renderer(snapshot):
+        state["render_calls"] += 1
+        return deterministic_renderer(snapshot)
+
+    local = ProjectDocumentRepository(
+        dsn,
+        now=lambda: FIXED_NOW,
+        renderer=renderer,
+        receipt_authority_reader=authority,
+    )
+    subject = ProjectDocumentService(local)
+    draft = subject.create_receipt(
+        project_id,
+        allocations=[{"ledger_source_key": source_key, "amount": 200_000}],
+        values={},
+        idempotency_key="drift-receipt-create-0001",
+        actor=ACTOR,
+    )
+    state["available"] = False
+
+    with pytest.raises(ProjectDocumentConflict, match="no longer exists"):
+        subject.issue_document(
+            draft["id"],
+            expected_version=draft["lock_version"],
+            idempotency_key="drift-receipt-issue-0001",
+            actor=ACTOR,
+        )
+    assert state["render_calls"] == 0
+    assert local.get_document(draft["id"])["status"] == "draft"
+    assert local.get_document(draft["id"])["official_number"] is None
+
+    unavailable = ProjectDocumentRepository(
+        dsn,
+        renderer=deterministic_renderer,
+    )
+    with pytest.raises(ProjectDocumentUnavailable, match="authority reader"):
+        ProjectDocumentService(unavailable).create_receipt(
+            project_id,
+            allocations=[{"ledger_source_key": source_key, "amount": 100_000}],
+            values={},
+            idempotency_key="missing-reader-receipt-create-0001",
+            actor=ACTOR,
+        )
+
+
 def test_draft_allocations_reserve_income_and_concurrent_overreservation_fails(repository, dsn):
     created = project(repository)
     project_id = created["project"]["id"]
@@ -549,7 +712,11 @@ def test_draft_allocations_reserve_income_and_concurrent_overreservation_fails(r
     barrier = threading.Barrier(2)
 
     def allocate(document, key):
-        local = ProjectDocumentRepository(dsn, renderer=deterministic_renderer)
+        local = ProjectDocumentRepository(
+            dsn,
+            renderer=deterministic_renderer,
+            receipt_authority_reader=deterministic_receipt_authority,
+        )
         barrier.wait(timeout=5)
         return local.lock_allocations(
             document["id"],
@@ -598,18 +765,17 @@ def test_receipt_allocation_requires_non_empty_project_wallet_and_company(
         idempotency_key=f"missing-mapping-{wallet!s}-{company!s}-0001".replace(" ", "-"),
         actor=ACTOR,
     )
-    draft = receipt(repository, project_id, f"missing-mapping-receipt-{uuid.uuid4()}")
     source_key = insert_income(dsn, project_id)
 
     with pytest.raises(
         ProjectDocumentConflict,
         match="non-empty project wallet and company",
     ):
-        repository.lock_allocations(
-            draft["id"],
-            [{"ledger_source_key": source_key, "amount": 100_000}],
-            expected_version=draft["lock_version"],
-            idempotency_key=f"missing-mapping-allocation-{uuid.uuid4()}",
+        repository.create_receipt_draft(
+            project_id,
+            values={},
+            allocations=[{"ledger_source_key": source_key, "amount": 100_000}],
+            idempotency_key=f"missing-mapping-receipt-{uuid.uuid4()}",
             actor=ACTOR,
         )
 
@@ -736,7 +902,10 @@ def test_allocation_locks_are_deterministic_and_issue_blocks_source_mutation(rep
         return deterministic_renderer(snapshot)
 
     issuing = ProjectDocumentRepository(
-        dsn, now=lambda: FIXED_NOW, renderer=blocking_renderer
+        dsn,
+        now=lambda: FIXED_NOW,
+        renderer=blocking_renderer,
+        receipt_authority_reader=deterministic_receipt_authority,
     )
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(
@@ -760,18 +929,20 @@ def test_allocation_locks_are_deterministic_and_issue_blocks_source_mutation(rep
     ]
 
 
-def test_final_issue_requires_one_active_issued_sales_order(repository):
+def test_final_command_requires_one_active_issued_sales_order(repository):
     created = project(repository)
     project_id = created["project"]["id"]
-    final = invoice_with_total(
-        repository, project_id, "FINAL", 1_000_000, "final-no-sales-order-0001"
-    )
 
     with pytest.raises(
         ProjectDocumentConflict,
         match="exactly one active issued Sales Order",
     ):
-        issue(repository, final, "final-no-sales-order-issue-0001")
+        repository.create_invoice_draft(
+            project_id,
+            values={"invoice_kind": "FINAL"},
+            idempotency_key="final-no-sales-order-0001",
+            actor=ACTOR,
+        )
 
     first_sales_order = issue_sales_order(
         repository, created, key="multiple-sales-order-first-0001"
@@ -796,7 +967,12 @@ def test_final_issue_requires_one_active_issued_sales_order(repository):
         ProjectDocumentConflict,
         match="exactly one active issued Sales Order",
     ):
-        issue(repository, final, "final-multiple-sales-order-issue-0001")
+        repository.create_invoice_draft(
+            project_id,
+            values={"invoice_kind": "FINAL"},
+            idempotency_key="final-multiple-sales-order-0001",
+            actor=ACTOR,
+        )
 
 
 def test_final_issue_equals_residual_after_dp_and_progress(repository):
@@ -829,7 +1005,84 @@ def test_final_issue_equals_residual_after_dp_and_progress(repository):
     assert issued["immutable_snapshot"]["totals"]["total"] == 500_000
 
 
-def test_final_issue_rejects_negative_residual_after_overbilling(repository):
+def test_concurrent_dp_and_stale_final_issue_serialize_without_overbilling(repository, dsn):
+    created = project(repository)
+    project_id = created["project"]["id"]
+    sales_order = set_document_total(
+        repository,
+        created["sales_order"],
+        1_000_000,
+        "concurrent-commercial-so-update-0001",
+    )
+    issue(repository, sales_order, "concurrent-commercial-so-issue-0001")
+    subject = ProjectDocumentService(repository)
+    dp = subject.create_invoice(
+        project_id,
+        kind="DP",
+        values={
+            "lines": [
+                {
+                    "description": "DP",
+                    "quantity": "1",
+                    "unit": "termin",
+                    "unit_price": 500_000,
+                }
+            ]
+        },
+        idempotency_key="concurrent-commercial-dp-create-0001",
+        actor=ACTOR,
+    )
+    stale_final = subject.create_invoice(
+        project_id,
+        kind="FINAL",
+        values={},
+        idempotency_key="concurrent-commercial-final-create-0001",
+        actor=ACTOR,
+    )
+    barrier = threading.Barrier(2)
+
+    def issue_local(document, key):
+        local = ProjectDocumentRepository(
+            dsn,
+            now=lambda: FIXED_NOW,
+            renderer=deterministic_renderer,
+        )
+        barrier.wait(timeout=5)
+        return issue(local, document, key)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = (
+            executor.submit(
+                issue_local,
+                dp,
+                "concurrent-commercial-dp-issue-0001",
+            ),
+            executor.submit(
+                issue_local,
+                stale_final,
+                "concurrent-commercial-final-issue-0001",
+            ),
+        )
+        outcomes = []
+        for future in futures:
+            try:
+                outcomes.append(future.result())
+            except ProjectDocumentConflict as exc:
+                outcomes.append(exc)
+
+    assert sum(isinstance(item, dict) for item in outcomes) == 1
+    assert sum(isinstance(item, ProjectDocumentConflict) for item in outcomes) == 1
+    documents = repository.list_documents(project_id)
+    issued_invoices = [
+        item
+        for item in documents
+        if item["document_type"] == "invoice" and item["status"] == "issued"
+    ]
+    assert len(issued_invoices) == 1
+    assert issued_invoices[0]["immutable_snapshot"]["totals"]["total"] <= 1_000_000
+
+
+def test_progress_issue_rejects_overbilling_immediately(repository):
     created = project(repository)
     project_id = created["project"]["id"]
     issue_sales_order(repository, created, 1_000_000, "overbilled-sales-order-0001")
@@ -838,16 +1091,12 @@ def test_final_issue_rejects_negative_residual_after_overbilling(repository):
         repository, project_id, "PROGRESS", 400_000, "overbilled-progress-0001"
     )
     issue(repository, dp, "overbilled-dp-issue-0001")
-    issue(repository, progress, "overbilled-progress-issue-0001")
-    final = invoice_with_total(
-        repository, project_id, "FINAL", 1, "overbilled-final-0001"
-    )
 
     with pytest.raises(
         ProjectDocumentConflict,
-        match="commercial amount is overbilled by 100000",
+        match="invoice total exceeds residual commercial amount 300000",
     ):
-        issue(repository, final, "overbilled-final-issue-0001")
+        issue(repository, progress, "overbilled-progress-issue-0001")
 
 
 def test_final_residual_excludes_void_invoices_and_requires_non_void_sales_order(repository):
@@ -885,14 +1134,16 @@ def test_final_residual_excludes_void_invoices_and_requires_non_void_sales_order
         idempotency_key="void-residual-final-void-0001",
         actor=ACTOR,
     )
-    replacement = invoice_with_total(
-        repository, project_id, "FINAL", 1_000_000, "void-residual-replacement-0001"
-    )
     with pytest.raises(
         ProjectDocumentConflict,
         match="exactly one active issued Sales Order",
     ):
-        issue(repository, replacement, "void-residual-replacement-issue-0001")
+        repository.create_invoice_draft(
+            project_id,
+            values={"invoice_kind": "FINAL"},
+            idempotency_key="void-residual-replacement-0001",
+            actor=ACTOR,
+        )
 
 
 def test_final_residual_counts_only_active_invoice_revision(repository):
@@ -1014,9 +1265,9 @@ def test_final_revision_supersession_is_atomic_and_void_allows_recreate(reposito
 
 def test_active_final_index_violation_maps_to_domain_conflict(repository):
     created = project(repository)
-    first = repository.create_document_draft(
+    issue_sales_order(repository, created, 1_000_000, "final-index-sales-order-0001")
+    first = repository.create_invoice_draft(
         created["project"]["id"],
-        document_type="invoice",
         values={"invoice_kind": "FINAL"},
         idempotency_key="final-index-first-create-0001",
         actor=ACTOR,
@@ -1025,11 +1276,10 @@ def test_active_final_index_violation_maps_to_domain_conflict(repository):
 
     with pytest.raises(
         ProjectDocumentConflict,
-        match="a live FINAL invoice already exists",
+        match="active FINAL invoice already exists",
     ):
-        repository.create_document_draft(
+        repository.create_invoice_draft(
             created["project"]["id"],
-            document_type="invoice",
             values={"invoice_kind": "FINAL"},
             idempotency_key="final-index-second-create-0001",
             actor=ACTOR,
