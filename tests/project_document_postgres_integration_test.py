@@ -259,6 +259,121 @@ def test_profile_upsert_is_idempotent_versioned_audited_and_code_unique(reposito
             assert cursor.fetchall() == [("issuer.created", 1), ("issuer.updated", 2)]
 
 
+def test_issuer_non_code_update_passes_and_original_update_replays(repository):
+    first = issuer(repository)
+    updated = repository.upsert_issuer_profile(
+        issuer_key=first["issuer_key"],
+        legal_name="CV Holla Berkreasi Updated",
+        display_name="Hollawall Studio",
+        number_code="HW",
+        address="Surabaya Updated",
+        phone="+628123456789",
+        actor=ACTOR,
+        expected_version=first["profile_version"],
+        idempotency_key="issuer-legitimate-update-0001",
+    )
+    replay = repository.upsert_issuer_profile(
+        issuer_key=first["issuer_key"],
+        legal_name="CV Holla Berkreasi Updated",
+        display_name="Hollawall Studio",
+        number_code="HW",
+        address="Surabaya Updated",
+        phone="+628123456789",
+        actor=ACTOR,
+        expected_version=first["profile_version"],
+        idempotency_key="issuer-legitimate-update-0001",
+    )
+
+    assert replay == updated
+    assert updated["profile_version"] == 2
+    assert updated["display_name"] == "Hollawall Studio"
+    assert updated["number_code"] == "HW"
+
+
+def test_issuer_code_rotation_is_rejected_and_historical_code_stays_reserved(repository):
+    first = issuer(repository)
+
+    with pytest.raises(
+        ProjectDocumentConflict,
+        match="number_code is immutable after profile creation",
+    ):
+        repository.upsert_issuer_profile(
+            issuer_key=first["issuer_key"],
+            legal_name=first["legal_name"],
+            display_name=first["display_name"],
+            number_code="NEW",
+            address=first["address"],
+            actor=ACTOR,
+            expected_version=first["profile_version"],
+            idempotency_key="issuer-code-rotation-0001",
+        )
+
+    unchanged = repository.get_issuer_profile(first["issuer_key"])
+    assert unchanged["number_code"] == "HW"
+    assert unchanged["profile_version"] == 1
+    with pytest.raises(ProjectDocumentConflict, match="number_code"):
+        issuer(repository, issuer_key="other", number_code="HW")
+
+
+def test_direct_sql_issuer_code_mutation_is_rejected(repository, dsn):
+    import psycopg
+
+    issuer(repository)
+    with pytest.raises(
+        psycopg.errors.RaiseException,
+        match="number_code is immutable after profile creation",
+    ):
+        with psycopg.connect(dsn) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE project_issuer_profiles SET number_code = 'NEW' "
+                    "WHERE issuer_key = 'hollawall'"
+                )
+
+
+def test_rejected_issuer_code_rotation_does_not_interrupt_numbering(repository):
+    created = project(repository)
+    first = issue_sales_order(
+        repository,
+        created,
+        total=1_000_000,
+        key="immutable-code-numbering-first-0001",
+    )
+    profile = repository.get_issuer_profile("hollawall")
+    with pytest.raises(ProjectDocumentConflict, match="number_code is immutable"):
+        repository.upsert_issuer_profile(
+            issuer_key="hollawall",
+            legal_name=profile["legal_name"],
+            display_name=profile["display_name"],
+            number_code="NEW",
+            address=profile["address"],
+            actor=ACTOR,
+            expected_version=profile["profile_version"],
+            idempotency_key="immutable-code-numbering-rotate-0001",
+        )
+    second_draft = repository.create_document_draft(
+        created["project"]["id"],
+        document_type="sales_order",
+        values={},
+        idempotency_key="immutable-code-numbering-second-create-0001",
+        actor=ACTOR,
+    )
+    second_ready = set_document_total(
+        repository,
+        second_draft,
+        1_000_000,
+        "immutable-code-numbering-second-update-0001",
+    )
+    second = issue(
+        repository,
+        second_ready,
+        "immutable-code-numbering-second-issue-0001",
+    )
+
+    assert first["official_number"] == "SO/HW/2027/000001"
+    assert second["official_number"] == "SO/HW/2027/000002"
+
+
 def test_project_creation_defaults_and_invoice_status_restrictions(repository):
     created = project(repository)
     sales_order = created["sales_order"]
@@ -1039,6 +1154,32 @@ def test_schema_health_rejects_same_name_wrong_index_definition(repository, dsn)
     assert status["indexes"] is False
 
 
+def test_schema_health_rejects_same_name_wrong_pending_revision_index(repository, dsn):
+    import psycopg
+
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("DROP INDEX uq_project_pending_document_revision")
+            cursor.execute(
+                "CREATE UNIQUE INDEX uq_project_pending_document_revision "
+                "ON project_documents(id)"
+            )
+    status = project_document_schema_health(dsn)
+    assert status["ready"] is False
+    assert status["indexes"] is False
+
+
+def test_schema_health_rejects_malformed_core_column(repository, dsn):
+    import psycopg
+
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("ALTER TABLE projects ALTER COLUMN client_name DROP NOT NULL")
+    status = project_document_schema_health(dsn)
+    assert status["ready"] is False
+    assert status["tables"] is False
+
+
 def test_schema_health_rejects_same_name_wrong_constraint_definition(repository, dsn):
     import psycopg
 
@@ -1067,6 +1208,25 @@ def test_schema_health_rejects_same_name_wrong_trigger_definition(repository, ds
             cursor.execute(
                 "CREATE TRIGGER trg_projects_no_delete AFTER DELETE ON projects "
                 "FOR EACH ROW EXECUTE FUNCTION prevent_project_delete()"
+            )
+    status = project_document_schema_health(dsn)
+    assert status["ready"] is False
+    assert status["triggers"] is False
+
+
+def test_schema_health_rejects_same_name_noop_guard_function(repository, dsn):
+    import psycopg
+
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                CREATE OR REPLACE FUNCTION prevent_project_delete() RETURNS TRIGGER AS $$
+                BEGIN
+                    RETURN OLD;
+                END;
+                $$ LANGUAGE plpgsql
+                """
             )
     status = project_document_schema_health(dsn)
     assert status["ready"] is False

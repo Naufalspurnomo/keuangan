@@ -245,6 +245,20 @@ CREATE TABLE IF NOT EXISTS project_document_commands (
     completed_at TIMESTAMPTZ
 );
 
+CREATE OR REPLACE FUNCTION prevent_project_issuer_number_code_mutation() RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.number_code IS DISTINCT FROM OLD.number_code THEN
+        RAISE EXCEPTION 'issuer number_code is immutable after profile creation';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_project_issuer_number_code_immutable ON project_issuer_profiles;
+CREATE TRIGGER trg_project_issuer_number_code_immutable
+BEFORE UPDATE OF number_code ON project_issuer_profiles
+FOR EACH ROW EXECUTE FUNCTION prevent_project_issuer_number_code_mutation();
+
 CREATE OR REPLACE FUNCTION prevent_project_delete() RETURNS TRIGGER AS $$
 BEGIN
     RAISE EXCEPTION 'projects cannot be hard deleted';

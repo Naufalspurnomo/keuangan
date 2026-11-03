@@ -35,6 +35,8 @@ def test_migration_defines_exact_schema_and_database_guards():
     for required in (
         "uq_project_issuer_profiles_number_code",
         "uq_project_active_final_invoice",
+        "uq_project_pending_document_revision",
+        "prevent_project_issuer_number_code_mutation",
         "prevent_project_delete",
         "prevent_project_document_delete",
         "prevent_project_document_mutation",
@@ -133,6 +135,12 @@ def test_schema_health_is_read_only_and_requires_exact_catalog_objects(monkeypat
     for exact_object in (
         "uq_project_issuer_profiles_number_code",
         "uq_project_active_final_invoice",
+        "uq_project_pending_document_revision",
+        "project_issuer_profiles",
+        "project_document_number_counters",
+        "project_document_artifacts",
+        "project_document_events",
+        "pg_get_functiondef",
         "trg_projects_no_delete",
         "trg_project_documents_no_delete",
         "trg_project_document_immutable",

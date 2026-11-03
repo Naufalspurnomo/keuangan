@@ -180,22 +180,40 @@ _DOCUMENT_COLUMNS = _columns(_SELECT_DOCUMENT)
 _SCHEMA_HEALTH_QUERY = """
 SELECT
     (
-        SELECT ARRAY_AGG(table_name ORDER BY table_name) = ARRAY[
-            'project_document_allocations', 'project_document_artifacts',
-            'project_document_commands', 'project_document_events',
-            'project_document_lines', 'project_document_number_counters',
-            'project_documents', 'project_issuer_profile_events',
-            'project_issuer_profiles', 'project_scopes', 'projects'
-        ]::information_schema.sql_identifier[]
-        FROM information_schema.tables
-        WHERE table_schema = 'public'
-          AND table_name IN (
-              'project_issuer_profiles', 'projects', 'project_scopes',
-              'project_documents', 'project_document_lines',
-              'project_document_allocations', 'project_document_number_counters',
-              'project_document_events', 'project_document_artifacts',
-              'project_document_commands', 'project_issuer_profile_events'
-          )
+        (
+            SELECT ARRAY_AGG(table_name ORDER BY table_name) = ARRAY[
+                'project_document_allocations', 'project_document_artifacts',
+                'project_document_commands', 'project_document_events',
+                'project_document_lines', 'project_document_number_counters',
+                'project_documents', 'project_issuer_profile_events',
+                'project_issuer_profiles', 'project_scopes', 'projects'
+            ]::information_schema.sql_identifier[]
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name IN (
+                  'project_issuer_profiles', 'projects', 'project_scopes',
+                  'project_documents', 'project_document_lines',
+                  'project_document_allocations', 'project_document_number_counters',
+                  'project_document_events', 'project_document_artifacts',
+                  'project_document_commands', 'project_issuer_profile_events'
+              )
+        )
+        AND
+        (
+            SELECT MD5(STRING_AGG(
+                table_name || '|' || ordinal_position || '|' || column_name || '|' ||
+                udt_name || '|' || is_nullable || '|' || COALESCE(column_default, '') ||
+                '|' || is_identity,
+                E'\n' ORDER BY table_name, ordinal_position
+            )) = 'ebbbf0c0268865631328cce6dab142eb'
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name IN (
+                  'project_issuer_profiles', 'projects', 'project_documents',
+                  'project_document_number_counters', 'project_document_artifacts',
+                  'project_document_events'
+              )
+        )
     ) AS tables_ready,
     (
         SELECT COUNT(*) = 6 AND COALESCE(BOOL_AND(
@@ -241,7 +259,7 @@ SELECT
           )
     ) AS constraints_ready,
     (
-        SELECT COUNT(*) = 4 AND COALESCE(BOOL_AND(
+        SELECT COUNT(*) = 5 AND COALESCE(BOOL_AND(
             CASE ci.relname
                 WHEN 'uq_project_issuer_profiles_number_code' THEN
                     r.relname = 'project_issuer_profiles'
@@ -257,6 +275,13 @@ SELECT
                     AND pg_get_indexdef(i.indexrelid, 1, TRUE) = 'project_id'
                     AND pg_get_expr(i.indpred, i.indrelid, TRUE) =
                         'document_type = ''invoice''::text AND invoice_kind = ''FINAL''::text AND (status = ''issued''::text OR status = ''draft''::text AND revision_of_id IS NULL)'
+                WHEN 'uq_project_pending_document_revision' THEN
+                    r.relname = 'project_documents'
+                    AND i.indisunique
+                    AND i.indnkeyatts = 1
+                    AND pg_get_indexdef(i.indexrelid, 1, TRUE) = 'revision_of_id'
+                    AND pg_get_expr(i.indpred, i.indrelid, TRUE) =
+                        'revision_of_id IS NOT NULL AND status = ''draft''::text'
                 WHEN 'idx_project_document_allocations_source' THEN
                     r.relname = 'project_document_allocations'
                     AND NOT i.indisunique
@@ -283,61 +308,83 @@ SELECT
           AND ci.relname IN (
               'uq_project_issuer_profiles_number_code',
               'uq_project_active_final_invoice',
+              'uq_project_pending_document_revision',
               'idx_project_document_allocations_source',
               'idx_project_document_events_project_replay'
           )
     ) AS indexes_ready,
     (
-        SELECT COUNT(*) = 8 AND COALESCE(BOOL_AND(
+        SELECT COUNT(*) = 9 AND COALESCE(BOOL_AND(
             CASE t.tgname
+                WHEN 'trg_project_issuer_number_code_immutable' THEN
+                    r.relname = 'project_issuer_profiles'
+                    AND p.proname = 'prevent_project_issuer_number_code_mutation'
+                    AND t.tgtype = 19
+                    AND pg_get_triggerdef(t.oid, TRUE) =
+                        'CREATE TRIGGER trg_project_issuer_number_code_immutable BEFORE UPDATE OF number_code ON project_issuer_profiles FOR EACH ROW EXECUTE FUNCTION prevent_project_issuer_number_code_mutation()'
+                    AND POSITION('NEW.number_code IS DISTINCT FROM OLD.number_code' IN pg_get_functiondef(p.oid)) > 0
+                    AND POSITION('issuer number_code is immutable after profile creation' IN pg_get_functiondef(p.oid)) > 0
                 WHEN 'trg_projects_no_delete' THEN
                     r.relname = 'projects'
                     AND p.proname = 'prevent_project_delete'
                     AND t.tgtype = 11
                     AND pg_get_triggerdef(t.oid, TRUE) =
                         'CREATE TRIGGER trg_projects_no_delete BEFORE DELETE ON projects FOR EACH ROW EXECUTE FUNCTION prevent_project_delete()'
+                    AND POSITION('projects cannot be hard deleted' IN pg_get_functiondef(p.oid)) > 0
+                    AND POSITION('RAISE EXCEPTION' IN pg_get_functiondef(p.oid)) > 0
                 WHEN 'trg_project_documents_no_delete' THEN
                     r.relname = 'project_documents'
                     AND p.proname = 'prevent_project_document_delete'
                     AND t.tgtype = 11
                     AND pg_get_triggerdef(t.oid, TRUE) =
                         'CREATE TRIGGER trg_project_documents_no_delete BEFORE DELETE ON project_documents FOR EACH ROW EXECUTE FUNCTION prevent_project_document_delete()'
+                    AND POSITION('project documents cannot be hard deleted' IN pg_get_functiondef(p.oid)) > 0
                 WHEN 'trg_project_document_immutable' THEN
                     r.relname = 'project_documents'
                     AND p.proname = 'prevent_project_document_mutation'
                     AND t.tgtype = 19
                     AND pg_get_triggerdef(t.oid, TRUE) =
                         'CREATE TRIGGER trg_project_document_immutable BEFORE UPDATE ON project_documents FOR EACH ROW EXECUTE FUNCTION prevent_project_document_mutation()'
+                    AND POSITION('invalid draft to issued mutation' IN pg_get_functiondef(p.oid)) > 0
+                    AND POSITION('terminal project document is immutable' IN pg_get_functiondef(p.oid)) > 0
+                    AND POSITION('invalid project document transition' IN pg_get_functiondef(p.oid)) > 0
                 WHEN 'trg_project_document_lines_draft_only' THEN
                     r.relname = 'project_document_lines'
                     AND p.proname = 'prevent_non_draft_document_child_mutation'
                     AND t.tgtype = 31
                     AND pg_get_triggerdef(t.oid, TRUE) =
                         'CREATE TRIGGER trg_project_document_lines_draft_only BEFORE INSERT OR DELETE OR UPDATE ON project_document_lines FOR EACH ROW EXECUTE FUNCTION prevent_non_draft_document_child_mutation()'
+                    AND POSITION('issued project document children are immutable' IN pg_get_functiondef(p.oid)) > 0
+                    AND POSITION('FOR UPDATE' IN pg_get_functiondef(p.oid)) > 0
                 WHEN 'trg_project_document_allocations_draft_only' THEN
                     r.relname = 'project_document_allocations'
                     AND p.proname = 'prevent_non_draft_document_child_mutation'
                     AND t.tgtype = 31
                     AND pg_get_triggerdef(t.oid, TRUE) =
                         'CREATE TRIGGER trg_project_document_allocations_draft_only BEFORE INSERT OR DELETE OR UPDATE ON project_document_allocations FOR EACH ROW EXECUTE FUNCTION prevent_non_draft_document_child_mutation()'
+                    AND POSITION('issued project document children are immutable' IN pg_get_functiondef(p.oid)) > 0
+                    AND POSITION('FOR UPDATE' IN pg_get_functiondef(p.oid)) > 0
                 WHEN 'trg_project_document_events_append_only' THEN
                     r.relname = 'project_document_events'
                     AND p.proname = 'prevent_project_document_event_mutation'
                     AND t.tgtype = 27
                     AND pg_get_triggerdef(t.oid, TRUE) =
                         'CREATE TRIGGER trg_project_document_events_append_only BEFORE DELETE OR UPDATE ON project_document_events FOR EACH ROW EXECUTE FUNCTION prevent_project_document_event_mutation()'
+                    AND POSITION('project document events are append-only' IN pg_get_functiondef(p.oid)) > 0
                 WHEN 'trg_project_issuer_profile_events_append_only' THEN
                     r.relname = 'project_issuer_profile_events'
                     AND p.proname = 'prevent_project_document_event_mutation'
                     AND t.tgtype = 27
                     AND pg_get_triggerdef(t.oid, TRUE) =
                         'CREATE TRIGGER trg_project_issuer_profile_events_append_only BEFORE DELETE OR UPDATE ON project_issuer_profile_events FOR EACH ROW EXECUTE FUNCTION prevent_project_document_event_mutation()'
+                    AND POSITION('project document events are append-only' IN pg_get_functiondef(p.oid)) > 0
                 WHEN 'trg_project_document_artifacts_immutable' THEN
                     r.relname = 'project_document_artifacts'
                     AND p.proname = 'prevent_project_document_artifact_mutation'
                     AND t.tgtype = 27
                     AND pg_get_triggerdef(t.oid, TRUE) =
                         'CREATE TRIGGER trg_project_document_artifacts_immutable BEFORE DELETE OR UPDATE ON project_document_artifacts FOR EACH ROW EXECUTE FUNCTION prevent_project_document_artifact_mutation()'
+                    AND POSITION('project document artifacts are immutable' IN pg_get_functiondef(p.oid)) > 0
                 ELSE FALSE
             END
         ), FALSE)
@@ -347,6 +394,7 @@ SELECT
         JOIN pg_proc p ON p.oid = t.tgfoid
         WHERE n.nspname = 'public' AND NOT t.tgisinternal
           AND t.tgname IN (
+              'trg_project_issuer_number_code_immutable',
               'trg_projects_no_delete',
               'trg_project_documents_no_delete',
               'trg_project_document_immutable',
@@ -582,7 +630,7 @@ class ProjectDocumentRepository:
                     if replay is not None:
                         return replay
                     cursor.execute(
-                        "SELECT profile_version FROM project_issuer_profiles "
+                        "SELECT profile_version, number_code FROM project_issuer_profiles "
                         "WHERE issuer_key = %s FOR UPDATE",
                         (values[0],),
                     )
@@ -610,10 +658,14 @@ class ProjectDocumentRepository:
                     else:
                         if int(current[0]) != expected_version:
                             raise ProjectDocumentConflict("issuer profile version conflict")
+                        if str(current[1]) != values[3]:
+                            raise ProjectDocumentConflict(
+                                "issuer number_code is immutable after profile creation"
+                            )
                         cursor.execute(
                             """
                             UPDATE project_issuer_profiles SET
-                                legal_name = %s, display_name = %s, number_code = %s,
+                                legal_name = %s, display_name = %s,
                                 address = %s, phone = %s, email = %s, tax_identity = %s,
                                 bank_details = %s::jsonb, logo_path = %s,
                                 profile_version = profile_version + 1,
@@ -624,7 +676,7 @@ class ProjectDocumentRepository:
                                       logo_path, profile_version, created_at, updated_at
                             """,
                             (
-                                values[1], values[2], values[3], values[4], phone, email,
+                                values[1], values[2], values[4], phone, email,
                                 tax_identity, bank_json, logo_path, actor_json, values[0],
                                 expected_version,
                             ),
@@ -650,6 +702,10 @@ class ProjectDocumentRepository:
         except (ProjectDocumentError, ValueError):
             raise
         except Exception as exc:
+            if "issuer number_code is immutable after profile creation" in str(exc):
+                raise ProjectDocumentConflict(
+                    "issuer number_code is immutable after profile creation"
+                ) from exc
             if "uq_project_issuer_profiles_number_code" in str(exc):
                 raise ProjectDocumentConflict("issuer number_code already exists") from exc
             raise ProjectDocumentUnavailable(
