@@ -139,4 +139,7 @@ def test_schema_health_is_read_only_and_requires_exact_catalog_objects(monkeypat
         "trg_project_document_events_append_only",
     ):
         assert exact_object in health_sql
+    assert "pg_get_indexdef" in health_sql or "pg_get_expr" in health_sql
+    assert "pg_get_constraintdef" in health_sql
+    assert "tgtype" in health_sql or "pg_get_triggerdef" in health_sql
     assert all("CREATE TABLE" not in statement for statement in executed)

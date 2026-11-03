@@ -198,7 +198,35 @@ SELECT
           )
     ) AS tables_ready,
     (
-        SELECT COUNT(*) = 6
+        SELECT COUNT(*) = 6 AND COALESCE(BOOL_AND(
+            CASE c.conname
+                WHEN 'project_scopes_project_id_fkey' THEN
+                    r.relname = 'project_scopes'
+                    AND pg_get_constraintdef(c.oid, TRUE) =
+                        'FOREIGN KEY (project_id) REFERENCES projects(id)'
+                WHEN 'project_document_lines_document_id_fkey' THEN
+                    r.relname = 'project_document_lines'
+                    AND pg_get_constraintdef(c.oid, TRUE) =
+                        'FOREIGN KEY (document_id) REFERENCES project_documents(id)'
+                WHEN 'project_document_allocations_document_id_fkey' THEN
+                    r.relname = 'project_document_allocations'
+                    AND pg_get_constraintdef(c.oid, TRUE) =
+                        'FOREIGN KEY (document_id) REFERENCES project_documents(id)'
+                WHEN 'project_documents_revision_of_id_fkey' THEN
+                    r.relname = 'project_documents'
+                    AND pg_get_constraintdef(c.oid, TRUE) =
+                        'FOREIGN KEY (revision_of_id) REFERENCES project_documents(id) DEFERRABLE INITIALLY DEFERRED'
+                WHEN 'project_documents_superseded_by_id_fkey' THEN
+                    r.relname = 'project_documents'
+                    AND pg_get_constraintdef(c.oid, TRUE) =
+                        'FOREIGN KEY (superseded_by_id) REFERENCES project_documents(id) DEFERRABLE INITIALLY DEFERRED'
+                WHEN 'project_document_artifacts_pdf_signature_check' THEN
+                    r.relname = 'project_document_artifacts'
+                    AND pg_get_constraintdef(c.oid, TRUE) =
+                        'CHECK (SUBSTRING(pdf_bytes FROM 1 FOR 5) = convert_to(''%PDF-''::text, ''UTF8''::name))'
+                ELSE FALSE
+            END
+        ), FALSE)
         FROM pg_constraint c
         JOIN pg_class r ON r.oid = c.conrelid
         JOIN pg_namespace n ON n.oid = r.relnamespace
@@ -211,13 +239,48 @@ SELECT
               'project_documents_superseded_by_id_fkey',
               'project_document_artifacts_pdf_signature_check'
           )
-          AND c.confdeltype <> 'c'
     ) AS constraints_ready,
     (
-        SELECT COUNT(*) = 4
-        FROM pg_indexes
-        WHERE schemaname = 'public'
-          AND indexname IN (
+        SELECT COUNT(*) = 4 AND COALESCE(BOOL_AND(
+            CASE ci.relname
+                WHEN 'uq_project_issuer_profiles_number_code' THEN
+                    r.relname = 'project_issuer_profiles'
+                    AND i.indisunique
+                    AND i.indnkeyatts = 1
+                    AND pg_get_indexdef(i.indexrelid, 1, TRUE) =
+                        'upper(TRIM(BOTH FROM number_code))'
+                    AND pg_get_expr(i.indpred, i.indrelid, TRUE) IS NULL
+                WHEN 'uq_project_active_final_invoice' THEN
+                    r.relname = 'project_documents'
+                    AND i.indisunique
+                    AND i.indnkeyatts = 1
+                    AND pg_get_indexdef(i.indexrelid, 1, TRUE) = 'project_id'
+                    AND pg_get_expr(i.indpred, i.indrelid, TRUE) =
+                        'document_type = ''invoice''::text AND invoice_kind = ''FINAL''::text AND (status = ''issued''::text OR status = ''draft''::text AND revision_of_id IS NULL)'
+                WHEN 'idx_project_document_allocations_source' THEN
+                    r.relname = 'project_document_allocations'
+                    AND NOT i.indisunique
+                    AND i.indnkeyatts = 1
+                    AND pg_get_indexdef(i.indexrelid, 1, TRUE) = 'ledger_source_key'
+                    AND pg_get_expr(i.indpred, i.indrelid, TRUE) IS NULL
+                WHEN 'idx_project_document_events_project_replay' THEN
+                    r.relname = 'project_document_events'
+                    AND NOT i.indisunique
+                    AND i.indnkeyatts = 2
+                    AND ARRAY[
+                        pg_get_indexdef(i.indexrelid, 1, TRUE),
+                        pg_get_indexdef(i.indexrelid, 2, TRUE)
+                    ] = ARRAY['project_id', 'id']::TEXT[]
+                    AND pg_get_expr(i.indpred, i.indrelid, TRUE) IS NULL
+                ELSE FALSE
+            END
+        ), FALSE)
+        FROM pg_index i
+        JOIN pg_class ci ON ci.oid = i.indexrelid
+        JOIN pg_class r ON r.oid = i.indrelid
+        JOIN pg_namespace n ON n.oid = r.relnamespace
+        WHERE n.nspname = 'public'
+          AND ci.relname IN (
               'uq_project_issuer_profiles_number_code',
               'uq_project_active_final_invoice',
               'idx_project_document_allocations_source',
@@ -225,21 +288,73 @@ SELECT
           )
     ) AS indexes_ready,
     (
-        SELECT COUNT(DISTINCT t.tgname) = 8
+        SELECT COUNT(*) = 8 AND COALESCE(BOOL_AND(
+            CASE t.tgname
+                WHEN 'trg_projects_no_delete' THEN
+                    r.relname = 'projects'
+                    AND p.proname = 'prevent_project_delete'
+                    AND t.tgtype = 11
+                    AND pg_get_triggerdef(t.oid, TRUE) =
+                        'CREATE TRIGGER trg_projects_no_delete BEFORE DELETE ON projects FOR EACH ROW EXECUTE FUNCTION prevent_project_delete()'
+                WHEN 'trg_project_documents_no_delete' THEN
+                    r.relname = 'project_documents'
+                    AND p.proname = 'prevent_project_document_delete'
+                    AND t.tgtype = 11
+                    AND pg_get_triggerdef(t.oid, TRUE) =
+                        'CREATE TRIGGER trg_project_documents_no_delete BEFORE DELETE ON project_documents FOR EACH ROW EXECUTE FUNCTION prevent_project_document_delete()'
+                WHEN 'trg_project_document_immutable' THEN
+                    r.relname = 'project_documents'
+                    AND p.proname = 'prevent_project_document_mutation'
+                    AND t.tgtype = 19
+                    AND pg_get_triggerdef(t.oid, TRUE) =
+                        'CREATE TRIGGER trg_project_document_immutable BEFORE UPDATE ON project_documents FOR EACH ROW EXECUTE FUNCTION prevent_project_document_mutation()'
+                WHEN 'trg_project_document_lines_draft_only' THEN
+                    r.relname = 'project_document_lines'
+                    AND p.proname = 'prevent_non_draft_document_child_mutation'
+                    AND t.tgtype = 31
+                    AND pg_get_triggerdef(t.oid, TRUE) =
+                        'CREATE TRIGGER trg_project_document_lines_draft_only BEFORE INSERT OR DELETE OR UPDATE ON project_document_lines FOR EACH ROW EXECUTE FUNCTION prevent_non_draft_document_child_mutation()'
+                WHEN 'trg_project_document_allocations_draft_only' THEN
+                    r.relname = 'project_document_allocations'
+                    AND p.proname = 'prevent_non_draft_document_child_mutation'
+                    AND t.tgtype = 31
+                    AND pg_get_triggerdef(t.oid, TRUE) =
+                        'CREATE TRIGGER trg_project_document_allocations_draft_only BEFORE INSERT OR DELETE OR UPDATE ON project_document_allocations FOR EACH ROW EXECUTE FUNCTION prevent_non_draft_document_child_mutation()'
+                WHEN 'trg_project_document_events_append_only' THEN
+                    r.relname = 'project_document_events'
+                    AND p.proname = 'prevent_project_document_event_mutation'
+                    AND t.tgtype = 27
+                    AND pg_get_triggerdef(t.oid, TRUE) =
+                        'CREATE TRIGGER trg_project_document_events_append_only BEFORE DELETE OR UPDATE ON project_document_events FOR EACH ROW EXECUTE FUNCTION prevent_project_document_event_mutation()'
+                WHEN 'trg_project_issuer_profile_events_append_only' THEN
+                    r.relname = 'project_issuer_profile_events'
+                    AND p.proname = 'prevent_project_document_event_mutation'
+                    AND t.tgtype = 27
+                    AND pg_get_triggerdef(t.oid, TRUE) =
+                        'CREATE TRIGGER trg_project_issuer_profile_events_append_only BEFORE DELETE OR UPDATE ON project_issuer_profile_events FOR EACH ROW EXECUTE FUNCTION prevent_project_document_event_mutation()'
+                WHEN 'trg_project_document_artifacts_immutable' THEN
+                    r.relname = 'project_document_artifacts'
+                    AND p.proname = 'prevent_project_document_artifact_mutation'
+                    AND t.tgtype = 27
+                    AND pg_get_triggerdef(t.oid, TRUE) =
+                        'CREATE TRIGGER trg_project_document_artifacts_immutable BEFORE DELETE OR UPDATE ON project_document_artifacts FOR EACH ROW EXECUTE FUNCTION prevent_project_document_artifact_mutation()'
+                ELSE FALSE
+            END
+        ), FALSE)
         FROM pg_trigger t
         JOIN pg_class r ON r.oid = t.tgrelid
         JOIN pg_namespace n ON n.oid = r.relnamespace
         JOIN pg_proc p ON p.oid = t.tgfoid
         WHERE n.nspname = 'public' AND NOT t.tgisinternal
-          AND (t.tgname, p.proname) IN (
-              ('trg_projects_no_delete', 'prevent_project_delete'),
-              ('trg_project_documents_no_delete', 'prevent_project_document_delete'),
-              ('trg_project_document_immutable', 'prevent_project_document_mutation'),
-              ('trg_project_document_lines_draft_only', 'prevent_non_draft_document_child_mutation'),
-              ('trg_project_document_allocations_draft_only', 'prevent_non_draft_document_child_mutation'),
-              ('trg_project_document_events_append_only', 'prevent_project_document_event_mutation'),
-              ('trg_project_issuer_profile_events_append_only', 'prevent_project_document_event_mutation'),
-              ('trg_project_document_artifacts_immutable', 'prevent_project_document_artifact_mutation')
+          AND t.tgname IN (
+              'trg_projects_no_delete',
+              'trg_project_documents_no_delete',
+              'trg_project_document_immutable',
+              'trg_project_document_lines_draft_only',
+              'trg_project_document_allocations_draft_only',
+              'trg_project_document_events_append_only',
+              'trg_project_issuer_profile_events_append_only',
+              'trg_project_document_artifacts_immutable'
           )
     ) AS triggers_ready
 """
@@ -904,7 +1019,7 @@ class ProjectDocumentRepository:
         except (ProjectDocumentError, ValueError, TypeError):
             raise
         except Exception as exc:
-            if "uq_project_live_final_invoice" in str(exc):
+            if "uq_project_active_final_invoice" in str(exc):
                 raise ProjectDocumentConflict("a live FINAL invoice already exists") from exc
             raise ProjectDocumentUnavailable(
                 f"Project document database unavailable: {type(exc).__name__}"
@@ -968,7 +1083,9 @@ class ProjectDocumentRepository:
         cursor.execute(
             """
             SELECT id, ledger_source_key, amount, ledger_amount, ledger_snapshot, created_at
-            FROM project_document_allocations WHERE document_id = %s ORDER BY created_at, id
+            FROM project_document_allocations
+            WHERE document_id = %s
+            ORDER BY ledger_source_key, id
             """,
             (document_id,),
         )
@@ -1117,11 +1234,15 @@ class ProjectDocumentRepository:
             raise ProjectDocumentConflict("receipt allocation must reference valid project income")
         if str(row.get("project") or "") != project_id:
             raise ProjectDocumentConflict("receipt allocation project does not match")
-        wallet = str(issuer.get("wallet") or "")
-        company = str(issuer.get("company") or "")
-        if wallet and str(row.get("wallet") or "") != wallet:
+        wallet = str(issuer.get("wallet") or "").strip()
+        company = str(issuer.get("company") or "").strip()
+        if not wallet or not company:
+            raise ProjectDocumentConflict(
+                "receipt allocation requires non-empty project wallet and company"
+            )
+        if str(row.get("wallet") or "") != wallet:
             raise ProjectDocumentConflict("receipt allocation issuer wallet does not match")
-        if company and str(row.get("company") or "") != company:
+        if str(row.get("company") or "") != company:
             raise ProjectDocumentConflict("receipt allocation issuer company does not match")
         if int(row.get("amount") or 0) <= 0:
             raise ProjectDocumentConflict("receipt allocation income amount is invalid")
@@ -1287,6 +1408,84 @@ class ProjectDocumentRepository:
         }
 
     @staticmethod
+    def _issued_snapshot_total(snapshot: Any, *, label: str) -> int:
+        decoded = _safe_json_object(snapshot)
+        totals = decoded.get("totals") if decoded else None
+        if not isinstance(totals, Mapping):
+            raise ProjectDocumentConflict(f"{label} has no authoritative issued total")
+        total = totals.get("total")
+        if isinstance(total, bool) or not isinstance(total, int) or total < 0:
+            raise ProjectDocumentConflict(f"{label} has an invalid authoritative issued total")
+        return total
+
+    @classmethod
+    def _validate_final_residual(
+        cls,
+        cursor: Any,
+        document: Mapping[str, Any],
+    ) -> None:
+        if document.get("document_type") != "invoice" or document.get("invoice_kind") != "FINAL":
+            return
+        cursor.execute(
+            """
+            SELECT id, immutable_snapshot
+            FROM project_documents
+            WHERE project_id = %s
+              AND document_type = 'sales_order'
+              AND status = 'issued'
+            ORDER BY id
+            FOR UPDATE
+            """,
+            (document["project_id"],),
+        )
+        sales_orders = cursor.fetchall()
+        if len(sales_orders) != 1:
+            raise ProjectDocumentConflict(
+                "FINAL invoice requires exactly one active issued Sales Order"
+            )
+        commercial_total = cls._issued_snapshot_total(
+            sales_orders[0][1], label="Sales Order"
+        )
+        cursor.execute(
+            """
+            WITH RECURSIVE revision_chain(id, revision_of_id) AS (
+                SELECT id, revision_of_id
+                FROM project_documents
+                WHERE id = %s
+              UNION ALL
+                SELECT parent.id, parent.revision_of_id
+                FROM project_documents parent
+                JOIN revision_chain child ON parent.id = child.revision_of_id
+            )
+            SELECT d.id, d.immutable_snapshot
+            FROM project_documents d
+            WHERE d.project_id = %s
+              AND d.document_type = 'invoice'
+              AND d.status = 'issued'
+              AND NOT EXISTS (
+                  SELECT 1 FROM revision_chain chain WHERE chain.id = d.id
+              )
+            ORDER BY d.id
+            FOR UPDATE
+            """,
+            (document["id"], document["project_id"]),
+        )
+        prior_invoice_total = sum(
+            cls._issued_snapshot_total(snapshot, label="prior invoice")
+            for _invoice_id, snapshot in cursor.fetchall()
+        )
+        residual = commercial_total - prior_invoice_total
+        if residual < 0:
+            raise ProjectDocumentConflict(
+                f"commercial amount is overbilled by {-residual}"
+            )
+        final_total = int(cls._calculate_totals(document)["total"])
+        if final_total != residual:
+            raise ProjectDocumentConflict(
+                f"FINAL invoice total must equal residual commercial amount {residual}"
+            )
+
+    @staticmethod
     def _canonical_snapshot(
         *,
         document: Mapping[str, Any],
@@ -1379,6 +1578,7 @@ class ProjectDocumentRepository:
                             "invoices require a planned or active project"
                         )
                     self._revalidate_allocations(cursor, document)
+                    self._validate_final_residual(cursor, document)
                     year = instant.astimezone(JAKARTA).year
                     cursor.execute(
                         """
@@ -1439,6 +1639,7 @@ class ProjectDocumentRepository:
                     ):
                         raise ProjectDocumentUnavailable("document renderer returned an invalid PDF")
                     pdf_hash = hashlib.sha256(pdf_bytes).hexdigest()
+                    original_number = None
                     if document.get("revision_of_id"):
                         cursor.execute(
                             """
@@ -1447,13 +1648,16 @@ class ProjectDocumentRepository:
                                 superseded_at = %s, lock_version = lock_version + 1,
                                 updated_by = %s::jsonb, updated_at = NOW()
                             WHERE id = %s AND status = 'issued'
+                            RETURNING official_number
                             """,
                             (document_id, instant, actor_json, document["revision_of_id"]),
                         )
-                        if cursor.rowcount != 1:
+                        original_row = cursor.fetchone()
+                        if not original_row:
                             raise ProjectDocumentConflict(
                                 "revision source is not an issued document"
                             )
+                        original_number = str(original_row[0])
                     cursor.execute(
                         """
                         UPDATE project_documents
@@ -1482,6 +1686,22 @@ class ProjectDocumentRepository:
                     issued = self._load_document(cursor, document_id)
                     if issued["immutable_snapshot"] != canonical_snapshot:
                         raise ProjectDocumentUnavailable("stored snapshot readback mismatch")
+                    revision_links = {}
+                    if document.get("revision_of_id"):
+                        revision_links = {
+                            "original_document_id": document["revision_of_id"],
+                            "original_official_number": original_number,
+                            "replacement_document_id": document_id,
+                            "replacement_official_number": official_number,
+                        }
+                        self._event(
+                            cursor,
+                            project_id=document["project_id"],
+                            document_id=document["revision_of_id"],
+                            event_type="document.superseded",
+                            actor_json=actor_json,
+                            data=revision_links,
+                        )
                     self._event(
                         cursor,
                         project_id=document["project_id"],
@@ -1493,6 +1713,7 @@ class ProjectDocumentRepository:
                             "snapshot_sha256": snapshot_hash,
                             "pdf_sha256": pdf_hash,
                             "renderer_version": renderer_version,
+                            **revision_links,
                         },
                     )
                     return self._complete(cursor, key_hash, issued)
@@ -1610,6 +1831,10 @@ class ProjectDocumentRepository:
                     original = self._load_document(cursor, document_id, for_update=True)
                     if original["status"] != "issued":
                         raise ProjectDocumentConflict("only an issued document may be revised")
+                    if original["document_type"] == "receipt":
+                        raise ProjectDocumentConflict(
+                            "receipts cannot be revised; use payment reversal, receipt void, and a new receipt"
+                        )
                     if int(original["lock_version"]) != int(expected_version):
                         raise ProjectDocumentConflict("optimistic lock version conflict")
                     revision = self._insert_document(

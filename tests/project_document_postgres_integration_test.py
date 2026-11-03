@@ -137,7 +137,15 @@ def receipt(repository, project_id, key):
     )
 
 
-def insert_income(dsn, project_id, amount=500_000, source_key=None):
+def insert_income(
+    dsn,
+    project_id,
+    amount=500_000,
+    source_key=None,
+    *,
+    wallet="CV HB(101)",
+    company="HOLLA",
+):
     import psycopg
     from psycopg.types.json import Jsonb
 
@@ -152,12 +160,59 @@ def insert_income(dsn, project_id, amount=500_000, source_key=None):
                     wallet, project, is_valid, payload
                 ) VALUES (
                     %s, 'CV HB(101)', 1, 'pemasukan', DATE '2026-11-03',
-                    %s, 'Pemasukan', 'HOLLA', 'CV HB(101)', %s, TRUE, %s
+                    %s, 'Pemasukan', %s, %s, %s, TRUE, %s
                 )
                 """,
-                (selected, amount, project_id, Jsonb({"cash_authority": "sheets"})),
+                (
+                    selected,
+                    amount,
+                    company,
+                    wallet,
+                    project_id,
+                    Jsonb({"cash_authority": "sheets"}),
+                ),
             )
     return selected
+
+
+def set_document_total(repository, document, total, key):
+    return repository.update_draft(
+        document["id"],
+        {
+            "lines": [
+                {
+                    "description": "Commercial amount",
+                    "quantity": 1,
+                    "unit": "unit",
+                    "unit_price": total,
+                }
+            ]
+        },
+        expected_version=document["lock_version"],
+        idempotency_key=key,
+        actor=ACTOR,
+    )
+
+
+def issue_sales_order(repository, created, total=1_000_000, key="sales-order-ready-0001"):
+    prepared = set_document_total(
+        repository,
+        created["sales_order"],
+        total,
+        f"{key}-update",
+    )
+    return issue(repository, prepared, f"{key}-issue")
+
+
+def invoice_with_total(repository, project_id, kind, total, key):
+    draft = repository.create_document_draft(
+        project_id,
+        document_type="invoice",
+        values={"invoice_kind": kind},
+        idempotency_key=f"{key}-create",
+        actor=ACTOR,
+    )
+    return set_document_total(repository, draft, total, f"{key}-update")
 
 
 def test_profile_upsert_is_idempotent_versioned_audited_and_code_unique(repository, dsn):
@@ -407,6 +462,137 @@ def test_draft_allocations_reserve_income_and_concurrent_overreservation_fails(r
     )
 
 
+@pytest.mark.parametrize(
+    ("wallet", "company"),
+    [
+        (None, "HOLLA"),
+        ("CV HB(101)", None),
+        ("", "HOLLA"),
+        ("CV HB(101)", ""),
+    ],
+)
+def test_receipt_allocation_requires_non_empty_project_wallet_and_company(
+    repository, dsn, wallet, company
+):
+    created = project(repository)
+    project_id = created["project"]["id"]
+    repository.update_project(
+        project_id,
+        {"wallet": wallet, "company": company},
+        expected_version=created["project"]["lock_version"],
+        idempotency_key=f"missing-mapping-{wallet!s}-{company!s}-0001".replace(" ", "-"),
+        actor=ACTOR,
+    )
+    draft = receipt(repository, project_id, f"missing-mapping-receipt-{uuid.uuid4()}")
+    source_key = insert_income(dsn, project_id)
+
+    with pytest.raises(
+        ProjectDocumentConflict,
+        match="non-empty project wallet and company",
+    ):
+        repository.lock_allocations(
+            draft["id"],
+            [{"ledger_source_key": source_key, "amount": 100_000}],
+            expected_version=draft["lock_version"],
+            idempotency_key=f"missing-mapping-allocation-{uuid.uuid4()}",
+            actor=ACTOR,
+        )
+
+
+@pytest.mark.parametrize(
+    ("ledger_wallet", "ledger_company", "message"),
+    [
+        ("OTHER", "HOLLA", "issuer wallet does not match"),
+        ("CV HB(101)", "OTHER", "issuer company does not match"),
+    ],
+)
+def test_receipt_allocation_requires_exact_project_ledger_mapping(
+    repository, dsn, ledger_wallet, ledger_company, message
+):
+    created = project(repository)
+    project_id = created["project"]["id"]
+    draft = receipt(repository, project_id, f"mismatch-receipt-{uuid.uuid4()}")
+    source_key = insert_income(
+        dsn,
+        project_id,
+        wallet=ledger_wallet,
+        company=ledger_company,
+    )
+
+    with pytest.raises(ProjectDocumentConflict, match=message):
+        repository.lock_allocations(
+            draft["id"],
+            [{"ledger_source_key": source_key, "amount": 100_000}],
+            expected_version=draft["lock_version"],
+            idempotency_key=f"mismatch-allocation-{uuid.uuid4()}",
+            actor=ACTOR,
+        )
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"wallet": None}, "non-empty project wallet and company"),
+        ({"company": None}, "non-empty project wallet and company"),
+        ({"wallet": "OTHER"}, "issuer wallet does not match"),
+        ({"company": "OTHER"}, "issuer company does not match"),
+    ],
+)
+def test_receipt_issue_revalidates_complete_exact_project_ledger_mapping(
+    repository, dsn, changes, message
+):
+    created = project(repository)
+    project_id = created["project"]["id"]
+    draft = receipt(repository, project_id, f"issue-mapping-receipt-{uuid.uuid4()}")
+    source_key = insert_income(dsn, project_id)
+    allocated = repository.lock_allocations(
+        draft["id"],
+        [{"ledger_source_key": source_key, "amount": 100_000}],
+        expected_version=draft["lock_version"],
+        idempotency_key=f"issue-mapping-allocation-{uuid.uuid4()}",
+        actor=ACTOR,
+    )
+    current_project = repository.get_project(project_id)
+    repository.update_project(
+        project_id,
+        changes,
+        expected_version=current_project["lock_version"],
+        idempotency_key=f"issue-mapping-project-{uuid.uuid4()}",
+        actor=ACTOR,
+    )
+
+    with pytest.raises(ProjectDocumentConflict, match=message):
+        issue(repository, allocated, f"issue-mapping-attempt-{uuid.uuid4()}")
+    assert repository.get_document(allocated["id"])["status"] == "draft"
+
+
+def test_receipt_revision_is_rejected_with_correction_path(repository, dsn):
+    created = project(repository)
+    project_id = created["project"]["id"]
+    draft = receipt(repository, project_id, "receipt-not-revisable-create-0001")
+    source_key = insert_income(dsn, project_id)
+    allocated = repository.lock_allocations(
+        draft["id"],
+        [{"ledger_source_key": source_key, "amount": 100_000}],
+        expected_version=draft["lock_version"],
+        idempotency_key="receipt-not-revisable-allocate-0001",
+        actor=ACTOR,
+    )
+    issued = issue(repository, allocated, "receipt-not-revisable-issue-0001")
+
+    with pytest.raises(
+        ProjectDocumentConflict,
+        match="payment reversal, receipt void, and a new receipt",
+    ):
+        repository.revise_document(
+            issued["id"],
+            expected_version=issued["lock_version"],
+            idempotency_key="receipt-not-revisable-revise-0001",
+            actor=ACTOR,
+        )
+    assert repository.get_document(issued["id"])["status"] == "issued"
+
+
 def test_allocation_locks_are_deterministic_and_issue_blocks_source_mutation(repository, dsn):
     import psycopg
 
@@ -459,17 +645,216 @@ def test_allocation_locks_are_deterministic_and_issue_blocks_source_mutation(rep
     ]
 
 
+def test_final_issue_requires_one_active_issued_sales_order(repository):
+    created = project(repository)
+    project_id = created["project"]["id"]
+    final = invoice_with_total(
+        repository, project_id, "FINAL", 1_000_000, "final-no-sales-order-0001"
+    )
+
+    with pytest.raises(
+        ProjectDocumentConflict,
+        match="exactly one active issued Sales Order",
+    ):
+        issue(repository, final, "final-no-sales-order-issue-0001")
+
+    first_sales_order = issue_sales_order(
+        repository, created, key="multiple-sales-order-first-0001"
+    )
+    second_sales_order = repository.create_document_draft(
+        project_id,
+        document_type="sales_order",
+        values={},
+        idempotency_key="multiple-sales-order-second-create-0001",
+        actor=ACTOR,
+    )
+    second_sales_order = set_document_total(
+        repository,
+        second_sales_order,
+        1_000_000,
+        "multiple-sales-order-second-update-0001",
+    )
+    issue(repository, second_sales_order, "multiple-sales-order-second-issue-0001")
+    assert first_sales_order["status"] == "issued"
+
+    with pytest.raises(
+        ProjectDocumentConflict,
+        match="exactly one active issued Sales Order",
+    ):
+        issue(repository, final, "final-multiple-sales-order-issue-0001")
+
+
+def test_final_issue_equals_residual_after_dp_and_progress(repository):
+    created = project(repository)
+    project_id = created["project"]["id"]
+    issue_sales_order(repository, created, 1_000_000, "residual-sales-order-0001")
+    dp = invoice_with_total(repository, project_id, "DP", 300_000, "residual-dp-0001")
+    progress = invoice_with_total(
+        repository, project_id, "PROGRESS", 200_000, "residual-progress-0001"
+    )
+    issue(repository, dp, "residual-dp-issue-0001")
+    issue(repository, progress, "residual-progress-issue-0001")
+    wrong_final = invoice_with_total(
+        repository, project_id, "FINAL", 499_999, "residual-final-0001"
+    )
+
+    with pytest.raises(
+        ProjectDocumentConflict,
+        match="FINAL invoice total must equal residual commercial amount 500000",
+    ):
+        issue(repository, wrong_final, "residual-final-wrong-issue-0001")
+
+    final = set_document_total(
+        repository,
+        wrong_final,
+        500_000,
+        "residual-final-correct-update-0001",
+    )
+    issued = issue(repository, final, "residual-final-correct-issue-0001")
+    assert issued["immutable_snapshot"]["totals"]["total"] == 500_000
+
+
+def test_final_issue_rejects_negative_residual_after_overbilling(repository):
+    created = project(repository)
+    project_id = created["project"]["id"]
+    issue_sales_order(repository, created, 1_000_000, "overbilled-sales-order-0001")
+    dp = invoice_with_total(repository, project_id, "DP", 700_000, "overbilled-dp-0001")
+    progress = invoice_with_total(
+        repository, project_id, "PROGRESS", 400_000, "overbilled-progress-0001"
+    )
+    issue(repository, dp, "overbilled-dp-issue-0001")
+    issue(repository, progress, "overbilled-progress-issue-0001")
+    final = invoice_with_total(
+        repository, project_id, "FINAL", 1, "overbilled-final-0001"
+    )
+
+    with pytest.raises(
+        ProjectDocumentConflict,
+        match="commercial amount is overbilled by 100000",
+    ):
+        issue(repository, final, "overbilled-final-issue-0001")
+
+
+def test_final_residual_excludes_void_invoices_and_requires_non_void_sales_order(repository):
+    created = project(repository)
+    project_id = created["project"]["id"]
+    sales_order = issue_sales_order(
+        repository, created, 1_000_000, "void-residual-sales-order-0001"
+    )
+    dp = invoice_with_total(repository, project_id, "DP", 300_000, "void-residual-dp-0001")
+    issued_dp = issue(repository, dp, "void-residual-dp-issue-0001")
+    repository.void_document(
+        issued_dp["id"],
+        reason="Payment cancelled",
+        expected_version=issued_dp["lock_version"],
+        idempotency_key="void-residual-dp-void-0001",
+        actor=ACTOR,
+    )
+    final = invoice_with_total(
+        repository, project_id, "FINAL", 1_000_000, "void-residual-final-0001"
+    )
+    issued_final = issue(repository, final, "void-residual-final-issue-0001")
+    assert issued_final["status"] == "issued"
+
+    repository.void_document(
+        sales_order["id"],
+        reason="Commercial order cancelled",
+        expected_version=sales_order["lock_version"],
+        idempotency_key="void-residual-sales-order-void-0001",
+        actor=ACTOR,
+    )
+    repository.void_document(
+        issued_final["id"],
+        reason="Sales Order voided",
+        expected_version=issued_final["lock_version"],
+        idempotency_key="void-residual-final-void-0001",
+        actor=ACTOR,
+    )
+    replacement = invoice_with_total(
+        repository, project_id, "FINAL", 1_000_000, "void-residual-replacement-0001"
+    )
+    with pytest.raises(
+        ProjectDocumentConflict,
+        match="exactly one active issued Sales Order",
+    ):
+        issue(repository, replacement, "void-residual-replacement-issue-0001")
+
+
+def test_final_residual_counts_only_active_invoice_revision(repository):
+    created = project(repository)
+    project_id = created["project"]["id"]
+    issue_sales_order(repository, created, 1_000_000, "chain-sales-order-0001")
+    dp = invoice_with_total(repository, project_id, "DP", 300_000, "chain-dp-0001")
+    issued_dp = issue(repository, dp, "chain-dp-issue-0001")
+    revised_dp = repository.revise_document(
+        issued_dp["id"],
+        expected_version=issued_dp["lock_version"],
+        idempotency_key="chain-dp-revise-0001",
+        actor=ACTOR,
+    )
+    revised_dp = set_document_total(
+        repository, revised_dp, 350_000, "chain-dp-revision-update-0001"
+    )
+    issue(repository, revised_dp, "chain-dp-revision-issue-0001")
+    final = invoice_with_total(
+        repository, project_id, "FINAL", 650_000, "chain-final-0001"
+    )
+    issued_final = issue(repository, final, "chain-final-issue-0001")
+    assert issued_final["status"] == "issued"
+
+    final_revision = repository.revise_document(
+        issued_final["id"],
+        expected_version=issued_final["lock_version"],
+        idempotency_key="chain-final-revise-0001",
+        actor=ACTOR,
+    )
+    replacement = issue(repository, final_revision, "chain-final-revision-issue-0001")
+    assert replacement["status"] == "issued"
+
+
+def test_revision_issue_emits_mutual_superseded_and_issued_events_once(repository):
+    created = project(repository)
+    original = issue_sales_order(
+        repository, created, 1_000_000, "event-sales-order-0001"
+    )
+    revision = repository.revise_document(
+        original["id"],
+        expected_version=original["lock_version"],
+        idempotency_key="event-sales-order-revise-0001",
+        actor=ACTOR,
+    )
+    replacement = issue(repository, revision, "event-sales-order-revision-issue-0001")
+    replay = issue(repository, revision, "event-sales-order-revision-issue-0001")
+    assert replay == replacement
+
+    expected_links = {
+        "original_document_id": original["id"],
+        "original_official_number": original["official_number"],
+        "replacement_document_id": replacement["id"],
+        "replacement_official_number": replacement["official_number"],
+    }
+    original_events = repository.replay_audit(document_id=original["id"])
+    replacement_events = repository.replay_audit(document_id=replacement["id"])
+    superseded = [
+        event for event in original_events if event["event_type"] == "document.superseded"
+    ]
+    replacement_issued = [
+        event for event in replacement_events if event["event_type"] == "document.issued"
+    ]
+    assert len(superseded) == 1
+    assert len(replacement_issued) == 1
+    assert superseded[0]["event_data"] == expected_links
+    assert replacement_issued[0]["event_data"] | expected_links == replacement_issued[0]["event_data"]
+
+
 def test_final_revision_supersession_is_atomic_and_void_allows_recreate(repository, dsn):
     import psycopg
 
     created = project(repository)
     project_id = created["project"]["id"]
-    final = repository.create_document_draft(
-        project_id,
-        document_type="invoice",
-        values={"invoice_kind": "FINAL", "lines": [{"description": "Final", "quantity": 1, "unit": "unit", "unit_price": 1}]},
-        idempotency_key="final-create-key-0001",
-        actor=ACTOR,
+    issue_sales_order(repository, created, 1, "final-revision-sales-order-0001")
+    final = invoice_with_total(
+        repository, project_id, "FINAL", 1, "final-revision-final-0001"
     )
     issued = issue(repository, final, "final-issue-key-0001")
     revision = repository.revise_document(
@@ -512,14 +897,39 @@ def test_final_revision_supersession_is_atomic_and_void_allows_recreate(reposito
             assert cursor.fetchone()[0] == 1
 
 
-def test_concurrent_final_revision_allows_only_one_pending_draft(repository, dsn):
+def test_active_final_index_violation_maps_to_domain_conflict(repository):
     created = project(repository)
-    final = repository.create_document_draft(
+    first = repository.create_document_draft(
         created["project"]["id"],
         document_type="invoice",
         values={"invoice_kind": "FINAL"},
-        idempotency_key="final-concurrent-create-0001",
+        idempotency_key="final-index-first-create-0001",
         actor=ACTOR,
+    )
+    assert first["status"] == "draft"
+
+    with pytest.raises(
+        ProjectDocumentConflict,
+        match="a live FINAL invoice already exists",
+    ):
+        repository.create_document_draft(
+            created["project"]["id"],
+            document_type="invoice",
+            values={"invoice_kind": "FINAL"},
+            idempotency_key="final-index-second-create-0001",
+            actor=ACTOR,
+        )
+
+
+def test_concurrent_final_revision_allows_only_one_pending_draft(repository, dsn):
+    created = project(repository)
+    issue_sales_order(repository, created, 1, "final-concurrent-sales-order-0001")
+    final = invoice_with_total(
+        repository,
+        created["project"]["id"],
+        "FINAL",
+        1,
+        "final-concurrent-final-0001",
     )
     issued = issue(repository, final, "final-concurrent-issue-0001")
     barrier = threading.Barrier(2)
@@ -609,6 +1019,55 @@ def test_schema_health_detects_missing_exact_trigger(repository, dsn):
     with psycopg.connect(dsn) as connection:
         with connection.cursor() as cursor:
             cursor.execute("DROP TRIGGER trg_projects_no_delete ON projects")
+    status = project_document_schema_health(dsn)
+    assert status["ready"] is False
+    assert status["triggers"] is False
+
+
+def test_schema_health_rejects_same_name_wrong_index_definition(repository, dsn):
+    import psycopg
+
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("DROP INDEX uq_project_active_final_invoice")
+            cursor.execute(
+                "CREATE UNIQUE INDEX uq_project_active_final_invoice "
+                "ON project_documents(id)"
+            )
+    status = project_document_schema_health(dsn)
+    assert status["ready"] is False
+    assert status["indexes"] is False
+
+
+def test_schema_health_rejects_same_name_wrong_constraint_definition(repository, dsn):
+    import psycopg
+
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "ALTER TABLE project_scopes "
+                "DROP CONSTRAINT project_scopes_project_id_fkey"
+            )
+            cursor.execute(
+                "ALTER TABLE project_scopes "
+                "ADD CONSTRAINT project_scopes_project_id_fkey "
+                "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE"
+            )
+    status = project_document_schema_health(dsn)
+    assert status["ready"] is False
+    assert status["constraints"] is False
+
+
+def test_schema_health_rejects_same_name_wrong_trigger_definition(repository, dsn):
+    import psycopg
+
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("DROP TRIGGER trg_projects_no_delete ON projects")
+            cursor.execute(
+                "CREATE TRIGGER trg_projects_no_delete AFTER DELETE ON projects "
+                "FOR EACH ROW EXECUTE FUNCTION prevent_project_delete()"
+            )
     status = project_document_schema_health(dsn)
     assert status["ready"] is False
     assert status["triggers"] is False
