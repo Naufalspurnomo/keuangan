@@ -213,14 +213,29 @@ class ProjectDocumentService:
         if kind == "FINAL":
             if command.get("lines"):
                 raise DocumentCalculationError("FINAL invoice lines are repository-generated")
-            if (
-                int(command.get("document_discount_amount") or 0)
-                or Decimal(str(command.get("document_discount_percent") or "0"))
-                or Decimal(str(command.get("tax_percent") or "0"))
-            ):
+            discount_amount = integer_rupiah(
+                command.get("document_discount_amount", 0),
+                field="document_discount_amount",
+            )
+            discount_percent = decimal_value(
+                command.get("document_discount_percent", "0"),
+                field="document_discount_percent",
+                maximum=PERCENT_MAX,
+                max_fractional_digits=4,
+            )
+            tax_percent = decimal_value(
+                command.get("tax_percent", "0"),
+                field="tax_percent",
+                maximum=PERCENT_MAX,
+                max_fractional_digits=4,
+            )
+            if discount_amount or discount_percent or tax_percent:
                 raise DocumentCalculationError(
                     "FINAL invoice cannot add discount or tax to the residual"
                 )
+            command["document_discount_amount"] = discount_amount
+            command["document_discount_percent"] = decimal_text(discount_percent)
+            command["tax_percent"] = decimal_text(tax_percent)
         elif command.get("lines"):
             totals = calculate_document_totals(
                 command["lines"],

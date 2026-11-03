@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from services.project_document_models import MAX_RECEIPT_ALLOCATIONS
 from services.project_document_repository import (
     ProjectDocumentRepository,
     ProjectDocumentUnavailable,
@@ -35,6 +36,7 @@ def test_migration_defines_exact_schema_and_database_guards():
     for required in (
         "uq_project_issuer_profiles_number_code",
         "uq_project_active_final_invoice",
+        "uq_project_active_sales_order",
         "uq_project_pending_document_revision",
         "prevent_project_issuer_number_code_mutation",
         "prevent_project_delete",
@@ -51,6 +53,16 @@ def test_migration_defines_exact_schema_and_database_guards():
     assert "sales_order" in sql and "invoice" in sql and "receipt" in sql
     assert "quotation" not in sql
     assert "credit_note" not in sql
+
+
+def test_receipt_allocation_count_is_bounded_before_io():
+    allocations = [
+        {"ledger_source_key": f"sheet:income:{index}", "amount": 1}
+        for index in range(MAX_RECEIPT_ALLOCATIONS + 1)
+    ]
+
+    with pytest.raises(ValueError, match=f"at most {MAX_RECEIPT_ALLOCATIONS}"):
+        ProjectDocumentRepository._normalize_allocations(allocations)
 
 
 def test_issue_interface_only_accepts_server_renderer_output():
@@ -135,6 +147,7 @@ def test_schema_health_is_read_only_and_requires_exact_catalog_objects(monkeypat
     for exact_object in (
         "uq_project_issuer_profiles_number_code",
         "uq_project_active_final_invoice",
+        "uq_project_active_sales_order",
         "uq_project_pending_document_revision",
         "project_issuer_profiles",
         "project_document_number_counters",

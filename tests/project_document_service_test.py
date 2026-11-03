@@ -226,6 +226,32 @@ def test_invoice_leaves_due_date_and_status_validation_to_atomic_repository_comm
     assert not any(item[0] == "get_project" for item in repository.calls)
 
 
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"document_discount_amount": "not-an-integer"},
+        {"document_discount_percent": "not-a-decimal"},
+        {"tax_percent": "NaN"},
+        {"tax_percent": "Infinity"},
+        {"tax_percent": "1e999999"},
+        {"tax_percent": "0.00001"},
+    ],
+)
+def test_final_invoice_normalizes_malformed_numeric_inputs(values):
+    subject, repository = service()
+
+    with pytest.raises(DocumentCalculationError):
+        subject.create_invoice(
+            repository.project["id"],
+            kind="FINAL",
+            values=values,
+            idempotency_key="final-malformed-numeric-0001",
+            actor={"email": "owner@example.com"},
+        )
+
+    assert repository.calls == []
+
+
 def test_invoice_status_is_not_prechecked_outside_repository_transaction():
     repository = FakeRepository()
     repository.project["status"] = "completed"

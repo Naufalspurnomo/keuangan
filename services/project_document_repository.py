@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 from services.project_document_models import (
     MAX_DOCUMENT_LINES,
+    MAX_RECEIPT_ALLOCATIONS,
     PERCENT_MAX,
     QUANTITY_MAX,
     DocumentCalculationError,
@@ -105,6 +106,11 @@ def _json_default(value: Any) -> Any:
 def canonical_json_hash(value: Any) -> str:
     encoded, _ = _json(value, label="value")
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _constraint_name(exc: BaseException) -> str:
+    diagnostic = getattr(exc, "diag", None)
+    return str(getattr(diagnostic, "constraint_name", "") or "")
 
 
 def _actor(value: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -270,7 +276,7 @@ SELECT
           )
     ) AS constraints_ready,
     (
-        SELECT COUNT(*) = 5 AND COALESCE(BOOL_AND(
+        SELECT COUNT(*) = 6 AND COALESCE(BOOL_AND(
             CASE ci.relname
                 WHEN 'uq_project_issuer_profiles_number_code' THEN
                     r.relname = 'project_issuer_profiles'
@@ -286,6 +292,13 @@ SELECT
                     AND pg_get_indexdef(i.indexrelid, 1, TRUE) = 'project_id'
                     AND pg_get_expr(i.indpred, i.indrelid, TRUE) =
                         'document_type = ''invoice''::text AND invoice_kind = ''FINAL''::text AND (status = ''issued''::text OR status = ''draft''::text AND revision_of_id IS NULL)'
+                WHEN 'uq_project_active_sales_order' THEN
+                    r.relname = 'project_documents'
+                    AND i.indisunique
+                    AND i.indnkeyatts = 1
+                    AND pg_get_indexdef(i.indexrelid, 1, TRUE) = 'project_id'
+                    AND pg_get_expr(i.indpred, i.indrelid, TRUE) =
+                        'document_type = ''sales_order''::text AND status = ''issued''::text'
                 WHEN 'uq_project_pending_document_revision' THEN
                     r.relname = 'project_documents'
                     AND i.indisunique
@@ -319,6 +332,7 @@ SELECT
           AND ci.relname IN (
               'uq_project_issuer_profiles_number_code',
               'uq_project_active_final_invoice',
+              'uq_project_active_sales_order',
               'uq_project_pending_document_revision',
               'idx_project_document_allocations_source',
               'idx_project_document_events_project_replay'
@@ -772,7 +786,7 @@ class ProjectDocumentRepository:
         actor_json, _ = _actor(actor)
         project_id = str(uuid.uuid4())
         document_id = str(uuid.uuid4())
-        request = {"values": command, "actor": _safe_json_object(actor_json)}
+        request = {"values": command}
         try:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
@@ -1771,6 +1785,14 @@ class ProjectDocumentRepository:
                         raise ProjectDocumentConflict(
                             "receipt amount is derived from authoritative allocations"
                         )
+                    if (
+                        existing["document_type"] == "invoice"
+                        and existing.get("invoice_kind") == "FINAL"
+                        and monetary_fields.intersection(supplied)
+                    ):
+                        raise ProjectDocumentConflict(
+                            "FINAL monetary fields are repository-generated"
+                        )
                     cursor.execute(
                         f"UPDATE project_documents SET {', '.join(assignments)} "
                         "WHERE id = %s AND lock_version = %s AND status = 'draft' RETURNING project_id",
@@ -1874,6 +1896,10 @@ class ProjectDocumentRepository:
         materialized = [dict(item) for item in allocations]
         if not materialized:
             raise ValueError("at least one allocation is required")
+        if len(materialized) > MAX_RECEIPT_ALLOCATIONS:
+            raise ValueError(
+                f"receipt may contain at most {MAX_RECEIPT_ALLOCATIONS} allocations"
+            )
         seen: set[str] = set()
         normalized: list[tuple[str, int]] = []
         for allocation in materialized:
@@ -2021,9 +2047,11 @@ class ProjectDocumentRepository:
         idempotency_key: str,
         actor: Mapping[str, Any],
     ) -> dict[str, Any]:
-        materialized = [dict(item) for item in allocations]
-        if not materialized:
-            raise ValueError("at least one allocation is required")
+        normalized_allocations = self._normalize_allocations(allocations)
+        materialized = [
+            {"ledger_source_key": source_key, "amount": amount}
+            for source_key, amount in normalized_allocations
+        ]
         actor_json, _ = _actor(actor)
         request = {"document_id": document_id, "allocations": materialized, "expected_version": expected_version}
         try:
@@ -2032,18 +2060,29 @@ class ProjectDocumentRepository:
                     key_hash, _, replay = self._claim(cursor, "document.allocate", idempotency_key, request)
                     if replay is not None:
                         return replay
+                    cursor.execute(
+                        "SELECT project_id FROM project_documents WHERE id = %s",
+                        (document_id,),
+                    )
+                    identity = cursor.fetchone()
+                    if not identity:
+                        raise ProjectDocumentNotFound("document not found")
+                    cursor.execute(
+                        "SELECT id, wallet, company FROM projects WHERE id = %s FOR UPDATE",
+                        (identity[0],),
+                    )
+                    project = _row_dict(
+                        cursor, ["id", "wallet", "company"], cursor.fetchone()
+                    ) or {}
+                    if not project:
+                        raise ProjectDocumentConflict("document project is missing")
                     document = self._load_document(cursor, document_id, for_update=True)
                     if document["status"] != "draft" or document["document_type"] != "receipt":
                         raise ProjectDocumentConflict("allocations require a receipt draft")
                     if int(document["lock_version"]) != int(expected_version):
                         raise ProjectDocumentConflict("optimistic lock version conflict")
-                    cursor.execute(
-                        "SELECT id, wallet, company FROM projects WHERE id = %s FOR UPDATE",
-                        (document["project_id"],),
-                    )
-                    project = _row_dict(
-                        cursor, ["id", "wallet", "company"], cursor.fetchone()
-                    ) or {}
+                    if str(document["project_id"]) != str(project["id"]):
+                        raise ProjectDocumentConflict("document project changed")
                     prepared = self._prepare_receipt_allocations(
                         cursor,
                         document_id=document_id,
@@ -2110,6 +2149,10 @@ class ProjectDocumentRepository:
         allocations = document.get("allocations") or []
         if not allocations:
             raise ProjectDocumentConflict("receipt requires verified income allocations")
+        if len(allocations) > MAX_RECEIPT_ALLOCATIONS:
+            raise ProjectDocumentConflict(
+                f"receipt may contain at most {MAX_RECEIPT_ALLOCATIONS} allocations"
+            )
         cursor.execute(
             "SELECT id, wallet, company FROM projects WHERE id = %s FOR UPDATE",
             (document["project_id"],),
@@ -2266,6 +2309,72 @@ class ProjectDocumentRepository:
         return total
 
     @classmethod
+    def _locked_issued_invoice_state(
+        cls,
+        cursor: Any,
+        project_id: str,
+    ) -> dict[str, int]:
+        cursor.execute(
+            """
+            SELECT id, immutable_snapshot
+            FROM project_documents
+            WHERE project_id = %s
+              AND document_type = 'invoice'
+              AND status = 'issued'
+            ORDER BY id
+            FOR UPDATE
+            """,
+            (project_id,),
+        )
+        rows = cursor.fetchall()
+        total = 0
+        for _invoice_id, snapshot in rows:
+            total = bounded_idr(
+                total + cls._issued_snapshot_total(snapshot, label="issued invoice"),
+                field="issued invoice total",
+            )
+        return {"count": len(rows), "total": total}
+
+    @classmethod
+    def _validate_sales_order_commercial_state(
+        cls,
+        cursor: Any,
+        document: Mapping[str, Any],
+    ) -> None:
+        if document.get("document_type") != "sales_order":
+            return
+        cursor.execute(
+            """
+            SELECT id
+            FROM project_documents
+            WHERE project_id = %s
+              AND document_type = 'sales_order'
+              AND status = 'issued'
+            ORDER BY id
+            FOR UPDATE
+            """,
+            (document["project_id"],),
+        )
+        active_ids = [str(row[0]) for row in cursor.fetchall()]
+        revision_of_id = str(document.get("revision_of_id") or "")
+        if revision_of_id:
+            if active_ids != [revision_of_id]:
+                raise ProjectDocumentConflict(
+                    "Sales Order revision source must be the sole active issued Sales Order"
+                )
+        elif active_ids:
+            raise ProjectDocumentConflict("an active issued Sales Order already exists")
+        issued_invoices = cls._locked_issued_invoice_state(
+            cursor,
+            str(document["project_id"]),
+        )
+        proposed_total = int(cls._calculate_totals(document)["total"])
+        if proposed_total < issued_invoices["total"]:
+            raise ProjectDocumentConflict(
+                "Sales Order total cannot be below issued invoice total"
+            )
+
+    @classmethod
     def _validate_invoice_commercial_state(
         cls,
         cursor: Any,
@@ -2337,10 +2446,54 @@ class ProjectDocumentRepository:
             raise ProjectDocumentConflict(
                 f"invoice total exceeds residual commercial amount {residual}"
             )
-        if document.get("invoice_kind") == "FINAL" and invoice_total != residual:
-            raise ProjectDocumentConflict(
-                f"FINAL invoice total must equal residual commercial amount {residual}"
-            )
+        if document.get("invoice_kind") == "FINAL":
+            numeric = cls._numeric_document_values(document)
+            if (
+                numeric["document_discount_amount"]
+                or Decimal(numeric["document_discount_percent"])
+                or Decimal(numeric["tax_percent"])
+            ):
+                raise ProjectDocumentConflict(
+                    "FINAL invoice cannot add discount or tax to the residual"
+                )
+            lines = list(document.get("lines") or [])
+            canonical_line = lines[0] if len(lines) == 1 else {}
+            if (
+                len(lines) != 1
+                or str(canonical_line.get("description") or "") != "Pelunasan akhir"
+                or decimal_value(
+                    canonical_line.get("quantity"),
+                    field="FINAL quantity",
+                    maximum=QUANTITY_MAX,
+                    max_fractional_digits=4,
+                ) != Decimal("1")
+                or str(canonical_line.get("unit") or "") != "termin"
+                or integer_rupiah(
+                    canonical_line.get("unit_price"), field="FINAL unit_price"
+                ) != residual
+                or decimal_value(
+                    canonical_line.get("line_discount_percent", "0"),
+                    field="FINAL line_discount_percent",
+                    maximum=PERCENT_MAX,
+                    max_fractional_digits=4,
+                )
+                or integer_rupiah(
+                    canonical_line.get("line_gross"), field="FINAL line_gross"
+                ) != residual
+                or integer_rupiah(
+                    canonical_line.get("line_discount"), field="FINAL line_discount"
+                )
+                or integer_rupiah(
+                    canonical_line.get("line_total"), field="FINAL line_total"
+                ) != residual
+            ):
+                raise ProjectDocumentConflict(
+                    "FINAL invoice line must be the repository-generated residual"
+                )
+            if invoice_total != residual:
+                raise ProjectDocumentConflict(
+                    f"FINAL invoice total must equal residual commercial amount {residual}"
+                )
 
     @staticmethod
     def _canonical_snapshot(
@@ -2416,20 +2569,33 @@ class ProjectDocumentRepository:
                             "document renderer is not configured"
                         )
                     instant = _instant(issued_at or self._now())
+                    cursor.execute(
+                        "SELECT project_id FROM project_documents WHERE id = %s",
+                        (document_id,),
+                    )
+                    identity = cursor.fetchone()
+                    if not identity:
+                        raise ProjectDocumentNotFound("document not found")
+                    cursor.execute(
+                        "SELECT " + _SELECT_PROJECT + " FROM projects WHERE id = %s FOR UPDATE",
+                        (identity[0],),
+                    )
+                    project = _row_dict(cursor, _PROJECT_COLUMNS, cursor.fetchone())
+                    if not project:
+                        raise ProjectDocumentConflict("document project is missing")
                     document = self._load_document(cursor, document_id, for_update=True)
                     if document["status"] != "draft":
                         raise ProjectDocumentConflict("only a draft document may be issued")
                     if int(document["lock_version"]) != int(expected_version):
                         raise ProjectDocumentConflict("optimistic lock version conflict")
-                    cursor.execute(
-                        "SELECT " + _SELECT_PROJECT + " FROM projects WHERE id = %s FOR UPDATE",
-                        (document["project_id"],),
-                    )
-                    project = _row_dict(cursor, _PROJECT_COLUMNS, cursor.fetchone())
-                    if not project:
-                        raise ProjectDocumentConflict("document project is missing")
+                    if str(document["project_id"]) != str(project["id"]):
+                        raise ProjectDocumentConflict("document project changed")
                     project["created_by"] = _safe_json_object(project.get("created_by"))
                     project["updated_by"] = _safe_json_object(project.get("updated_by"))
+                    if str(document["issuer_key"]) != str(project["issuer_key"]):
+                        raise ProjectDocumentConflict(
+                            "document issuer does not match the current project issuer"
+                        )
                     if document["document_type"] == "invoice" and project["status"] not in {
                         "planned", "active"
                     }:
@@ -2437,6 +2603,7 @@ class ProjectDocumentRepository:
                             "invoices require a planned or active project"
                         )
                     self._revalidate_allocations(cursor, document)
+                    self._validate_sales_order_commercial_state(cursor, document)
                     self._validate_invoice_commercial_state(cursor, document)
                     year = instant.astimezone(JAKARTA).year
                     cursor.execute(
@@ -2579,6 +2746,10 @@ class ProjectDocumentRepository:
         except (ProjectDocumentError, ValueError, TypeError):
             raise
         except Exception as exc:
+            if _constraint_name(exc) == "uq_project_active_sales_order":
+                raise ProjectDocumentConflict(
+                    "an active issued Sales Order already exists"
+                ) from exc
             raise ProjectDocumentUnavailable(
                 f"Project document database unavailable: {type(exc).__name__}"
             ) from exc
@@ -2628,6 +2799,38 @@ class ProjectDocumentRepository:
                     if replay is not None:
                         return replay
                     cursor.execute(
+                        "SELECT project_id FROM project_documents WHERE id = %s",
+                        (document_id,),
+                    )
+                    identity = cursor.fetchone()
+                    if not identity:
+                        raise ProjectDocumentNotFound("document not found")
+                    cursor.execute(
+                        "SELECT id FROM projects WHERE id = %s FOR UPDATE",
+                        (identity[0],),
+                    )
+                    project_row = cursor.fetchone()
+                    if not project_row:
+                        raise ProjectDocumentConflict("document project is missing")
+                    current = self._load_document(cursor, document_id, for_update=True)
+                    if current["status"] != "issued":
+                        raise ProjectDocumentConflict(
+                            "only an issued document may be changed"
+                        )
+                    if int(current["lock_version"]) != int(expected_version):
+                        raise ProjectDocumentConflict("optimistic lock version conflict")
+                    if str(current["project_id"]) != str(project_row[0]):
+                        raise ProjectDocumentConflict("document project changed")
+                    if current["document_type"] == "sales_order":
+                        issued_invoices = self._locked_issued_invoice_state(
+                            cursor,
+                            str(current["project_id"]),
+                        )
+                        if issued_invoices["count"]:
+                            raise ProjectDocumentConflict(
+                                "Sales Order cannot be voided while issued invoices exist"
+                            )
+                    cursor.execute(
                         """
                         UPDATE project_documents
                         SET status = 'void', void_reason = %s, voided_at = NOW(),
@@ -2640,7 +2843,7 @@ class ProjectDocumentRepository:
                     )
                     row = cursor.fetchone()
                     if not row:
-                        self._raise_issued_conflict(cursor, document_id, expected_version)
+                        raise ProjectDocumentConflict("issued document transition conflicted")
                     document = self._load_document(cursor, document_id)
                     self._event(
                         cursor,
@@ -2721,6 +2924,10 @@ class ProjectDocumentRepository:
         except (ProjectDocumentError, ValueError, TypeError):
             raise
         except Exception as exc:
+            if _constraint_name(exc) == "uq_project_pending_document_revision":
+                raise ProjectDocumentConflict(
+                    "a pending revision already exists for this document"
+                ) from exc
             raise ProjectDocumentUnavailable(
                 f"Project document database unavailable: {type(exc).__name__}"
             ) from exc

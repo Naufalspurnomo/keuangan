@@ -119,7 +119,13 @@ def issuer(repository, *, issuer_key="hollawall", number_code="HW", key=None):
     )
 
 
-def project(repository, *, key="project-create-key-0001", status="planned"):
+def project(
+    repository,
+    *,
+    key="project-create-key-0001",
+    status="planned",
+    actor=ACTOR,
+):
     profile = issuer(repository)
     return repository.create_project_with_sales_order(
         {
@@ -136,7 +142,7 @@ def project(repository, *, key="project-create-key-0001", status="planned"):
             "contract_notes": "A5 documents",
         },
         idempotency_key=key,
-        actor=ACTOR,
+        actor=actor,
     )
 
 
@@ -391,23 +397,15 @@ def test_rejected_issuer_code_rotation_does_not_interrupt_numbering(repository):
             expected_version=profile["profile_version"],
             idempotency_key="immutable-code-numbering-rotate-0001",
         )
-    second_draft = repository.create_document_draft(
-        created["project"]["id"],
-        document_type="sales_order",
-        values={},
-        idempotency_key="immutable-code-numbering-second-create-0001",
-        actor=ACTOR,
-    )
-    second_ready = set_document_total(
+    second_project = project(
         repository,
-        second_draft,
-        1_000_000,
-        "immutable-code-numbering-second-update-0001",
+        key="immutable-code-numbering-second-project-0001",
     )
-    second = issue(
+    second = issue_sales_order(
         repository,
-        second_ready,
-        "immutable-code-numbering-second-issue-0001",
+        second_project,
+        total=1_000_000,
+        key="immutable-code-numbering-second-0001",
     )
 
     assert first["official_number"] == "SO/HW/2027/000001"
@@ -531,13 +529,8 @@ def test_renderer_failure_and_invalid_pdf_roll_back_number_and_issuance(dsn):
 
 def test_concurrent_numbering_uses_independent_connections_and_replays(repository, dsn):
     created = project(repository)
-    second = repository.create_document_draft(
-        created["project"]["id"],
-        document_type="sales_order",
-        values={},
-        idempotency_key="second-sales-order-0001",
-        actor=ACTOR,
-    )
+    second_project = project(repository, key="concurrent-second-project-0001")
+    second = second_project["sales_order"]
     barrier = threading.Barrier(2)
 
     def run(document, key):
@@ -563,13 +556,8 @@ def test_concurrent_numbering_uses_independent_connections_and_replays(repositor
     }
 
     # Two independent transactions with one key converge on the committed response.
-    third = repository.create_document_draft(
-        created["project"]["id"],
-        document_type="sales_order",
-        values={},
-        idempotency_key="third-sales-order-0001",
-        actor=ACTOR,
-    )
+    third_project = project(repository, key="concurrent-third-project-0001")
+    third = third_project["sales_order"]
     replay_barrier = threading.Barrier(2)
 
     def replay_issue():
@@ -960,19 +948,82 @@ def test_final_command_requires_one_active_issued_sales_order(repository):
         1_000_000,
         "multiple-sales-order-second-update-0001",
     )
-    issue(repository, second_sales_order, "multiple-sales-order-second-issue-0001")
-    assert first_sales_order["status"] == "issued"
+    with pytest.raises(ProjectDocumentConflict, match="active issued Sales Order"):
+        issue(repository, second_sales_order, "multiple-sales-order-second-issue-0001")
+    assert repository.get_document(first_sales_order["id"])["status"] == "issued"
 
-    with pytest.raises(
-        ProjectDocumentConflict,
-        match="exactly one active issued Sales Order",
-    ):
-        repository.create_invoice_draft(
-            project_id,
-            values={"invoice_kind": "FINAL"},
-            idempotency_key="final-multiple-sales-order-0001",
+
+def test_sales_order_revision_and_void_preserve_issued_invoice_coverage(repository):
+    created = project(repository, key="sales-order-transition-project-0001")
+    issued_sales_order = issue_sales_order(
+        repository, created, 1_000_000, "sales-order-transition-original-0001"
+    )
+    dp = invoice_with_total(
+        repository,
+        created["project"]["id"],
+        "DP",
+        600_000,
+        "sales-order-transition-dp-0001",
+    )
+    issue(repository, dp, "sales-order-transition-dp-issue-0001")
+    revision = repository.revise_document(
+        issued_sales_order["id"],
+        expected_version=issued_sales_order["lock_version"],
+        idempotency_key="sales-order-transition-revise-0001",
+        actor=ACTOR,
+    )
+    lowered = set_document_total(
+        repository,
+        revision,
+        500_000,
+        "sales-order-transition-lower-0001",
+    )
+
+    with pytest.raises(ProjectDocumentConflict, match="issued invoice total"):
+        issue(repository, lowered, "sales-order-transition-revision-issue-0001")
+    with pytest.raises(ProjectDocumentConflict, match="issued invoices exist"):
+        repository.void_document(
+            issued_sales_order["id"],
+            reason="Invalid cancellation",
+            expected_version=issued_sales_order["lock_version"],
+            idempotency_key="sales-order-transition-void-0001",
             actor=ACTOR,
         )
+
+
+def test_issue_rejects_document_after_project_issuer_reassignment(repository):
+    created = project(repository, key="issuer-binding-project-0001")
+    alternate = issuer(
+        repository,
+        issuer_key="alternate",
+        number_code="ALT",
+        key="issuer-binding-alternate-0001",
+    )
+    repository.update_project(
+        created["project"]["id"],
+        {"issuer_key": alternate["issuer_key"]},
+        expected_version=created["project"]["lock_version"],
+        idempotency_key="issuer-binding-project-update-0001",
+        actor=ACTOR,
+    )
+
+    with pytest.raises(ProjectDocumentConflict, match="issuer does not match"):
+        issue(repository, created["sales_order"], "issuer-binding-issue-0001")
+
+
+def test_project_create_replay_ignores_actor_enrichment(repository):
+    first = project(
+        repository,
+        key="actor-stable-project-0001",
+        actor={"email": "owner@example.com"},
+    )
+    replay = project(
+        repository,
+        key="actor-stable-project-0001",
+        actor={"email": "owner@example.com", "role": "owner"},
+    )
+
+    assert replay == first
 
 
 def test_final_issue_equals_residual_after_dp_and_progress(repository):
@@ -985,24 +1036,56 @@ def test_final_issue_equals_residual_after_dp_and_progress(repository):
     )
     issue(repository, dp, "residual-dp-issue-0001")
     issue(repository, progress, "residual-progress-issue-0001")
-    wrong_final = invoice_with_total(
-        repository, project_id, "FINAL", 499_999, "residual-final-0001"
+    final = repository.create_invoice_draft(
+        project_id,
+        values={"invoice_kind": "FINAL"},
+        idempotency_key="residual-final-0001",
+        actor=ACTOR,
     )
-
-    with pytest.raises(
-        ProjectDocumentConflict,
-        match="FINAL invoice total must equal residual commercial amount 500000",
-    ):
-        issue(repository, wrong_final, "residual-final-wrong-issue-0001")
-
-    final = set_document_total(
-        repository,
-        wrong_final,
-        500_000,
-        "residual-final-correct-update-0001",
-    )
-    issued = issue(repository, final, "residual-final-correct-issue-0001")
+    issued = issue(repository, final, "residual-final-issue-0001")
     assert issued["immutable_snapshot"]["totals"]["total"] == 500_000
+
+
+def test_final_rejects_monetary_draft_updates_and_issue_revalidates_shape(repository, dsn):
+    import psycopg
+
+    created = project(repository)
+    project_id = created["project"]["id"]
+    issue_sales_order(repository, created, 1_000, "final-shape-sales-order-0001")
+    final = repository.create_invoice_draft(
+        project_id,
+        values={"invoice_kind": "FINAL"},
+        idempotency_key="final-shape-create-0001",
+        actor=ACTOR,
+    )
+
+    with pytest.raises(ProjectDocumentConflict, match="FINAL monetary fields"):
+        repository.update_draft(
+            final["id"],
+            {"tax_percent": "10"},
+            expected_version=final["lock_version"],
+            idempotency_key="final-shape-update-0001",
+            actor=ACTOR,
+        )
+
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE project_documents SET tax_percent = 10 WHERE id = %s",
+                (final["id"],),
+            )
+            cursor.execute(
+                """
+                UPDATE project_document_lines
+                SET unit_price = 909, line_gross = 909,
+                    line_discount = 0, line_total = 909
+                WHERE document_id = %s
+                """,
+                (final["id"],),
+            )
+
+    with pytest.raises(ProjectDocumentConflict, match="FINAL invoice cannot add"):
+        issue(repository, final, "final-shape-issue-0001")
 
 
 def test_concurrent_dp_and_stale_final_issue_serialize_without_overbilling(repository, dsn):
@@ -1120,18 +1203,26 @@ def test_final_residual_excludes_void_invoices_and_requires_non_void_sales_order
     issued_final = issue(repository, final, "void-residual-final-issue-0001")
     assert issued_final["status"] == "issued"
 
+    with pytest.raises(ProjectDocumentConflict, match="issued invoices exist"):
+        repository.void_document(
+            sales_order["id"],
+            reason="Commercial order cancelled",
+            expected_version=sales_order["lock_version"],
+            idempotency_key="void-residual-sales-order-blocked-0001",
+            actor=ACTOR,
+        )
+    repository.void_document(
+        issued_final["id"],
+        reason="Payment cancelled",
+        expected_version=issued_final["lock_version"],
+        idempotency_key="void-residual-final-void-0001",
+        actor=ACTOR,
+    )
     repository.void_document(
         sales_order["id"],
         reason="Commercial order cancelled",
         expected_version=sales_order["lock_version"],
         idempotency_key="void-residual-sales-order-void-0001",
-        actor=ACTOR,
-    )
-    repository.void_document(
-        issued_final["id"],
-        reason="Sales Order voided",
-        expected_version=issued_final["lock_version"],
-        idempotency_key="void-residual-final-void-0001",
         actor=ACTOR,
     )
     with pytest.raises(
@@ -1321,7 +1412,10 @@ def test_concurrent_final_revision_allows_only_one_pending_draft(repository, dsn
             except (ProjectDocumentConflict, ProjectDocumentUnavailable) as exc:
                 outcomes.append(exc)
     assert sum(isinstance(item, dict) for item in outcomes) == 1
-    assert sum(isinstance(item, Exception) for item in outcomes) == 1
+    failures = [item for item in outcomes if isinstance(item, Exception)]
+    assert len(failures) == 1
+    assert isinstance(failures[0], ProjectDocumentConflict)
+    assert "pending revision" in str(failures[0])
 
 
 def test_sql_lifecycle_terminal_immutability_and_no_delete_guards(repository, dsn):

@@ -127,6 +127,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_project_active_final_invoice
     ON project_documents(project_id)
     WHERE document_type = 'invoice' AND invoice_kind = 'FINAL'
       AND (status = 'issued' OR (status = 'draft' AND revision_of_id IS NULL));
+CREATE UNIQUE INDEX IF NOT EXISTS uq_project_active_sales_order
+    ON project_documents(project_id)
+    WHERE document_type = 'sales_order' AND status = 'issued';
 CREATE UNIQUE INDEX IF NOT EXISTS uq_project_pending_document_revision
     ON project_documents(revision_of_id)
     WHERE revision_of_id IS NOT NULL AND status = 'draft';
