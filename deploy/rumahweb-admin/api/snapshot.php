@@ -86,8 +86,11 @@ $curl = curl_init($upstream);
 curl_setopt_array($curl, [
     CURLOPT_RETURNTRANSFER => true,
     CURLOPT_FOLLOWLOCATION => false,
-    CURLOPT_CONNECTTIMEOUT => 8,
-    CURLOPT_TIMEOUT => 30,
+    CURLOPT_CONNECTTIMEOUT => 12,
+    // Live snapshot reads may wake a cold Koyeb worker and fetch authoritative
+    // Google Sheets data. Keep the read window aligned with the bounded write
+    // proxies so a healthy upstream is not misreported as unavailable.
+    CURLOPT_TIMEOUT => 75,
     CURLOPT_HTTPHEADER => ['Accept: application/json', 'X-Hollawall-Proxy-Token: ' . $token],
     CURLOPT_SSL_VERIFYPEER => true,
     CURLOPT_SSL_VERIFYHOST => 2,

@@ -30,6 +30,8 @@ class RumahwebAdminReleaseTests(unittest.TestCase):
         self.assertIn("password_verify", login)
         self.assertIn("method_not_allowed", proxy)
         self.assertIn("X-Hollawall-Proxy-Token", proxy)
+        self.assertIn("CURLOPT_CONNECTTIMEOUT => 12", proxy)
+        self.assertIn("CURLOPT_TIMEOUT => 75", proxy)
 
     def test_release_has_fail_closed_transaction_proxy(self) -> None:
         proxy = (RELEASE / "api" / "transactions.php").read_text(encoding="utf-8")
