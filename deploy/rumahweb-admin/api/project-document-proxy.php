@@ -309,8 +309,11 @@ function pd_proxy(string $method, string $url, array|false $payload, bool $pdf, 
     curl_setopt_array($curl, [
         CURLOPT_RETURNTRANSFER => false,
         CURLOPT_FOLLOWLOCATION => false,
-        CURLOPT_CONNECTTIMEOUT => 8,
-        CURLOPT_TIMEOUT => 30,
+        CURLOPT_CONNECTTIMEOUT => 12,
+        // Project/document commands can include canonical PDF rendering and
+        // immutable artifact persistence. Let the backend complete its bounded
+        // idempotent command instead of returning an ambiguous proxy timeout.
+        CURLOPT_TIMEOUT => 75,
         CURLOPT_CUSTOMREQUEST => $method,
         CURLOPT_POSTFIELDS => $body,
         CURLOPT_HTTPHEADER => $headers,

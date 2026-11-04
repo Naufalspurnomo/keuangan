@@ -186,6 +186,16 @@ class RumahwebAdminProjectDocumentProxyTests(unittest.TestCase):
         self.assertIsNotNone(csrf)
         return authenticated_id, csrf.group(1)
 
+    def test_proxy_timeout_covers_cold_backend_document_rendering(self):
+        source = (TEMPLATE / "api" / "project-document-proxy.php").read_text(encoding="utf-8")
+        timeout = re.search(r"CURLOPT_TIMEOUT\s*=>\s*(\d+)", source)
+        connect_timeout = re.search(r"CURLOPT_CONNECTTIMEOUT\s*=>\s*(\d+)", source)
+        self.assertIsNotNone(timeout)
+        self.assertIsNotNone(connect_timeout)
+        self.assertGreaterEqual(int(timeout.group(1)), 75)
+        self.assertGreaterEqual(int(connect_timeout.group(1)), 10)
+        self.assertLess(int(connect_timeout.group(1)), int(timeout.group(1)))
+
     @staticmethod
     def success(data):
         return {
