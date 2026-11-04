@@ -152,6 +152,23 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
 
         context.route("**/admin/api/snapshot.php", route_api)
         context.route(
+            "**/admin/api/projects.php**",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({
+                    "api_version": "dashboard.v1",
+                    "data": {"items": []},
+                    "meta": {"capabilities": {
+                        "reads_enabled": True,
+                        "project_document_writes_enabled": False,
+                        "transaction_correction_reversal": False,
+                        "hard_delete": False,
+                    }},
+                }),
+            ),
+        )
+        context.route(
             "**/admin/api/write-session.php",
             lambda route: route.fulfill(
                 status=200,
@@ -193,6 +210,23 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             route.fulfill(status=200, content_type="application/json", body=json.dumps(SNAPSHOT if state["calls"] == 1 else UPDATED_SNAPSHOT))
 
         context.route("**/admin/api/snapshot.php", route_api)
+        context.route(
+            "**/admin/api/projects.php**",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({
+                    "api_version": "dashboard.v1",
+                    "data": {"items": []},
+                    "meta": {"capabilities": {
+                        "reads_enabled": True,
+                        "project_document_writes_enabled": False,
+                        "transaction_correction_reversal": False,
+                        "hard_delete": False,
+                    }},
+                }),
+            ),
+        )
         context.route(
             "**/admin/api/write-session.php",
             lambda route: route.fulfill(

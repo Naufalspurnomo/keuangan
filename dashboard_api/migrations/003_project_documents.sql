@@ -30,8 +30,8 @@ CREATE TABLE IF NOT EXISTS projects (
     client_address TEXT,
     client_contact TEXT,
     issuer_key TEXT NOT NULL REFERENCES project_issuer_profiles(issuer_key),
-    wallet TEXT,
-    company TEXT,
+    wallet TEXT NOT NULL CHECK (LENGTH(TRIM(wallet)) BETWEEN 1 AND 120),
+    company TEXT NOT NULL CHECK (LENGTH(TRIM(company)) BETWEEN 1 AND 120),
     status TEXT NOT NULL DEFAULT 'planned'
         CHECK (status IN ('planned', 'active', 'completed', 'cancelled')),
     start_date DATE,
@@ -44,6 +44,30 @@ CREATE TABLE IF NOT EXISTS projects (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (completion_date IS NULL OR start_date IS NULL OR completion_date >= start_date)
 );
+
+-- Fail closed rather than preserving projects that can never issue receipts.
+ALTER TABLE projects ALTER COLUMN wallet SET NOT NULL;
+ALTER TABLE projects ALTER COLUMN company SET NOT NULL;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'projects_wallet_nonempty_check'
+          AND conrelid = 'projects'::regclass
+    ) THEN
+        ALTER TABLE projects ADD CONSTRAINT projects_wallet_nonempty_check
+            CHECK (LENGTH(TRIM(wallet)) BETWEEN 1 AND 120);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'projects_company_nonempty_check'
+          AND conrelid = 'projects'::regclass
+    ) THEN
+        ALTER TABLE projects ADD CONSTRAINT projects_company_nonempty_check
+            CHECK (LENGTH(TRIM(company)) BETWEEN 1 AND 120);
+    END IF;
+END;
+$$;
 
 CREATE INDEX IF NOT EXISTS idx_projects_status_updated ON projects(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_projects_issuer ON projects(issuer_key, created_at DESC);
@@ -87,6 +111,9 @@ CREATE TABLE IF NOT EXISTS project_documents (
     tax_percent NUMERIC(7,4) NOT NULL DEFAULT 0 CHECK (tax_percent >= 0 AND tax_percent <= 100),
     notes TEXT,
     payment_terms TEXT,
+    prepared_by TEXT,
+    client_signatory TEXT,
+    project_image_url TEXT,
     immutable_snapshot JSONB,
     snapshot_sha256 TEXT CHECK (snapshot_sha256 IS NULL OR snapshot_sha256 ~ '^[0-9a-f]{64}$'),
     renderer_version TEXT,
@@ -111,6 +138,28 @@ CREATE TABLE IF NOT EXISTS project_documents (
     CHECK (status <> 'void' OR (void_reason IS NOT NULL AND LENGTH(TRIM(void_reason)) > 0 AND voided_at IS NOT NULL)),
     CHECK (status <> 'superseded' OR (superseded_by_id IS NOT NULL AND superseded_at IS NOT NULL))
 );
+
+-- Idempotently upgrade databases that applied an earlier pre-release 003.
+ALTER TABLE project_documents ADD COLUMN IF NOT EXISTS prepared_by TEXT;
+ALTER TABLE project_documents ADD COLUMN IF NOT EXISTS client_signatory TEXT;
+ALTER TABLE project_documents ADD COLUMN IF NOT EXISTS project_image_url TEXT;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'project_documents_project_image_url_check'
+          AND conrelid = 'project_documents'::regclass
+    ) THEN
+        ALTER TABLE project_documents
+            ADD CONSTRAINT project_documents_project_image_url_check CHECK (
+                project_image_url IS NULL OR (
+                    LENGTH(project_image_url) <= 196608 AND
+                    project_image_url ~ '^data:image/(png|jpeg);base64,[A-Za-z0-9+/=]+$'
+                )
+            );
+    END IF;
+END;
+$$;
 
 ALTER TABLE project_documents DROP CONSTRAINT IF EXISTS project_documents_revision_of_id_fkey;
 ALTER TABLE project_documents ADD CONSTRAINT project_documents_revision_of_id_fkey
@@ -293,11 +342,13 @@ BEGIN
         old_stable := to_jsonb(OLD) - ARRAY[
             'issue_date', 'due_date', 'valid_until', 'document_discount_amount',
             'document_discount_percent', 'tax_percent', 'notes', 'payment_terms',
+            'prepared_by', 'client_signatory', 'project_image_url',
             'lock_version', 'updated_by', 'updated_at'
         ]::TEXT[];
         new_stable := to_jsonb(NEW) - ARRAY[
             'issue_date', 'due_date', 'valid_until', 'document_discount_amount',
             'document_discount_percent', 'tax_percent', 'notes', 'payment_terms',
+            'prepared_by', 'client_signatory', 'project_image_url',
             'lock_version', 'updated_by', 'updated_at'
         ]::TEXT[];
         IF new_stable IS DISTINCT FROM old_stable THEN

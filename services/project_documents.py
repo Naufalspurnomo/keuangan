@@ -188,6 +188,12 @@ class ProjectDocumentService:
         actor: Mapping[str, Any],
     ) -> dict[str, Any]:
         command = dict(values)
+        wallet = str(command.get("wallet") or "").strip()
+        company = str(command.get("company") or "").strip()
+        if not wallet or not company:
+            raise ValueError("wallet and company are required")
+        command["wallet"] = wallet
+        command["company"] = company
         command.setdefault("tax_percent", "0")
         return self._repository.create_project_with_sales_order(
             command,

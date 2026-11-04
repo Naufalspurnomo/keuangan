@@ -26,10 +26,16 @@ import {
   OverviewWorkspace,
 
   WalletWorkspacePage,
+  TransactionRows,
 } from './FinancePages'
 import ProjectCommandCenter from './ProjectCommandCenter'
 import ProjectCompleteDialog from './ProjectCompleteDialog'
+import ProjectDetailWorkspace from './ProjectDetailWorkspace'
+import ProjectDocumentsWorkspace from './ProjectDocumentsWorkspace'
+import ProjectPresensiPanel from './ProjectPresensiPanel'
+import ProjectRecordForm from './ProjectRecordForm'
 import ProjectTransactionsWorkspace from './ProjectTransactionsWorkspace'
+import ProductionProjectsWorkspace from './ProductionProjectsWorkspace'
 import ReportsWorkspace from './ReportsWorkspace'
 import type { FinanceDebt, FinanceProject, FinanceTransaction, FinanceWorkspace, ProjectInput, TransactionInput, TransactionFormInput, DebtInput } from './financeWorkspace'
 import { snapshotFinanceWorkspace } from './snapshot'
@@ -37,6 +43,18 @@ import { useLiveSnapshot } from './liveSnapshotView'
 import { createTransactionWriteAttempt, jakartaToday, loadTransactionWriteSession, type RecordedTransaction, type TransactionWriteAttempt, type TransactionWriteSession } from './transactionApi'
 import { useFinanceWorkspace } from './useFinanceWorkspace'
 import hollawallLogo from './assets/hollawall-logo.png'
+import { createProjectDocumentApi, type ProjectDocumentApi, type ProjectDocumentSession } from './projectDocumentApi'
+import {
+  NO_PROJECT_DOCUMENT_WRITES,
+  projectDocumentRoute,
+  readProjectDocumentRoute,
+  type ProjectDetailTab,
+  type ProjectDocumentCapabilities,
+  type ProjectDocumentRoute,
+  type ProjectDraft,
+  type ProjectRecord,
+  type ProductionProjectStatus,
+} from './projectDocuments'
 
 type Page = 'overview' | 'cashflow' | 'wallets' | 'projects' | 'office' | 'debts' | 'reports'
 type Modal =
@@ -48,22 +66,34 @@ type Modal =
 const MOBILE_NAVIGATION_QUERY = '(max-width: 900px)'
 const PAGES: Page[] = ['overview', 'cashflow', 'wallets', 'projects', 'office', 'debts', 'reports']
 
-function routeHash(page: Page, projectId?: string) {
-  return `#${page}${page === 'projects' && projectId ? `?project=${encodeURIComponent(projectId)}` : ''}`
+function routeHash(page: Page, projectId?: string, detail?: Partial<ProjectDocumentRoute>) {
+  if (page === 'projects' && projectId) return projectDocumentRoute({ projectId, tab: detail?.tab ?? 'transactions', document: detail?.document, type: detail?.type })
+  return `#${page}`
 }
 
-function currentRoute(): { page: Page; projectId?: string } {
+interface AppRoute {
+  page: Page
+  projectId?: string
+  tab?: ProjectDetailTab
+  document?: string
+  type?: ProjectDocumentRoute['type']
+}
+
+function currentRoute(): AppRoute {
   const [rawPage, rawQuery = ''] = window.location.hash.replace(/^#/, '').split('?')
   const params = new URLSearchParams(rawQuery)
   if (rawPage === 'transactions') {
     const projectId = params.get('project') || undefined
-    const canonical = routeHash('projects', projectId)
+    const canonical = projectId ? `#projects?project=${encodeURIComponent(projectId)}` : '#projects'
     window.history.replaceState({ page: 'projects', projectId, scrollY: 0 }, '', canonical)
-    return { page: 'projects', projectId }
+    return { page: 'projects', projectId, tab: 'transactions' }
   }
   const page = PAGES.includes(rawPage as Page) ? rawPage as Page : 'overview'
-  const projectId = page === 'projects' ? params.get('project') || undefined : undefined
-  return { page, projectId }
+  if (page === 'projects') {
+    const detail = readProjectDocumentRoute(window.location.hash)
+    return { page, projectId: detail.projectId, tab: detail.tab, document: detail.document, type: detail.type }
+  }
+  return { page }
 }
 
 const pageMeta: Record<Page, { eyebrow: string; title: string; copy: string }> = {
@@ -113,15 +143,21 @@ function localIsoDate() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
 
-export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, onCreateLiveTransaction }: { suppliedWorkspace?: Readonly<FinanceWorkspace>; liveWriteSession?: TransactionWriteSession; liveWriteStatus?: string; onCreateLiveTransaction?: (input: TransactionFormInput) => Promise<RecordedTransaction> } = {}) {
+export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, onCreateLiveTransaction, projectApi }: { suppliedWorkspace?: Readonly<FinanceWorkspace>; liveWriteSession?: TransactionWriteSession; liveWriteStatus?: string; onCreateLiveTransaction?: (input: TransactionFormInput) => Promise<RecordedTransaction>; projectApi?: ProjectDocumentApi } = {}) {
   const finance = useFinanceWorkspace(suppliedWorkspace)
   const readOnly = finance.readOnly
   const canCreateTransactions = readOnly && liveWriteSession?.writesEnabled === true && Boolean(onCreateLiveTransaction)
   const initialRoute = useRef(currentRoute()).current
-  const [route, setRoute] = useState(initialRoute)
+  const [route, setRoute] = useState<AppRoute>(initialRoute)
   const { page: active, projectId: projectFilter } = route
   const [menuOpen, setMenuOpen] = useState(false)
   const [modal, setModal] = useState<Modal>(null)
+  const [projectModal, setProjectModal] = useState<ProjectRecord | 'create' | null>(null)
+  const [productionProjects, setProductionProjects] = useState<ProjectRecord[]>([])
+  const [projectCapabilities, setProjectCapabilities] = useState<ProjectDocumentCapabilities>(NO_PROJECT_DOCUMENT_WRITES)
+  const [projectDataLoading, setProjectDataLoading] = useState(Boolean(readOnly && projectApi))
+  const [projectApiAvailable, setProjectApiAvailable] = useState(false)
+  const [projectBusy, setProjectBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const [theme, setTheme] = useState(() => localStorage.getItem('hollawall-theme') || 'light')
   const mobile = useMobileNavigation()
@@ -131,7 +167,26 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
   const mainRef = useRef<HTMLElement>(null)
   const meta = pageMeta[active]
   const selectedProject = projectFilter ? finance.workspace.projects.find((project) => project.id === projectFilter) : undefined
+  const productionProject = projectFilter ? productionProjects.find((project) => project.id === projectFilter) : undefined
+  const projectSession: ProjectDocumentSession = { csrfToken: liveWriteSession?.csrfToken ?? '', capabilities: projectCapabilities }
 
+  const loadProductionProjects = async () => {
+    if (!readOnly || !projectApi) return
+    setProjectDataLoading(true)
+    try {
+      const result = await projectApi.listProjects()
+      const projects = result.projects.filter((project) => !project.archived_at)
+      setProductionProjects(projects)
+      setProjectCapabilities(result.capabilities)
+      setProjectApiAvailable(projects.length > 0 || result.capabilities.projectWrites)
+    } catch {
+      setProductionProjects([])
+      setProjectCapabilities(NO_PROJECT_DOCUMENT_WRITES)
+      setProjectApiAvailable(false)
+    } finally { setProjectDataLoading(false) }
+  }
+
+  useEffect(() => { void loadProductionProjects() }, [projectApi, readOnly])
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('hollawall-theme', theme) }, [theme])
   useEffect(() => { document.title = `${meta.title} — Hollawall` }, [meta.title])
   useEffect(() => {
@@ -192,11 +247,11 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
     else main.removeAttribute('inert')
   }, [mobile, menuOpen])
   useEffect(() => {
-    if (active !== 'projects' || !projectFilter || selectedProject) return
+    if (active !== 'projects' || !projectFilter || projectDataLoading || selectedProject || productionProject) return
     window.history.replaceState({ page: 'projects', scrollY: 0 }, '', routeHash('projects'))
     setRoute({ page: 'projects' })
     setNotice('Proyek tidak ditemukan.')
-  }, [active, projectFilter, selectedProject])
+  }, [active, productionProject, projectDataLoading, projectFilter, selectedProject])
 
   const pushRoute = (page: Page, projectId?: string) => {
     if (active === page && projectFilter === projectId) return
@@ -206,6 +261,11 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
     window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'auto' }))
   }
   const navigate = (page: Page) => pushRoute(page)
+  const setProjectDetailRoute = (detail: ProjectDocumentRoute) => {
+    const next: AppRoute = { page: 'projects', projectId: detail.projectId, tab: detail.tab, document: detail.document, type: detail.type }
+    window.history.pushState({ ...next, scrollY: 0 }, '', routeHash('projects', detail.projectId, detail))
+    setRoute(next)
+  }
   const backToProjects = () => window.history.state?.fromPage === 'projects' ? window.history.back() : pushRoute('projects')
   const closeMenu = () => { setMenuOpen(false); if (mobile) window.requestAnimationFrame(() => menuButtonRef.current?.focus()) }
   const commit = (action: () => void, success: string) => { if (readOnly) throw new Error('Workspace live hanya baca.'); action(); setNotice(success) }
@@ -243,6 +303,42 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
     const project = finance.workspace.projects.find((item) => item.name === name)
     if (project) openProject(project)
   }
+  const saveProductionProject = async (draft: ProjectDraft) => {
+    if (!projectApi) return
+    setProjectBusy(true)
+    try {
+      const command = projectModal === 'create'
+        ? projectApi.createProject(draft)
+        : projectApi.updateProject(projectModal!.id, draft, projectModal!.lock_version)
+      const saved = await command.submit(projectSession)
+      const current = await projectApi.getProject(saved.id)
+      setProductionProjects((projects) => projects.some((project) => project.id === current.id)
+        ? projects.map((project) => project.id === current.id ? current : project)
+        : [current, ...projects])
+      setProjectModal(null)
+      setNotice('Proyek disimpan dan dibaca kembali dari server.')
+    } finally { setProjectBusy(false) }
+  }
+  const changeProductionProjectStatus = async (status: ProductionProjectStatus) => {
+    if (!projectApi || !productionProject) return
+    setProjectBusy(true)
+    try {
+      const saved = await projectApi.setProjectStatus(productionProject.id, status, productionProject.lock_version).submit(projectSession)
+      const current = await projectApi.getProject(saved.id)
+      setProductionProjects((projects) => projects.map((project) => project.id === current.id ? current : project))
+      setNotice('Status proyek diperbarui.')
+    } finally { setProjectBusy(false) }
+  }
+  const archiveProductionProject = async () => {
+    if (!projectApi || !productionProject || !window.confirm(`Arsipkan proyek ${productionProject.name}?`)) return
+    setProjectBusy(true)
+    try {
+      await projectApi.archiveProject(productionProject.id, productionProject.lock_version).submit(projectSession)
+      await loadProductionProjects()
+      pushRoute('projects')
+      setNotice('Proyek diarsipkan.')
+    } finally { setProjectBusy(false) }
+  }
   const addAction = active === 'projects'
     ? selectedProject
       ? { label: 'Tambah transaksi', run: () => setModal({ kind: 'transaction', projectId: selectedProject.id } as Modal) }
@@ -253,12 +349,29 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
         ? { label: 'Tambah hutang', run: () => setModal({ kind: 'debt' } as Modal) }
         : { label: 'Tambah transaksi', run: () => setModal({ kind: 'transaction' } as Modal) }
 
+  const productionTransactions = productionProject
+    ? <section className="recent-command"><header><div><p className="eyebrow">TRANSAKSI PROYEK</p><h2>Aktivitas tercatat</h2></div></header><TransactionRows rows={finance.workspace.transactions.filter((row) => row.project_id === productionProject.id)} projects={finance.workspace.projects} /></section>
+    : null
   const content = active === 'overview'
     ? <OverviewWorkspace workspace={finance.workspace} readOnly={readOnly} canCreateTransactions={canCreateTransactions} onAddTransaction={() => setModal({ kind: 'transaction' })} onAddProject={() => setModal({ kind: 'project' })} onAddOffice={() => setModal({ kind: 'transaction', scope: 'office' })} />
     : active === 'cashflow' ? <CashflowWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
       : active === 'wallets' ? <WalletWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
-        : active === 'projects' && selectedProject ? <ProjectTransactionsWorkspace workspace={finance.workspace} project={selectedProject} onBack={backToProjects} onAdd={(project) => setModal({ kind: 'transaction', projectId: project.id })} onEdit={readOnly ? () => undefined : (value) => setModal({ kind: 'transaction', value, projectId: selectedProject.id })} onDelete={readOnly ? () => undefined : (value) => confirmDelete('transaksi', () => finance.removeTransaction(value.id))} onComplete={readOnly ? () => undefined : completeProjectNow} onReactivate={readOnly ? () => undefined : reactivateProject} readOnly={readOnly} canCreateTransactions={canCreateTransactions} />
-          : active === 'projects' ? <ProjectCommandCenter workspace={finance.workspace} onAdd={() => setModal({ kind: 'project' })} onEdit={(value) => setModal({ kind: 'project', value })} onComplete={(value) => setModal({ kind: 'complete-project', value })} onQuickComplete={completeProjectNow} onDelete={(value) => confirmDelete(`proyek ${value.name}`, () => finance.removeProject(value.id))} onOpen={openProject} readOnly={readOnly} />
+        : active === 'projects' && productionProject && projectApi ? <ProjectDetailWorkspace
+            project={productionProject}
+            tab={route.tab ?? 'transactions'}
+            onRouteChange={({ tab }) => setProjectDetailRoute({ projectId: productionProject.id, tab })}
+            onBack={backToProjects}
+            transactions={productionTransactions}
+            presensi={<ProjectPresensiPanel project={productionProject} />}
+            documents={<ProjectDocumentsWorkspace project={productionProject} api={projectApi} session={projectSession} route={{ projectId: productionProject.id, tab: route.tab ?? 'documents', document: route.document, type: route.type }} onRouteChange={setProjectDetailRoute} />}
+            capabilities={projectCapabilities}
+            onEdit={setProjectModal}
+            onStatusChange={changeProductionProjectStatus}
+            onArchive={archiveProductionProject}
+          />
+          : active === 'projects' && projectApiAvailable ? <ProductionProjectsWorkspace projects={productionProjects} capabilities={projectCapabilities} loading={projectDataLoading} onAdd={() => setProjectModal('create')} onEdit={setProjectModal} onOpen={(project) => setProjectDetailRoute({ projectId: project.id, tab: 'transactions' })} />
+            : active === 'projects' && selectedProject ? <ProjectTransactionsWorkspace workspace={finance.workspace} project={selectedProject} onBack={backToProjects} onAdd={(project) => setModal({ kind: 'transaction', projectId: project.id })} onEdit={readOnly ? () => undefined : (value) => setModal({ kind: 'transaction', value, projectId: selectedProject.id })} onDelete={readOnly ? () => undefined : (value) => confirmDelete('transaksi', () => finance.removeTransaction(value.id))} onComplete={readOnly ? () => undefined : completeProjectNow} onReactivate={readOnly ? () => undefined : reactivateProject} readOnly={readOnly} canCreateTransactions={canCreateTransactions} />
+              : active === 'projects' ? <ProjectCommandCenter workspace={finance.workspace} onAdd={() => setModal({ kind: 'project' })} onEdit={(value) => setModal({ kind: 'project', value })} onComplete={(value) => setModal({ kind: 'complete-project', value })} onQuickComplete={completeProjectNow} onDelete={(value) => confirmDelete(`proyek ${value.name}`, () => finance.removeProject(value.id))} onOpen={openProject} readOnly={readOnly} />
             : active === 'office' ? <OfficeWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'transaction', scope: 'office' })} onEdit={(value) => setModal({ kind: 'transaction', value })} onDelete={(value) => confirmDelete('biaya kantor', () => finance.removeTransaction(value.id))} readOnly={readOnly} canCreateTransactions={canCreateTransactions} />
               : active === 'debts' ? <DebtWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'debt' })} onEdit={(value) => setModal({ kind: 'debt', value })} onDelete={(value) => confirmDelete('hutang internal', () => finance.removeDebt(value.id))} />
                 : <ReportsWorkspace workspace={finance.workspace} />
@@ -270,7 +383,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
         <header className="topbar">
           <button ref={menuButtonRef} className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi" aria-controls="app-navigation" aria-expanded={mobile ? menuOpen : undefined}><Menu size={21} /></button>
           <img className="mobile-header-logo" src={hollawallLogo} alt="Hollawall" />
-          <div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{mobile ? meta.title : selectedProject?.name ?? meta.title}</strong></div>
+          <div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{mobile ? meta.title : productionProject?.name ?? selectedProject?.name ?? meta.title}</strong></div>
           <div className="topbar-actions">
             {active === 'projects' && <ExportButton workspace={finance.workspace} />}
             {((!readOnly && active !== 'reports') || (canCreateTransactions && active !== 'reports' && active !== 'debts' && !(active === 'projects' && !selectedProject))) && <button className="topbar-add" onClick={addAction.run}><Plus size={16} /><span>{addAction.label}</span></button>}
@@ -290,6 +403,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
       {!readOnly && modal?.kind === 'complete-project' && <ProjectCompleteDialog project={modal.value} onSave={completeProject} onClose={() => setModal(null)} />}
       {(!readOnly || canCreateTransactions) && modal?.kind === 'transaction' && <TransactionForm projects={finance.workspace.projects} transaction={modal.value} initialScope={modal.scope} lockedProjectId={modal.projectId} onSave={saveTransaction} onClose={() => setModal(null)} liveWrite={readOnly} currentDate={readOnly ? jakartaToday() : undefined} />}
       {!readOnly && modal?.kind === 'debt' && <DebtForm debt={modal.value} onSave={saveDebt} onClose={() => setModal(null)} />}
+      {projectModal && <ProjectRecordForm project={projectModal === 'create' ? undefined : projectModal} saving={projectBusy} onSave={saveProductionProject} onClose={() => setProjectModal(null)} />}
     </div>
   )
 }
@@ -300,6 +414,7 @@ export default function App() {
 
 function LiveDashboardApp() {
   const state = useLiveSnapshot({ endpoint: '/admin/api/snapshot.php' })
+  const projectApi = useMemo(() => createProjectDocumentApi(), [])
   const [writeSession, setWriteSession] = useState<TransactionWriteSession>()
   const [writeStatus, setWriteStatus] = useState('Memeriksa kemampuan pencatatan transaksi…')
   const pendingAttempt = useRef<TransactionWriteAttempt | null>(null)
@@ -365,5 +480,5 @@ function LiveDashboardApp() {
 
   if (state.status === 'loading') return <main role="status">Menghubungkan data keuangan live</main>
   if (state.status === 'error') return <main role="alert"><h1>Data live belum tersedia</h1><p>Data demo tidak ditampilkan sebagai pengganti.</p><button onClick={state.reload}>Coba lagi</button></main>
-  return workspace ? <DemoApp suppliedWorkspace={workspace} liveWriteSession={writeSession} liveWriteStatus={writeStatus} onCreateLiveTransaction={createLiveTransaction} /> : null
+  return workspace ? <DemoApp suppliedWorkspace={workspace} liveWriteSession={writeSession} liveWriteStatus={writeStatus} onCreateLiveTransaction={createLiveTransaction} projectApi={projectApi} /> : null
 }

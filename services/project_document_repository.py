@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime, timedelta, timezone
@@ -35,6 +36,10 @@ DOCUMENT_PREFIXES = {"sales_order": "SO", "invoice": "INV", "receipt": "KWT"}
 DOCUMENT_TYPES = frozenset(DOCUMENT_PREFIXES)
 PROJECT_STATUSES = frozenset({"planned", "active", "completed", "cancelled"})
 INVOICE_KINDS = frozenset({"DP", "PROGRESS", "FINAL"})
+MAX_PROJECT_IMAGE_URL_CHARS = 196_608
+_PROJECT_IMAGE_URL = re.compile(
+    r"^data:image/(?:png|jpeg);base64,[A-Za-z0-9+/=]+$"
+)
 _SELECT_PROJECT = """
     id, name, client_name, client_company, client_address, client_contact,
     issuer_key, wallet, company, status, start_date, completion_date,
@@ -44,7 +49,8 @@ _SELECT_DOCUMENT = """
     id, project_id, issuer_key, document_type, invoice_kind, status,
     official_number, issue_date, due_date, valid_until,
     document_discount_amount, document_discount_percent, tax_percent,
-    notes, payment_terms, immutable_snapshot, snapshot_sha256,
+    notes, payment_terms, prepared_by, client_signatory, project_image_url,
+    immutable_snapshot, snapshot_sha256,
     renderer_version, revision_of_id, superseded_by_id, void_reason,
     lock_version, issued_at, voided_at, superseded_at,
     created_by, updated_by, created_at, updated_at
@@ -106,6 +112,17 @@ def _json_default(value: Any) -> Any:
 def canonical_json_hash(value: Any) -> str:
     encoded, _ = _json(value, label="value")
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _project_image_url(value: Any) -> str | None:
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return None
+    if len(cleaned) > MAX_PROJECT_IMAGE_URL_CHARS:
+        raise ValueError("project_image_url exceeds 196608 characters")
+    if not _PROJECT_IMAGE_URL.fullmatch(cleaned):
+        raise ValueError("project_image_url must be a PNG or JPEG data URL")
+    return cleaned
 
 
 def _constraint_name(exc: BaseException) -> str:
@@ -218,11 +235,10 @@ SELECT
         AND
         (
             SELECT MD5(STRING_AGG(
-                table_name || '|' || ordinal_position || '|' || column_name || '|' ||
-                udt_name || '|' || is_nullable || '|' || COALESCE(column_default, '') ||
-                '|' || is_identity,
-                E'\n' ORDER BY table_name, ordinal_position
-            )) = 'ebbbf0c0268865631328cce6dab142eb'
+                table_name || '|' || column_name || '|' || udt_name || '|' ||
+                is_nullable || '|' || COALESCE(column_default, '') || '|' || is_identity,
+                E'\n' ORDER BY table_name, column_name
+            )) = '77f25137cfdc70728c872ef7c2f442e3'
             FROM information_schema.columns
             WHERE table_schema = 'public'
               AND table_name IN (
@@ -778,8 +794,12 @@ class ProjectDocumentRepository:
         name = str(command.get("name") or "").strip()
         client_name = str(command.get("client_name") or "").strip()
         issuer_key = str(command.get("issuer_key") or "").strip()
-        if not name or not client_name or not issuer_key:
-            raise ValueError("name, client_name, and issuer_key are required")
+        wallet = str(command.get("wallet") or "").strip()
+        company = str(command.get("company") or "").strip()
+        if not name or not client_name or not issuer_key or not wallet or not company:
+            raise ValueError(
+                "name, client_name, issuer_key, wallet, and company are required"
+            )
         status = str(command.get("status") or "planned")
         if status not in PROJECT_STATUSES:
             raise ValueError("unsupported project status")
@@ -811,8 +831,8 @@ class ProjectDocumentRepository:
                             str(command.get("client_address") or "").strip(),
                             str(command.get("client_contact") or "").strip(),
                             issuer_key,
-                            str(command.get("wallet") or "").strip(),
-                            str(command.get("company") or "").strip(),
+                            wallet,
+                            company,
                             status,
                             command.get("start_date"), command.get("completion_date"),
                             str(command.get("contract_notes") or "").strip(),
@@ -1008,6 +1028,12 @@ class ProjectDocumentRepository:
             raise ValueError("project changes are empty or unsupported")
         if "status" in supplied and supplied["status"] not in PROJECT_STATUSES:
             raise ValueError("unsupported project status")
+        for field in ("wallet", "company"):
+            if field in supplied:
+                cleaned = str(supplied[field] or "").strip()
+                if not cleaned:
+                    raise ValueError("wallet and company must remain non-empty")
+                supplied[field] = cleaned
         actor_json, _ = _actor(actor)
         request = {"project_id": project_id, "changes": supplied, "expected_version": expected_version}
         assignments = []
@@ -1023,6 +1049,27 @@ class ProjectDocumentRepository:
                     key_hash, _, replay = self._claim(cursor, "project.update", idempotency_key, request)
                     if replay is not None:
                         return replay
+                    cursor.execute(
+                        "SELECT issuer_key FROM projects WHERE id = %s FOR UPDATE",
+                        (project_id,),
+                    )
+                    current_project = cursor.fetchone()
+                    if not current_project:
+                        raise ProjectDocumentNotFound("project not found")
+                    if (
+                        "issuer_key" in supplied
+                        and str(supplied["issuer_key"]) != str(current_project[0])
+                    ):
+                        cursor.execute(
+                            "SELECT EXISTS("
+                            "SELECT 1 FROM project_documents WHERE project_id = %s"
+                            ")",
+                            (project_id,),
+                        )
+                        if bool(cursor.fetchone()[0]):
+                            raise ProjectDocumentConflict(
+                                "issuer_key is immutable after the document chain is created"
+                            )
                     cursor.execute(
                         f"UPDATE projects SET {', '.join(assignments)} "
                         "WHERE id = %s AND lock_version = %s RETURNING " + _SELECT_PROJECT,
@@ -1099,16 +1146,19 @@ class ProjectDocumentRepository:
         actor_json: str,
         revision_of_id: str | None = None,
     ) -> dict[str, Any]:
+        project_image_url = _project_image_url(values.get("project_image_url"))
         cursor.execute(
             """
             INSERT INTO project_documents (
                 id, project_id, issuer_key, document_type, invoice_kind,
                 issue_date, due_date, valid_until,
                 document_discount_amount, document_discount_percent, tax_percent,
-                notes, payment_terms, revision_of_id, created_by, updated_by
+                notes, payment_terms, prepared_by, client_signatory,
+                project_image_url, revision_of_id, created_by, updated_by
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, NULLIF(%s, ''), NULLIF(%s, ''), %s,
+                %s, %s, %s, NULLIF(%s, ''), NULLIF(%s, ''),
+                NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''), %s,
                 %s::jsonb, %s::jsonb
             ) RETURNING """ + _SELECT_DOCUMENT,
             (
@@ -1119,6 +1169,9 @@ class ProjectDocumentRepository:
                 str(values.get("tax_percent") or "0"),
                 str(values.get("notes") or "").strip(),
                 str(values.get("payment_terms") or "").strip(),
+                str(values.get("prepared_by") or "").strip(),
+                str(values.get("client_signatory") or "").strip(),
+                project_image_url,
                 revision_of_id, actor_json, actor_json,
             ),
         )
@@ -1147,10 +1200,11 @@ class ProjectDocumentRepository:
         project_id: str,
         *,
         excluding_document_id: str | None = None,
+        expected_issuer_key: str | None = None,
     ) -> dict[str, Any]:
         cursor.execute(
             """
-            SELECT id, immutable_snapshot
+            SELECT id, issuer_key, immutable_snapshot
             FROM project_documents
             WHERE project_id = %s
               AND document_type = 'sales_order'
@@ -1165,8 +1219,15 @@ class ProjectDocumentRepository:
             raise ProjectDocumentConflict(
                 "invoice requires exactly one active issued Sales Order"
             )
+        if (
+            expected_issuer_key is not None
+            and str(sales_orders[0][1]) != str(expected_issuer_key)
+        ):
+            raise ProjectDocumentConflict(
+                "active issued Sales Order issuer must match project issuer"
+            )
         contract_total = cls._issued_snapshot_total(
-            sales_orders[0][1], label="Sales Order"
+            sales_orders[0][2], label="Sales Order"
         )
         cursor.execute(
             """
@@ -1242,7 +1303,11 @@ class ProjectDocumentRepository:
                         raise ProjectDocumentConflict(
                             "invoices require a planned or active project"
                         )
-                    commercial = self._locked_commercial_state(cursor, project_id)
+                    commercial = self._locked_commercial_state(
+                        cursor,
+                        project_id,
+                        expected_issuer_key=str(project[0]),
+                    )
                     if commercial["active_final_id"]:
                         raise ProjectDocumentConflict("an active FINAL invoice already exists")
                     residual = int(commercial["residual"])
@@ -1731,7 +1796,8 @@ class ProjectDocumentRepository:
     ) -> dict[str, Any]:
         allowed = {
             "issue_date", "due_date", "valid_until", "document_discount_amount",
-            "document_discount_percent", "tax_percent", "notes", "payment_terms", "lines",
+            "document_discount_percent", "tax_percent", "notes", "payment_terms",
+            "prepared_by", "client_signatory", "project_image_url", "lines",
         }
         supplied = dict(changes)
         if not supplied or set(supplied) - allowed:
@@ -1750,6 +1816,10 @@ class ProjectDocumentRepository:
                         max_fractional_digits=4,
                     )
                 )
+        if "project_image_url" in supplied:
+            supplied["project_image_url"] = _project_image_url(
+                supplied["project_image_url"]
+            )
         actor_json, _ = _actor(actor)
         request = {"document_id": document_id, "changes": supplied, "expected_version": expected_version}
         fields = {key: value for key, value in supplied.items() if key != "lines"}
@@ -2316,7 +2386,7 @@ class ProjectDocumentRepository:
     ) -> dict[str, int]:
         cursor.execute(
             """
-            SELECT id, immutable_snapshot
+            SELECT id, invoice_kind, immutable_snapshot
             FROM project_documents
             WHERE project_id = %s
               AND document_type = 'invoice'
@@ -2328,12 +2398,16 @@ class ProjectDocumentRepository:
         )
         rows = cursor.fetchall()
         total = 0
-        for _invoice_id, snapshot in rows:
+        for _invoice_id, _kind, snapshot in rows:
             total = bounded_idr(
                 total + cls._issued_snapshot_total(snapshot, label="issued invoice"),
                 field="issued invoice total",
             )
-        return {"count": len(rows), "total": total}
+        return {
+            "count": len(rows),
+            "total": total,
+            "active_final_count": sum(str(row[1]) == "FINAL" for row in rows),
+        }
 
     @classmethod
     def _validate_sales_order_commercial_state(
@@ -2345,7 +2419,7 @@ class ProjectDocumentRepository:
             return
         cursor.execute(
             """
-            SELECT id
+            SELECT id, immutable_snapshot
             FROM project_documents
             WHERE project_id = %s
               AND document_type = 'sales_order'
@@ -2355,7 +2429,8 @@ class ProjectDocumentRepository:
             """,
             (document["project_id"],),
         )
-        active_ids = [str(row[0]) for row in cursor.fetchall()]
+        active_sales_orders = cursor.fetchall()
+        active_ids = [str(row[0]) for row in active_sales_orders]
         revision_of_id = str(document.get("revision_of_id") or "")
         if revision_of_id:
             if active_ids != [revision_of_id]:
@@ -2369,6 +2444,15 @@ class ProjectDocumentRepository:
             str(document["project_id"]),
         )
         proposed_total = int(cls._calculate_totals(document)["total"])
+        if revision_of_id and issued_invoices["active_final_count"]:
+            current_total = cls._issued_snapshot_total(
+                active_sales_orders[0][1],
+                label="active Sales Order",
+            )
+            if proposed_total != current_total:
+                raise ProjectDocumentConflict(
+                    "Sales Order total is immutable while an active FINAL invoice exists"
+                )
         if proposed_total < issued_invoices["total"]:
             raise ProjectDocumentConflict(
                 "Sales Order total cannot be below issued invoice total"
@@ -2379,12 +2463,14 @@ class ProjectDocumentRepository:
         cls,
         cursor: Any,
         document: Mapping[str, Any],
+        *,
+        project_issuer_key: str,
     ) -> None:
         if document.get("document_type") != "invoice":
             return
         cursor.execute(
             """
-            SELECT id, immutable_snapshot
+            SELECT id, issuer_key, immutable_snapshot
             FROM project_documents
             WHERE project_id = %s
               AND document_type = 'sales_order'
@@ -2399,8 +2485,16 @@ class ProjectDocumentRepository:
             raise ProjectDocumentConflict(
                 "invoice requires exactly one active issued Sales Order"
             )
+        sales_order_issuer = str(sales_orders[0][1])
+        if (
+            sales_order_issuer != str(project_issuer_key)
+            or sales_order_issuer != str(document["issuer_key"])
+        ):
+            raise ProjectDocumentConflict(
+                "active issued Sales Order issuer must match project and invoice issuer"
+            )
         contract_total = cls._issued_snapshot_total(
-            sales_orders[0][1], label="Sales Order"
+            sales_orders[0][2], label="Sales Order"
         )
         cursor.execute(
             """
@@ -2592,7 +2686,10 @@ class ProjectDocumentRepository:
                         raise ProjectDocumentConflict("document project changed")
                     project["created_by"] = _safe_json_object(project.get("created_by"))
                     project["updated_by"] = _safe_json_object(project.get("updated_by"))
-                    if str(document["issuer_key"]) != str(project["issuer_key"]):
+                    if (
+                        document["document_type"] != "invoice"
+                        and str(document["issuer_key"]) != str(project["issuer_key"])
+                    ):
                         raise ProjectDocumentConflict(
                             "document issuer does not match the current project issuer"
                         )
@@ -2602,9 +2699,20 @@ class ProjectDocumentRepository:
                         raise ProjectDocumentConflict(
                             "invoices require a planned or active project"
                         )
+                    if (
+                        document["document_type"] in {"sales_order", "invoice"}
+                        and not document.get("lines")
+                    ):
+                        raise ProjectDocumentConflict(
+                            "sales_order and invoice require at least one line"
+                        )
                     self._revalidate_allocations(cursor, document)
                     self._validate_sales_order_commercial_state(cursor, document)
-                    self._validate_invoice_commercial_state(cursor, document)
+                    self._validate_invoice_commercial_state(
+                        cursor,
+                        document,
+                        project_issuer_key=str(project["issuer_key"]),
+                    )
                     year = instant.astimezone(JAKARTA).year
                     cursor.execute(
                         """
@@ -2829,6 +2937,15 @@ class ProjectDocumentRepository:
                         if issued_invoices["count"]:
                             raise ProjectDocumentConflict(
                                 "Sales Order cannot be voided while issued invoices exist"
+                            )
+                    elif current.get("invoice_kind") in {"DP", "PROGRESS"}:
+                        issued_invoices = self._locked_issued_invoice_state(
+                            cursor,
+                            str(current["project_id"]),
+                        )
+                        if issued_invoices["active_final_count"]:
+                            raise ProjectDocumentConflict(
+                                "active FINAL invoice must be voided first"
                             )
                     cursor.execute(
                         """

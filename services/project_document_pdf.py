@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import io
+import warnings
 from collections.abc import Mapping
+from html import escape
 from pathlib import Path
 from typing import Any
 
+from PIL import Image as PillowImage
+from PIL import UnidentifiedImageError
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A5
@@ -18,6 +24,7 @@ from reportlab.platypus import (
     BaseDocTemplate,
     Frame,
     Image,
+    KeepTogether,
     PageTemplate,
     Paragraph,
     Spacer,
@@ -26,6 +33,13 @@ from reportlab.platypus import (
 )
 
 RENDERER_VERSION = "hollawall-a5-v1"
+MAX_PROJECT_IMAGE_URL_CHARS = 196_608
+MAX_PROJECT_IMAGE_BYTES = 144 * 1024
+MAX_PROJECT_IMAGE_PIXELS = 16_000_000
+PROJECT_IMAGE_PREFIXES = {
+    "data:image/png;base64,": "PNG",
+    "data:image/jpeg;base64,": "JPEG",
+}
 _ASSET_DIR = Path(__file__).resolve().parents[1] / "assets/project-documents"
 _DEFAULT_LOGO = _ASSET_DIR / "hollawall-logo.png"
 _NAVY = colors.HexColor("#172A46")
@@ -65,6 +79,49 @@ def _mapping(value: Any) -> dict[str, Any]:
 def _text(value: Any, fallback: str = "—") -> str:
     cleaned = str(value or "").strip()
     return cleaned or fallback
+
+
+def _paragraph_text(value: Any, fallback: str = "—") -> str:
+    return escape(_text(value, fallback), quote=True)
+
+
+def _project_image_stream(value: Any) -> io.BytesIO | None:
+    source = value if isinstance(value, str) else ""
+    if not source or len(source) > MAX_PROJECT_IMAGE_URL_CHARS:
+        return None
+    expected_format = None
+    encoded = ""
+    for prefix, image_format in PROJECT_IMAGE_PREFIXES.items():
+        if source.startswith(prefix):
+            expected_format = image_format
+            encoded = source[len(prefix):]
+            break
+    if expected_format is None:
+        return None
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if not raw or len(raw) > MAX_PROJECT_IMAGE_BYTES:
+        return None
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", PillowImage.DecompressionBombWarning)
+            with PillowImage.open(io.BytesIO(raw)) as image:
+                if image.format != expected_format:
+                    return None
+                width, height = image.size
+                if width <= 0 or height <= 0 or width * height > MAX_PROJECT_IMAGE_PIXELS:
+                    return None
+                image.verify()
+    except (
+        OSError,
+        UnidentifiedImageError,
+        PillowImage.DecompressionBombError,
+        PillowImage.DecompressionBombWarning,
+    ):
+        return None
+    return io.BytesIO(raw)
 
 
 def _idr(value: Any) -> str:
@@ -134,12 +191,15 @@ def _header(snapshot: Mapping[str, Any], styles: Mapping[str, ParagraphStyle], l
     else:
         logo = Paragraph("<b>HOLLAWALL</b>", styles["value"])
     identity = Paragraph(
-        f"<b>{_text(issuer.get('display_name'), 'Hollawall')}</b><br/>"
-        f"{_text(issuer.get('legal_name'), 'CV Holla Berkreasi')}<br/>"
-        f"{_text(issuer.get('address'))}",
+        f"<b>{_paragraph_text(issuer.get('display_name'), 'Hollawall')}</b><br/>"
+        f"{_paragraph_text(issuer.get('legal_name'), 'CV Holla Berkreasi')}<br/>"
+        f"{_paragraph_text(issuer.get('address'))}",
         styles["small"],
     )
-    title = Paragraph(f"{document_type}<br/><font size='7'>{official_number}</font>", styles["title"])
+    title = Paragraph(
+        f"{document_type}<br/><font size='7'>{_paragraph_text(official_number)}</font>",
+        styles["title"],
+    )
     table = Table([[logo, identity, title]], colWidths=[20 * mm, 65 * mm, 45 * mm])
     table.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -160,19 +220,31 @@ def _meta(snapshot: Mapping[str, Any], styles: Mapping[str, ParagraphStyle]):
         str(project.get("client_contact") or "").strip(),
     ] if item)
     date_rows = [
-        [Paragraph("TANGGAL TERBIT", styles["label"]), Paragraph(_text(document.get("issue_date")), styles["right"])],
+        [
+            Paragraph("TANGGAL TERBIT", styles["label"]),
+            Paragraph(_paragraph_text(document.get("issue_date")), styles["right"]),
+        ],
     ]
     if document.get("due_date"):
-        date_rows.append([Paragraph("JATUH TEMPO", styles["label"]), Paragraph(_text(document.get("due_date")), styles["right"])])
+        date_rows.append([
+            Paragraph("JATUH TEMPO", styles["label"]),
+            Paragraph(_paragraph_text(document.get("due_date")), styles["right"]),
+        ])
     if document.get("valid_until"):
-        date_rows.append([Paragraph("BERLAKU HINGGA", styles["label"]), Paragraph(_text(document.get("valid_until")), styles["right"])])
+        date_rows.append([
+            Paragraph("BERLAKU HINGGA", styles["label"]),
+            Paragraph(_paragraph_text(document.get("valid_until")), styles["right"]),
+        ])
     left = [
         [Paragraph("KEPADA", styles["label"])],
-        [Paragraph(client, styles["value"])],
-        [Paragraph(client_details or _text(project.get("client_address")), styles["small"])],
+        [Paragraph(_paragraph_text(client), styles["value"])],
+        [Paragraph(
+            _paragraph_text(client_details or project.get("client_address")),
+            styles["small"],
+        )],
         [Spacer(1, 1 * mm)],
         [Paragraph("PROYEK", styles["label"])],
-        [Paragraph(_text(project.get("name")), styles["value"])],
+        [Paragraph(_paragraph_text(project.get("name")), styles["value"])],
     ]
     left_table = Table(left, colWidths=[78 * mm])
     left_table.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
@@ -207,8 +279,8 @@ def _items(snapshot: Mapping[str, Any], styles: Mapping[str, ParagraphStyle]):
         line = _mapping(item)
         quantity = f"{_text(line.get('quantity'), '0')} {_text(line.get('unit'), '')}".strip()
         rows.append([
-            Paragraph(_text(line.get("description")), styles["table"]),
-            Paragraph(quantity, styles["table"]),
+            Paragraph(_paragraph_text(line.get("description")), styles["table"]),
+            Paragraph(_paragraph_text(quantity), styles["table"]),
             Paragraph(_idr(line.get("unit_price")), styles["right"]),
             Paragraph(_idr(line.get("line_total")), styles["right"]),
         ])
@@ -248,24 +320,55 @@ def _totals(snapshot: Mapping[str, Any], styles: Mapping[str, ParagraphStyle]):
     return table
 
 
+def _project_image(snapshot: Mapping[str, Any]):
+    document = _mapping(snapshot.get("document"))
+    project = _mapping(snapshot.get("project"))
+    source = document.get("project_image_url") or project.get("project_image_url") or project.get("image_url")
+    stream = _project_image_stream(source)
+    if stream is None:
+        return []
+    image = Image(stream, width=130 * mm, height=42 * mm, kind="proportional")
+    image.hAlign = "CENTER"
+    return [KeepTogether([image, Spacer(1, 2 * mm)])]
+
+
 def _notes_and_signatures(snapshot: Mapping[str, Any], styles: Mapping[str, ParagraphStyle]):
     document = _mapping(snapshot.get("document"))
     issuer = _mapping(snapshot.get("issuer"))
     bank = _mapping(issuer.get("bank_details"))
     notes = [
         Paragraph("CATATAN & PEMBAYARAN", styles["heading"]),
-        Paragraph(_text(document.get("notes"), "Tidak ada catatan tambahan."), styles["body"]),
-        Paragraph(_text(document.get("payment_terms"), "Sesuai kesepakatan proyek."), styles["body"]),
+        Paragraph(
+            _paragraph_text(document.get("notes"), "Tidak ada catatan tambahan."),
+            styles["body"],
+        ),
+        Paragraph(
+            _paragraph_text(document.get("payment_terms"), "Sesuai kesepakatan proyek."),
+            styles["body"],
+        ),
     ]
     if bank:
-        notes.append(Paragraph(
-            f"{_text(bank.get('bank'))} · {_text(bank.get('account_number'))} · {_text(bank.get('account_name'))}",
-            styles["small"],
-        ))
+        bank_text = " · ".join(
+            _text(bank.get(field))
+            for field in ("bank", "account_number", "account_name")
+        )
+        notes.append(Paragraph(_paragraph_text(bank_text), styles["small"]))
     signatures = Table([
         [Paragraph("DISIAPKAN OLEH", styles["label"]), Paragraph("DISETUJUI KLIEN", styles["label"])],
         [Spacer(1, 13 * mm), Spacer(1, 13 * mm)],
-        [Paragraph(_text(issuer.get("display_name"), "Hollawall"), styles["center"]), Paragraph("Nama & tanda tangan", styles["center"])],
+        [
+            Paragraph(
+                _paragraph_text(
+                    document.get("prepared_by"),
+                    _text(issuer.get("display_name"), "Hollawall"),
+                ),
+                styles["center"],
+            ),
+            Paragraph(
+                _paragraph_text(document.get("client_signatory"), "Nama & tanda tangan"),
+                styles["center"],
+            ),
+        ],
     ], colWidths=[65 * mm, 65 * mm])
     signatures.setStyle(TableStyle([
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
@@ -327,6 +430,7 @@ def render_project_document_pdf(snapshot: Mapping[str, Any], *, logo_path: str |
     story: list[Any] = [
         _header(snapshot, styles, logo),
         _meta(snapshot, styles),
+        *_project_image(snapshot),
         _items(snapshot, styles),
         Spacer(1, 3 * mm),
         _totals(snapshot, styles),
@@ -361,7 +465,8 @@ def render_project_document_pdf(snapshot: Mapping[str, Any], *, logo_path: str |
 
     doc.addPageTemplates([PageTemplate(id="A5", frames=[frame], onPage=final_decorate)])
     story = [
-        _header(snapshot, styles, logo), _meta(snapshot, styles), _items(snapshot, styles),
+        _header(snapshot, styles, logo), _meta(snapshot, styles),
+        *_project_image(snapshot), _items(snapshot, styles),
         Spacer(1, 3 * mm), _totals(snapshot, styles), Spacer(1, 2 * mm),
         *_notes_and_signatures(snapshot, styles),
     ]

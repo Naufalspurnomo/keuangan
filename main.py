@@ -231,7 +231,7 @@ def dashboard_write_schema_health():
 def project_document_schema_health():
     """Read back the authoritative project/document schema without DDL."""
     writes_enabled = str(
-        os.getenv('DASHBOARD_TRANSACTION_WRITES_ENABLED') or ''
+        os.getenv('PROJECT_DOCUMENT_WRITES_ENABLED') or ''
     ).strip().casefold() in {'1', 'true', 'yes', 'on'}
     dsn = str(os.getenv('STATE_DATABASE_URL') or os.getenv('DATABASE_URL') or '').strip()
     if not dsn:
@@ -488,8 +488,25 @@ def health_check():
                 security_missing.append('TELEGRAM_WEBHOOK_SECRET')
         security_ready = not security_missing
         dashboard_writes_enabled = bool(app.config.get('DASHBOARD_TRANSACTION_WRITES_ENABLED', False))
+        project_document_reads_enabled = bool(app.config.get('PROJECT_DOCUMENT_READS_ENABLED', False))
+        project_document_writes_enabled = bool(app.config.get('PROJECT_DOCUMENT_WRITES_ENABLED', False))
         dashboard_schema_ready = not dashboard_writes_enabled or bool(dashboard_schema.get('ready'))
-        project_schema_ready = not dashboard_writes_enabled or bool(project_schema.get('ready'))
+        project_schema_required = (
+            dashboard_writes_enabled
+            or project_document_reads_enabled
+            or project_document_writes_enabled
+        )
+        project_schema_ready = not project_schema_required or (
+            project_document_reads_enabled and bool(project_schema.get('ready'))
+        )
+        project_document_readiness = {
+            'reads_enabled': project_document_reads_enabled,
+            'writes_enabled': project_document_writes_enabled,
+            'schema_ready': bool(project_schema.get('ready')),
+            'ready': project_schema_ready,
+            'transaction_correction_reversal': False,
+            'hard_delete': False,
+        }
         serving = (
             (durable or not inbox_required())
             and security_ready
@@ -511,6 +528,7 @@ def health_check():
             'whatsapp_provider': whatsapp_provider,
             'dashboard_write_schema': dashboard_schema,
             'project_document_schema': project_schema,
+            'project_document_readiness': project_document_readiness,
             'security': {
                 'ready': security_ready,
                 'required': security_required,
@@ -519,11 +537,28 @@ def health_check():
         }), 200 if serving else 503
     except Exception as exc:
         secure_log("ERROR", f"Health durable inbox check failed: {type(exc).__name__}: {exc}")
-        required = inbox_required() or allowlist_required() or webhook_secret_required()
+        project_document_reads_enabled = bool(app.config.get('PROJECT_DOCUMENT_READS_ENABLED', False))
+        project_document_writes_enabled = bool(app.config.get('PROJECT_DOCUMENT_WRITES_ENABLED', False))
+        required = (
+            inbox_required()
+            or allowlist_required()
+            or webhook_secret_required()
+            or bool(app.config.get('DASHBOARD_TRANSACTION_WRITES_ENABLED', False))
+            or project_document_reads_enabled
+            or project_document_writes_enabled
+        )
         return jsonify({
             'status': 'unhealthy' if required else 'degraded',
             'timestamp': datetime.now().isoformat(),
             'transaction_inbox': {'durable': False, 'error': type(exc).__name__},
+            'project_document_readiness': {
+                'reads_enabled': project_document_reads_enabled,
+                'writes_enabled': project_document_writes_enabled,
+                'schema_ready': False,
+                'ready': not project_document_reads_enabled and not project_document_writes_enabled,
+                'transaction_correction_reversal': False,
+                'hard_delete': False,
+            },
             'security': {'ready': False, 'required': True, 'missing': ['health_check']},
         }), 503 if required else 200
 

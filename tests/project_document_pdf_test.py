@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
 import io
 from copy import deepcopy
 
+import pytest
+from PIL import Image as PillowImage
 from pypdf import PdfReader
 
 from services.project_document_pdf import (
@@ -150,4 +153,125 @@ def test_renderer_ignores_unsafe_optional_images_without_network_or_file_reads(m
     assert "Lobby Cempaka" in text(pdf)
 
 
-import pytest
+HOSTILE_TEXT = (
+    "R&D <angle> </para> <b>literal</b> "
+    "<font name='DefinitelyMissingFont'>unknown-font</font>"
+)
+
+
+def test_renderer_renders_hostile_line_description_literally():
+    value = snapshot()
+    value["lines"][0]["description"] = HOSTILE_TEXT
+
+    content = text(render_project_document_pdf(value, logo_path=None))
+
+    assert HOSTILE_TEXT in " ".join(content.split())
+
+
+PARAGRAPH_STRING_PATHS = (
+    ("issuer", "display_name"),
+    ("issuer", "legal_name"),
+    ("issuer", "address"),
+    ("issuer", "bank_details", "bank"),
+    ("issuer", "bank_details", "account_number"),
+    ("issuer", "bank_details", "account_name"),
+    ("project", "client_company"),
+    ("project", "client_name"),
+    ("project", "client_contact"),
+    ("project", "client_address"),
+    ("project", "name"),
+    ("document", "official_number"),
+    ("document", "issue_date"),
+    ("document", "due_date"),
+    ("document", "valid_until"),
+    ("document", "notes"),
+    ("document", "payment_terms"),
+    ("document", "prepared_by"),
+    ("document", "client_signatory"),
+    ("lines", 0, "description"),
+    ("lines", 0, "quantity"),
+    ("lines", 0, "unit"),
+)
+
+
+def _set_nested(value: dict, path: tuple[str | int, ...], replacement: str) -> None:
+    target = value
+    for part in path[:-1]:
+        target = target[part]
+    target[path[-1]] = replacement
+
+
+@pytest.mark.parametrize("path", PARAGRAPH_STRING_PATHS, ids=lambda path: ".".join(map(str, path)))
+def test_renderer_escapes_every_external_paragraph_value(path):
+    value = snapshot()
+    if path == ("project", "client_address"):
+        value["project"]["client_company"] = ""
+        value["project"]["client_name"] = ""
+        value["project"]["client_contact"] = ""
+    _set_nested(value, path, HOSTILE_TEXT)
+
+    content = "".join(text(render_project_document_pdf(value, logo_path=None)).split())
+
+    assert "".join(HOSTILE_TEXT.split()) in content
+
+
+def test_renderer_uses_persisted_signature_labels():
+    value = snapshot()
+    value["document"]["prepared_by"] = "Nadia Finance"
+    value["document"]["client_signatory"] = "Arif Director"
+
+    content = text(render_project_document_pdf(value, logo_path=None))
+
+    assert "Nadia Finance" in content
+    assert "Arif Director" in content
+
+
+def project_image_data_url(image_format: str = "PNG") -> str:
+    buffer = io.BytesIO()
+    PillowImage.new("RGB", (4, 3), (220, 30, 40)).save(buffer, format=image_format)
+    subtype = "png" if image_format == "PNG" else "jpeg"
+    return f"data:image/{subtype};base64,{base64.b64encode(buffer.getvalue()).decode('ascii')}"
+
+
+def test_renderer_embeds_valid_small_project_data_image_deterministically():
+    value = snapshot()
+    value["document"]["project_image_url"] = project_image_data_url()
+
+    first = render_project_document_pdf(value, logo_path=None)
+    second = render_project_document_pdf(deepcopy(value), logo_path=None)
+
+    assert first == second
+    resources = reader(first).pages[0]["/Resources"]
+    assert "/XObject" in resources
+    assert len(resources["/XObject"].get_object()) == 1
+
+
+@pytest.mark.parametrize(
+    "image_url",
+    [
+        "https://attacker.example/project.png",
+        "file:///etc/passwd",
+        "data:image/gif;base64,R0lGODlhAQABAIAAAAUEBA==",
+        "data:image/png;base64,not-valid-base64!",
+        "data:image/png;base64,Zm9v",
+        "data:image/png;base64," + ("A" * 196_609),
+        "data:image/png;base64," + base64.b64encode(b"x" * (144 * 1024 + 1)).decode("ascii"),
+    ],
+)
+def test_renderer_ignores_invalid_oversized_or_remote_project_images_without_io(
+    image_url,
+    monkeypatch,
+):
+    value = snapshot()
+    value["document"]["project_image_url"] = image_url
+
+    def fail(*_args, **_kwargs):
+        raise AssertionError("renderer attempted external image access")
+
+    monkeypatch.setattr("builtins.open", fail)
+    first = render_project_document_pdf(value, logo_path=None)
+    second = render_project_document_pdf(deepcopy(value), logo_path=None)
+
+    assert first == second
+    assert "Lobby Cempaka" in text(first)
+    assert "/XObject" not in reader(first).pages[0]["/Resources"]

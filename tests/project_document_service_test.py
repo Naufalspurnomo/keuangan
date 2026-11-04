@@ -192,7 +192,13 @@ def test_create_project_leaves_volatile_defaults_to_atomic_repository_command():
     subject, repository = service()
 
     result = subject.create_project(
-        {"name": "Expo", "client_name": "Client", "issuer_key": "hollawall"},
+        {
+            "name": "Expo",
+            "client_name": "Client",
+            "issuer_key": "hollawall",
+            "wallet": "CV HB(101)",
+            "company": "HOLLA",
+        },
         idempotency_key="project-command-0001",
         actor={"email": "owner@example.com"},
     )
@@ -201,6 +207,31 @@ def test_create_project_leaves_volatile_defaults_to_atomic_repository_command():
     assert result["sales_order"]["tax_percent"] == "0"
     assert "sales_order_valid_until" not in repository.calls[0][1]
     assert [call[0] for call in repository.calls] == ["create_project_with_sales_order"]
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        {"wallet": "", "company": "HOLLA"},
+        {"wallet": "CV HB(101)", "company": ""},
+    ],
+)
+def test_create_project_requires_wallet_company_binding(binding):
+    subject, repository = service()
+
+    with pytest.raises(ValueError, match="wallet and company are required"):
+        subject.create_project(
+            {
+                "name": "Expo",
+                "client_name": "Client",
+                "issuer_key": "hollawall",
+                **binding,
+            },
+            idempotency_key="project-binding-required-0001",
+            actor={"email": "owner@example.com"},
+        )
+
+    assert repository.calls == []
 
 
 def test_invoice_leaves_due_date_and_status_validation_to_atomic_repository_command():

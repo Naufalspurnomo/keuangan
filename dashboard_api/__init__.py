@@ -27,6 +27,7 @@ def register_dashboard(
     # Import lazily so standalone transaction services can import contracts.
     from dashboard_api.routes import create_dashboard_blueprint
     from services.dashboard_transaction_service import GoogleSheetsTransactionAdapter
+    from services.project_document_pdf import render_project_document_artifact
     from services.project_document_repository import (
         ProjectDocumentRepository,
         ProjectDocumentUnavailable,
@@ -46,6 +47,14 @@ def register_dashboard(
         str(os.getenv("DASHBOARD_TRANSACTION_WRITES_ENABLED") or "").strip().casefold()
         in {"1", "true", "yes", "on"},
     )
+    app.config.setdefault(
+        "PROJECT_DOCUMENT_WRITES_ENABLED",
+        str(os.getenv("PROJECT_DOCUMENT_WRITES_ENABLED") or "").strip().casefold()
+        in {"1", "true", "yes", "on"},
+    )
+    # Health must only advertise project/document reads when this process has
+    # actually registered the authoritative repository-backed routes.
+    app.config.setdefault("PROJECT_DOCUMENT_READS_ENABLED", False)
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
     app.config["SESSION_COOKIE_SECURE"] = True
     app.config["SESSION_COOKIE_HTTPONLY"] = True
@@ -65,6 +74,7 @@ def register_dashboard(
     if selected_project_documents is None and dsn:
         selected_project_documents = ProjectDocumentRepository(
             dsn,
+            renderer=render_project_document_artifact,
             receipt_authority_reader=GoogleSheetsTransactionAdapter.read_receipt_authority,
         )
 
@@ -82,6 +92,17 @@ def register_dashboard(
             transaction_service=transaction_service,
         )
     )
+    if selected_project_documents is not None:
+        from dashboard_api.project_document_routes import (
+            create_project_document_blueprint,
+        )
+
+        # Register after the legacy dashboard blueprint. Flask still selects the
+        # more-specific project/document rules over the legacy /<view> route.
+        app.register_blueprint(
+            create_project_document_blueprint(selected_project_documents)
+        )
+        app.config["PROJECT_DOCUMENT_READS_ENABLED"] = True
 
 
 __all__ = ["register_dashboard"]
