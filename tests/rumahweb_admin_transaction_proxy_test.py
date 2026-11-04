@@ -172,6 +172,16 @@ class RumahwebAdminTransactionProxyTests(unittest.TestCase):
     def transaction_url(base: str) -> str:
         return base + "api/transactions.php"
 
+    def test_proxy_timeout_covers_cold_backend_authoritative_readback(self) -> None:
+        source = (TEMPLATE / "api" / "transactions.php").read_text(encoding="utf-8")
+        timeout = re.search(r"CURLOPT_TIMEOUT\s*=>\s*(\d+)", source)
+        connect_timeout = re.search(r"CURLOPT_CONNECTTIMEOUT\s*=>\s*(\d+)", source)
+        self.assertIsNotNone(timeout)
+        self.assertIsNotNone(connect_timeout)
+        self.assertGreaterEqual(int(timeout.group(1)), 75)
+        self.assertGreaterEqual(int(connect_timeout.group(1)), 10)
+        self.assertLess(int(connect_timeout.group(1)), int(timeout.group(1)))
+
     @staticmethod
     def payload(key: str = IDEMPOTENCY_KEY) -> dict:
         return {

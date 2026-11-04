@@ -160,8 +160,12 @@ if ($curl === false) {
 curl_setopt_array($curl, [
     CURLOPT_RETURNTRANSFER => false,
     CURLOPT_FOLLOWLOCATION => false,
-    CURLOPT_CONNECTTIMEOUT => 8,
-    CURLOPT_TIMEOUT => 30,
+    CURLOPT_CONNECTTIMEOUT => 12,
+    // A cold Koyeb worker plus authoritative Google Sheets write/readback can
+    // legitimately exceed 30 seconds. Keep this above the backend's own bounded
+    // transaction path so the proxy returns the idempotent completion response
+    // instead of an ambiguous 502 after the write already committed.
+    CURLOPT_TIMEOUT => 75,
     CURLOPT_POST => true,
     CURLOPT_POSTFIELDS => $forwardBody,
     CURLOPT_HTTPHEADER => [
