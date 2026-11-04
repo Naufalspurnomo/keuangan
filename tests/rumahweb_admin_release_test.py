@@ -61,6 +61,13 @@ class RumahwebAdminReleaseTests(unittest.TestCase):
         self.assertIn("cookie_renewed_at", login)
         self.assertIn("cookie_renewed_at", proxy)
 
+    def test_release_sets_transport_security_headers(self) -> None:
+        htaccess = (RELEASE / ".htaccess").read_text(encoding="utf-8")
+        self.assertIn("Strict-Transport-Security", htaccess)
+        self.assertIn("RewriteRule ^login/?$ index.php [L]", htaccess)
+        self.assertIn("X-Content-Type-Options", htaccess)
+        self.assertIn("X-Robots-Tag", htaccess)
+
     def test_release_contains_no_live_secret_or_config(self) -> None:
         self.assertFalse((RELEASE / "config.example.php").exists())
         self.assertFalse((RELEASE / ".hollawall-admin.php").exists())

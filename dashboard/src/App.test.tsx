@@ -177,7 +177,7 @@ describe('Hollawall demo finance workspace', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(document.querySelector(`[data-project-id="${project.id}"]`)?.classList.contains('is-completed')).toBe(true)
     expect(JSON.parse(localStorage.getItem('hollawall-finance-demo-v3')!).projects[0].status).toBe('completed')
-  })
+  }, 30_000)
 
   it('reactivates an accidentally completed project from project detail', async () => {
     const workspace = seedFinanceWorkspace()

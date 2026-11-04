@@ -1,11 +1,17 @@
 DirectoryIndex index.php
 Options -Indexes
 
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^login/?$ index.php [L]
+</IfModule>
+
 <FilesMatch "^(?:app-shell\.php|\.htaccess)$">
   Require all denied
 </FilesMatch>
 
 <IfModule mod_headers.c>
+  Header always set Strict-Transport-Security "max-age=31536000"
   Header always set X-Content-Type-Options "nosniff"
   Header always set X-Robots-Tag "noindex, nofollow, noarchive"
 </IfModule>
