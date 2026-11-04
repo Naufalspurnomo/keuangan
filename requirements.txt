@@ -28,3 +28,4 @@ numpy==1.26.3
 
 # PDF
 reportlab==4.0.9
+pypdf==6.16.1

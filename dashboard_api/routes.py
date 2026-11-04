@@ -140,6 +140,7 @@ def _envelope(data: Any, filters: Any, repository: Any, *, completeness: int | N
 def create_dashboard_blueprint(
     repository: Any,
     *,
+    project_uuid_exists: Any,
     transaction_service: Any | None = None,
 ) -> Blueprint:
     blueprint = Blueprint("dashboard_api", __name__, url_prefix="/api/dashboard/v1")
@@ -159,7 +160,8 @@ def create_dashboard_blueprint(
                 project,
                 wallet,
                 company,
-            ) in project_identities
+            ) in project_identities,
+            project_uuid_exists=project_uuid_exists,
         )
 
     @blueprint.after_request
@@ -252,7 +254,13 @@ def create_dashboard_blueprint(
                 actor={"email": identity[0], "role": identity[1]},
                 message_id=message_id,
             )
-        except TransactionValidationError:
+        except TransactionValidationError as exc:
+            if exc.__cause__ is not None:
+                return write_error(
+                    "transaction_unavailable",
+                    "Transaction service temporarily unavailable",
+                    503,
+                )
             return write_error(
                 "invalid_transaction",
                 "Transaction request is invalid",

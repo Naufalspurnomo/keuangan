@@ -70,6 +70,34 @@ function liveResponse(snapshot = liveSnapshot()) {
   return new Response(JSON.stringify(snapshot), { status: 200, headers: { 'content-type': 'application/json' } })
 }
 
+function productionProjectsResponse() {
+  return new Response(JSON.stringify({
+    api_version: 'dashboard.v1',
+    data: {
+      items: [{
+        id: '123e4567-e89b-42d3-a456-426614174000',
+        name: 'Kontrak Panggung Utama',
+        client_name: 'PT Klien Produksi',
+        client_company: 'PT Klien Produksi',
+        client_address: 'Surabaya',
+        client_contact: 'Operasional',
+        issuer_key: 'cv-holla-berkreasi',
+        status: 'active',
+        start_date: '2026-11-01',
+        completion_date: null,
+        contract_notes: '',
+        wallet: 'CV HB',
+        company: 'Holla',
+        lock_version: 1,
+        archived_at: null,
+        created_at: '2026-11-01T00:00:00Z',
+        updated_at: '2026-11-01T00:00:00Z',
+      }],
+    },
+    meta: { capabilities: { project_document_writes_enabled: false, transaction_correction_reversal: false } },
+  }), { status: 200, headers: { 'content-type': 'application/json' } })
+}
+
 function navigation() {
   return within(document.querySelector('aside.sidebar') as HTMLElement)
 }
@@ -92,6 +120,24 @@ afterEach(() => {
 })
 
 describe('production live source mode', () => {
+  it('renders PostgreSQL projects and routes the live detail workspace by UUID', async () => {
+    const request = vi.fn(async (input: RequestInfo | URL) => String(input).startsWith('/admin/api/projects.php?action=list')
+      ? productionProjectsResponse()
+      : liveResponse())
+    vi.stubGlobal('fetch', request)
+
+    render(<App />)
+    await screen.findByText('Mode live · hanya baca')
+    fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Buka proyek Kontrak Panggung Utama' }))
+    expect(screen.getByLabelText('ID proyek PostgreSQL')).toHaveTextContent('123e4567-e89b-42d3-a456-426614174000')
+    expect(screen.getByRole('tab', { name: 'Transaksi' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'Dokumen' })).toBeTruthy()
+    expect(window.location.hash).toContain('project=123e4567-e89b-42d3-a456-426614174000')
+    expect(request).toHaveBeenCalledWith('/admin/api/projects.php?action=list', expect.objectContaining({ credentials: 'same-origin' }))
+  }, 30_000)
+
   it('keeps the complete dashboard shell, analytics, routes, reports, and source-grounded unknown values', async () => {
     const request = vi.fn(async (_input?: RequestInfo | URL) => liveResponse())
     vi.stubGlobal('fetch', request)

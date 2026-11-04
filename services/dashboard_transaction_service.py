@@ -8,17 +8,30 @@ Postgres remains a best-effort projection and is never treated as authority.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Protocol
 
-from config.constants import OPERASIONAL_COLS, OPERASIONAL_SHEET_NAME, SPLIT_PEMASUKAN, SPLIT_PENGELUARAN
-from config.wallets import get_dompet_short_name
+from config.constants import (
+    OPERASIONAL_COLS,
+    OPERASIONAL_SHEET_NAME,
+    SPLIT_LAYOUT_DATA_START,
+    SPLIT_PEMASUKAN,
+    SPLIT_PENGELUARAN,
+)
+from config.wallets import DOMPET_COMPANIES, get_dompet_short_name
 from dashboard_api.write_contracts import TransactionRequest, validate_transaction_request
 from security import secure_log
 from services.dashboard_write_requests import DashboardWriteClaim, DashboardWriteRequestStore
+from services.project_document_repository import (
+    ProjectDocumentConflict,
+    ProjectDocumentUnavailable,
+)
 from utils.amounts import parse_money_token
 
 
@@ -86,6 +99,7 @@ class SheetsTransactionAdapter(Protocol):
 
 
 ProjectExists = Callable[[str, str, str], bool]
+ProjectUuidExists = Callable[[str, str, str], bool]
 ProjectionRepair = Callable[[dict[str, Any]], Any]
 Today = Callable[[], date]
 _SOURCE_WALLET_RE = re.compile(r"^(?P<description>.*) \[Sumber: (?P<wallet>[^\]]+)\]$")
@@ -203,6 +217,143 @@ class GoogleSheetsTransactionAdapter:
         )
 
     @staticmethod
+    def read_receipt_authority(
+        locator: Mapping[str, Any],
+        project: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Read one receipt source directly from its authoritative wallet Sheet.
+
+        PostgreSQL supplies only the locator. No cache or projection fallback is
+        accepted here. Message-backed rows may move within the same income block;
+        manual rows are bound to their recorded row through the source-key hash.
+        """
+
+        from gspread import WorksheetNotFound
+        from services.ledger_store import build_source_key
+        from sheets_helper import get_spreadsheet
+
+        source_key = str(locator.get("source_key") or "").strip()
+        source_sheet = str(locator.get("source_sheet") or "").strip()
+        source_block = str(locator.get("source_block") or "").strip().casefold()
+        message_id = str(locator.get("message_id") or "").strip()
+        expected_row = locator.get("source_row")
+        project_id = str(project.get("id") or "").strip()
+        wallet = str(project.get("wallet") or "").strip()
+        company = str(project.get("company") or "").strip()
+        if (
+            not source_key
+            or source_block != "pemasukan"
+            or not project_id
+            or not wallet
+            or not company
+            or source_sheet != wallet
+            or company not in DOMPET_COMPANIES.get(wallet, ())
+        ):
+            raise ProjectDocumentConflict("receipt authority locator is invalid")
+        try:
+            try:
+                spreadsheet = get_spreadsheet()
+                http_client = getattr(spreadsheet, "client", None)
+                if http_client is not None and hasattr(http_client, "timeout"):
+                    http_client.timeout = (5, 15)
+                worksheet = spreadsheet.worksheet(source_sheet)
+            except WorksheetNotFound as exc:
+                raise ProjectDocumentConflict(
+                    "authoritative receipt wallet Sheet no longer exists"
+                ) from exc
+            if message_id:
+                matches = _matching_rows(
+                    worksheet.col_values(SPLIT_PEMASUKAN["MESSAGE_ID"]),
+                    message_id,
+                )
+                if not matches:
+                    raise ProjectDocumentConflict(
+                        "authoritative receipt source no longer exists"
+                    )
+                if len(matches) != 1:
+                    raise ProjectDocumentConflict(
+                        "authoritative receipt source identity is ambiguous"
+                    )
+                observed_row = matches[0]
+            else:
+                if (
+                    isinstance(expected_row, bool)
+                    or not isinstance(expected_row, int)
+                    or expected_row < SPLIT_LAYOUT_DATA_START
+                ):
+                    raise ProjectDocumentConflict(
+                        "manual receipt source row is invalid"
+                    )
+                observed_row = expected_row
+            values = list(worksheet.row_values(observed_row) or [])
+        except (ProjectDocumentConflict, ProjectDocumentUnavailable):
+            raise
+        except Exception as exc:
+            raise ProjectDocumentUnavailable(
+                "authoritative receipt Sheet is temporarily unavailable"
+            ) from exc
+
+        observed_message_id = _cell(values, SPLIT_PEMASUKAN["MESSAGE_ID"])
+        if message_id != observed_message_id:
+            raise ProjectDocumentConflict(
+                "authoritative receipt source message identity changed"
+            )
+        raw_amount = _cell(values, SPLIT_PEMASUKAN["JUMLAH"])
+        sheet_project = _cell(values, SPLIT_PEMASUKAN["PROJECT"])
+        try:
+            amount = parse_money_token(raw_amount)
+            transaction_date = _sheet_date(
+                _cell(values, SPLIT_PEMASUKAN["TANGGAL"])
+            )
+        except (DashboardTransactionConflict, TypeError, ValueError) as exc:
+            raise ProjectDocumentConflict(
+                "authoritative receipt source contains invalid cash data"
+            ) from exc
+        row_for_identity = {
+            "sheet_name": source_sheet,
+            "sheet_row": observed_row,
+            "source_block": "pemasukan",
+            "message_id": observed_message_id,
+            "tanggal": _cell(values, SPLIT_PEMASUKAN["TANGGAL"]),
+            "jumlah": raw_amount,
+            "keterangan": _cell(values, SPLIT_PEMASUKAN["KETERANGAN"]),
+            "nama_projek": sheet_project,
+        }
+        observed_key = build_source_key(row_for_identity)
+        if observed_key != source_key:
+            raise ProjectDocumentConflict(
+                "authoritative receipt source identity changed"
+            )
+        if amount <= 0 or sheet_project != project_id:
+            raise ProjectDocumentConflict(
+                "authoritative receipt source project or amount changed"
+            )
+        raw_cells = [
+            _cell(values, column)
+            for column in range(SPLIT_PEMASUKAN["NO"], SPLIT_PEMASUKAN["MESSAGE_ID"] + 1)
+        ]
+        return {
+            "source_key": observed_key,
+            "source_sheet": source_sheet,
+            "expected_source_row": expected_row,
+            "observed_source_row": observed_row,
+            "source_block": "pemasukan",
+            "message_id": observed_message_id or None,
+            "direction": "Pemasukan",
+            "amount": amount,
+            "transaction_date": transaction_date.isoformat(),
+            "project_id": project_id,
+            "wallet": wallet,
+            "company": company,
+            "description": _cell(values, SPLIT_PEMASUKAN["KETERANGAN"]),
+            "raw_cells_sha256": hashlib.sha256(
+                json.dumps(raw_cells, ensure_ascii=False, separators=(",", ":")).encode(
+                    "utf-8"
+                )
+            ).hexdigest(),
+        }
+
+    @staticmethod
     def _read_office(request: TransactionRequest, *, message_id: str) -> AuthoritativeSheetRow | None:
         from sheets_helper import get_or_create_operational_sheet
 
@@ -252,12 +403,14 @@ class DashboardTransactionService:
         store: WriteRequestStore | None = None,
         sheets: SheetsTransactionAdapter | None = None,
         project_exists: ProjectExists,
+        project_uuid_exists: ProjectUuidExists | None = None,
         projection_repair: ProjectionRepair | None = None,
         today: Today | None = None,
     ) -> None:
         self._store = store or DashboardWriteRequestStore()
         self._sheets = sheets or GoogleSheetsTransactionAdapter()
         self._project_exists = project_exists
+        self._project_uuid_exists = project_uuid_exists
         self._projection_repair = projection_repair or _default_projection_repair
         self._today = today
 
@@ -267,6 +420,13 @@ class DashboardTransactionService:
             company = payload.get("company")
             if not isinstance(wallet, str) or not isinstance(company, str):
                 return False
+            if self._project_uuid_exists is not None:
+                try:
+                    uuid.UUID(project)
+                except (TypeError, ValueError):
+                    pass
+                else:
+                    return self._project_uuid_exists(project, wallet, company)
             return self._project_exists(project, wallet, company)
 
         kwargs: dict[str, Any] = {"project_exists": project_exists}

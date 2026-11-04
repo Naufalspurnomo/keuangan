@@ -31,7 +31,8 @@
 .primary-button { background: var(--primary); color: #fff; }
 html[data-theme='dark'] .primary-button { color: #0c2028; }
 .secondary-button { background: var(--surface-raised); color: var(--text); border-color: var(--border); }
-.primary-button:disabled, .secondary-button:disabled { opacity: .45; cursor: not-allowed; }
+.primary-button:disabled, .secondary-button:disabled { opacity: 1; background: var(--surface-muted); color: var(--text-secondary); border-color: var(--border); cursor: not-allowed; }
+.project-document-empty { display: grid; gap: 6px; }
 .finance-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--border); background: var(--surface-raised); }
 .finance-kpis article { padding: 20px; min-width: 0; border-right: 1px solid var(--border-subtle); }
 .finance-kpis article:last-child { border: 0; }

@@ -8,7 +8,12 @@ return [
     'password_hash' => 'CURRENT_DASHBOARD_BCRYPT_HASH',
     'proxy_token' => 'OWNER_PROXY_TOKEN',
     'upstream_snapshot_url' => 'https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app/api/dashboard/v1/snapshot',
-    // Fail closed. Enable only after the backend migration and write route are verified.
+    // Exact browser origin used for same-origin validation on state changes.
+    'public_origin' => 'https://hollawall.com',
+    // Fail closed. Enable each write surface only after its backend schema and routes are verified.
     'transaction_writes_enabled' => false,
     'upstream_transactions_url' => 'https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app/api/dashboard/v1/transactions',
+    'project_document_writes_enabled' => false,
+    'upstream_projects_url' => 'https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app/api/dashboard/v1/projects',
+    'upstream_documents_url' => 'https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app/api/dashboard/v1/documents',
 ];

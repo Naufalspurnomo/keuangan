@@ -382,6 +382,184 @@ def test_google_sheets_adapter_calls_existing_append_helpers_without_queue(monke
     assert office_calls[0]["category"] == "Gaji"
 
 
+def test_receipt_authority_reader_uses_exact_message_identity_and_allows_same_sheet_row_move(monkeypatch):
+    import sheets_helper
+    from config.constants import SPLIT_PEMASUKAN
+
+    project_id = "00000000-0000-4000-8000-000000000001"
+    message_id = "dashboard:receipt:0001"
+    source_key = f"message:CV HB(101):pemasukan:{message_id}"
+    values = ["" for _ in range(18)]
+    values[SPLIT_PEMASUKAN["NO"] - 1] = "7"
+    values[SPLIT_PEMASUKAN["WAKTU"] - 1] = "09:15:00"
+    values[SPLIT_PEMASUKAN["TANGGAL"] - 1] = TODAY.isoformat()
+    values[SPLIT_PEMASUKAN["JUMLAH"] - 1] = "100000"
+    values[SPLIT_PEMASUKAN["PROJECT"] - 1] = project_id
+    values[SPLIT_PEMASUKAN["KETERANGAN"] - 1] = "Pembayaran termin"
+    values[SPLIT_PEMASUKAN["OLEH"] - 1] = "Dashboard"
+    values[SPLIT_PEMASUKAN["SOURCE"] - 1] = "Dashboard"
+    values[SPLIT_PEMASUKAN["MESSAGE_ID"] - 1] = message_id
+
+    class FakeWorksheet:
+        def col_values(self, column):
+            assert column == SPLIT_PEMASUKAN["MESSAGE_ID"]
+            return [""] * 8 + [message_id]
+
+        def row_values(self, row):
+            assert row == 9
+            return values
+
+    class FakeSpreadsheet:
+        def worksheet(self, wallet):
+            assert wallet == "CV HB(101)"
+            return FakeWorksheet()
+
+    monkeypatch.setattr(sheets_helper, "get_spreadsheet", lambda: FakeSpreadsheet())
+    observed = GoogleSheetsTransactionAdapter.read_receipt_authority(
+        {
+            "source_key": source_key,
+            "source_sheet": "CV HB(101)",
+            "source_row": 7,
+            "source_block": "pemasukan",
+            "message_id": message_id,
+        },
+        {"id": project_id, "wallet": "CV HB(101)", "company": "HOLLA"},
+    )
+
+    assert observed["source_key"] == source_key
+    assert observed["observed_source_row"] == 9
+    assert observed["amount"] == 100_000
+    assert observed["project_id"] == project_id
+    assert observed["wallet"] == "CV HB(101)"
+    assert observed["company"] == "HOLLA"
+    assert len(observed["raw_cells_sha256"]) == 64
+
+
+def test_receipt_authority_reader_recomputes_manual_source_fingerprint_from_raw_cells(monkeypatch):
+    import sheets_helper
+    from config.constants import SPLIT_PEMASUKAN
+    from services.ledger_store import build_source_key
+
+    project_id = "00000000-0000-4000-8000-000000000001"
+    values = ["" for _ in range(18)]
+    values[SPLIT_PEMASUKAN["TANGGAL"] - 1] = "03/11/2026"
+    values[SPLIT_PEMASUKAN["JUMLAH"] - 1] = "Rp 100.000"
+    values[SPLIT_PEMASUKAN["PROJECT"] - 1] = project_id
+    values[SPLIT_PEMASUKAN["KETERANGAN"] - 1] = "Pembayaran manual"
+    source_key = build_source_key(
+        {
+            "sheet_name": "CV HB(101)",
+            "sheet_row": 9,
+            "source_block": "pemasukan",
+            "message_id": "",
+            "tanggal": "03/11/2026",
+            "jumlah": "Rp 100.000",
+            "keterangan": "Pembayaran manual",
+            "nama_projek": project_id,
+        }
+    )
+
+    class FakeWorksheet:
+        def row_values(self, row):
+            assert row == 9
+            return values
+
+    class FakeSpreadsheet:
+        def worksheet(self, wallet):
+            assert wallet == "CV HB(101)"
+            return FakeWorksheet()
+
+    monkeypatch.setattr(sheets_helper, "get_spreadsheet", lambda: FakeSpreadsheet())
+    observed = GoogleSheetsTransactionAdapter.read_receipt_authority(
+        {
+            "source_key": source_key,
+            "source_sheet": "CV HB(101)",
+            "source_row": 9,
+            "source_block": "pemasukan",
+            "message_id": None,
+        },
+        {"id": project_id, "wallet": "CV HB(101)", "company": "HOLLA"},
+    )
+
+    assert observed["source_key"] == source_key
+    assert observed["amount"] == 100_000
+    assert observed["transaction_date"] == "2026-11-03"
+
+
+def test_receipt_authority_reader_fails_closed_on_duplicate_missing_or_api_failure(monkeypatch):
+    import sheets_helper
+    from config.constants import SPLIT_PEMASUKAN
+    from services.project_document_repository import (
+        ProjectDocumentConflict,
+        ProjectDocumentUnavailable,
+    )
+
+    project_id = "00000000-0000-4000-8000-000000000001"
+    message_id = "dashboard:receipt:0002"
+    locator = {
+        "source_key": f"message:CV HB(101):pemasukan:{message_id}",
+        "source_sheet": "CV HB(101)",
+        "source_row": 7,
+        "source_block": "pemasukan",
+        "message_id": message_id,
+    }
+    project = {"id": project_id, "wallet": "CV HB(101)", "company": "HOLLA"}
+
+    class DuplicateWorksheet:
+        def col_values(self, column):
+            assert column == SPLIT_PEMASUKAN["MESSAGE_ID"]
+            return [message_id, message_id]
+
+    class FakeSpreadsheet:
+        def __init__(self, worksheet):
+            self._worksheet = worksheet
+
+        def worksheet(self, _wallet):
+            return self._worksheet
+
+    monkeypatch.setattr(
+        sheets_helper,
+        "get_spreadsheet",
+        lambda: FakeSpreadsheet(DuplicateWorksheet()),
+    )
+    with pytest.raises(ProjectDocumentConflict, match="ambiguous"):
+        GoogleSheetsTransactionAdapter.read_receipt_authority(locator, project)
+
+    class MissingWorksheet:
+        def col_values(self, _column):
+            return [f"{message_id}:component"]
+
+    monkeypatch.setattr(
+        sheets_helper,
+        "get_spreadsheet",
+        lambda: FakeSpreadsheet(MissingWorksheet()),
+    )
+    with pytest.raises(ProjectDocumentConflict, match="no longer exists"):
+        GoogleSheetsTransactionAdapter.read_receipt_authority(locator, project)
+
+    from gspread import WorksheetNotFound
+
+    class MissingSpreadsheet:
+        def worksheet(self, _wallet):
+            raise WorksheetNotFound("missing")
+
+    monkeypatch.setattr(
+        sheets_helper,
+        "get_spreadsheet",
+        lambda: MissingSpreadsheet(),
+    )
+    with pytest.raises(ProjectDocumentConflict, match="wallet Sheet no longer exists"):
+        GoogleSheetsTransactionAdapter.read_receipt_authority(locator, project)
+
+    def unavailable():
+        raise TimeoutError("credential detail")
+
+    monkeypatch.setattr(sheets_helper, "get_spreadsheet", unavailable)
+    with pytest.raises(ProjectDocumentUnavailable, match="temporarily unavailable") as raised:
+        GoogleSheetsTransactionAdapter.read_receipt_authority(locator, project)
+    assert "credential detail" not in str(raised.value)
+
+
 def test_google_sheets_adapter_reads_exact_project_row(monkeypatch):
     import sheets_helper
     from config.constants import SPLIT_PEMASUKAN
