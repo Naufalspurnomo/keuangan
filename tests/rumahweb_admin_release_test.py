@@ -64,6 +64,8 @@ class RumahwebAdminReleaseTests(unittest.TestCase):
     def test_release_sets_transport_security_headers(self) -> None:
         htaccess = (RELEASE / ".htaccess").read_text(encoding="utf-8")
         self.assertIn("Strict-Transport-Security", htaccess)
+        self.assertIn("RewriteCond %{HTTPS} !=on", htaccess)
+        self.assertIn("RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]", htaccess)
         self.assertIn("RewriteRule ^login/?$ index.php [L]", htaccess)
         self.assertIn("X-Content-Type-Options", htaccess)
         self.assertIn("X-Robots-Tag", htaccess)
