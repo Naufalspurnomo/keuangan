@@ -26,7 +26,7 @@ describe('ProjectDetailWorkspace', () => {
     const onRouteChange = vi.fn()
     render(<ProjectDetailWorkspace project={project} tab="transactions" onRouteChange={onRouteChange} onBack={vi.fn()} transactions={<p>Ledger proyek</p>} presensi={<p>Bukti presensi</p>} documents={<p>Pusat dokumen</p>} />)
     expect(screen.getByText('Ledger proyek')).toBeTruthy()
-    expect(screen.getByText(project.id!)).toBeTruthy()
+    expect(screen.queryByText(project.id!)).toBeNull()
     fireEvent.click(screen.getByRole('tab', { name: 'Dokumen' }))
     expect(onRouteChange).toHaveBeenCalledWith({ tab: 'documents' })
   })

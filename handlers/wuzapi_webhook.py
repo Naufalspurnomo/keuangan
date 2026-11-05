@@ -33,14 +33,33 @@ IGNORED_EVENT_TYPES = {
 }
 
 
+def _identity_number(value: object) -> str:
+    jid = str(value or '')
+    if '@' not in jid or jid.endswith('@g.us'):
+        return ''
+    return jid.split('@')[0].split(':')[0]
+
+
+def _sender_identity_candidates(info: dict) -> list[str]:
+    candidates = []
+    for key in ('Sender', 'SenderAlt', 'Chat'):
+        number = _identity_number(info.get(key))
+        if number and number not in candidates:
+            candidates.append(number)
+    return candidates
+
+
 def _extract_sender_number(info: dict) -> str:
-    sender_alt = str(info.get('SenderAlt') or '')
+    # Sender and SenderAlt can be opaque WhatsApp LIDs; prefer a routable phone JID.
     sender_jid = str(info.get('Sender') or '')
+    chat_jid = str(info.get('Chat') or '')
     sender_number = (
-        sender_alt.split('@')[0].split(':')[0]
-        if '@' in sender_alt
-        else (sender_jid.split('@')[0].split(':')[0] if '@' in sender_jid else '')
+        _identity_number(sender_jid) if sender_jid.endswith('@s.whatsapp.net') else ''
+    ) or (
+        _identity_number(chat_jid) if chat_jid.endswith('@s.whatsapp.net') else ''
     )
+    if not sender_number:
+        sender_number = _identity_number(info.get('SenderAlt')) or _identity_number(sender_jid)
 
     if not sender_number:
         info_id = str(info.get('ID', '') or '')
@@ -155,6 +174,7 @@ def handle_wuzapi_webhook(
         if info.get('IsFromMe', False):
             return jsonify({'status': 'own_message'}), 200
 
+        sender_candidates = _sender_identity_candidates(info)
         sender_number = _extract_sender_number(info)
         if not sender_number:
             secure_log("WARNING", f"Webhook: No sender number found in {info}")
@@ -162,7 +182,7 @@ def handle_wuzapi_webhook(
 
         chat_jid = info.get('Chat', '')
         is_group = '@g.us' in chat_jid
-        if not is_sender_allowed([sender_number]):
+        if not is_sender_allowed(sender_candidates):
             secure_log("WARNING", f"Webhook: Access denied for {sender_number}")
             reply_target = chat_jid if (is_group and chat_jid) else sender_number
             send_wuzapi_reply(

@@ -47,7 +47,7 @@ export function Modal({ title, copy, onClose, children, live = false }: { title:
   }, [onClose])
   return <div className="finance-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose() }}>
     <section ref={modalRef} className="finance-modal" role="dialog" aria-modal="true" aria-labelledby="finance-modal-title">
-      <header><div><p className="eyebrow">{live ? 'DATA LIVE' : 'DATA DEMO'}</p><h2 id="finance-modal-title">{title}</h2><p>{copy}</p></div><button type="button" className="icon-button" onClick={onClose} aria-label="Tutup"><X size={20} /></button></header>
+      <header><div>{!live && <p className="eyebrow">DATA DEMO</p>}<h2 id="finance-modal-title">{title}</h2><p>{copy}</p></div><button type="button" className="icon-button" onClick={onClose} aria-label="Tutup"><X size={20} /></button></header>
       {children}
     </section>
   </div>
@@ -132,7 +132,7 @@ export function TransactionForm({ projects, transaction, initialScope = 'project
       if (locked && (!lockedProject || lockedProject.status === 'planned')) throw new Error('Proyek terkunci tidak tersedia untuk transaksi.')
       const projectScoped = locked || scope === 'project'
       if (liveWrite && date !== currentDate) throw new Error('Tanggal transaksi harus tanggal Jakarta hari ini.')
-      if (!writeMappingAvailable) throw new Error('Pemetaan kanonis dompet, perusahaan, dan proyek belum tersedia.')
+      if (!writeMappingAvailable) throw new Error('Pilihan dompet, perusahaan, dan proyek belum tersedia.')
       const pair = CANONICAL_WALLET_COMPANY_PAIRS[writePair]
       const result = onSave({
         date,
@@ -151,7 +151,7 @@ export function TransactionForm({ projects, transaction, initialScope = 'project
     } catch (reason) { fail(reason) }
   }
   const title = transaction ? `Ubah transaksi${lockedProject ? ` · ${lockedProject.name}` : ''}` : lockedProject ? `Tambah transaksi · ${lockedProject.name}` : scope === 'office' ? 'Catat biaya kantor' : 'Tambah transaksi'
-  return <Modal title={title} copy={liveWrite ? 'Transaksi hanya dinyatakan berhasil setelah server memverifikasi baris buku besar.' : 'Transaksi demo langsung memperbarui seluruh ringkasan dan laporan.'} onClose={onClose} live={liveWrite}>
+  return <Modal title={title} copy={liveWrite ? 'Periksa kembali rincian transaksi sebelum menyimpan.' : 'Transaksi demo langsung memperbarui seluruh ringkasan dan laporan.'} onClose={onClose} live={liveWrite}>
     <form className="finance-form" onSubmit={submit}>
       <fieldset disabled={busy || retryOnly} style={{ border: 0, margin: 0, padding: 0 }}>
       {!locked && <div className="scope-selector" role="group" aria-label="Pilih aktivitas"><button type="button" className={scope === 'project' ? 'active' : ''} aria-pressed={scope === 'project'} onClick={() => { setScope('project'); setWriteCategory(PROJECT_WRITE_CATEGORIES[0]) }}>Proyek</button><button type="button" className={scope === 'office' ? 'active' : ''} aria-pressed={scope === 'office'} onClick={() => { setScope('office'); setWriteCategory(OFFICE_WRITE_CATEGORIES[0]) }}>Operasional Kantor</button></div>}
@@ -162,7 +162,7 @@ export function TransactionForm({ projects, transaction, initialScope = 'project
         <AmountInput label="Jumlah" value={amount} onChange={setAmount} />
         <label className="wide"><span>Keterangan *</span><textarea autoFocus rows={3} required maxLength={liveWrite ? ((locked || scope === 'project') ? 200 : 150) : undefined} value={notes} onChange={(event) => setNotes(event.target.value)} /></label></div>
       </fieldset>
-      {!writeMappingAvailable && <p className="form-error" role="status">Pencatatan belum tersedia: pemetaan kanonis belum dikonfigurasi.</p>}
+      {!writeMappingAvailable && <p className="form-error" role="status">Pencatatan belum tersedia untuk pilihan ini.</p>}
       <ErrorNote error={error} /><footer><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>Batal</button><button className="primary-button" disabled={busy || !writeMappingAvailable}>{busy ? 'Memverifikasi pencatatan…' : retryOnly ? 'Coba lagi permintaan yang sama' : transaction ? 'Simpan perubahan' : 'Simpan transaksi'}</button></footer>
     </form>
   </Modal>

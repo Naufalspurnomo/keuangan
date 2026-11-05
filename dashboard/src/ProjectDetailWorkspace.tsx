@@ -65,7 +65,7 @@ export default function ProjectDetailWorkspace({
         <p className="eyebrow">PROYEK</p>
         <h1>{project.name}</h1>
         <p>{project.client_name}{project.client_company ? ` · ${project.client_company}` : ''} · <span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span></p>
-        <code className="project-uuid" aria-label="ID proyek PostgreSQL">{project.id}</code>
+
       </div>
       {capabilities.projectWrites && onEdit && <button type="button" className="secondary-button" onClick={() => onEdit(project)}><Pencil size={16} /> Ubah proyek</button>}
     </header>

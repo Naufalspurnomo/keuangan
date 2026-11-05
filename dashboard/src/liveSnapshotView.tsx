@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { loadLiveSnapshot, type LiveSnapshotLoadOptions } from './liveSnapshot'
 import type { DashboardSnapshot, ProjectSummary, WalletSnapshot } from './snapshot'
@@ -26,13 +26,14 @@ export interface LiveSnapshotViewModel {
 }
 
 export type LiveSnapshotState =
-  | { status: 'loading'; data: null; error: null }
-  | { status: 'ready'; data: DashboardSnapshot; error: null }
-  | { status: 'error'; data: null; error: Error }
+  | { status: 'loading'; data: null; error: null; refreshing: false }
+  | { status: 'ready'; data: DashboardSnapshot; error: Error | null; refreshing: boolean }
+  | { status: 'error'; data: null; error: Error; refreshing: false }
 
 interface UseLiveSnapshotOptions {
   endpoint?: string
   loader?: LiveSnapshotLoader
+  pollIntervalMs?: number
 }
 
 const rupiah = new Intl.NumberFormat('id-ID', {
@@ -86,25 +87,52 @@ export function adaptLiveSnapshot(snapshot: DashboardSnapshot): LiveSnapshotView
   }
 }
 
-export function useLiveSnapshot({ endpoint, loader = loadLiveSnapshot }: UseLiveSnapshotOptions = {}) {
-  const [requestId, setRequestId] = useState(0)
-  const [state, setState] = useState<LiveSnapshotState>({ status: 'loading', data: null, error: null })
+export function useLiveSnapshot({ endpoint, loader = loadLiveSnapshot, pollIntervalMs = 5_000 }: UseLiveSnapshotOptions = {}) {
+  const [state, setState] = useState<LiveSnapshotState>({ status: 'loading', data: null, error: null, refreshing: false })
+  const activeController = useRef<AbortController | null>(null)
+  const requestSequence = useRef(0)
 
-  const reload = useCallback(() => setRequestId((current) => current + 1), [])
-
-  useEffect(() => {
+  const reload = useCallback(() => {
+    activeController.current?.abort()
     const controller = new AbortController()
-    setState({ status: 'loading', data: null, error: null })
-    loader({ endpoint, signal: controller.signal })
+    const sequence = ++requestSequence.current
+    activeController.current = controller
+    setState((current) => current.data
+      ? { status: 'ready', data: current.data, error: null, refreshing: true }
+      : { status: 'loading', data: null, error: null, refreshing: false })
+    return loader({ endpoint, signal: controller.signal })
       .then((data) => {
-        if (!controller.signal.aborted) setState({ status: 'ready', data, error: null })
+        if (!controller.signal.aborted && sequence === requestSequence.current) {
+          setState({ status: 'ready', data, error: null, refreshing: false })
+        }
+        return data
       })
       .catch((error: unknown) => {
-        if (!controller.signal.aborted) setState({ status: 'error', data: null, error: readableError(error) })
+        if (!controller.signal.aborted && sequence === requestSequence.current) {
+          const readable = readableError(error)
+          setState((current) => current.data
+            ? { status: 'ready', data: current.data, error: readable, refreshing: false }
+            : { status: 'error', data: null, error: readable, refreshing: false })
+        }
+        throw error
       })
+  }, [endpoint, loader])
 
-    return () => controller.abort()
-  }, [endpoint, loader, requestId])
+  useEffect(() => {
+    void reload().catch(() => undefined)
+    const poll = () => { if (document.visibilityState === 'visible') void reload().catch(() => undefined) }
+    const interval = window.setInterval(poll, pollIntervalMs)
+    const onFocus = () => { if (document.visibilityState === 'visible') void reload().catch(() => undefined) }
+    const onVisibilityChange = () => { if (document.visibilityState === 'visible') void reload().catch(() => undefined) }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      activeController.current?.abort()
+    }
+  }, [pollIntervalMs, reload])
 
   return { ...state, reload }
 }
@@ -129,8 +157,8 @@ export function LiveSnapshotBanner({ endpoint, loader = loadLiveSnapshot }: Live
       <section className="live-snapshot live-snapshot--loading" role="status" aria-live="polite">
         <span className="live-snapshot__pulse" aria-hidden="true" />
         <div>
-          <strong>Menghubungkan data keuangan live</strong>
-          <p>Memverifikasi sesi admin dan kontrak snapshot.</p>
+          <strong>Memuat data keuangan</strong>
+          <p>Menyiapkan ringkasan terbaru.</p>
         </div>
       </section>
     )
@@ -140,10 +168,10 @@ export function LiveSnapshotBanner({ endpoint, loader = loadLiveSnapshot }: Live
     return (
       <section className="live-snapshot live-snapshot--error" role="alert">
         <div>
-          <strong>Data live belum tersedia</strong>
-          <p>{state.error.message} Data demo tidak ditampilkan sebagai data live.</p>
+          <strong>Data belum tersedia</strong>
+          <p>{state.error.message} Data demo tidak ditampilkan sebagai pengganti.</p>
         </div>
-        <button type="button" onClick={state.reload} aria-label="Coba lagi data live">
+        <button type="button" onClick={() => void state.reload()} aria-label="Coba lagi data">
           Coba lagi
         </button>
       </section>
@@ -153,18 +181,18 @@ export function LiveSnapshotBanner({ endpoint, loader = loadLiveSnapshot }: Live
   if (!view) return null
 
   return (
-    <section className={`live-snapshot live-snapshot--${view.freshness}`} aria-label="Status data live">
+    <section className={`live-snapshot live-snapshot--${view.freshness}`} aria-label="Status data">
       <div className="live-snapshot__heading">
         <div>
-          <span className="live-snapshot__eyebrow">Data keuangan live</span>
+          <span className="live-snapshot__eyebrow">Ringkasan keuangan</span>
           <h2>{view.source}</h2>
           <p>
             {view.freshnessLabel} · Data sampai {formatSnapshotDate(view.dataThrough)} · {view.validRows} baris valid ·{' '}
             {view.invalidRows} perlu ditinjau
           </p>
         </div>
-        <button type="button" onClick={state.reload} aria-label="Muat ulang data live">
-          Muat ulang
+        <button type="button" onClick={() => void state.reload()} aria-label="Muat ulang data" disabled={state.refreshing}>
+          {state.refreshing ? 'Memperbarui…' : 'Muat ulang'}
         </button>
       </div>
       <div className="live-snapshot__metrics">

@@ -127,7 +127,7 @@ function Sidebar({ active, open, mobile, live, close, navigate }: { active: Page
     ['debts', 'Hutang Internal', Landmark], ['reports', 'Laporan', FileBarChart],
   ] as const
   const hidden = mobile && !open
-  return <>{mobile && open && <button type="button" className="mobile-overlay is-open" onClick={close} aria-label="Tutup navigasi" />}<aside id="app-navigation" className={`sidebar ${open ? 'is-open' : ''}`} aria-hidden={hidden || undefined}><div className="sidebar-head"><img src={hollawallLogo} alt="Hollawall" /><button ref={closeButtonRef} tabIndex={hidden ? -1 : 0} className="icon-button mobile-only" onClick={close} aria-label="Tutup navigasi"><X size={20} /></button></div><div className="workspace-switch"><Building2 size={18} /><span><small>Ruang kerja</small>Hollawall Group</span></div><nav aria-label="Menu utama">{items.map(([key, label, Icon]) => <button type="button" tabIndex={hidden ? -1 : 0} key={key} className={active === key ? 'active' : ''} aria-current={active === key ? 'page' : undefined} onClick={() => { navigate(key); close() }}><Icon size={18} /><span>{label}</span></button>)}</nav><div className="sidebar-bottom"><div className="profile workspace-profile"><span><LockKeyhole size={15} /></span><div><strong>{live ? 'Workspace live' : 'Workspace demo'}</strong><small>{live ? 'Data server · Terautentikasi' : 'Data lokal · Teraudit'}</small></div></div></div></aside></>
+  return <>{mobile && open && <button type="button" className="mobile-overlay is-open" onClick={close} aria-label="Tutup navigasi" />}<aside id="app-navigation" className={`sidebar ${open ? 'is-open' : ''}`} aria-hidden={hidden || undefined}><div className="sidebar-head"><img src={hollawallLogo} alt="Hollawall" /><button ref={closeButtonRef} tabIndex={hidden ? -1 : 0} className="icon-button mobile-only" onClick={close} aria-label="Tutup navigasi"><X size={20} /></button></div><div className="workspace-switch"><Building2 size={18} /><span><small>Ruang kerja</small>Hollawall Group</span></div><nav aria-label="Menu utama">{items.map(([key, label, Icon]) => <button type="button" tabIndex={hidden ? -1 : 0} key={key} className={active === key ? 'active' : ''} aria-current={active === key ? 'page' : undefined} onClick={() => { navigate(key); close() }}><Icon size={18} /><span>{label}</span></button>)}</nav><div className="sidebar-bottom"><div className="profile workspace-profile"><span><LockKeyhole size={15} /></span><div><strong>{live ? 'Keuangan Hollawall' : 'Workspace demo'}</strong><small>{live ? 'Ringkasan dan laporan' : 'Data lokal · Teraudit'}</small></div></div></div></aside></>
 }
 
 function ThemeToggle({ theme, setTheme }: { theme: string; setTheme: (theme: string) => void }) {
@@ -268,7 +268,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
   }
   const backToProjects = () => window.history.state?.fromPage === 'projects' ? window.history.back() : pushRoute('projects')
   const closeMenu = () => { setMenuOpen(false); if (mobile) window.requestAnimationFrame(() => menuButtonRef.current?.focus()) }
-  const commit = (action: () => void, success: string) => { if (readOnly) throw new Error('Workspace live hanya baca.'); action(); setNotice(success) }
+  const commit = (action: () => void, success: string) => { if (readOnly) throw new Error('Data ini hanya dapat dilihat.'); action(); setNotice(success) }
   const safe = (action: () => void, success: string) => { try { commit(action, success) } catch (error) { setNotice(error instanceof Error ? error.message : 'Tindakan belum dapat diproses.') } }
   const saveProject = (input: ProjectInput) => modal?.kind === 'project' && modal.value
     ? commit(() => finance.editProject(modal.value!.id, input), 'Proyek diperbarui.')
@@ -285,7 +285,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
     if (readOnly) {
       if (!canCreateTransactions || !onCreateLiveTransaction) throw new Error('Pencatatan transaksi belum tersedia.')
       return onCreateLiveTransaction(input).then((result) => {
-        setNotice(`Transaksi tercatat di ${result.sheetName}, baris ${result.sheetRow}. Data live dimuat ulang.`)
+        setNotice(`Transaksi tercatat di ${result.sheetName}, baris ${result.sheetRow}. Tampilan sedang diperbarui.`)
       })
     }
     const { category: _category, ...demoInput } = input
@@ -316,7 +316,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
         ? projects.map((project) => project.id === current.id ? current : project)
         : [current, ...projects])
       setProjectModal(null)
-      setNotice('Proyek disimpan dan dibaca kembali dari server.')
+      setNotice('Proyek disimpan dan ditampilkan kembali.')
     } finally { setProjectBusy(false) }
   }
   const changeProductionProjectStatus = async (status: ProductionProjectStatus) => {
@@ -391,10 +391,10 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
           </div>
         </header>
         <div className="content">
-          <p className="demo-mode-label">{readOnly ? canCreateTransactions ? 'Mode live · pencatatan transaksi aktif' : 'Mode live · hanya baca' : 'Mode demo · data browser'}</p>
+          {!readOnly && <p className="demo-mode-label">Mode demo · data browser</p>}
           {readOnly && !canCreateTransactions && <p className="form-error">{liveWriteStatus ?? 'Pencatatan transaksi belum tersedia.'}</p>}
           {!readOnly && <DemoBanner updatedAt={finance.workspace.updated_at} onReset={reset} />}
-          {!['overview', 'projects', 'reports'].includes(active) && <header className="page-heading"><div><p className="eyebrow">{meta.eyebrow}</p><h1>{meta.title}</h1><p>{meta.copy}</p></div><span className="demo-badge">{readOnly ? 'DATA LIVE' : 'DATA DEMO'}</span></header>}
+          {!['overview', 'projects', 'reports'].includes(active) && <header className="page-heading"><div><p className="eyebrow">{meta.eyebrow}</p><h1>{meta.title}</h1><p>{meta.copy}</p></div>{!readOnly && <span className="demo-badge">DATA DEMO</span>}</header>}
           {content}
         </div>
       </main>
@@ -440,7 +440,7 @@ function LiveDashboardApp() {
     if (!writeSession?.writesEnabled) throw new Error(writeStatus || 'Pencatatan transaksi belum tersedia.')
     if (!Number.isSafeInteger(input.amount) || input.amount <= 0) throw new Error('Jumlah harus berupa rupiah bulat lebih dari nol.')
     if (input.date !== jakartaToday()) throw new Error('Tanggal transaksi harus tanggal Jakarta hari ini.')
-    if (!input.wallet || !input.company || !input.category) throw new Error('Pemetaan kanonis transaksi belum lengkap.')
+    if (!input.wallet || !input.company || !input.category) throw new Error('Pilihan transaksi belum lengkap.')
     const description = input.notes
     if (!description || description !== description.trim() || description !== description.split(/\s+/).join(' ')) {
       throw new Error('Keterangan wajib diisi tanpa spasi berlebih di awal, akhir, atau tengah.')
@@ -450,7 +450,7 @@ function LiveDashboardApp() {
       ? workspace?.projects.find((project) => project.id === input.project_id)
       : undefined
     if (input.scope === 'project' && (!selectedProject?.write_mapping || selectedProject.status !== 'active')) {
-      throw new Error('Pemetaan kanonis proyek belum tersedia untuk pencatatan.')
+      throw new Error('Proyek ini belum tersedia untuk pencatatan.')
     }
     if (!pendingAttempt.current) {
       pendingAttempt.current = createTransactionWriteAttempt({
@@ -478,7 +478,7 @@ function LiveDashboardApp() {
     }
   }
 
-  if (state.status === 'loading') return <main role="status">Menghubungkan data keuangan live</main>
-  if (state.status === 'error') return <main role="alert"><h1>Data live belum tersedia</h1><p>Data demo tidak ditampilkan sebagai pengganti.</p><button onClick={state.reload}>Coba lagi</button></main>
+  if (state.status === 'loading') return <main role="status">Memuat data keuangan</main>
+  if (state.status === 'error') return <main role="alert"><h1>Data belum tersedia</h1><p>Data demo tidak ditampilkan sebagai pengganti.</p><button onClick={() => void state.reload()}>Coba lagi</button></main>
   return workspace ? <DemoApp suppliedWorkspace={workspace} liveWriteSession={writeSession} liveWriteStatus={writeStatus} onCreateLiveTransaction={createLiveTransaction} projectApi={projectApi} /> : null
 }

@@ -23,8 +23,8 @@ export default function LiveFinanceApp() {
   const [selectedProject, setSelectedProject] = useState<ProjectSummary | null>(null)
   const [projectTab, setProjectTab] = useState<ProjectTab>('Transaksi')
 
-  if (state.status === 'loading') return <main role="status">Menghubungkan data keuangan live</main>
-  if (state.status === 'error') return <main role="alert"><h1>Data live belum tersedia</h1><p>Data demo tidak ditampilkan sebagai pengganti.</p><button onClick={state.reload}>Coba lagi</button></main>
+  if (state.status === 'loading') return <main role="status">Memuat data keuangan</main>
+  if (state.status === 'error') return <main role="alert"><h1>Data belum tersedia</h1><p>Data demo tidak ditampilkan sebagai pengganti.</p><button onClick={() => void state.reload()}>Coba lagi</button></main>
 
   const data = state.data
   const openProject = (project: ProjectSummary) => {
@@ -44,11 +44,11 @@ export default function LiveFinanceApp() {
 
   return <main className="live-snapshot">
     <h1>Hollawall</h1>
-    <p>Mode live · hanya baca</p>
+
     <nav aria-label="Menu utama">
       {(['Ringkasan', 'Proyek', 'Transaksi', 'Dompet'] as LivePage[]).map((name) => <button key={name} onClick={() => choosePage(name)}>{name}</button>)}
     </nav>
-    <button onClick={state.reload}>Muat ulang</button>
+    <button onClick={() => void state.reload()}>Muat ulang</button>
 
     {selectedProject ? <section aria-label={`Detail ${selectedProject.name}`}>
       <button type="button" onClick={() => setSelectedProject(null)}>Kembali ke proyek</button>

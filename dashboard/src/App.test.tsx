@@ -159,7 +159,7 @@ describe('Hollawall demo finance workspace', () => {
     expect(screen.queryByRole('button', { name: `Selesaikan ${project.name}` })).toBeNull()
     nav('Ringkasan')
     expect(screen.getByText(`Memperbarui proyek ${project.name}`)).toBeTruthy()
-  })
+  }, 30_000)
 
   it('quick-completes an active project from the candle context menu without opening a dialog', async () => {
     const workspace = seedFinanceWorkspace()

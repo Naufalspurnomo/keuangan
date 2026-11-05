@@ -153,7 +153,7 @@ export default function BusinessSectionReport({ transactions, wallets }: { trans
             <div><strong>{row.project || row.notes || 'Transaksi'}</strong><small>{row.notes || row.wallet} · {new Date(row.transaction_date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}</small></div>
             <b className={row.transaction_type === 'Pemasukan' ? 'positive' : 'negative'}>{row.transaction_type === 'Pemasukan' ? '+' : '−'}{compact.format(row.amount)}</b>
           </div>)}
-          {filtered.length === 0 && <div className="business-empty"><strong>Belum ada transaksi</strong><p>Unit ini belum memiliki aktivitas pada snapshot aktif.</p></div>}
+          {filtered.length === 0 && <div className="business-empty"><strong>Belum ada transaksi</strong><p>Unit ini belum memiliki aktivitas tercatat.</p></div>}
         </div>
       </aside>
     </div>
