@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import ProjectPresensiPanel from './ProjectPresensiPanel'
 import ProjectTransactionsWorkspace from './ProjectTransactionsWorkspace'
 import { seedFinanceWorkspace } from './financeWorkspace'
 
@@ -46,6 +47,47 @@ describe('project presensi detail', () => {
     expect(screen.getAllByText('Sedang bekerja').length).toBeGreaterThan(0)
     expect(screen.getByText('8 jam 15 menit')).toBeTruthy()
     expect(fetch).toHaveBeenCalledWith('/admin/api/presensi.php?project_id=p26-griya', expect.objectContaining({ credentials: 'same-origin', cache: 'no-store' }))
+  })
+
+  it('shows Indonesian WhatsApp delivery badges and non-zero attempt counts', async () => {
+    const deliveryRecords = [
+      {
+        ...records[0],
+        id: 'prs-delivery-1',
+        check_in: { ...records[0].check_in, whatsapp_delivery: { status: 'sent', attempts: 1 } },
+        check_out: { ...records[0].check_out, whatsapp_delivery: { status: 'failed', attempts: 3, last_error: 'secret-error', provider_message_id: 'secret-id' } },
+      },
+      {
+        ...records[0],
+        id: 'prs-delivery-2',
+        check_in: { ...records[0].check_in, id: 'evt-pending', whatsapp_delivery: { status: 'pending', attempts: 0 } },
+        check_out: { ...records[0].check_out, id: 'evt-unknown', whatsapp_delivery: { status: 'unknown', attempts: 2 } },
+      },
+    ]
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ version: 'presensi.admin.v1', records: deliveryRecords }),
+    } as Response)
+
+    render(<ProjectPresensiPanel project={{ id: 'p26-griya', name: 'Griya Wellness Center' }} />)
+
+    expect(await screen.findByLabelText('Status WhatsApp Check-in: Terkirim')).toBeTruthy()
+    expect(screen.getByLabelText('Status WhatsApp Check-out: Gagal')).toBeTruthy()
+    expect(screen.getByLabelText('Status WhatsApp Check-in: Menunggu')).toBeTruthy()
+    expect(screen.getByLabelText('Status WhatsApp Check-out: Belum diketahui')).toBeTruthy()
+    expect(screen.getByText('1 percobaan pengiriman')).toBeTruthy()
+    expect(screen.getByText('3 percobaan pengiriman')).toBeTruthy()
+    expect(screen.getByText('2 percobaan pengiriman')).toBeTruthy()
+    expect(screen.queryByText('0 percobaan pengiriman')).toBeNull()
+    expect(screen.queryByText('secret-error')).toBeNull()
+    expect(screen.queryByText('secret-id')).toBeNull()
+  })
+
+  it('shows legacy delivery metadata as unknown without a fabricated retry count', async () => {
+    render(<ProjectPresensiPanel project={{ id: 'p26-griya', name: 'Griya Wellness Center' }} />)
+
+    await waitFor(() => expect(screen.getAllByLabelText(/Status WhatsApp .+: Belum diketahui/)).toHaveLength(3))
+    expect(screen.queryByText(/percobaan pengiriman/)).toBeNull()
   })
 
   it('shows paired selfie, location evidence, filters, and safe failure state', async () => {

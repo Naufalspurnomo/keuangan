@@ -1,6 +1,13 @@
 import { Clock3, LocateFixed, RefreshCw, Search, UserRoundCheck } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+type WhatsAppDeliveryStatus = 'sent' | 'pending' | 'failed' | 'unknown'
+
+interface WhatsAppDelivery {
+  status?: WhatsAppDeliveryStatus
+  attempts?: number
+}
+
 interface PresensiEvidence {
   id: string
   occurred_at: string
@@ -8,6 +15,7 @@ interface PresensiEvidence {
   latitude: number | null
   longitude: number | null
   photo_url: string
+  whatsapp_delivery?: WhatsAppDelivery
 }
 
 interface PresensiRecord {
@@ -35,6 +43,24 @@ function durationLabel(minutes: number | null) {
   return `${hours} jam ${rest} menit`
 }
 
+const WHATSAPP_DELIVERY_LABELS: Record<WhatsAppDeliveryStatus, string> = {
+  sent: 'Terkirim',
+  pending: 'Menunggu',
+  failed: 'Gagal',
+  unknown: 'Belum diketahui',
+}
+
+function WhatsAppDeliveryBadge({ label, delivery }: { label: string; delivery?: WhatsAppDelivery }) {
+  const status = delivery?.status && delivery.status in WHATSAPP_DELIVERY_LABELS ? delivery.status : 'unknown'
+  const attempts = typeof delivery?.attempts === 'number' && Number.isFinite(delivery.attempts) && delivery.attempts > 0
+    ? Math.floor(delivery.attempts)
+    : 0
+  return <div className="presensi-whatsapp-delivery">
+    <span className={`presensi-whatsapp-status ${status}`} aria-label={`Status WhatsApp ${label}: ${WHATSAPP_DELIVERY_LABELS[status]}`}><span aria-hidden="true">WA</span>{WHATSAPP_DELIVERY_LABELS[status]}</span>
+    {attempts > 0 ? <span>{attempts} percobaan pengiriman</span> : null}
+  </div>
+}
+
 function EvidenceCard({ label, employee, evidence }: { label: string; employee: string; evidence: PresensiEvidence | null }) {
   if (!evidence) return <article className="presensi-evidence is-empty"><div className="presensi-photo-placeholder"><Clock3 size={24} /></div><div><small>{label}</small><strong>Belum dilakukan</strong><span>Menunggu selfie dan lokasi baru.</span></div></article>
   const hasLocation = typeof evidence.latitude === 'number' && Number.isFinite(evidence.latitude)
@@ -51,6 +77,7 @@ function EvidenceCard({ label, employee, evidence }: { label: string; employee: 
         <span>Akurasi {Math.round(evidence.accuracy_m)} m</span>
         <a href={`https://www.google.com/maps?q=${encodeURIComponent(coordinate)}`} target="_blank" rel="noreferrer" aria-label={`Buka lokasi ${label} ${employee} di peta`}><LocateFixed size={13} /> Buka peta</a>
       </> : <span>Lokasi tidak tersedia pada data lama.</span>}
+      <WhatsAppDeliveryBadge label={label} delivery={evidence.whatsapp_delivery} />
     </div>
   </article>
 }

@@ -22,6 +22,21 @@ def main() -> None:
     brand = absen / "brand"
     brand.mkdir()
     shutil.copy2(LOGO, brand / "hollawall-logo.png")
+    required = {
+        "api/login.php",
+        "api/logout.php",
+        "api/outbox-claim.php",
+        "api/outbox-ack.php",
+        "api/bootstrap.php",
+        "api/status.php",
+        "api/submit.php",
+        "presensi/index.php",
+        "assets/presensi.js",
+        "assets/presensi.css",
+    }
+    missing = sorted(path for path in required if not (absen / path).is_file())
+    if missing:
+        raise RuntimeError(f"required presensi release files missing: {missing}")
     forbidden = {"events.json", "rate-limits.json", ".hollawall-presensi.php"}
     for path in absen.rglob("*"):
         if path.name in forbidden:

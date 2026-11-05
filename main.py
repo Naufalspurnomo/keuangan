@@ -23,6 +23,7 @@ from flask import Flask, g, request, jsonify
 from dotenv import load_dotenv
 
 from dashboard_api import register_dashboard
+from presensi_delivery_api import register_presensi_delivery_endpoint
 from services.dashboard_write_requests import (
     DashboardWriteRequestUnavailable,
     dashboard_write_schema_health as read_dashboard_write_schema_health,
@@ -280,6 +281,7 @@ _DASHBOARD_WRITE_SCHEMA_AT_STARTUP = migrate_dashboard_write_schema_at_startup()
 # Register the optional private dashboard only when its database is configured.
 # This does not alter /health, /webhook_wuzapi, or /telegram behavior.
 register_dashboard(app)
+register_presensi_delivery_endpoint(app)
 
 # Configuration Flags
 DEBUG = os.getenv('FLASK_DEBUG', '0') == '1'

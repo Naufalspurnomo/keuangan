@@ -2,6 +2,7 @@ import contextlib
 import functools
 import http.server
 import os
+import shutil
 from pathlib import Path
 import socketserver
 import threading
@@ -42,7 +43,7 @@ class FinancialCommandCenterPrototypeTests(unittest.TestCase):
         cls._server_context = serve(PROTOTYPE)
         cls.base_url = cls._server_context.__enter__()
         cls._playwright = sync_playwright().start()
-        executable = os.environ.get("CHROMIUM_PATH", "/snap/bin/chromium")
+        executable = os.environ.get("CHROMIUM_PATH") or shutil.which("google-chrome") or shutil.which("chromium") or "/snap/bin/chromium"
         cls.browser = cls._playwright.chromium.launch(
             headless=True,
             executable_path=executable if Path(executable).exists() else None,

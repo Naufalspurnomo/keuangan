@@ -9,6 +9,7 @@ if ($contentLength <= 0 || $contentLength > 5_242_880) {
     presensi_error(413, 'request_too_large', 'Ukuran bukti presensi tidak valid.');
 }
 presensi_public_session();
+$sessionEmployee = presensi_public_employee();
 $csrf = (string) ($_POST['csrf'] ?? '');
 if ($csrf === '' || !hash_equals((string) ($_SESSION['presensi_csrf'] ?? ''), $csrf)) {
     presensi_error(403, 'csrf_invalid', 'Sesi formulir tidak valid. Muat ulang halaman.');
@@ -16,7 +17,7 @@ if ($csrf === '' || !hash_equals((string) ($_SESSION['presensi_csrf'] ?? ''), $c
 presensi_validate_capture_token((string) ($_POST['capture_token'] ?? ''));
 
 $submissionId = trim((string) ($_POST['submission_id'] ?? ''));
-$employeeId = trim((string) ($_POST['employee_id'] ?? ''));
+$employeeId = $sessionEmployee['id'];
 $projectId = trim((string) ($_POST['project_id'] ?? ''));
 $action = trim((string) ($_POST['action'] ?? ''));
 if (!preg_match('/^sub-[a-f0-9]{32}$/', $submissionId)) {
@@ -98,6 +99,15 @@ try {
         'photo_mime' => $selfie['mime'],
         'photo_width' => $selfie['width'],
         'photo_height' => $selfie['height'],
+        'whatsapp_delivery' => [
+            'status' => 'pending',
+            'attempts' => 0,
+            'next_retry_at' => gmdate('c'),
+            'provider_message_id' => null,
+            'last_error' => null,
+            'lease_token_hash' => null,
+            'lease_expires_at' => null,
+        ],
     ];
     $events[] = $event;
     presensi_write_events($paths, $events);
@@ -119,6 +129,7 @@ if ($storageFailure instanceof PresensiStorageException) {
 }
 $_SESSION['presensi_csrf'] = bin2hex(random_bytes(24));
 $nextCaptureToken = presensi_consume_capture_token();
+presensi_trigger_delivery($config);
 presensi_json_response(201, [
     'version' => 'presensi.submission.v1',
     'success' => true,

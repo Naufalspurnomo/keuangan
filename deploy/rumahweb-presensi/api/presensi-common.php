@@ -6,11 +6,20 @@ const PRESENSI_ADMIN_PATH = '/admin/';
 const PRESENSI_MAX_SELFIE_BYTES = 3_145_728;
 const PRESENSI_MIN_SELFIE_BYTES = 1_024;
 const PRESENSI_SESSION_LIFETIME = 43_200;
+const PRESENSI_SESSION_IDLE_LIFETIME = 1_800;
 const PRESENSI_ADMIN_SESSION_LIFETIME = 2_592_000;
 const PRESENSI_ADMIN_RENEW_AFTER = 86_400;
 const PRESENSI_RATE_LIMIT_WINDOW = 600;
 const PRESENSI_RATE_LIMIT_MAX = 12;
 const PRESENSI_LOCATION_MAX_AGE_SECONDS = 120;
+const PRESENSI_LOGIN_WINDOW = 900;
+const PRESENSI_LOGIN_MAX_FAILURES = 5;
+const PRESENSI_LOGIN_SOURCE_MAX_FAILURES = 25;
+const PRESENSI_LOGIN_LOCK_SECONDS = 900;
+const PRESENSI_LOGIN_MAX_BUCKETS = 256;
+const PRESENSI_LOGIN_MAX_FILE_BYTES = 131_072;
+const PRESENSI_OUTBOX_LEASE_SECONDS = 120;
+const PRESENSI_OUTBOX_MAX_ATTEMPTS = 5;
 
 final class PresensiStorageException extends RuntimeException
 {
@@ -96,31 +105,51 @@ function presensi_config(): array
         presensi_error(503, 'configuration_invalid', 'Konfigurasi presensi tidak valid.');
     }
     $retentionDays = filter_var($config['retention_days'] ?? null, FILTER_VALIDATE_INT);
+    $outboxSecret = (string) ($config['outbox_shared_secret'] ?? '');
+    $deliveryTriggerUrl = trim((string) ($config['delivery_trigger_url'] ?? ''));
+    $deliveryTriggerParts = $deliveryTriggerUrl === '' ? false : parse_url($deliveryTriggerUrl);
     if (!isset($config['employees'], $config['projects'])
         || !is_array($config['employees'])
         || !is_array($config['projects'])
+        || strlen($outboxSecret) < 32
+        || ($deliveryTriggerUrl !== '' && (
+            !is_array($deliveryTriggerParts)
+            || strtolower((string) ($deliveryTriggerParts['scheme'] ?? '')) !== 'https'
+            || trim((string) ($deliveryTriggerParts['host'] ?? '')) === ''
+            || array_key_exists('user', $deliveryTriggerParts)
+            || array_key_exists('pass', $deliveryTriggerParts)
+            || array_key_exists('query', $deliveryTriggerParts)
+            || array_key_exists('fragment', $deliveryTriggerParts)
+        ))
         || $retentionDays === false || $retentionDays < 1 || $retentionDays > 365) {
         presensi_error(503, 'configuration_invalid', 'Konfigurasi presensi tidak valid.');
     }
     $employees = [];
+    $employeeIds = [];
+    $employeeNames = [];
+    $employeeCodes = [];
     foreach ($config['employees'] as $row) {
+        $employeeId = is_array($row) ? trim((string) ($row['id'] ?? '')) : '';
+        $employeeName = is_array($row) ? trim((string) ($row['name'] ?? '')) : '';
+        $employeeCode = is_array($row) ? strtoupper(trim((string) ($row['code'] ?? ''))) : '';
+        $pinHash = is_array($row) ? (string) ($row['pin_hash'] ?? '') : '';
+        $passwordInfo = password_get_info($pinHash);
         if (!is_array($row)
-            || !preg_match('/^pegawai-[1-9][0-9]*$/', (string) ($row['id'] ?? ''))
-            || trim((string) ($row['name'] ?? '')) === '') {
+            || !preg_match('/^[a-z0-9][a-z0-9-]{1,63}$/D', $employeeId)
+            || $employeeName === '' || strlen($employeeName) > 100
+            || !preg_match('/^[A-Z0-9][A-Z0-9-]{2,31}$/D', $employeeCode)
+            || ($passwordInfo['algoName'] ?? 'unknown') === 'unknown') {
             presensi_error(503, 'configuration_invalid', 'Konfigurasi pegawai tidak valid.');
         }
-        $employees[] = ['id' => (string) $row['id'], 'name' => trim((string) $row['name'])];
+        $employeeIds[] = strtolower($employeeId);
+        $employeeNames[] = strtolower($employeeName);
+        $employeeCodes[] = $employeeCode;
+        $employees[] = ['id' => $employeeId, 'name' => $employeeName, 'code' => $employeeCode, 'pin_hash' => $pinHash];
     }
-    $expectedEmployees = ['pegawai-1' => 'Pegawai 1', 'pegawai-2' => 'Pegawai 2', 'pegawai-3' => 'Pegawai 3'];
-    $actualEmployees = [];
-    foreach ($employees as $employee) {
-        $actualEmployees[$employee['id']] = $employee['name'];
-    }
-    ksort($actualEmployees);
-    $employeeNames = array_map(static fn(array $row): string => strtolower($row['name']), $employees);
-    if (count($employees) !== count($expectedEmployees)
-        || $actualEmployees !== $expectedEmployees
-        || count(array_unique($employeeNames)) !== count($employeeNames)) {
+    if (!$employees
+        || count(array_unique($employeeIds)) !== count($employeeIds)
+        || count(array_unique($employeeNames)) !== count($employeeNames)
+        || count(array_unique($employeeCodes)) !== count($employeeCodes)) {
         presensi_error(503, 'configuration_invalid', 'Konfigurasi presensi memiliki identitas ganda atau tidak sesuai.');
     }
 
@@ -155,7 +184,39 @@ function presensi_config(): array
         || count(array_unique($allProjectNames)) !== count($allProjectNames)) {
         presensi_error(503, 'configuration_invalid', 'Konfigurasi presensi memiliki identitas ganda atau tidak sesuai.');
     }
-    return ['employees' => $employees, 'projects' => $projects, 'retention_days' => (int) $retentionDays];
+    return [
+        'employees' => $employees,
+        'projects' => $projects,
+        'retention_days' => (int) $retentionDays,
+        'outbox_shared_secret' => $outboxSecret,
+        'delivery_trigger_url' => $deliveryTriggerUrl,
+    ];
+}
+
+function presensi_trigger_delivery(array $config): void
+{
+    $url = (string) ($config['delivery_trigger_url'] ?? '');
+    if ($url === '') return;
+    $headers = [
+        'Accept: application/json',
+        'Content-Length: 0',
+        'X-Presensi-Secret: ' . (string) $config['outbox_shared_secret'],
+    ];
+    $context = stream_context_create([
+        'http' => [
+            'method' => 'POST',
+            'header' => implode("\r\n", $headers),
+            'content' => '',
+            'timeout' => 1.5,
+            'ignore_errors' => true,
+            'follow_location' => 0,
+            'max_redirects' => 0,
+        ],
+        'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
+    ]);
+    // The record is already durable. Delivery is best-effort here; the outbox
+    // remains authoritative and can be retried safely by the bounded worker.
+    @file_get_contents($url, false, $context, 0, 1);
 }
 
 function presensi_find_named(array $rows, string $id): ?array
@@ -225,6 +286,8 @@ function presensi_store_paths(): array
         'photos' => $realPhotos,
         'events' => $root . '/events.json',
         'lock' => $root . '/events.lock',
+        'login_attempts' => $root . '/login-attempts.json',
+        'login_lock' => $root . '/login-attempts.lock',
     ];
 }
 
@@ -425,6 +488,140 @@ function presensi_consume_capture_token(): string
     return presensi_issue_capture_token();
 }
 
+function presensi_public_employee(bool $required = true): ?array
+{
+    $employeeId = (string) ($_SESSION['presensi_employee_id'] ?? '');
+    $employeeName = (string) ($_SESSION['presensi_employee_name'] ?? '');
+    $now = time();
+    $authenticatedAt = (int) ($_SESSION['presensi_authenticated_at'] ?? 0);
+    $lastSeen = (int) ($_SESSION['presensi_last_seen'] ?? 0);
+    if ($employeeId === '' || $employeeName === '' || $authenticatedAt <= 0
+        || $now - $authenticatedAt > PRESENSI_SESSION_LIFETIME
+        || ($lastSeen > 0 && $now - $lastSeen > PRESENSI_SESSION_IDLE_LIFETIME)) {
+        unset($_SESSION['presensi_employee_id'], $_SESSION['presensi_employee_name'], $_SESSION['presensi_authenticated_at'], $_SESSION['presensi_last_seen']);
+        if ($required) {
+            presensi_error(401, 'authentication_required', 'Masuk sebagai pegawai diperlukan.');
+        }
+        return null;
+    }
+    $_SESSION['presensi_last_seen'] = $now;
+    return ['id' => $employeeId, 'name' => $employeeName];
+}
+
+function presensi_login_keys(string $code): array
+{
+    $remote = strtolower((string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown'));
+    $source = hash('sha256', 'source|' . $remote);
+    $normalizedCode = preg_match('/^[A-Z0-9][A-Z0-9-]{2,31}$/D', $code) ? $code : '__INVALID__';
+    $credential = hash('sha256', 'credential|' . $remote . '|' . $normalizedCode);
+    return [$source => PRESENSI_LOGIN_SOURCE_MAX_FAILURES, $credential => PRESENSI_LOGIN_MAX_FAILURES];
+}
+
+function presensi_read_login_rows(array $paths): array
+{
+    if (!is_file($paths['login_attempts'])) return [];
+    $size = filesize($paths['login_attempts']);
+    if ($size === false || $size > PRESENSI_LOGIN_MAX_FILE_BYTES) {
+        presensi_error(503, 'authentication_unavailable', 'Masuk belum dapat diproses.');
+    }
+    $decoded = json_decode((string) file_get_contents($paths['login_attempts']), true);
+    if (!is_array($decoded)) presensi_error(503, 'authentication_unavailable', 'Masuk belum dapat diproses.');
+    return $decoded;
+}
+
+function presensi_login_attempts(array $paths, array $keys, bool $success): int
+{
+    $handle = fopen($paths['login_lock'], 'c+');
+    if ($handle === false || !flock($handle, LOCK_EX)) {
+        if (is_resource($handle)) fclose($handle);
+        presensi_error(503, 'authentication_unavailable', 'Masuk belum dapat diproses.');
+    }
+    chmod($paths['login_lock'], 0600);
+    try {
+        $rows = presensi_read_login_rows($paths);
+        $now = time();
+        foreach ($rows as $rowKey => $row) {
+            if (!is_array($row) || (int) ($row['updated_at'] ?? 0) < $now - PRESENSI_LOGIN_LOCK_SECONDS * 2) unset($rows[$rowKey]);
+        }
+        $retryAfter = 0;
+        foreach ($keys as $key => $failureLimit) {
+            $row = is_array($rows[$key] ?? null) ? $rows[$key] : ['failures' => [], 'locked_until' => 0];
+            $failures = array_values(array_filter((array) ($row['failures'] ?? []), static fn($at): bool => is_int($at) && $at >= $now - PRESENSI_LOGIN_WINDOW));
+            $lockedUntil = (int) ($row['locked_until'] ?? 0);
+            if ($success) {
+                unset($rows[$key]);
+            } elseif ($lockedUntil <= $now) {
+                $failures[] = $now;
+                if (count($failures) >= (int) $failureLimit) $lockedUntil = $now + PRESENSI_LOGIN_LOCK_SECONDS;
+                $rows[$key] = ['failures' => array_slice($failures, -(int) $failureLimit), 'locked_until' => $lockedUntil, 'updated_at' => $now];
+            }
+            $retryAfter = max($retryAfter, $lockedUntil - $now);
+        }
+        if (count($rows) > PRESENSI_LOGIN_MAX_BUCKETS) {
+            uasort($rows, static fn(array $a, array $b): int => (int) ($b['updated_at'] ?? 0) <=> (int) ($a['updated_at'] ?? 0));
+            $rows = array_slice($rows, 0, PRESENSI_LOGIN_MAX_BUCKETS, true);
+        }
+        $temporary = $paths['root'] . '/login-attempts.' . bin2hex(random_bytes(8)) . '.tmp';
+        $encoded = json_encode($rows, JSON_UNESCAPED_SLASHES);
+        if ($encoded === false || strlen($encoded) > PRESENSI_LOGIN_MAX_FILE_BYTES || file_put_contents($temporary, $encoded . "\n", LOCK_EX) === false) {
+            presensi_error(503, 'authentication_unavailable', 'Masuk belum dapat diproses.');
+        }
+        chmod($temporary, 0600);
+        if (!rename($temporary, $paths['login_attempts'])) {
+            @unlink($temporary);
+            presensi_error(503, 'authentication_unavailable', 'Masuk belum dapat diproses.');
+        }
+        chmod($paths['login_attempts'], 0600);
+        return max(0, $retryAfter);
+    } finally {
+        flock($handle, LOCK_UN);
+        fclose($handle);
+    }
+}
+
+function presensi_login_locked(array $paths, array $keys): int
+{
+    $handle = fopen($paths['login_lock'], 'c+');
+    if ($handle === false || !flock($handle, LOCK_SH)) {
+        if (is_resource($handle)) fclose($handle);
+        presensi_error(503, 'authentication_unavailable', 'Masuk belum dapat diproses.');
+    }
+    try {
+        $rows = presensi_read_login_rows($paths);
+        $until = 0;
+        foreach (array_keys($keys) as $key) $until = max($until, (int) ($rows[$key]['locked_until'] ?? 0));
+        return max(0, $until - time());
+    } finally {
+        flock($handle, LOCK_UN);
+        fclose($handle);
+    }
+}
+
+function presensi_require_internal_secret(array $config): void
+{
+    $provided = trim((string) ($_SERVER['HTTP_X_PRESENSI_SECRET'] ?? ''));
+    $expected = (string) ($config['outbox_shared_secret'] ?? '');
+    if ($provided === '' || $expected === '' || !hash_equals($expected, $provided)) {
+        presensi_error(401, 'authentication_required', 'Autentikasi internal diperlukan.');
+    }
+}
+
+function presensi_delivery(array $event): array
+{
+    $delivery = is_array($event['whatsapp_delivery'] ?? null) ? $event['whatsapp_delivery'] : [];
+    $state = (string) ($delivery['status'] ?? 'unknown');
+    if (!in_array($state, ['pending', 'sent', 'failed', 'unknown'], true)) $state = 'unknown';
+    return [
+        'status' => $state,
+        'attempts' => max(0, (int) ($delivery['attempts'] ?? 0)),
+        'next_retry_at' => isset($delivery['next_retry_at']) ? (string) $delivery['next_retry_at'] : null,
+        'provider_message_id' => isset($delivery['provider_message_id']) ? (string) $delivery['provider_message_id'] : null,
+        'last_error' => isset($delivery['last_error']) ? (string) $delivery['last_error'] : null,
+        'lease_token_hash' => isset($delivery['lease_token_hash']) ? (string) $delivery['lease_token_hash'] : null,
+        'lease_expires_at' => isset($delivery['lease_expires_at']) ? (string) $delivery['lease_expires_at'] : null,
+    ];
+}
+
 function presensi_public_session(): void
 {
     $sessionPath = presensi_private_directory('.hollawall-presensi-sessions');
@@ -545,6 +742,7 @@ function presensi_build_records(array $events, ?string $projectId = null): array
         }
         $latitude = filter_var($event['latitude'] ?? null, FILTER_VALIDATE_FLOAT);
         $longitude = filter_var($event['longitude'] ?? null, FILTER_VALIDATE_FLOAT);
+        $delivery = presensi_delivery($event);
         $evidence = [
             'id' => (string) ($event['id'] ?? ''),
             'occurred_at' => (string) ($event['occurred_at'] ?? ''),
@@ -552,6 +750,10 @@ function presensi_build_records(array $events, ?string $projectId = null): array
             'longitude' => $longitude === false ? null : (float) $longitude,
             'accuracy_m' => (float) ($event['accuracy_m'] ?? 0),
             'photo_url' => PRESENSI_ADMIN_PATH . 'api/presensi-photo.php?id=' . rawurlencode((string) ($event['id'] ?? '')),
+            'whatsapp_delivery' => [
+                'status' => $delivery['status'],
+                'attempts' => $delivery['attempts'],
+            ],
         ];
         if (($event['action'] ?? null) === 'check_in') {
             $records[$pair]['check_in'] = $evidence;

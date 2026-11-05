@@ -1,5 +1,7 @@
 import os
 import base64
+import io
+import json
 import time
 import requests
 import mimetypes
@@ -8,6 +10,9 @@ import threading
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 from typing import Dict, Optional, Any
+
+from PIL import Image, UnidentifiedImageError
+
 from security import log_timing, secure_log
 
 # Environment Variables
@@ -308,6 +313,21 @@ def _normalize_base(domain: str) -> str:
     return base
 
 
+def _secure_https_base(domain: str) -> str:
+    base = _normalize_base(domain)
+    parsed = urlsplit(base)
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        return ""
+    return base
+
+
 def _build_wuzapi_endpoints(base: str, path_suffix: str) -> list[str]:
     """Build minimal endpoint candidates for hosted/self-hosted WuzAPI variants."""
     if not base:
@@ -438,8 +458,162 @@ def _wuzapi_send_ack(payload: Any) -> tuple[str, str, str]:
         return "sent", message_id, details or "success"
     if message_id or timestamp:
         return "sent", message_id, details or "metadata"
-
     return "unknown", "", "provider tidak mengembalikan acknowledgement pengiriman"
+
+
+def _wuzapi_image_send_ack(payload: Any) -> tuple[str, str, str]:
+    """Require an explicit success/rejection marker for presensi images."""
+    state, message_id, reason = _wuzapi_send_ack(payload)
+    if state != "sent":
+        return state, message_id, reason
+    objects = _wuzapi_response_objects(payload)
+    explicit_success = any(
+        obj.get(key) is True
+        for obj in objects
+        for key in ("success", "Success", "ok", "Ok")
+    )
+    details = ""
+    for obj in objects:
+        details = details or str(obj.get("Details") or obj.get("details") or "").strip()
+    if explicit_success or details.casefold() in {"sent", "success", "successful", "ok", "accepted"}:
+        return state, message_id, reason
+    return "unknown", "", "provider tidak mengembalikan acknowledgement eksplisit"
+
+
+def _validated_jpeg_bytes(image_bytes: bytes, max_bytes: int) -> Optional[bytes]:
+    """Return verified JPEG bytes or ``None`` without decoding unbounded input."""
+    if not isinstance(image_bytes, bytes) or not image_bytes or len(image_bytes) > max_bytes:
+        return None
+    if not image_bytes.startswith(b"\xff\xd8\xff") or not image_bytes.endswith(b"\xff\xd9"):
+        return None
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            if image.format != "JPEG" or image.width * image.height > 40_000_000:
+                return None
+            image.verify()
+    except (UnidentifiedImageError, OSError, ValueError):
+        return None
+    return image_bytes
+
+
+def _bounded_response_json(response: requests.Response, max_bytes: int = 65_536) -> Any:
+    """Read a small provider response body and parse JSON."""
+    content_length = response.headers.get("Content-Length", "")
+    try:
+        if content_length and int(content_length) > max_bytes:
+            raise ValueError("response_too_large")
+    except (TypeError, ValueError):
+        if content_length:
+            raise ValueError("response_too_large")
+
+    chunks = []
+    size = 0
+    for chunk in response.iter_content(chunk_size=8192):
+        if not chunk:
+            continue
+        size += len(chunk)
+        if size > max_bytes:
+            raise ValueError("response_too_large")
+        chunks.append(chunk)
+    raw = b"".join(chunks)
+    return json.loads(raw.decode("utf-8"))
+
+
+def send_image_to_whatsapp_group(
+    image_bytes: bytes,
+    caption: str,
+    *,
+    event_id: str,
+    group_jid: Optional[str] = None,
+) -> Dict[str, str]:
+    """Send one verified JPEG to the configured WhatsApp group via WuzAPI.
+
+    Configuration: ``WUZAPI_DOMAIN``, ``WUZAPI_TOKEN``, and
+    ``PRESENSI_WHATSAPP_GROUP_JID``. ``event_id`` becomes WuzAPI's client
+    message ID so a caller can use the same stable identifier across recovery.
+
+    The return outcome is strictly ``sent``, ``failed``, or ``unknown``.
+    A transport error or ambiguous 2xx is ``unknown`` because WhatsApp may
+    already have accepted the image. This function never retries a send.
+    """
+    result = {"outcome": "failed", "provider_message_id": "", "error_code": ""}
+    configured_jid = (os.getenv("PRESENSI_WHATSAPP_GROUP_JID") or "").strip()
+    destination = (group_jid or configured_jid).strip()
+    if not configured_jid or destination != configured_jid:
+        result["error_code"] = "group_jid_not_configured"
+        return result
+    if not re.fullmatch(r"[1-9][0-9]{5,24}@g\.us", destination):
+        result["error_code"] = "group_jid_invalid"
+        return result
+    if not re.fullmatch(r"evt-[a-f0-9]{24}", str(event_id or "")):
+        result["error_code"] = "event_id_invalid"
+        return result
+    secure_base = _secure_https_base(WUZAPI_DOMAIN)
+    if not secure_base or not WUZAPI_TOKEN:
+        result["error_code"] = "wuzapi_not_configured"
+        return result
+
+    max_image_bytes = int(_bounded_env_float(
+        "WUZAPI_IMAGE_MAX_BYTES", 3_145_728, 1_024, 10 * 1024 * 1024
+    ))
+    image = _validated_jpeg_bytes(image_bytes, max_image_bytes)
+    if image is None:
+        result["error_code"] = "jpeg_invalid"
+        return result
+
+    clean_caption = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", str(caption or "")).strip()
+    if not clean_caption or len(clean_caption) > 1_024:
+        result["error_code"] = "caption_invalid"
+        return result
+
+    payload = {
+        "Phone": destination,
+        "Image": "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii"),
+        "Caption": clean_caption,
+        "Id": event_id,
+    }
+    response = None
+    try:
+        url = f"{secure_base}/chat/send/image"
+        response = get_wuzapi_session().post(
+            url,
+            json=payload,
+            timeout=(3, 20),
+            allow_redirects=False,
+            stream=True,
+        )
+        if not 200 <= response.status_code < 300:
+            result["outcome"] = "failed" if 400 <= response.status_code < 500 else "unknown"
+            result["error_code"] = f"wuzapi_http_{response.status_code}"
+            return result
+        try:
+            provider_payload = _bounded_response_json(response)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            result["outcome"] = "unknown"
+            result["error_code"] = "wuzapi_ack_unknown"
+            return result
+
+        ack_state, message_id, _reason = _wuzapi_image_send_ack(provider_payload)
+        if ack_state == "sent":
+            result["outcome"] = "sent"
+            result["provider_message_id"] = message_id[:160]
+        elif ack_state == "rejected":
+            result["error_code"] = "wuzapi_rejected"
+        else:
+            result["outcome"] = "unknown"
+            result["error_code"] = "wuzapi_ack_unknown"
+        return result
+    except requests.RequestException:
+        result["outcome"] = "unknown"
+        result["error_code"] = "wuzapi_transport_unknown"
+        return result
+    except Exception:
+        result["outcome"] = "unknown"
+        result["error_code"] = "wuzapi_transport_unknown"
+        return result
+    finally:
+        if response is not None:
+            response.close()
 
 
 def send_wuzapi_reply(to: str, body: str, mention_jid: str = None) -> Optional[Dict]:
