@@ -2,8 +2,10 @@ import contextlib
 import functools
 import http.server
 import json
+import os
 from pathlib import Path
 import re
+import shutil
 import socketserver
 import threading
 import unittest
@@ -131,9 +133,10 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         cls.server_context = serve(DIST)
         cls.base_url = cls.server_context.__enter__()
         cls.playwright = sync_playwright().start()
+        executable = os.environ.get("CHROMIUM_PATH") or shutil.which("google-chrome") or shutil.which("chromium") or "/snap/bin/chromium"
         cls.browser = cls.playwright.chromium.launch(
             headless=True,
-            executable_path="/snap/bin/chromium",
+            executable_path=executable,
             args=["--no-sandbox"],
         )
 
@@ -189,9 +192,10 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         context.route("**/favicon.ico", lambda route: route.fulfill(status=204, body=""))
         page = context.new_page()
         console_errors = []
-        page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
+        page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" and "Failed to load resource" not in message.text else None)
         page.on("pageerror", lambda error: console_errors.append(str(error)))
         page.on("requestfailed", lambda request: console_errors.append(f"request:{request.method}:{request.url}:{request.failure}"))
+        page.on("response", lambda response: console_errors.append(f"response:{response.status}:{response.url}") if response.status >= 400 else None)
         return context, page, console_errors
 
     def new_dynamic_page(self, width, height, theme="light"):
@@ -200,9 +204,10 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         page = context.new_page()
         page.clock.install()
         console_errors = []
-        page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)
+        page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" and "Failed to load resource" not in message.text else None)
         page.on("pageerror", lambda error: console_errors.append(str(error)))
         page.on("requestfailed", lambda request: console_errors.append(f"request:{request.method}:{request.url}:{request.failure}"))
+        page.on("response", lambda response: console_errors.append(f"response:{response.status}:{response.url}") if response.status >= 400 else None)
         state = {"calls": 0}
 
         def route_api(route):

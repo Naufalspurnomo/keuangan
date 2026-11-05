@@ -87,7 +87,7 @@ class PresensiReleaseTests(unittest.TestCase):
     def test_employee_primary_actions_use_accessible_ink_on_orange(self) -> None:
         css = (ABSEN / "assets" / "presensi.css").read_text(encoding="utf-8")
         self.assertIn(".primary-button { color: var(--ink); background: var(--orange); }", css)
-        submit = css.split(".submit-button {", 2)[2].split("}", 1)[0]
+        submit = css.rsplit(".submit-button {", 1)[1].split("}", 1)[0]
         self.assertIn("color: var(--ink);", submit)
         self.assertIn(".submit-button small { color: var(--ink);", css)
         self.assertIn("button:disabled { cursor: not-allowed; opacity: 1; }", css)

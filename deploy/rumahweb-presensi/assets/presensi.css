@@ -59,9 +59,9 @@ body {
   font-family: 'Montserrat', sans-serif;
   -webkit-font-smoothing: antialiased;
 }
-button, select { font: inherit; }
-button, select, a { -webkit-tap-highlight-color: transparent; }
-button:focus-visible, select:focus-visible, a:focus-visible {
+button, select, input { font: inherit; }
+button, select, input, a { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible {
   outline: 3px solid rgba(24, 184, 198, .38);
   outline-offset: 3px;
 }
@@ -91,6 +91,17 @@ main {
   margin: 0 auto;
   padding: clamp(38px, 6vw, 82px) 0 64px;
 }
+.compact-main { width: min(620px, calc(100% - 32px)); padding-top: clamp(24px, 5vw, 48px); }
+.login-card { max-width: 430px; margin: 0 auto; padding: clamp(24px, 6vw, 40px); border: 1px solid rgba(50,29,0,.11); border-radius: 18px; background: #fff; box-shadow: var(--shadow); }
+.login-card h1 { margin: 0 0 24px; color: var(--brown); font-family: 'Staatliches', sans-serif; font-size: 40px; font-weight: 400; text-transform: uppercase; }
+.login-card form, .login-card label { display: grid; gap: 9px; }
+.login-card form { gap: 18px; }
+.login-card label > span { color: var(--brown); font-size: 12px; font-weight: 700; }
+.login-card input { width: 100%; min-height: 54px; padding: 0 15px; border: 1px solid #d8cbb8; border-radius: 10px; color: var(--ink); background: #fff; font-size: 16px; }
+.login-card .submit-button { margin-top: 4px; }
+.session-actions { display: flex; align-items: center; gap: 10px; }
+.session-actions .text-button { width: auto; min-height: 40px !important; padding: 0 10px; border: 0; cursor: pointer; }
+.single-field { grid-template-columns: 1fr !important; }
 .hero { max-width: 720px; margin-bottom: 34px; }
 .eyebrow {
   margin: 0 0 12px;
@@ -171,7 +182,7 @@ main {
   border-bottom: 1px solid var(--line);
   background: linear-gradient(90deg, var(--cyan-soft), #fff 68%);
 }
-.card-head h2 { margin: 0; color: var(--brown); font-size: clamp(29px, 5vw, 42px); letter-spacing: .01em; line-height: 1; text-transform: uppercase; }
+.card-head h2, .card-head h1 { margin: 0; color: var(--brown); font-family: 'Staatliches', sans-serif; font-size: clamp(29px, 5vw, 42px); font-weight: 400; letter-spacing: .01em; line-height: 1; text-transform: uppercase; }
 .card-head .eyebrow { margin-bottom: 8px; }
 .action-badge {
   flex: none;
@@ -240,7 +251,7 @@ select:disabled { color: #7f7b74; background: #f6f4f1; }
   font-size: 18px;
   font-weight: 400;
 }
-.proof-head h3 { margin: 0 0 3px; color: var(--brown); font-size: 23px; letter-spacing: .01em; line-height: 1.1; text-transform: uppercase; }
+.proof-head h2, .proof-head h3 { margin: 0 0 3px; color: var(--brown); font-family: 'Staatliches', sans-serif; font-size: 23px; font-weight: 400; letter-spacing: .01em; line-height: 1.1; text-transform: uppercase; }
 .proof-head p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .state-pill {
   flex: none;

@@ -21,85 +21,52 @@ header('Cache-Control: no-store');
 </head>
 <body>
   <header class="site-head">
-    <a href="https://hollawall.com/" aria-label="Kembali ke Hollawall"><img src="/absen/brand/hollawall-logo.png" alt="Hollawall" /></a>
-    <span>Presensi lapangan</span>
+    <img src="/absen/brand/hollawall-logo.png" alt="Hollawall" />
+    <span>Presensi</span>
   </header>
-  <main>
-    <section class="hero" aria-labelledby="page-title">
-      <p class="eyebrow">HOLLAWALL CREW</p>
-      <h1 id="page-title">Presensi proyek,<br /><em>langsung dari lokasi.</em></h1>
-      <p>Setiap Check-in dan Check-out membutuhkan selfie baru serta lokasi GPS aktual.</p>
-      <div class="trust-row" aria-label="Bukti presensi">
-        <span><b>01</b> Kamera langsung</span>
-        <span><b>02</b> GPS presisi</span>
-        <span><b>03</b> Waktu server</span>
-      </div>
+  <main class="compact-main">
+    <section id="login-card" class="login-card" aria-labelledby="login-title">
+      <h1 id="login-title">Masuk Presensi</h1>
+      <div id="login-notice" class="notice" role="alert" aria-live="polite" hidden></div>
+      <form id="login-form" novalidate>
+        <label><span>Kode pegawai</span><input id="employee-code" name="code" autocomplete="username" autocapitalize="characters" maxlength="32" required /></label>
+        <label><span>PIN</span><input id="employee-pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="128" required /></label>
+        <button id="login-button" type="submit" class="submit-button"><span>Masuk</span></button>
+      </form>
     </section>
 
-    <section class="presensi-card" aria-labelledby="form-title">
+    <section id="presensi-card" class="presensi-card" aria-labelledby="form-title" hidden>
       <div class="card-head">
-        <div><p class="eyebrow">LANGKAH PRESENSI</p><h2 id="form-title">Siapkan bukti kehadiran</h2></div>
-        <span id="action-badge" class="action-badge">CHECK-IN</span>
+        <div><p id="employee-greeting" class="eyebrow"></p><h1 id="form-title">Presensi</h1></div>
+        <div class="session-actions"><span id="action-badge" class="action-badge">CHECK-IN</span><button id="logout-button" type="button" class="text-button">Keluar</button></div>
       </div>
-
       <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
       <form id="presensi-form" novalidate>
-        <div class="field-grid">
-          <label>
-            <span>Nama pegawai</span>
-            <select id="employee" name="employee_id" required disabled>
-              <option value="">Pilih pegawai</option>
-            </select>
-          </label>
-          <label>
-            <span>Proyek aktif</span>
-            <select id="project" name="project_id" required disabled>
-              <option value="">Pilih proyek</option>
-            </select>
-          </label>
+        <div class="field-grid single-field">
+          <label><span>Proyek aktif</span><select id="project" name="project_id" required disabled><option value="">Pilih proyek</option></select></label>
         </div>
-
         <section class="proof-panel" aria-labelledby="camera-title">
-          <div class="proof-head">
-            <div><span class="step-number">1</span><div><h3 id="camera-title">Selfie langsung</h3><p>Buka kamera depan, pastikan wajah terlihat jelas.</p></div></div>
-            <span id="camera-state" class="state-pill">Belum siap</span>
-          </div>
+          <div class="proof-head"><div><span class="step-number">1</span><div><h2 id="camera-title">Selfie langsung</h2><p>Pastikan wajah terlihat jelas.</p></div></div><span id="camera-state" class="state-pill">Belum siap</span></div>
           <div class="camera-frame">
             <video id="camera" autoplay muted playsinline hidden></video>
             <img id="selfie-preview" alt="Pratinjau selfie presensi" hidden />
-            <div id="camera-placeholder" class="camera-placeholder">
-              <span aria-hidden="true">◉</span>
-              <strong>Kamera belum dibuka</strong>
-              <small>Selfie hanya diambil dari kamera langsung.</small>
-            </div>
+            <div id="camera-placeholder" class="camera-placeholder"><span aria-hidden="true">◉</span><strong>Kamera belum dibuka</strong></div>
           </div>
           <div class="camera-actions">
             <button id="open-camera" type="button" class="secondary-button" disabled>Aktifkan kamera</button>
             <button id="capture-selfie" type="button" class="primary-button" disabled>Ambil selfie & lokasi</button>
             <button id="retake-selfie" type="button" class="text-button" hidden>Ambil ulang</button>
           </div>
-          <p id="camera-requirements" class="proof-requirements">Pilih pegawai dan proyek terlebih dahulu.</p>
+          <p id="camera-requirements" class="proof-requirements">Pilih proyek terlebih dahulu.</p>
         </section>
-
         <section class="proof-panel" aria-labelledby="location-title">
-          <div class="proof-head">
-            <div><span class="step-number">2</span><div><h3 id="location-title">Lokasi aktual</h3><p>Lokasi dibaca satu kali saat selfie diambil, bukan dilacak terus.</p></div></div>
-            <span id="location-state" class="state-pill">Belum siap</span>
-          </div>
-          <div class="location-card">
-            <span class="location-dot" aria-hidden="true"></span>
-            <div><strong id="location-copy">Aktifkan GPS untuk melanjutkan</strong><small id="location-detail">Koordinat dan akurasi GPS akan disimpan bersama selfie.</small></div>
-          </div>
+          <div class="proof-head"><div><span class="step-number">2</span><div><h2 id="location-title">Lokasi aktual</h2><p>Dibaca saat selfie diambil.</p></div></div><span id="location-state" class="state-pill">Belum siap</span></div>
+          <div class="location-card"><span class="location-dot" aria-hidden="true"></span><div><strong id="location-copy">Aktifkan GPS untuk melanjutkan</strong><small id="location-detail">Koordinat dan akurasi tersimpan bersama selfie.</small></div></div>
         </section>
-
         <input type="hidden" id="action" name="action" value="check_in" />
-        <button id="submit-presensi" type="submit" class="submit-button" disabled>
-          <span>Kirim Check-in</span><small>Selfie dan lokasi wajib lengkap</small>
-        </button>
+        <button id="submit-presensi" type="submit" class="submit-button" disabled><span>Kirim Check-in</span><small>Selfie dan lokasi wajib lengkap</small></button>
       </form>
-      <p class="privacy-note"><strong>Mode demo:</strong> pilihan nama belum memverifikasi identitas pegawai dan bukan bukti payroll. Foto tersimpan privat dan hanya dapat dibuka dari dashboard admin.</p>
     </section>
   </main>
-  <footer>© Hollawall · Sistem presensi proyek</footer>
 </body>
 </html>

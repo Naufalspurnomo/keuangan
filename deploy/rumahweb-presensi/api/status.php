@@ -4,7 +4,8 @@ require __DIR__ . '/presensi-common.php';
 
 presensi_require_method('GET');
 presensi_public_session();
-$employeeId = trim((string) ($_GET['employee_id'] ?? ''));
+$employee = presensi_public_employee();
+$employeeId = $employee['id'];
 $submissionId = trim((string) ($_GET['submission_id'] ?? ''));
 $submissionAction = trim((string) ($_GET['submission_action'] ?? ''));
 $submissionProject = trim((string) ($_GET['submission_project'] ?? ''));
@@ -12,11 +13,6 @@ if ($submissionId !== '' && (!preg_match('/^sub-[a-f0-9]{32}$/', $submissionId)
     || !in_array($submissionAction, ['check_in', 'check_out'], true)
     || $submissionProject === '')) {
     presensi_error(422, 'submission_invalid', 'Identitas pengiriman tidak valid.');
-}
-$config = presensi_config();
-$employee = presensi_find_named($config['employees'], $employeeId);
-if ($employee === null) {
-    presensi_error(422, 'employee_invalid', 'Pegawai tidak valid.');
 }
 $events = presensi_read_events(presensi_store_paths());
 $open = presensi_open_event($events, $employeeId);

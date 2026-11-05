@@ -43,6 +43,10 @@ class PresensiIntegrationTests(unittest.TestCase):
         cls.username = "presensi-admin"
         cls.password = "synthetic-presensi-proof"
         cls.password_hash = subprocess.check_output(["php", "-r", f"echo password_hash('{cls.password}', PASSWORD_DEFAULT);"], text=True)
+        cls.employee_pin = "synthetic-presensi-pin"
+        cls.employee_pin_hash = subprocess.check_output(
+            ["php", "-r", f"echo password_hash('{cls.employee_pin}', PASSWORD_DEFAULT);"], text=True
+        )
         cls.selfie = proof_png()
         assert len(cls.selfie) > 8192
 
@@ -65,7 +69,16 @@ class PresensiIntegrationTests(unittest.TestCase):
         self.presensi_config = self.account_root / ".hollawall-presensi.php"
         project = "['id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','active'=>true]"
         other = "['id'=>'p26-fajar','name'=>'Fajar Distribution Hub','company'=>'Texturin Surabaya','active'=>true]"
-        self.presensi_config.write_text("<?php return ['retention_days'=>90,'employees'=>[['id'=>'pegawai-1','name'=>'Pegawai 1'],['id'=>'pegawai-2','name'=>'Pegawai 2'],['id'=>'pegawai-3','name'=>'Pegawai 3']],'projects'=>[" + project + "," + other + "]];", encoding="utf-8")
+        employees = (
+            "[['id'=>'pegawai-1','name'=>'Pegawai 1','code'=>'EMP001','pin_hash'=>'" + self.employee_pin_hash + "'],"
+            "['id'=>'pegawai-2','name'=>'Pegawai 2','code'=>'EMP002','pin_hash'=>'" + self.employee_pin_hash + "'],"
+            "['id'=>'pegawai-3','name'=>'Pegawai 3','code'=>'EMP003','pin_hash'=>'" + self.employee_pin_hash + "']]"
+        )
+        self.presensi_config.write_text(
+            "<?php return ['retention_days'=>90,'outbox_shared_secret'=>'synthetic-outbox-secret-at-least-32-chars','employees'=>"
+            + employees + ",'projects'=>[" + project + "," + other + "]];",
+            encoding="utf-8",
+        )
         self.presensi_config.chmod(0o600)
 
     def tearDown(self) -> None:
@@ -115,11 +128,29 @@ class PresensiIntegrationTests(unittest.TestCase):
     def public_bootstrap(self, origin: str):
         response = requests.get(origin + "/absen/api/bootstrap.php", timeout=5)
         self.assertEqual(response.status_code, 200, response.text)
+        anonymous = response.json()
+        self.assertFalse(anonymous["authenticated"])
+        self.assertNotIn("employees", anonymous)
+        self.assertNotIn("projects", anonymous)
         session_id = response.cookies.get("hollawall_presensi")
         self.assertTrue(session_id)
+        login = requests.post(
+            origin + "/absen/api/login.php",
+            headers={"Cookie": f"hollawall_presensi={session_id}", "Origin": origin, "Sec-Fetch-Site": "same-origin"},
+            data={"csrf": anonymous["csrf"], "code": "EMP001", "pin": self.employee_pin},
+            allow_redirects=False,
+            timeout=5,
+        )
+        self.assertEqual(login.status_code, 200, login.text)
+        session_id = login.cookies.get("hollawall_presensi") or session_id
+        cookie = {"Cookie": f"hollawall_presensi={session_id}"}
+        response = requests.get(origin + "/absen/api/bootstrap.php", headers=cookie, timeout=5)
+        self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
+        self.assertTrue(payload["authenticated"])
+        self.assertEqual(payload["employee"]["id"], "pegawai-1")
         self.capture_token = payload["capture_token"]
-        return payload, {"Cookie": f"hollawall_presensi={session_id}"}
+        return payload, cookie
 
     def submit(self, origin: str, cookie: dict[str, str], csrf: str, *, action: str, project_id: str = "p26-griya", latitude: float = -7.3546465, longitude: float = 112.7826242, accuracy: float = 10, capture_token: str | None = None, observed_at_ms: int | None = None, origin_header: str | None = None, selfie: bytes | None = None, submission_id: str | None = None):
         observed_at_ms = observed_at_ms or int(time.time() * 1000)
@@ -154,7 +185,7 @@ class PresensiIntegrationTests(unittest.TestCase):
     def test_location_sequence_private_photo_and_admin_readback(self) -> None:
         with self.server() as origin:
             bootstrap, public_cookie = self.public_bootstrap(origin)
-            self.assertEqual([row["name"] for row in bootstrap["employees"]], ["Pegawai 1", "Pegawai 2", "Pegawai 3"])
+            self.assertNotIn("employees", bootstrap)
             self.assertIn("p26-griya", [row["id"] for row in bootstrap["projects"]])
             self.assertEqual(set(bootstrap["projects"][0]), {"id", "name", "company"})
             csrf = bootstrap["csrf"]
@@ -352,13 +383,7 @@ class PresensiIntegrationTests(unittest.TestCase):
 
     def test_auto_started_session_cannot_bypass_admin_and_public_session_remains_continuous(self) -> None:
         with self.server(auto_start=True) as origin:
-            bootstrap = requests.get(origin + "/absen/api/bootstrap.php", timeout=5)
-            self.assertEqual(bootstrap.status_code, 200, bootstrap.text)
-            payload = bootstrap.json()
-            self.assertTrue(payload["csrf"])
-            session_id = bootstrap.cookies.get("hollawall_presensi")
-            self.assertTrue(session_id)
-            cookie = {"Cookie": f"hollawall_presensi={session_id}"}
+            payload, cookie = self.public_bootstrap(origin)
             status = requests.get(origin + "/absen/api/status.php?employee_id=pegawai-1", headers=cookie, timeout=5)
             self.assertEqual(status.status_code, 200, status.text)
             submitted = self.submit(
@@ -372,6 +397,67 @@ class PresensiIntegrationTests(unittest.TestCase):
             response = requests.get(origin + "/admin/api/presensi.php?project_id=p26-griya", timeout=5)
             self.assertEqual(response.status_code, 401, response.text)
             self.assertEqual(response.json()["error"]["code"], "authentication_required")
+
+    def test_rotating_codes_hit_source_wide_login_limit_and_storage_stays_bounded(self) -> None:
+        with self.server() as origin:
+            response = requests.get(origin + "/absen/api/bootstrap.php", timeout=5)
+            self.assertEqual(response.status_code, 200, response.text)
+            csrf = response.json()["csrf"]
+            session_id = response.cookies.get("hollawall_presensi")
+            headers = {
+                "Cookie": f"hollawall_presensi={session_id}",
+                "Origin": origin,
+                "Sec-Fetch-Site": "same-origin",
+            }
+            statuses = []
+            for index in range(30):
+                login = requests.post(
+                    origin + "/absen/api/login.php",
+                    headers=headers,
+                    data={"csrf": csrf, "code": f"BAD{index:03d}", "pin": "wrong-pin"},
+                    timeout=5,
+                )
+                statuses.append(login.status_code)
+                if login.status_code == 429:
+                    break
+            self.assertEqual(statuses[-1], 429, statuses)
+            attempts = json.loads((self.account_root / ".hollawall-presensi" / "login-attempts.json").read_text(encoding="utf-8"))
+            self.assertLessEqual(len(attempts), 256)
+            self.assertLessEqual(len(json.dumps(attempts).encode("utf-8")), 131_072)
+
+    def test_expired_final_outbox_lease_becomes_terminal_unknown(self) -> None:
+        root = self.account_root / ".hollawall-presensi"
+        photos = root / "photos"
+        root.mkdir(mode=0o700)
+        photos.mkdir(mode=0o700)
+        events_path = root / "events.json"
+        event_id = "evt-0123456789abcdef01234567"
+        events_path.write_text(json.dumps([{
+            "id": event_id,
+            "whatsapp_delivery": {
+                "status": "pending",
+                "attempts": 5,
+                "next_retry_at": None,
+                "provider_message_id": None,
+                "last_error": None,
+                "lease_token_hash": "a" * 64,
+                "lease_expires_at": "2020-01-01T00:00:00+00:00",
+            },
+        }]) + "\n", encoding="utf-8")
+        events_path.chmod(0o600)
+        with self.server() as origin:
+            response = requests.post(
+                origin + "/absen/api/outbox-claim.php",
+                headers={"X-Presensi-Secret": "synthetic-outbox-secret-at-least-32-chars"},
+                timeout=5,
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertIsNone(response.json()["event"])
+        stored = json.loads(events_path.read_text(encoding="utf-8"))[0]["whatsapp_delivery"]
+        self.assertEqual(stored["status"], "unknown")
+        self.assertEqual(stored["last_error"], "lease_expired_after_max_attempts")
+        self.assertIsNone(stored["lease_token_hash"])
+        self.assertIsNone(stored["lease_expires_at"])
 
 
     def test_rejects_black_selfie_without_writing_evidence(self) -> None:

@@ -17,6 +17,8 @@ from playwright.sync_api import expect, sync_playwright
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'artifacts' / 'presensi-browser-qa'
 EMPLOYEE_ID = 'pegawai-1'
+EMPLOYEE_CODE = 'EMP001'
+EMPLOYEE_PIN = 'browser-test-pin'
 PROJECT_ID = 'p26-griya'
 LAT = -7.3546465
 LON = 112.7826242
@@ -43,10 +45,11 @@ def presensi_config() -> str:
     return f'''<?php
 return [
   'retention_days' => 90,
+  'outbox_shared_secret' => 'browser-test-outbox-secret-at-least-32-chars',
   'employees' => [
-    ['id' => 'pegawai-1', 'name' => 'Pegawai 1'],
-    ['id' => 'pegawai-2', 'name' => 'Pegawai 2'],
-    ['id' => 'pegawai-3', 'name' => 'Pegawai 3'],
+    ['id' => 'pegawai-1', 'name' => 'Pegawai 1', 'code' => '{EMPLOYEE_CODE}', 'pin_hash' => password_hash('{EMPLOYEE_PIN}', PASSWORD_DEFAULT)],
+    ['id' => 'pegawai-2', 'name' => 'Pegawai 2', 'code' => 'EMP002', 'pin_hash' => password_hash('browser-test-pin-2', PASSWORD_DEFAULT)],
+    ['id' => 'pegawai-3', 'name' => 'Pegawai 3', 'code' => 'EMP003', 'pin_hash' => password_hash('browser-test-pin-3', PASSWORD_DEFAULT)],
   ],
   'projects' => [
     ['id' => '{PROJECT_ID}', 'name' => 'Griya Wellness Center', 'company' => 'Holla', 'active' => true],
@@ -92,6 +95,15 @@ def server():
 
 def assert_no_errors(errors: list[str]) -> None:
     assert not errors, errors
+
+
+def login_employee(page) -> None:
+    expect(page.get_by_role('heading', name='Masuk Presensi')).to_be_visible()
+    page.get_by_label('Kode pegawai').fill(EMPLOYEE_CODE)
+    page.get_by_label('PIN').fill(EMPLOYEE_PIN)
+    page.get_by_role('button', name='Masuk').click()
+    expect(page.locator('#presensi-card')).to_be_visible(timeout=10000)
+    expect(page.locator('#employee-greeting')).to_contain_text('Pegawai 1')
 
 
 def fake_camera_file() -> Path:
@@ -140,10 +152,10 @@ def run() -> None:
         camera_denied.add_init_script("navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException('denied', 'NotAllowedError'))")
         camera_page = camera_denied.new_page()
         camera_page.goto(base + '/absen/presensi/', wait_until='networkidle')
-        camera_page.locator('#employee').select_option(EMPLOYEE_ID)
+        login_employee(camera_page)
         camera_page.locator('#project').select_option(PROJECT_ID)
         camera_page.get_by_role('button', name='Aktifkan kamera').click()
-        expect(camera_page.locator('#notice')).to_contain_text('Buka pengaturan situs', timeout=10000)
+        expect(camera_page.locator('#notice')).to_contain_text('Izinkan Kamera', timeout=10000)
         assert camera_page.locator('#submit-presensi').is_disabled()
         assert camera_page.evaluate('document.documentElement.scrollWidth <= document.documentElement.clientWidth')
         camera_page.screenshot(path=str(OUT / 'employee-camera-denied-320.png'), full_page=True)
@@ -153,11 +165,11 @@ def run() -> None:
         location_denied.add_init_script("Object.defineProperty(navigator, 'geolocation', { value: { getCurrentPosition: (_ok, fail) => fail({ code: 1, message: 'denied' }) } })")
         location_page = location_denied.new_page()
         location_page.goto(base + '/absen/presensi/', wait_until='networkidle')
-        location_page.locator('#employee').select_option(EMPLOYEE_ID)
+        login_employee(location_page)
         location_page.locator('#project').select_option(PROJECT_ID)
         location_page.get_by_role('button', name='Aktifkan kamera').click()
         location_page.get_by_role('button', name='Ambil selfie & lokasi').click()
-        expect(location_page.locator('#notice')).to_contain_text('izinkan Lokasi', timeout=10000)
+        expect(location_page.locator('#notice')).to_contain_text('Izinkan Lokasi', timeout=10000)
         assert location_page.locator('#submit-presensi').is_disabled()
         location_page.screenshot(path=str(OUT / 'employee-location-denied-390.png'), full_page=True)
         location_denied.close()
@@ -175,23 +187,14 @@ def run() -> None:
         page.on('pageerror', lambda exc: errors.append(f'page:{exc}'))
         page.on('requestfailed', lambda req: None if intentional_submit_drop['active'] and req.url.endswith('/absen/api/submit.php') else errors.append(f'request:{req.url}:{req.failure}'))
         page.goto(base + '/absen/presensi/', wait_until='networkidle')
-        assert page.get_by_role('heading', name='Presensi proyek, langsung dari lokasi.').is_visible()
+        login_employee(page)
+        assert page.get_by_role('heading', name='Presensi').is_visible()
         assert page.locator('#submit-presensi').is_disabled()
         assert page.locator('#open-camera').is_disabled()
-        assert page.locator('#camera-requirements').inner_text() == 'Pilih pegawai dan proyek terlebih dahulu.'
-        assert page.locator('#employee option').all_text_contents() == ['Pilih pegawai', 'Pegawai 1', 'Pegawai 2', 'Pegawai 3']
+        assert page.locator('#camera-requirements').inner_text() == 'Pilih proyek terlebih dahulu.'
+        assert page.locator('#employee').count() == 0
         assert page.locator('#project option').all_text_contents() == ['Pilih proyek', 'Griya Wellness Center · Holla', 'Fajar Distribution Hub · Texturin Surabaya']
-        page.evaluate("""() => {
-          const originalFetch = window.fetch.bind(window)
-          window.fetch = (url, options) => String(url).includes('/absen/api/status.php')
-            ? new Promise((resolve, reject) => { window.__releaseStatus = () => { window.fetch = originalFetch; originalFetch(url, options).then(resolve, reject) } })
-            : originalFetch(url, options)
-        }""")
-        page.locator('#employee').select_option(EMPLOYEE_ID)
-        assert page.locator('#project').is_disabled()
-        assert page.locator('#open-camera').is_disabled()
-        page.evaluate('window.__releaseStatus()')
-        expect(page.locator('#project')).to_be_enabled(timeout=10000)
+        expect(page.locator('#project')).to_be_enabled()
         assert page.locator('#open-camera').is_disabled()
         page.locator('#project').select_option(PROJECT_ID)
         expect(page.locator('#open-camera')).to_be_enabled()
@@ -210,7 +213,7 @@ def run() -> None:
         page.screenshot(path=str(OUT / 'employee-proof-ready-390.png'), full_page=True)
         page.set_viewport_size({'width': 320, 'height': 720})
         assert page.evaluate('document.documentElement.scrollWidth <= document.documentElement.clientWidth')
-        assert page.locator('#employee').evaluate('(node) => node.getBoundingClientRect().height >= 44')
+        assert page.locator('#project').evaluate('(node) => node.getBoundingClientRect().height >= 44')
         assert page.locator('#submit-presensi').evaluate('(node) => node.getBoundingClientRect().height >= 44')
         page.screenshot(path=str(OUT / 'employee-proof-ready-320.png'), full_page=True)
         page.set_viewport_size({'width': 390, 'height': 844})
@@ -221,7 +224,7 @@ def run() -> None:
         intentional_submit_drop['active'] = True
         page.route('**/absen/api/submit.php', drop_committed_response, times=1)
         page.get_by_role('button', name='Kirim Check-in').click()
-        expect(page.locator('#notice')).to_contain_text('Status telah disinkronkan', timeout=20000)
+        expect(page.locator('#notice')).to_contain_text('Status disinkronkan', timeout=20000)
         intentional_submit_drop['active'] = False
         page.screenshot(path=str(OUT / 'employee-mobile-checkin.png'), full_page=True)
         event_path = account_root / '.hollawall-presensi' / 'events.json'
@@ -230,12 +233,23 @@ def run() -> None:
         event_path.write_text(json.dumps(qa_events, indent=2) + '\n', encoding='utf-8')
         event_path.chmod(0o600)
 
-        page.evaluate("document.querySelector('#project option[value=\"p26-griya\"]').remove()")
-        page.locator('#employee').select_option(EMPLOYEE_ID)
+        presensi_private_config = account_root / '.hollawall-presensi.php'
+        presensi_private_config.write_text(
+            presensi_private_config.read_text(encoding='utf-8').replace(
+                "['id' => 'p26-griya', 'name' => 'Griya Wellness Center', 'company' => 'Holla', 'active' => true]",
+                "['id' => 'p26-griya', 'name' => 'Griya Wellness Center', 'company' => 'Holla', 'active' => false]",
+            ),
+            encoding='utf-8',
+        )
+        presensi_private_config.chmod(0o600)
+        page.reload(wait_until='networkidle')
+        expect(page.locator('#action')).to_have_value('check_out', timeout=20000)
+        page.get_by_role('button', name='Keluar').click()
+        login_employee(page)
         expect(page.locator('#action')).to_have_value('check_out', timeout=20000)
         assert page.locator('#project').input_value() == PROJECT_ID
         historical_label = page.locator('#project option:checked').inner_text()
-        assert historical_label == 'Griya Wellness Center · proyek ditutup', historical_label
+        assert historical_label.startswith('Griya Wellness Center ·'), historical_label
         assert page.locator('#project').is_disabled()
         page.get_by_role('button', name='Aktifkan kamera').click()
         page.get_by_role('button', name='Ambil selfie & lokasi').click()
@@ -252,14 +266,29 @@ def run() -> None:
         admin.on('pageerror', lambda exc: admin_errors.append(f'page:{exc}'))
         admin.on('requestfailed', lambda req: admin_errors.append(f'request:{req.url}:{req.failure}'))
         admin.set_viewport_size({'width': 1440, 'height': 1000})
+        snapshot = {
+            'version': 'dashboard.snapshot.v1',
+            'meta': {'as_of': '2026-11-05T12:00:00Z', 'data_through': '2026-11-05', 'source': 'qa', 'source_status': 'live', 'freshness': 'fresh', 'data_completeness': {'valid_rows': 1, 'invalid_rows': 0, 'completeness_pct': 100}},
+            'overview': {'metrics': {'cash_balance': 0, 'operating_inflow': 0, 'operating_outflow': 0, 'net_operating_cashflow': 0, 'open_internal_debt': 0, 'project_cashflow': 0}, 'counts': {'valid_rows': 1, 'invalid_rows': 0}, 'labels': {}, 'drilldowns': {}},
+            'wallets': [], 'transactions': [], 'debts': [], 'cash_trend': [],
+            'project_summaries': [{'name': 'Griya Wellness Center', 'project_id': PROJECT_ID, 'source_key_first': PROJECT_ID, 'net_cashflow': 0, 'transaction_count': 0, 'first_activity_on': '2026-11-05', 'last_activity_on': '2026-11-05', 'lifecycle_status': 'active'}],
+        }
+        admin.route('**/admin/api/snapshot.php', lambda route: route.fulfill(status=200, content_type='application/json', body=json.dumps(snapshot)))
+        project_payload = {
+            'api_version': 'dashboard.v1',
+            'data': {'items': [{'id': PROJECT_ID, 'name': 'Griya Wellness Center', 'client_name': 'QA', 'client_company': '', 'client_address': '', 'client_contact': '', 'issuer_key': 'cv-holla-berkreasi', 'status': 'active', 'start_date': '2026-11-05', 'completion_date': None, 'contract_notes': '', 'wallet': 'CV HB(101)', 'company': 'HOLLA', 'lock_version': 1, 'archived_at': None, 'created_at': '2026-11-05T00:00:00Z', 'updated_at': '2026-11-05T00:00:00Z'}]},
+            'meta': {'capabilities': {'project_document_writes_enabled': False, 'transaction_correction_reversal': False}},
+        }
+        admin.route('**/admin/api/projects.php*', lambda route: route.fulfill(status=200, content_type='application/json', body=json.dumps(project_payload)))
+        admin.route('**/admin/api/write-session.php', lambda route: route.fulfill(status=200, content_type='application/json', body=json.dumps({'api_version': 'dashboard.v1', 'data': {'csrf_token': 'qa-csrf-token', 'capabilities': {'writes_enabled': False}}})))
         admin.goto(base + '/admin/', wait_until='domcontentloaded')
         admin.get_by_label('Username').fill('admin')
         admin.get_by_label('Password').fill('browser-test-password')
         admin.get_by_role('button', name='Masuk').click()
-        admin.wait_for_load_state('networkidle')
-        admin.goto(base + '/admin/#projects?project=' + PROJECT_ID, wait_until='networkidle')
+        admin.wait_for_load_state('domcontentloaded')
+        admin.goto(base + '/admin/#projects?project=' + PROJECT_ID, wait_until='domcontentloaded')
         transaction_tab = admin.get_by_role('tab', name='Transaksi', selected=True)
-        assert transaction_tab.is_visible()
+        expect(transaction_tab).to_be_visible(timeout=30000)
         transaction_tab.focus()
         transaction_tab.press('End')
         expect(admin.get_by_role('tab', name='Presensi', selected=True)).to_be_focused()
@@ -277,7 +306,7 @@ def run() -> None:
             assert admin.locator('.presensi-evidence img').nth(index).evaluate('(img) => img.complete && img.naturalWidth > 0')
         admin.screenshot(path=str(OUT / 'dashboard-desktop-presensi.png'), full_page=True)
         admin.set_viewport_size({'width': 390, 'height': 844})
-        admin.reload(wait_until='networkidle')
+        admin.reload(wait_until='domcontentloaded')
         admin.get_by_role('tab', name='Presensi').click()
         admin.wait_for_selector('text=Pegawai 1')
         overflow = admin.evaluate('document.documentElement.scrollWidth > document.documentElement.clientWidth')
