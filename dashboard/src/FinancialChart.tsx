@@ -153,7 +153,7 @@ export default function FinancialChart({ kind, cashTrend = [], cashLabel = 'Sald
           <Bar dataKey="keluar" name="Pengeluaran" fill="url(#expenseHatch)" radius={[3, 3, 0, 0]} barSize={18} />
         </ComposedChart>
       </ResponsiveContainer>
-      {hasGap && <p className="chart-note">Beberapa periode belum memiliki transaksi tercatat pada snapshot.</p>}
+      {hasGap && <p className="chart-note">Beberapa periode belum memiliki transaksi tercatat.</p>}
     </div>
   }
 

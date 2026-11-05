@@ -98,7 +98,7 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onCompl
   const asOf = projectAsOf(year, projectSnapshotDate(workspace))
 
   return <section className="project-command-center">
-    <header className="command-head"><div><p className="eyebrow">PROYEK · {workspace.mode === 'live' ? 'DATA LIVE' : 'DATA DEMO'}</p><h1>Portofolio proyek per tahun</h1><p>Bandingkan proyek selesai, aktif, dan direncanakan dari satu sumber data.</p></div></header>
+    <header className="command-head"><div><p className="eyebrow">PROYEK{workspace.mode === 'demo' ? ' · DATA DEMO' : ''}</p><h1>Portofolio proyek per tahun</h1><p>Bandingkan proyek selesai, aktif, dan direncanakan.</p></div></header>
 
     <section className="year-command" aria-label="Pilih tahun proyek">
       <button type="button" aria-label="Tahun sebelumnya" title={yearIndex <= 0 ? 'Tidak ada tahun sebelumnya' : undefined} disabled={yearIndex <= 0} onClick={() => changeYear(years[yearIndex - 1])}><ArrowLeft size={19} /></button>

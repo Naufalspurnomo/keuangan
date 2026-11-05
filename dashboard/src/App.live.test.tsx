@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 import App from './App'
 import { validLiveSnapshot } from './liveSnapshot.test'
@@ -98,6 +98,35 @@ function productionProjectsResponse() {
   }), { status: 200, headers: { 'content-type': 'application/json' } })
 }
 
+function writeSessionResponse() {
+  return new Response(JSON.stringify({
+    api_version: 'dashboard.v1',
+    data: { csrf_token: 'csrf-token-1234567890', capabilities: { writes_enabled: true } },
+  }), { status: 200, headers: { 'content-type': 'application/json' } })
+}
+
+function recordedTransactionResponse() {
+  return new Response(JSON.stringify({
+    api_version: 'dashboard.v1',
+    data: {
+      recorded: true,
+      transaction_id: 'tx-new-1',
+      sheet_name: 'Operasional',
+      sheet_row: 42,
+      source_block: 'office',
+      sheet_message_id: 'message-1',
+      projection_status: 'pending',
+      duplicate: false,
+    },
+  }), { status: 201, headers: { 'content-type': 'application/json' } })
+}
+
+const forbiddenProductionCopy = /DATA LIVE|Workspace live|Mode live|PostgreSQL|buku besar produksi|pemetaan kanonis|snapshot live|kontrak snapshot|ID proyek PostgreSQL/i
+
+function expectNoProductionChatter() {
+  expect(document.body.textContent).not.toMatch(forbiddenProductionCopy)
+}
+
 function navigation() {
   return within(document.querySelector('aside.sidebar') as HTMLElement)
 }
@@ -112,6 +141,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   localStorage.clear()
   sessionStorage.clear()
   window.history.replaceState(null, '', '/')
@@ -127,11 +157,11 @@ describe('production live source mode', () => {
     vi.stubGlobal('fetch', request)
 
     render(<App />)
-    await screen.findByText('Mode live · hanya baca')
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
     fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
 
     fireEvent.click(await screen.findByRole('button', { name: 'Buka proyek Kontrak Panggung Utama' }))
-    expect(screen.getByLabelText('ID proyek PostgreSQL')).toHaveTextContent('123e4567-e89b-42d3-a456-426614174000')
+    expect(screen.queryByText('123e4567-e89b-42d3-a456-426614174000')).toBeNull()
     expect(screen.getByRole('tab', { name: 'Transaksi' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: 'Dokumen' })).toBeTruthy()
     expect(window.location.hash).toContain('project=123e4567-e89b-42d3-a456-426614174000')
@@ -144,7 +174,7 @@ describe('production live source mode', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('Mode live · hanya baca')).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })).toBeTruthy()
     expect(document.querySelector('.app-shell.finance-workspace-shell')).toBeTruthy()
     expect(navigation().getByRole('button', { name: 'Ringkasan' })).toBeTruthy()
     expect(navigation().getByRole('button', { name: 'Arus Kas' })).toBeTruthy()
@@ -158,13 +188,13 @@ describe('production live source mode', () => {
     expect(screen.getByText('Dompet Tak Terpetakan')).toBeTruthy()
 
     expect(screen.queryByText('Workspace demo')).toBeNull()
-    expect(screen.getByText('Workspace live')).toBeTruthy()
+    expect(screen.queryByText('Workspace live')).toBeNull()
 
     fireEvent.click(navigation().getByRole('button', { name: 'Operasional Kantor' }))
     expect(window.location.hash).toBe('#office')
     expect(screen.getByText('Kategori Produksi Khusus')).toBeTruthy()
     expect(screen.getByText('Biaya kategori aktual')).toBeTruthy()
-    expect(screen.getByText('DATA LIVE')).toBeTruthy()
+    expect(screen.queryByText('DATA LIVE')).toBeNull()
     expect(screen.queryByText('DATA DEMO')).toBeNull()
 
     fireEvent.click(navigation().getByRole('button', { name: 'Laporan' }))
@@ -172,7 +202,7 @@ describe('production live source mode', () => {
     expect(screen.getByRole('heading', { name: 'Pratinjau dan ekspor PDF' })).toBeTruthy()
     expect(screen.getByText('Texturin Regional Baru')).toBeTruthy()
     expect(screen.getByText('Unit Operasional Baru')).toBeTruthy()
-    expect(screen.getAllByText(/DATA LIVE/i).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/DATA LIVE/i)).toBeNull()
     expect(screen.queryByText(/DATA DEMO/i)).toBeNull()
     expect(screen.queryByText(/^DEMO$/i)).toBeNull()
     expect(request).toHaveBeenCalledWith('/admin/api/snapshot.php', expect.objectContaining({ credentials: 'same-origin' }))
@@ -183,7 +213,7 @@ describe('production live source mode', () => {
 
     render(<App />)
 
-    await screen.findByText('Mode live · hanya baca')
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
     expect(screen.queryByText(/Data keuangan demo tersimpan/)).toBeNull()
     expect(screen.queryByRole('button', { name: /Reset/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /Tambah transaksi/i })).toBeNull()
@@ -207,8 +237,7 @@ describe('production live source mode', () => {
 
     render(<App />)
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Data live belum tersedia')
-    expect(screen.getByText(/Data demo tidak ditampilkan sebagai pengganti/)).toBeTruthy()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Data belum tersedia')
     expect(document.querySelector('.app-shell')).toBeNull()
     expect(localStorage.getItem('hollawall-finance-demo-v3')).toBeNull()
   })
@@ -218,14 +247,14 @@ describe('production live source mode', () => {
     vi.stubGlobal('fetch', request)
 
     render(<App />)
-    await screen.findByText('Mode live · hanya baca')
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
     fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Buka proyek Proyek Produksi Alfa' }))
 
     expect(window.location.hash).toMatch(/^#projects\?project=/)
     fireEvent.click(screen.getByRole('tab', { name: 'Presensi' }))
     expect(screen.getByRole('status')).toHaveTextContent('Presensi belum tersedia')
-    expect(screen.getByText(/ID proyek presensi kanonis tidak tersedia/)).toBeTruthy()
+    expect(screen.getByText(/Proyek ini belum terhubung ke presensi/)).toBeTruthy()
     expect(request.mock.calls.some(([input]) => String(input).includes('/admin/api/presensi.php'))).toBe(false)
   })
 
@@ -238,7 +267,7 @@ describe('production live source mode', () => {
     vi.stubGlobal('fetch', request)
 
     render(<App />)
-    await screen.findByText('Mode live · hanya baca')
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
     fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Buka proyek Proyek Produksi Alfa' }))
     fireEvent.click(screen.getByRole('tab', { name: 'Presensi' }))
@@ -249,5 +278,60 @@ describe('production live source mode', () => {
       expect.objectContaining({ credentials: 'same-origin' }),
     )
     expect(request.mock.calls.some(([input]) => String(input).includes('project_id=proyek-produksi-alfa'))).toBe(false)
+  })
+
+  it('removes implementation chatter from every production route and transaction form', async () => {
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith('/admin/api/projects.php?action=list')) return productionProjectsResponse()
+      if (url === '/admin/api/write-session.php') return writeSessionResponse()
+      return liveResponse()
+    })
+    vi.stubGlobal('fetch', request)
+    render(<App />)
+
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
+    expectNoProductionChatter()
+    for (const page of ['Arus Kas', 'Dompet', 'Operasional Kantor', 'Hutang Internal', 'Laporan']) {
+      fireEvent.click(navigation().getByRole('button', { name: page }))
+      expectNoProductionChatter()
+    }
+    fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
+    await screen.findByRole('heading', { name: 'Daftar proyek' })
+    expectNoProductionChatter()
+    fireEvent.click(screen.getByRole('button', { name: 'Buka proyek Kontrak Panggung Utama' }))
+    expectNoProductionChatter()
+
+    fireEvent.click(navigation().getByRole('button', { name: 'Ringkasan' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Tambah transaksi' }))
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expectNoProductionChatter()
+  })
+
+  it('refreshes immediately after a transaction write and again on the next poll', async () => {
+    vi.useFakeTimers()
+    let snapshotRequests = 0
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/admin/api/snapshot.php') { snapshotRequests += 1; return liveResponse() }
+      if (url === '/admin/api/write-session.php') return writeSessionResponse()
+      if (url === '/admin/api/transactions.php') return recordedTransactionResponse()
+      if (url.startsWith('/admin/api/projects.php?action=list')) return productionProjectsResponse()
+      return liveResponse()
+    })
+    vi.stubGlobal('fetch', request)
+    render(<App />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tambah transaksi' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Operasional Kantor' }))
+    fireEvent.change(screen.getByLabelText('Jumlah *'), { target: { value: '500000' } })
+    fireEvent.change(screen.getByLabelText('Keterangan *'), { target: { value: 'Biaya kantor hari ini' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan transaksi' }))
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(snapshotRequests).toBe(2)
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(snapshotRequests).toBe(3)
   })
 })

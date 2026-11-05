@@ -563,6 +563,17 @@ def health_check():
         }), 503 if required else 200
 
 
+@app.route('/api/health/release', methods=['GET'])
+def release_health_check():
+    """Return immutable, non-secret deployment provenance."""
+    release_sha = (
+        os.getenv('RELEASE_SHA', '').strip()
+        or os.getenv('KOYEB_GIT_SHA', '').strip()
+        or 'unknown'
+    )
+    return jsonify({'status': 'ok', 'release_sha': release_sha}), 200
+
+
 # ===================== WUZAPI HANDLER =====================
 
 @app.route('/webhook_wuzapi', methods=['POST'])
@@ -2677,14 +2688,26 @@ Balas 1 atau 2"""
             (has_revision_keyword or is_likely_amount_revision)
         )
 
-        if should_try_quoted_revision or is_command_match(text, Commands.UNDO, is_group) or is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):
+        explicit_dashboard_undo = re.fullmatch(
+            r'/undo\s+(dashboard:\d+:[0-9a-f]{64})',
+            (text or '').strip(),
+        )
+        malformed_explicit_undo = bool(re.match(r'^/undo\s+', (text or '').strip())) and not explicit_dashboard_undo
+        if should_try_quoted_revision or is_command_match(text, Commands.UNDO, is_group) or explicit_dashboard_undo or malformed_explicit_undo or is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):
             from handlers.revision_handler import handle_revision_command, handle_undo_command
 
             revision_result = None
 
             # Check for standard commands
-            if is_command_match(text, Commands.UNDO, is_group):
-                 revision_result = handle_undo_command(sender_number, chat_jid, quoted_msg_id)
+            if malformed_explicit_undo:
+                 revision_result = {'action': 'REPLY', 'response': '⚠️ ID transaksi dashboard tidak valid.'}
+            elif is_command_match(text, Commands.UNDO, is_group) or explicit_dashboard_undo:
+                 revision_result = handle_undo_command(
+                     sender_number,
+                     chat_jid,
+                     quoted_msg_id,
+                     explicit_dashboard_undo.group(1) if explicit_dashboard_undo else None,
+                 )
 
             # Check for /revisi command or reply revision
             elif should_try_quoted_revision or is_prefix_match(text, Commands.REVISION_PREFIXES, is_group):

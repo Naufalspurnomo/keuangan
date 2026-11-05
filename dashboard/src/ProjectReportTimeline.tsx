@@ -143,7 +143,7 @@ function SectionTimeline({ portfolio, projects, window, selected, onSelect, onNe
   </section>
 }
 
-export default function ProjectReportTimeline({ transactions, projects, asOf, dataThrough, onAddProject }: { transactions: Transaction[]; projects: ProjectSummary[]; asOf?: string | null; dataThrough?: string | null; onAddProject?: () => void }) {
+export default function ProjectReportTimeline({ transactions, projects, asOf, dataThrough, onAddProject, showSourceDetails = false }: { transactions: Transaction[]; projects: ProjectSummary[]; asOf?: string | null; dataThrough?: string | null; onAddProject?: () => void; showSourceDetails?: boolean }) {
   const window = useMemo(() => quarterWindow(asOf), [asOf])
   const revenueAnchor = parseDate(dataThrough) ?? window.anchor
   const [selected, setSelected] = useState<ProjectSummary | null>(null)
@@ -195,11 +195,11 @@ export default function ProjectReportTimeline({ transactions, projects, asOf, da
       <header><div><p className="eyebrow">PROYEK TERPILIH</p><h3>{selected.name}</h3><span>{selected.portfolio} · {selected.transaction_count ?? selectedTransactions.length} transaksi</span></div><button type="button" className="icon-button" aria-label="Tutup detail proyek" onClick={() => setSelected(null)}><X size={17} /></button></header>
       <div className="project-detail-dates"><span><small>Mulai</small><strong>{dateLabel(selected.started_on ?? selected.first_activity_on)}</strong></span><span><small>Selesai</small><strong>{selected.lifecycle_status === 'active' ? 'Masih aktif' : dateLabel(selected.completed_on ?? selected.last_activity_on)}</strong></span><span><small>Aktivitas terakhir</small><strong>{dateLabel(selected.last_activity_on)}</strong></span></div>
       <div className="project-detail-money"><span><ArrowDownRight size={17} /><small>Masuk</small><strong className="positive">{IDR.format(incoming)}</strong></span><span><ArrowUpRight size={17} /><small>Keluar</small><strong className="negative">{IDR.format(outgoing)}</strong></span><span><small>Bersih</small><strong>{IDR.format(incoming - outgoing)}</strong></span></div>
-      <small className="project-source-key">{selected.source_key_latest ?? 'source key belum tersedia'}</small>
+      {showSourceDetails && <small className="project-source-key">{selected.source_key_latest ?? 'source key belum tersedia'}</small>}
     </aside>}
 
-    {readOnlyNotice && <div className="readonly-modal" role="dialog" aria-modal="true" aria-label="Dashboard read-only">
-      <div><button type="button" className="icon-button" aria-label="Tutup pemberitahuan" onClick={() => setReadOnlyNotice(false)}><X size={18} /></button><p className="eyebrow">DASHBOARD READ-ONLY</p><h3>Tambah proyek dari sumber data</h3><p>Untuk menjaga audit trail, kelola proyek dari sumber data kanonis. Proyek akan muncul di timeline setelah marker Start atau aktivitas transaksi masuk ke snapshot.</p><button type="button" className="secondary-button" onClick={() => setReadOnlyNotice(false)}>Mengerti</button></div>
+    {readOnlyNotice && <div className="readonly-modal" role="dialog" aria-modal="true" aria-label="Informasi proyek">
+      <div><button type="button" className="icon-button" aria-label="Tutup pemberitahuan" onClick={() => setReadOnlyNotice(false)}><X size={18} /></button><p className="eyebrow">PROYEK</p><h3>Tambah proyek belum tersedia di sini</h3><p>Gunakan menu Proyek untuk membuat dan mengelola proyek.</p><button type="button" className="secondary-button" onClick={() => setReadOnlyNotice(false)}>Mengerti</button></div>
     </div>}
   </section>
 }

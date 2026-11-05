@@ -2854,6 +2854,7 @@ def get_dashboard_summary():
                         
                         # Add to global expense
                         total_expense += amount
+                        total_transactions += 1
                         
                         # Check source
                         keterangan = row[OPERASIONAL_COLS['KETERANGAN']-1] if len(row) >= OPERASIONAL_COLS['KETERANGAN'] else ""

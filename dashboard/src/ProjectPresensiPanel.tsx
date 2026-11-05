@@ -100,7 +100,7 @@ export default function ProjectPresensiPanel({ project }: { project: { id?: stri
   const active = records.filter((record) => record.status === 'active').length
   const completed = records.length - active
 
-  if (!project.id) return <div className="project-detail-empty" role="status"><strong>Presensi belum tersedia</strong><span>ID proyek presensi kanonis tidak tersedia pada snapshot live.</span></div>
+  if (!project.id) return <div className="project-detail-empty" role="status"><strong>Presensi belum tersedia</strong><span>Proyek ini belum terhubung ke presensi.</span></div>
   if (error) return <div className="project-detail-empty presensi-error" role="alert"><strong>Data presensi belum dapat dimuat.</strong><span>Data lama tidak ditampilkan.</span><button type="button" className="secondary-button" onClick={() => loadRecords(true)}>Coba lagi</button></div>
   if (loading && !records.length) return <div className="project-detail-empty" role="status" aria-live="polite"><strong>Memuat data presensi…</strong><span>Mengambil bukti terbaru dari server.</span></div>
 

@@ -106,7 +106,7 @@ export function PresensiPanel({ project }: { project: { id?: string; name: strin
   const active = records.filter((record) => record.status === 'active').length
   const completed = records.length - active
 
-  if (!project.id) return <div className="project-detail-empty" role="status"><strong>Presensi belum tersedia</strong><span>ID proyek presensi kanonis tidak tersedia pada snapshot live.</span></div>
+  if (!project.id) return <div className="project-detail-empty" role="status"><strong>Presensi belum tersedia</strong><span>Proyek ini belum terhubung ke presensi.</span></div>
   if (error) return <div className="project-detail-empty presensi-error" role="alert"><strong>Data presensi belum dapat dimuat.</strong><span>Data lama tidak ditampilkan.</span><button type="button" className="secondary-button" onClick={() => loadRecords(true)}>Coba lagi</button></div>
   if (loading && !records.length) return <div className="project-detail-empty" role="status" aria-live="polite"><strong>Memuat data presensi…</strong><span>Mengambil bukti terbaru dari server.</span></div>
 
@@ -181,10 +181,10 @@ export default function ProjectTransactionsWorkspace({ workspace, project, onBac
   return <section className="finance-page-stack project-transaction-detail">
     <header className="project-detail-head">
       <button type="button" className="secondary-button project-detail-back" onClick={onBack}><ArrowLeft size={17} /> Kembali ke Proyek</button>
-      <div className="project-detail-identity"><p className="eyebrow">DETAIL PROYEK · {workspace.mode === 'live' ? 'DATA LIVE' : 'DATA DEMO'}</p><h1>{project.name}</h1><p>{project.company} · {project.wallet} · <span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span>{project.client ? ` · ${project.client}` : ''}</p></div>
+      <div className="project-detail-identity"><p className="eyebrow">DETAIL PROYEK{workspace.mode === 'demo' ? ' · DATA DEMO' : ''}</p><h1>{project.name}</h1><p>{project.company} · {project.wallet} · <span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span>{project.client ? ` · ${project.client}` : ''}</p></div>
       {(!readOnly || (canCreateTransactions && project.write_mapping)) && tab === 'transactions' && <button type="button" className="primary-button" onClick={() => onAdd(project)}><Plus size={16} /> Tambah transaksi</button>}
     </header>
-    {readOnly && canCreateTransactions && !project.write_mapping && <p className="form-error" role="status">Pencatatan proyek belum tersedia: pemetaan kanonis dompet/perusahaan belum dikonfigurasi.</p>}
+    {readOnly && canCreateTransactions && !project.write_mapping && <p className="form-error" role="status">Pencatatan belum tersedia untuk proyek ini.</p>}
     <section className="project-status-control" aria-label="Status proyek">
       <div><small>STATUS PROYEK</small><span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span><p>{project.status === 'active' ? 'Proyek sedang berjalan dan dapat diselesaikan.' : project.status === 'completed' ? 'Proyek telah selesai. Aktifkan kembali jika status ini terpilih tanpa sengaja.' : 'Proyek belum dimulai.'}</p></div>
       {!readOnly && project.status === 'active' && <button type="button" className="primary-button" onClick={() => onComplete(project)}><CheckCircle2 size={16} /> Selesaikan proyek</button>}

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { adaptLiveSnapshot, LiveSnapshotBanner } from './liveSnapshotView'
@@ -40,7 +40,11 @@ const snapshot = (): DashboardSnapshot => ({
   ],
 })
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
 
 describe('adaptLiveSnapshot', () => {
   it('creates a stable read-only view model without mutating server order', () => {
@@ -66,9 +70,9 @@ describe('LiveSnapshotBanner', () => {
     const loader = vi.fn(async () => snapshot())
     render(<LiveSnapshotBanner loader={loader} />)
 
-    expect(screen.getByRole('status').textContent).toContain('Menghubungkan data keuangan live')
-    await waitFor(() => expect(screen.getByRole('region', { name: 'Status data live' })).toBeTruthy())
-    expect(screen.getByText('Data keuangan live')).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toContain('Memuat data keuangan')
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Status data' })).toBeTruthy())
+    expect(screen.getByText('Ringkasan keuangan')).toBeTruthy()
     expect(screen.getAllByText((text) => text.replace(/\s/g, '') === 'Rp15.000.000')).toHaveLength(2)
     expect(screen.getByText(/12 baris valid · 1 perlu ditinjau/)).toBeTruthy()
     expect(screen.getByText(/Segar · Data sampai 1 November 2026/)).toBeTruthy()
@@ -86,13 +90,61 @@ describe('LiveSnapshotBanner', () => {
     render(<LiveSnapshotBanner loader={loader} />)
 
     const error = await screen.findByRole('alert')
-    expect(error.textContent).toContain('Data live belum tersedia')
+    expect(error.textContent).toContain('Data belum tersedia')
     expect(error.textContent).toContain('Snapshot unavailable (503)')
     expect(screen.queryByText('Rp15.000.000')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Coba lagi data live' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Coba lagi data' }))
 
-    await waitFor(() => expect(screen.getByText('Data keuangan live')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Ringkasan keuangan')).toBeTruthy())
     expect(loader).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the last good snapshot mounted while a refresh is pending', async () => {
+    let resolveRefresh!: (value: DashboardSnapshot) => void
+    const refreshed = snapshot()
+    refreshed.overview.metrics.cash_balance = 22_000_000
+    const loader = vi.fn()
+      .mockResolvedValueOnce(snapshot())
+      .mockImplementationOnce(() => new Promise<DashboardSnapshot>((resolve) => { resolveRefresh = resolve }))
+    render(<LiveSnapshotBanner loader={loader} />)
+
+    await screen.findAllByText((text) => text.replace(/\s/g, '') === 'Rp15.000.000')
+    fireEvent.click(screen.getByRole('button', { name: 'Muat ulang data' }))
+    await waitFor(() => expect(loader).toHaveBeenCalledTimes(2))
+
+    expect(screen.getAllByText((text) => text.replace(/\s/g, '') === 'Rp15.000.000')).toHaveLength(2)
+    expect(screen.queryByText('Menghubungkan data keuangan')).toBeNull()
+
+    resolveRefresh(refreshed)
+    await screen.findByText((text) => text.replace(/\s/g, '') === 'Rp22.000.000')
+  })
+
+  it('polls every five seconds only while visible and refreshes on focus or restored visibility', async () => {
+    vi.useFakeTimers()
+    let visibility: DocumentVisibilityState = 'visible'
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
+    const loader = vi.fn(async () => snapshot())
+    render(<LiveSnapshotBanner loader={loader} />)
+    await act(async () => { await Promise.resolve() })
+    expect(loader).toHaveBeenCalledTimes(1)
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_999) })
+    expect(loader).toHaveBeenCalledTimes(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    expect(loader).toHaveBeenCalledTimes(2)
+
+    visibility = 'hidden'
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(loader).toHaveBeenCalledTimes(2)
+
+    visibility = 'visible'
+    act(() => document.dispatchEvent(new Event('visibilitychange')))
+    await act(async () => { await Promise.resolve() })
+    expect(loader).toHaveBeenCalledTimes(3)
+
+    act(() => window.dispatchEvent(new Event('focus')))
+    await act(async () => { await Promise.resolve() })
+    expect(loader).toHaveBeenCalledTimes(4)
   })
 })

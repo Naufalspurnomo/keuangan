@@ -339,7 +339,15 @@ Atau reply pesan ini dengan detail yang benar.'''
 
     return None
 
-def handle_undo_command(user_id: str, chat_id: str, quoted_message_id: str = None) -> dict:
+_DASHBOARD_MESSAGE_ID_RE = re.compile(r'^dashboard:\d+:[0-9a-f]{64}$')
+
+
+def handle_undo_command(
+    user_id: str,
+    chat_id: str,
+    quoted_message_id: str = None,
+    explicit_message_id: str = None,
+) -> dict:
     """
     Delete the last transaction created by this user.
     """
@@ -347,8 +355,12 @@ def handle_undo_command(user_id: str, chat_id: str, quoted_message_id: str = Non
     is_group = bool(chat_id and chat_id.endswith('@g.us'))
     original_tx_id = ""
 
+    if explicit_message_id:
+        if not _DASHBOARD_MESSAGE_ID_RE.fullmatch(explicit_message_id):
+            return {'action': 'REPLY', 'response': '⚠️ ID transaksi dashboard tidak valid.'}
+        original_tx_id = explicit_message_id
     # Group safety: /undo should target explicit replied bot report.
-    if is_group:
+    elif is_group:
         if not quoted_message_id:
             return {
                 'action': 'REPLY',
