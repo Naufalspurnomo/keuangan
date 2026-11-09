@@ -16,4 +16,7 @@ return [
     'project_document_writes_enabled' => false,
     'upstream_projects_url' => 'https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app/api/dashboard/v1/projects',
     'upstream_documents_url' => 'https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app/api/dashboard/v1/documents',
+    // Owner-only durable inbox review. Reads remain available; terminal decisions fail closed by default.
+    'inbox_review_writes_enabled' => false,
+    'upstream_inbox_reviews_url' => 'https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app/api/dashboard/v1/inbox/reviews',
 ];

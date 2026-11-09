@@ -8,11 +8,12 @@ only and intentionally exposes its degraded status through ``inbox_health``.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from security import secure_log
 
@@ -21,10 +22,37 @@ class InboxUnavailable(RuntimeError):
     pass
 
 
+class ReviewNotFound(LookupError):
+    """The exact inbox event key does not exist."""
+
+
+class ReviewConflict(RuntimeError):
+    """The event is no longer in a reviewable lifecycle state."""
+
+
+class ReviewValidationError(ValueError):
+    """A review action attempted to bypass its proof or status constraints."""
+
+
+REVIEW_ACTION_STATUSES = {
+    "ignore": "ignored",
+    "confirm_processed": "processed",
+}
+REVIEW_RESULT_STATUSES = {
+    "ignore": "review_ignored",
+    "confirm_processed": "review_confirmed_processed",
+}
+_REVIEW_METADATA_COLUMNS = (
+    "event_key, provider, message_id, event_type, is_group, finance_signal, "
+    "payload_score, status, result_status, attempts, received_at, updated_at"
+)
+
+
 _init_lock = threading.Lock()
 _initialized = False
 _memory_lock = threading.Lock()
 _memory_events: Dict[str, dict] = {}
+_memory_review_audit: list[dict[str, Any]] = []
 
 
 def _truthy(value: Optional[str]) -> bool:
@@ -40,6 +68,10 @@ def inbox_required() -> bool:
     if configured is not None:
         return _truthy(configured)
     return _truthy(os.getenv("STATE_STORE_REQUIRED"))
+
+
+def review_writes_enabled() -> bool:
+    return _truthy(os.getenv("INBOX_REVIEW_WRITES_ENABLED"))
 
 
 def _event_key(event: dict) -> str:
@@ -324,17 +356,342 @@ def inbox_health() -> dict:
                 cur.execute(
                     """
                     SELECT COUNT(*) FILTER (WHERE status NOT IN ('processed', 'ignored')),
-                           COUNT(*) FILTER (WHERE status LIKE 'needs_review%%')
+                           COUNT(*) FILTER (WHERE status LIKE 'needs_review%%'),
+                           EXTRACT(EPOCH FROM (NOW() - MIN(received_at) FILTER (
+                               WHERE status LIKE 'needs_review%%'
+                           )))
                     FROM transaction_inbox
-                    WHERE received_at > NOW() - INTERVAL '7 days'
                     """
                 )
-                backlog, review = cur.fetchone()
-        return {"backend": "postgres", "durable": True, "backlog": int(backlog), "needs_review": int(review)}
+                backlog, review, oldest_seconds = cur.fetchone()
+        schema = inbox_review_schema_health()
+        return {
+            "backend": "postgres", "durable": True, "backlog": int(backlog),
+            "needs_review": int(review),
+            "oldest_review_age_seconds": int(oldest_seconds) if oldest_seconds is not None else None,
+            "review_writes_enabled": review_writes_enabled(),
+            "review_schema_ready": bool(schema.get("ready")),
+            "review_audit_ready": bool(schema.get("audit_ready")),
+        }
     with _memory_lock:
-        review = sum(1 for event in _memory_events.values() if event.get("status") == "needs_review")
+        review = sum(1 for event in _memory_events.values() if str(event.get("status") or "").startswith("needs_review"))
         backlog = sum(1 for event in _memory_events.values() if event.get("status") not in {"processed", "ignored"})
-    return {"backend": "memory", "durable": False, "backlog": backlog, "needs_review": review}
+    return {
+        "backend": "memory", "durable": False, "backlog": backlog, "needs_review": review,
+        "oldest_review_age_seconds": None, "review_writes_enabled": review_writes_enabled(),
+        "review_schema_ready": False, "review_audit_ready": False,
+    }
+
+
+def inbox_review_schema_health() -> dict[str, Any]:
+    """Read back migration-owned review schema without mutating it."""
+    if not _database_url():
+        return {"configured": False, "ready": False, "audit_ready": False}
+    try:
+        import psycopg
+
+        required_columns = {
+            "command_key", "request_hash", "event_key", "message_id", "action", "expected_status",
+            "previous_status", "resulting_status", "actor", "reason", "ledger_proof",
+            "event_snapshot_hash", "reviewed_at",
+        }
+        with psycopg.connect(_database_url(), autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'transaction_inbox_review_audit'
+                    """
+                )
+                columns = {str(row[0]) for row in cur.fetchall()}
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM pg_indexes
+                        WHERE schemaname = 'public'
+                          AND indexname = 'uq_transaction_inbox_review_command'
+                    ), EXISTS (
+                        SELECT 1 FROM pg_trigger
+                        WHERE tgname = 'trg_inbox_review_audit_append_only'
+                          AND NOT tgisinternal
+                    )
+                    """
+                )
+                command_index, append_only = cur.fetchone()
+        ready = required_columns.issubset(columns) and bool(command_index) and bool(append_only)
+        return {
+            "configured": True, "ready": ready, "audit_ready": ready,
+            "columns": required_columns.issubset(columns),
+            "command_index": bool(command_index), "append_only": bool(append_only),
+        }
+    except Exception as exc:
+        secure_log("ERROR", f"Inbox review schema health failed: {type(exc).__name__}")
+        return {"configured": True, "ready": False, "audit_ready": False}
+
+
+def _review_metadata(event: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: event.get(key)
+        for key in (
+            "event_key", "provider", "message_id", "event_type", "is_group",
+            "finance_signal", "payload_score", "status", "result_status",
+            "attempts", "received_at", "updated_at",
+        )
+    }
+
+
+def list_review_events(*, limit: int = 50) -> list[dict[str, Any]]:
+    """List private review metadata without message text, identities, or media."""
+    safe_limit = max(1, min(int(limit), 100))
+    if _ensure_db():
+        import psycopg
+
+        with psycopg.connect(_database_url(), autocommit=True) as conn:
+            with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+                cur.execute(
+                    f"""
+                    SELECT {_REVIEW_METADATA_COLUMNS}
+                    FROM transaction_inbox
+                    WHERE status LIKE 'needs_review%%'
+                    ORDER BY received_at
+                    LIMIT %s
+                    """,  # nosec B608 -- selected columns are a private module constant
+                    (safe_limit,),
+                )
+                return [dict(row) for row in cur.fetchall()]
+    with _memory_lock:
+        rows = [
+            _review_metadata(event)
+            for event in _memory_events.values()
+            if str(event.get("status") or "").startswith("needs_review")
+        ]
+    rows.sort(key=lambda row: str(row.get("received_at") or ""))
+    return rows[:safe_limit]
+
+
+def get_review_event(event_key: str) -> dict[str, Any] | None:
+    """Return one explicit review event for the owner-only detail route."""
+    key = str(event_key or "").strip()
+    if not key:
+        return None
+    if _ensure_db():
+        import psycopg
+
+        with psycopg.connect(_database_url(), autocommit=True) as conn:
+            with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT event_key, provider, message_id, event_type, body_text,
+                           quoted_message_id, is_group, finance_signal, payload_score,
+                           status, result_status, attempts, received_at, updated_at,
+                           (NULLIF(media_data, '') IS NOT NULL OR NULLIF(media_path, '') IS NOT NULL)
+                               AS media_available
+                    FROM transaction_inbox
+                    WHERE event_key = %s AND status LIKE 'needs_review%%'
+                    """,
+                    (key,),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
+    with _memory_lock:
+        event = _memory_events.get(key)
+        if not event or not str(event.get("status") or "").startswith("needs_review"):
+            return None
+        return dict(event)
+
+
+def _review_request_hash(
+    *,
+    event_key: str,
+    action: str,
+    actor: str,
+    reason: str,
+    expected_status: str,
+) -> str:
+    return hashlib.sha256(json.dumps(
+        {
+            "event_key": event_key,
+            "action": action,
+            "actor": actor,
+            "reason": reason,
+            "expected_status": expected_status,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
+
+
+def get_review_command_result(
+    command_key: str,
+    *,
+    event_key: str,
+    action: str,
+    actor: str,
+    reason: str,
+    expected_status: str,
+) -> dict[str, Any] | None:
+    """Replay a completed owner command before consulting the active review queue."""
+    selected_command = str(command_key or "").strip()
+    if not selected_command:
+        raise ReviewValidationError("command key is required")
+    if not _ensure_db() or not inbox_review_schema_health().get("ready"):
+        raise InboxUnavailable("durable inbox review schema unavailable")
+    request_hash = _review_request_hash(
+        event_key=str(event_key or "").strip(),
+        action=str(action or "").strip(),
+        actor=str(actor or "").strip(),
+        reason=str(reason or "").strip(),
+        expected_status=str(expected_status or "").strip(),
+    )
+
+    import psycopg
+
+    with psycopg.connect(_database_url(), autocommit=True) as conn:
+        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+            cur.execute(
+                """
+                SELECT event_key, message_id, action, resulting_status, request_hash
+                FROM transaction_inbox_review_audit
+                WHERE command_key = %s
+                """,
+                (selected_command,),
+            )
+            replay = cur.fetchone()
+    if not replay:
+        return None
+    if str(replay["request_hash"]) != request_hash:
+        raise ReviewConflict("idempotency key was reused with another request")
+    return {
+        "event_key": str(replay["event_key"]),
+        "message_id": str(replay["message_id"]),
+        "action": str(replay["action"]),
+        "status": str(replay["resulting_status"]),
+        "replayed": True,
+    }
+
+
+def resolve_review_event(
+    event_key: str,
+    action: str,
+    *,
+    actor: str,
+    reason: str,
+    expected_status: str,
+    command_key: str,
+    ledger_proof: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve one review event through an idempotent audited compare-and-set."""
+    key = str(event_key or "").strip()
+    selected_action = str(action or "").strip()
+    selected_actor = str(actor or "").strip()
+    selected_reason = str(reason or "").strip()
+    selected_expected = str(expected_status or "").strip()
+    selected_command = str(command_key or "").strip()
+    if selected_action not in REVIEW_ACTION_STATUSES:
+        raise ReviewValidationError("unsupported review action")
+    if not all((key, selected_actor, selected_reason, selected_expected, selected_command)):
+        raise ReviewValidationError("event, actor, reason, expected status, and command are required")
+    if len(selected_actor) > 320 or len(selected_reason) > 1000:
+        raise ReviewValidationError("actor or reason is too long")
+    if not isinstance(ledger_proof, dict) or ledger_proof.get("status") != "complete":
+        raise ReviewValidationError("complete ledger proof is required")
+    matches = ledger_proof.get("matches")
+    if not isinstance(matches, list):
+        raise ReviewValidationError("ledger matches are required")
+    if selected_action == "ignore" and matches:
+        raise ReviewValidationError("ignore requires zero ledger matches")
+    if selected_action == "confirm_processed" and not matches:
+        raise ReviewValidationError("confirm_processed requires ledger matches")
+    if not review_writes_enabled():
+        raise InboxUnavailable("inbox review writes are disabled")
+
+    resulting_status = REVIEW_ACTION_STATUSES[selected_action]
+    result_status = REVIEW_RESULT_STATUSES[selected_action]
+    if not _ensure_db() or not inbox_review_schema_health().get("ready"):
+        raise InboxUnavailable("durable inbox review schema unavailable")
+    proof_json = json.dumps(ledger_proof, sort_keys=True, separators=(",", ":"), default=str)
+    request_hash = _review_request_hash(
+        event_key=key,
+        action=selected_action,
+        actor=selected_actor,
+        reason=selected_reason,
+        expected_status=selected_expected,
+    )
+
+    import psycopg
+
+    with psycopg.connect(_database_url()) as conn:
+        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+            cur.execute(
+                """
+                SELECT event_key, message_id, action, resulting_status, request_hash
+                FROM transaction_inbox_review_audit WHERE command_key = %s
+                """,
+                (selected_command,),
+            )
+            replay = cur.fetchone()
+            if replay:
+                if str(replay["request_hash"]) != request_hash:
+                    raise ReviewConflict("idempotency key was reused with another request")
+                return {
+                    "event_key": str(replay["event_key"]),
+                    "message_id": str(replay["message_id"]),
+                    "action": str(replay["action"]),
+                    "status": str(replay["resulting_status"]),
+                    "replayed": True,
+                }
+            cur.execute(
+                """
+                SELECT event_key, message_id, status, provider, event_type,
+                       payload_score, received_at, updated_at
+                FROM transaction_inbox WHERE event_key = %s FOR UPDATE
+                """,
+                (key,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise ReviewNotFound("review event not found")
+            previous_status = str(row["status"] or "")
+            if previous_status != selected_expected:
+                raise ReviewConflict("event status no longer matches reviewed evidence")
+            snapshot_hash = hashlib.sha256(json.dumps(
+                dict(row), sort_keys=True, separators=(",", ":"), default=str,
+            ).encode("utf-8")).hexdigest()
+            cur.execute(
+                """
+                UPDATE transaction_inbox
+                SET status = %s, result_status = %s, last_error = NULL, updated_at = NOW()
+                WHERE event_key = %s AND status = %s
+                RETURNING event_key, message_id, status
+                """,
+                (resulting_status, result_status, key, selected_expected),
+            )
+            updated = cur.fetchone()
+            if not updated:
+                raise ReviewConflict("review event changed concurrently")
+            cur.execute(
+                """
+                INSERT INTO transaction_inbox_review_audit (
+                    command_key, request_hash, event_key, message_id, action, expected_status,
+                    previous_status, resulting_status, actor, reason, ledger_proof,
+                    event_snapshot_hash
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                """,
+                (
+                    selected_command, request_hash, key, str(updated["message_id"]),
+                    selected_action, selected_expected, previous_status, resulting_status,
+                    selected_actor, selected_reason, proof_json, snapshot_hash,
+                ),
+            )
+        conn.commit()
+    return {
+        "event_key": str(updated["event_key"]),
+        "message_id": str(updated["message_id"]),
+        "action": selected_action,
+        "status": str(updated["status"]),
+        "replayed": False,
+    }
 
 
 def prune_inbox() -> int:

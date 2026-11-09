@@ -5,6 +5,7 @@ import {
   Building2,
 
   FileBarChart,
+  Inbox,
   Landmark,
   LayoutDashboard,
   LockKeyhole,
@@ -37,6 +38,7 @@ import ProjectRecordForm from './ProjectRecordForm'
 import ProjectTransactionsWorkspace from './ProjectTransactionsWorkspace'
 import ProductionProjectsWorkspace from './ProductionProjectsWorkspace'
 import ReportsWorkspace from './ReportsWorkspace'
+import InboxReviewWorkspace from './InboxReviewWorkspace'
 import type { FinanceDebt, FinanceProject, FinanceTransaction, FinanceWorkspace, ProjectInput, TransactionInput, TransactionFormInput, DebtInput } from './financeWorkspace'
 import { snapshotFinanceWorkspace } from './snapshot'
 import { useLiveSnapshot } from './liveSnapshotView'
@@ -44,6 +46,8 @@ import { createTransactionWriteAttempt, jakartaToday, loadTransactionWriteSessio
 import { useFinanceWorkspace } from './useFinanceWorkspace'
 import hollawallLogo from './assets/hollawall-logo.png'
 import { createProjectDocumentApi, type ProjectDocumentApi, type ProjectDocumentSession } from './projectDocumentApi'
+import { createInboxReviewApi, type InboxReviewApi } from './inboxReviewApi'
+import './style.css'
 import {
   NO_PROJECT_DOCUMENT_WRITES,
   projectDocumentRoute,
@@ -56,7 +60,7 @@ import {
   type ProductionProjectStatus,
 } from './projectDocuments'
 
-type Page = 'overview' | 'cashflow' | 'wallets' | 'projects' | 'office' | 'debts' | 'reports'
+type Page = 'overview' | 'cashflow' | 'wallets' | 'projects' | 'office' | 'debts' | 'reports' | 'inbox-reviews'
 type Modal =
   | { kind: 'project'; value?: FinanceProject }
   | { kind: 'complete-project'; value: FinanceProject }
@@ -64,7 +68,7 @@ type Modal =
   | { kind: 'debt'; value?: FinanceDebt }
   | null
 const MOBILE_NAVIGATION_QUERY = '(max-width: 900px)'
-const PAGES: Page[] = ['overview', 'cashflow', 'wallets', 'projects', 'office', 'debts', 'reports']
+const PAGES: Page[] = ['overview', 'cashflow', 'wallets', 'projects', 'office', 'debts', 'reports', 'inbox-reviews']
 
 function routeHash(page: Page, projectId?: string, detail?: Partial<ProjectDocumentRoute>) {
   if (page === 'projects' && projectId) return projectDocumentRoute({ projectId, tab: detail?.tab ?? 'transactions', document: detail?.document, type: detail?.type })
@@ -105,6 +109,7 @@ const pageMeta: Record<Page, { eyebrow: string; title: string; copy: string }> =
   office: { eyebrow: 'KEBUTUHAN KANTOR', title: 'Operasional Kantor', copy: 'Biaya kantor yang terpisah dari proyek.' },
   debts: { eyebrow: 'PERGERAKAN INTERNAL', title: 'Hutang Internal', copy: 'Hutang antar-dompet tanpa mengubah kas konsolidasi.' },
   reports: { eyebrow: 'PELAPORAN', title: 'Laporan', copy: 'Filter, pratinjau, dan ekspor PDF.' },
+  'inbox-reviews': { eyebrow: 'KOTAK MASUK', title: 'Perlu Ditinjau', copy: 'Pesan tahan gagal yang memerlukan keputusan owner.' },
 }
 
 function useMobileNavigation() {
@@ -121,11 +126,12 @@ function useMobileNavigation() {
 function Sidebar({ active, open, mobile, live, close, navigate }: { active: Page; open: boolean; mobile: boolean; live: boolean; close: () => void; navigate: (page: Page) => void }) {
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   useEffect(() => { if (mobile && open) closeButtonRef.current?.focus() }, [mobile, open])
-  const items = [
+  const items: ReadonlyArray<readonly [Page, string, typeof LayoutDashboard]> = [
     ['overview', 'Ringkasan', LayoutDashboard], ['cashflow', 'Arus Kas', BarChart3], ['wallets', 'Dompet', WalletCards],
     ['projects', 'Proyek', BriefcaseBusiness], ['office', 'Operasional Kantor', Building2],
     ['debts', 'Hutang Internal', Landmark], ['reports', 'Laporan', FileBarChart],
-  ] as const
+    ...(live ? [['inbox-reviews', 'Perlu Ditinjau', Inbox] as const] : []),
+  ]
   const hidden = mobile && !open
   return <>{mobile && open && <button type="button" className="mobile-overlay is-open" onClick={close} aria-label="Tutup navigasi" />}<aside id="app-navigation" className={`sidebar ${open ? 'is-open' : ''}`} aria-hidden={hidden || undefined}><div className="sidebar-head"><img src={hollawallLogo} alt="Hollawall" /><button ref={closeButtonRef} tabIndex={hidden ? -1 : 0} className="icon-button mobile-only" onClick={close} aria-label="Tutup navigasi"><X size={20} /></button></div><div className="workspace-switch"><Building2 size={18} /><span><small>Ruang kerja</small>Hollawall Group</span></div><nav aria-label="Menu utama">{items.map(([key, label, Icon]) => <button type="button" tabIndex={hidden ? -1 : 0} key={key} className={active === key ? 'active' : ''} aria-current={active === key ? 'page' : undefined} onClick={() => { navigate(key); close() }}><Icon size={18} /><span>{label}</span></button>)}</nav><div className="sidebar-bottom"><div className="profile workspace-profile"><span><LockKeyhole size={15} /></span><div><strong>{live ? 'Keuangan Hollawall' : 'Workspace demo'}</strong><small>{live ? 'Ringkasan dan laporan' : 'Data lokal · Teraudit'}</small></div></div></div></aside></>
 }
@@ -143,7 +149,7 @@ function localIsoDate() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
 
-export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, onCreateLiveTransaction, projectApi }: { suppliedWorkspace?: Readonly<FinanceWorkspace>; liveWriteSession?: TransactionWriteSession; liveWriteStatus?: string; onCreateLiveTransaction?: (input: TransactionFormInput) => Promise<RecordedTransaction>; projectApi?: ProjectDocumentApi } = {}) {
+export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, onCreateLiveTransaction, projectApi, inboxReviewApi }: { suppliedWorkspace?: Readonly<FinanceWorkspace>; liveWriteSession?: TransactionWriteSession; liveWriteStatus?: string; onCreateLiveTransaction?: (input: TransactionFormInput) => Promise<RecordedTransaction>; projectApi?: ProjectDocumentApi; inboxReviewApi?: InboxReviewApi } = {}) {
   const finance = useFinanceWorkspace(suppliedWorkspace)
   const readOnly = finance.readOnly
   const canCreateTransactions = readOnly && liveWriteSession?.writesEnabled === true && Boolean(onCreateLiveTransaction)
@@ -374,7 +380,8 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
               : active === 'projects' ? <ProjectCommandCenter workspace={finance.workspace} onAdd={() => setModal({ kind: 'project' })} onEdit={(value) => setModal({ kind: 'project', value })} onComplete={(value) => setModal({ kind: 'complete-project', value })} onQuickComplete={completeProjectNow} onDelete={(value) => confirmDelete(`proyek ${value.name}`, () => finance.removeProject(value.id))} onOpen={openProject} readOnly={readOnly} />
             : active === 'office' ? <OfficeWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'transaction', scope: 'office' })} onEdit={(value) => setModal({ kind: 'transaction', value })} onDelete={(value) => confirmDelete('biaya kantor', () => finance.removeTransaction(value.id))} readOnly={readOnly} canCreateTransactions={canCreateTransactions} />
               : active === 'debts' ? <DebtWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'debt' })} onEdit={(value) => setModal({ kind: 'debt', value })} onDelete={(value) => confirmDelete('hutang internal', () => finance.removeDebt(value.id))} />
-                : <ReportsWorkspace workspace={finance.workspace} />
+                : active === 'inbox-reviews' && inboxReviewApi ? <InboxReviewWorkspace api={inboxReviewApi} csrfToken={liveWriteSession?.csrfToken ?? ''} />
+                  : <ReportsWorkspace workspace={finance.workspace} />
 
   return (
     <div className={`app-shell finance-workspace-shell${readOnly ? ' is-readonly' : ''}`}>
@@ -386,15 +393,15 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
           <div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{mobile ? meta.title : productionProject?.name ?? selectedProject?.name ?? meta.title}</strong></div>
           <div className="topbar-actions">
             {active === 'projects' && <ExportButton workspace={finance.workspace} />}
-            {((!readOnly && active !== 'reports') || (canCreateTransactions && active !== 'reports' && active !== 'debts' && !(active === 'projects' && !selectedProject))) && <button className="topbar-add" onClick={addAction.run}><Plus size={16} /><span>{addAction.label}</span></button>}
+            {((!readOnly && active !== 'reports' && active !== 'inbox-reviews') || (canCreateTransactions && active !== 'reports' && active !== 'debts' && active !== 'inbox-reviews' && !(active === 'projects' && !selectedProject))) && <button className="topbar-add" onClick={addAction.run}><Plus size={16} /><span>{addAction.label}</span></button>}
             <ThemeToggle theme={theme} setTheme={setTheme} />
           </div>
         </header>
         <div className="content">
           {!readOnly && <p className="demo-mode-label">Mode demo · data browser</p>}
-          {readOnly && !canCreateTransactions && <p className="form-error">{liveWriteStatus ?? 'Pencatatan transaksi belum tersedia.'}</p>}
+          {readOnly && !canCreateTransactions && active !== 'inbox-reviews' && <p className="form-error">{liveWriteStatus ?? 'Pencatatan transaksi belum tersedia.'}</p>}
           {!readOnly && <DemoBanner updatedAt={finance.workspace.updated_at} onReset={reset} />}
-          {!['overview', 'projects', 'reports'].includes(active) && <header className="page-heading"><div><p className="eyebrow">{meta.eyebrow}</p><h1>{meta.title}</h1><p>{meta.copy}</p></div>{!readOnly && <span className="demo-badge">DATA DEMO</span>}</header>}
+          {!['overview', 'projects', 'reports', 'inbox-reviews'].includes(active) && <header className="page-heading"><div><p className="eyebrow">{meta.eyebrow}</p><h1>{meta.title}</h1><p>{meta.copy}</p></div>{!readOnly && <span className="demo-badge">DATA DEMO</span>}</header>}
           {content}
         </div>
       </main>
@@ -415,6 +422,7 @@ export default function App() {
 function LiveDashboardApp() {
   const state = useLiveSnapshot({ endpoint: '/admin/api/snapshot.php' })
   const projectApi = useMemo(() => createProjectDocumentApi(), [])
+  const inboxReviewApi = useMemo(() => createInboxReviewApi(), [])
   const [writeSession, setWriteSession] = useState<TransactionWriteSession>()
   const [writeStatus, setWriteStatus] = useState('Memeriksa kemampuan pencatatan transaksi…')
   const pendingAttempt = useRef<TransactionWriteAttempt | null>(null)
@@ -480,5 +488,5 @@ function LiveDashboardApp() {
 
   if (state.status === 'loading') return <main role="status">Memuat data keuangan</main>
   if (state.status === 'error') return <main role="alert"><h1>Data belum tersedia</h1><p>Data demo tidak ditampilkan sebagai pengganti.</p><button onClick={() => void state.reload()}>Coba lagi</button></main>
-  return workspace ? <DemoApp suppliedWorkspace={workspace} liveWriteSession={writeSession} liveWriteStatus={writeStatus} onCreateLiveTransaction={createLiveTransaction} projectApi={projectApi} /> : null
+  return workspace ? <DemoApp suppliedWorkspace={workspace} liveWriteSession={writeSession} liveWriteStatus={writeStatus} onCreateLiveTransaction={createLiveTransaction} projectApi={projectApi} inboxReviewApi={inboxReviewApi} /> : null
 }

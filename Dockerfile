@@ -28,10 +28,9 @@ USER botuser
 # Expose port
 EXPOSE 8000
 
-# Health check (optional, helps Koyeb detect issues faster)
-# Health check (relaxed for heavy AI/Sheet operations)
+# Health check fails on HTTP errors and on a malformed/unhealthy JSON contract.
 HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=5 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/health', timeout=10)" || exit 1
+    CMD python -c "import requests; response=requests.get('http://localhost:8000/health',timeout=10); response.raise_for_status(); payload=response.json(); assert payload.get('status') in {'healthy','degraded'}" || exit 1
 
 # Run with optimized gunicorn settings (Increased threads for IO-bound work)
 CMD ["gunicorn", "main:app", \

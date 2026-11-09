@@ -250,7 +250,7 @@ class DashboardWriteRequestStore:
                         ) VALUES (%s, %s, %s::jsonb, %s::jsonb, %s, 'claimed')
                         ON CONFLICT (idempotency_key_hash) DO NOTHING
                         RETURNING {_SELECT_COLUMNS}
-                        """,
+                        """,  # nosec B608 -- selected columns are module constants; values remain parameterized
                         (key_hash, request_hash, request_json, actor_json, canonical_message_id),
                     )
                     row = cursor.fetchone()
@@ -262,7 +262,7 @@ class DashboardWriteRequestStore:
                             SELECT {_SELECT_COLUMNS}
                             FROM dashboard_write_requests
                             WHERE idempotency_key_hash = %s
-                            """,
+                            """,  # nosec B608 -- selected columns are module constants; values remain parameterized
                             (key_hash,),
                         )
                         existing = cursor.fetchone()
@@ -318,7 +318,7 @@ class DashboardWriteRequestStore:
                         WHERE idempotency_key_hash = %s
                           AND request_hash = %s
                         RETURNING {_SELECT_COLUMNS}
-                        """,
+                        """,  # nosec B608 -- selected columns are module constants; values remain parameterized
                         (
                             response_json,
                             status,
