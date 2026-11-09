@@ -78,7 +78,10 @@ jobs:
         run: python -m pip_audit -r requirements.txt --progress-spinner off
 
       - name: Security lint
-        run: python -m bandit -r . -x archive,tests,output,tmp,artifacts,dashboard,node_modules,.venv --severity-level medium --confidence-level medium
+        run: >-
+          python -m bandit -r
+          agent_core dashboard_api handlers layers services utils scripts main.py sheets_helper.py
+          --severity-level medium --confidence-level medium
 
       - name: Static lint
         run: python -m ruff check . --select E9,F63,F7,F82 --exclude archive --exclude tests --exclude output --exclude tmp --exclude artifacts --exclude dashboard --exclude node_modules

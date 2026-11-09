@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from urllib.parse import urlparse
 
 import pytest
 
@@ -17,7 +18,10 @@ pytestmark = pytest.mark.skipif(not DSN, reason="INBOX_REVIEW_TEST_DATABASE_URL 
 def disposable_review_db(monkeypatch):
     import psycopg
 
-    assert "hollawall_inbox_test" in DSN, "test refuses a database without disposable marker"
+    parsed = urlparse(DSN)
+    database = parsed.path.removeprefix("/")
+    assert parsed.hostname in {"127.0.0.1", "localhost"}, "test database must be loopback-only"
+    assert database.endswith("_test"), "test refuses a database without disposable suffix"
     with psycopg.connect(DSN, autocommit=True) as conn:
         conn.execute("DROP TABLE IF EXISTS transaction_inbox_review_audit CASCADE")
         conn.execute("DROP TABLE IF EXISTS transaction_inbox CASCADE")
