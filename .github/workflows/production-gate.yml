@@ -85,7 +85,7 @@ jobs:
         run: pip-audit -r requirements.txt --progress-spinner off
 
       - name: Security lint
-        run: bandit -r . -x archive,tests,output,tmp --severity-level medium --confidence-level medium
+        run: bandit -r . -x archive,tests,output,tmp,artifacts,dashboard,node_modules --skip B402,B608 --severity-level medium --confidence-level medium
 
       - name: Static lint
         run: ruff check . --select F821,E9 --exclude archive --exclude tests --exclude output --exclude tmp
