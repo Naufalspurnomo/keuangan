@@ -92,6 +92,9 @@ def register_dashboard(
             transaction_service=transaction_service,
         )
     )
+    from dashboard_api.inbox_review import create_inbox_review_blueprint
+
+    app.register_blueprint(create_inbox_review_blueprint())
     if selected_project_documents is not None:
         from dashboard_api.project_document_routes import (
             create_project_document_blueprint,

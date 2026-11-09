@@ -427,6 +427,29 @@ class DurablePipelineTests(unittest.TestCase):
         self.assertEqual(status_code, 200)
         self.assertFalse(response.get_json()["project_document_schema"]["ready"])
 
+    def test_health_fails_closed_when_review_writes_enabled_without_schema(self):
+        import main
+
+        provider = {
+            "configured": False, "reachable": False, "connected": False,
+            "logged_in": False, "state": "disabled", "error": "",
+            "checked_at": "2026-09-02T00:00:00+00:00",
+        }
+        inbox = {
+            "durable": True, "backend": "postgres", "backlog": 0, "needs_review": 0,
+            "review_writes_enabled": True, "review_schema_ready": False,
+            "review_audit_ready": False,
+        }
+        with main.app.test_request_context("/health"), \
+             patch.object(main, "inbox_health", return_value=inbox), \
+             patch.object(main, "get_wuzapi_status", return_value=provider), \
+             patch.object(main, "dashboard_write_schema_health", return_value={"ready": True}), \
+             patch.object(main, "project_document_schema_health", return_value={"ready": True}):
+            response, status_code = main.health_check()
+
+        self.assertEqual(status_code, 503)
+        self.assertEqual(response.get_json()["status"], "unhealthy")
+
     def test_health_reports_memory_inbox_as_degraded(self):
         import main
 

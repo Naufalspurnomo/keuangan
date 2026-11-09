@@ -7,40 +7,161 @@ on:
 
 permissions:
   contents: read
+  issues: write
+
+concurrency:
+  group: production-smoke
+  cancel-in-progress: false
+
+env:
+  BACKEND_ORIGIN: https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app
+  SITE_ORIGIN: https://hollawall.com
+  INCIDENT_TITLE: "[production-smoke] Hollawall production acceptance failed"
 
 jobs:
   smoke:
-    name: Live health smoke
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    name: Live production acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
     steps:
-      - name: Check dashboard HTTPS
+      - name: Check public surfaces
         run: |
+          set -euo pipefail
           curl --fail --silent --show-error --location --max-time 20 \
             --proto '=https' --tlsv1.2 \
             -o /tmp/dashboard.html \
             -w 'dashboard_http=%{http_code}\n' \
-            https://hollawall.com/admin/
+            "$SITE_ORIGIN/admin/"
           grep -q 'Hollawall' /tmp/dashboard.html
 
-      - name: Check backend health contract
+          curl --fail --silent --show-error --location --max-time 20 \
+            --proto '=https' --tlsv1.2 \
+            -o /tmp/presensi.html \
+            -w 'presensi_http=%{http_code}\n' \
+            "$SITE_ORIGIN/absen/presensi/"
+          grep -Eqi 'Hollawall|Presensi' /tmp/presensi.html
+
+      - name: Check anonymous denial
         run: |
+          set -euo pipefail
+          for url in \
+            "$SITE_ORIGIN/admin/api/snapshot.php" \
+            "$SITE_ORIGIN/admin/api/inbox-reviews.php?action=list" \
+            "$BACKEND_ORIGIN/api/dashboard/v1/inbox/reviews"
+          do
+            code=$(curl --silent --show-error --max-time 20 \
+              --proto '=https' --tlsv1.2 \
+              --output /tmp/denial-body \
+              --write-out '%{http_code}' \
+              "$url")
+            case "$code" in
+              401|403) ;;
+              *) echo "anonymous access was not denied: $url ($code)" >&2; exit 1 ;;
+            esac
+          done
+
+      - name: Check backend health and release provenance
+        env:
+          EXPECTED_RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
           curl --fail --silent --show-error --max-time 20 \
             --proto '=https' --tlsv1.2 \
             -o /tmp/health.json \
             -w 'backend_http=%{http_code}\n' \
-            https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app/health
+            "$BACKEND_ORIGIN/health"
+          curl --fail --silent --show-error --max-time 20 \
+            --proto '=https' --tlsv1.2 \
+            -o /tmp/release.json \
+            -w 'release_http=%{http_code}\n' \
+            "$BACKEND_ORIGIN/api/health/release"
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
 
           payload = json.loads(Path('/tmp/health.json').read_text())
+          release = json.loads(Path('/tmp/release.json').read_text())
+          expected = os.environ['EXPECTED_RELEASE_SHA'].strip().lower()
+          actual = str(release.get('release_sha') or '').strip().lower()
+          assert expected and actual == expected, {'expected': expected, 'actual': actual}
           assert payload.get('status') == 'healthy', payload
           inbox = payload.get('transaction_inbox', {})
           assert inbox.get('durable') is True, payload
           assert inbox.get('backlog') == 0, payload
           assert inbox.get('needs_review') == 0, payload
-          assert payload.get('whatsapp_provider', {}).get('reachable') is True, payload
-          assert payload.get('whatsapp_provider', {}).get('logged_in') is True, payload
-          print('health_contract=ok')
+          assert inbox.get('review_writes_enabled') is True, payload
+          assert inbox.get('review_schema_ready') is True, payload
+          assert inbox.get('review_audit_ready') is True, payload
+          provider = payload.get('whatsapp_provider', {})
+          assert provider.get('reachable') is True, payload
+          assert provider.get('connected') is True, payload
+          assert provider.get('logged_in') is True, payload
+          print('production_acceptance=ok')
           PY
+
+      - name: Close recovered incident
+        if: success()
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          INCIDENT_TITLE: ${{ env.INCIDENT_TITLE }}
+        with:
+          script: |
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100,
+            });
+            for (const issue of issues.filter(item => !item.pull_request && item.title === process.env.INCIDENT_TITLE)) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `Recovered: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+              });
+            }
+
+      - name: Open or update production incident
+        if: failure()
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          INCIDENT_TITLE: ${{ env.INCIDENT_TITLE }}
+        with:
+          script: |
+            const body = [
+              'The scheduled Hollawall production acceptance check failed.',
+              '',
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              `Commit expected in production: ${context.sha}`,
+              '',
+              'This issue is deduplicated and will close automatically after a green smoke run.',
+            ].join('\n');
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100,
+            });
+            const existing = issues.find(item => !item.pull_request && item.title === process.env.INCIDENT_TITLE);
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: process.env.INCIDENT_TITLE,
+                body,
+              });
+            }

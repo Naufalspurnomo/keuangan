@@ -6,7 +6,7 @@ import hashlib
 import threading
 from functools import wraps
 import gspread
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 from typing import List, Dict, Optional
@@ -563,6 +563,11 @@ def _create_dompet_sheet_with_split_layout(spreadsheet, dompet_name: str):
     
     secure_log("INFO", f"Created Split Layout sheet: {dompet_name}")
     return sheet
+
+
+def get_operational_sheet_read_only():
+    """Return the existing authoritative operational sheet without creating state."""
+    return get_spreadsheet().worksheet(OPERASIONAL_SHEET_NAME)
 
 
 def get_or_create_operational_sheet():
@@ -2924,6 +2929,107 @@ def get_dashboard_summary():
 
 
 
+class LedgerScanIncomplete(RuntimeError):
+    """At least one authoritative worksheet could not be scanned."""
+
+    def __init__(self, proof: Dict):
+        super().__init__("authoritative ledger scan incomplete")
+        self.proof = proof
+
+
+def _message_id_matches(cell_value: str, target: str) -> bool:
+    cell = str(cell_value or "").strip()
+    wanted = str(target or "").strip()
+    if not cell or not wanted:
+        return False
+    if cell == wanted:
+        return True
+    if '|' in cell:
+        parts = [part.strip() for part in cell.split('|') if part.strip()]
+        return wanted in parts or cell.startswith(f"{wanted}|")
+    return False
+
+
+def find_all_transactions_by_message_id_strict(message_id: str) -> Dict:
+    """Return structured proof only after every authoritative source was read.
+
+    Unlike the compatibility lookup below, this function never converts a
+    source failure into an empty result. Review actions must fail closed when
+    the proof is partial.
+    """
+    target = str(message_id or "").strip()
+    proof: Dict = {
+        "status": "complete",
+        "message_id": target,
+        "matches": [],
+        "checked_sources": [],
+        "failed_sources": [],
+        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    if not target:
+        return proof
+
+    for dompet in DOMPET_SHEETS:
+        try:
+            sheet = get_dompet_sheet(dompet)
+            if sheet is None:
+                raise RuntimeError("worksheet unavailable")
+            in_ids = sheet.col_values(SPLIT_PEMASUKAN['MESSAGE_ID'])
+            out_ids = sheet.col_values(SPLIT_PENGELUARAN['MESSAGE_ID'])
+            max_len = max(len(in_ids), len(out_ids))
+            for row_idx in range(SPLIT_LAYOUT_DATA_START - 1, max_len):
+                row_number = row_idx + 1
+                mid_in = in_ids[row_idx] if row_idx < len(in_ids) else ""
+                mid_out = out_ids[row_idx] if row_idx < len(out_ids) else ""
+                if _message_id_matches(mid_in, target):
+                    row_data = sheet.row_values(row_number)
+                    amount = row_data[SPLIT_PEMASUKAN['JUMLAH'] - 1] if len(row_data) >= SPLIT_PEMASUKAN['JUMLAH'] else 0
+                    proof["matches"].append({
+                        "source_key": str(mid_in), "dompet": dompet, "row": row_number,
+                        "amount": _parse_amount(amount), "tipe": "Pemasukan",
+                    })
+                if _message_id_matches(mid_out, target):
+                    row_data = sheet.row_values(row_number)
+                    amount = row_data[SPLIT_PENGELUARAN['JUMLAH'] - 1] if len(row_data) >= SPLIT_PENGELUARAN['JUMLAH'] else 0
+                    proof["matches"].append({
+                        "source_key": str(mid_out), "dompet": dompet, "row": row_number,
+                        "amount": _parse_amount(amount), "tipe": "Pengeluaran",
+                    })
+            proof["checked_sources"].append(dompet)
+        except Exception as exc:
+            secure_log("ERROR", f"Strict ledger scan failed for {dompet}: {type(exc).__name__}")
+            proof["failed_sources"].append(dompet)
+
+    try:
+        sheet = get_operational_sheet_read_only()
+        if sheet is None:
+            raise RuntimeError("worksheet unavailable")
+        header = sheet.row_values(OPERASIONAL_HEADER_ROW)
+        message_id_column = OPERASIONAL_COLS['MESSAGE_ID']
+        if len(header) < message_id_column or str(header[message_id_column - 1]).strip() != "MessageID":
+            raise RuntimeError("operational worksheet schema mismatch")
+        ids = sheet.col_values(message_id_column)
+        for row_idx, cell in enumerate(ids):
+            if not _message_id_matches(cell, target):
+                continue
+            row_number = row_idx + 1
+            row_data = sheet.row_values(row_number)
+            amount = row_data[OPERASIONAL_COLS['JUMLAH'] - 1] if len(row_data) >= OPERASIONAL_COLS['JUMLAH'] else 0
+            proof["matches"].append({
+                "source_key": str(cell), "dompet": OPERASIONAL_SHEET_NAME,
+                "row": row_number, "amount": _parse_amount(amount), "tipe": "Pengeluaran",
+            })
+        proof["checked_sources"].append(OPERASIONAL_SHEET_NAME)
+    except Exception as exc:
+        secure_log("ERROR", f"Strict ledger scan failed for operational: {type(exc).__name__}")
+        proof["failed_sources"].append(OPERASIONAL_SHEET_NAME)
+
+    if proof["failed_sources"]:
+        proof["status"] = "partial"
+        raise LedgerScanIncomplete(proof)
+    return proof
+
+
 def find_all_transactions_by_message_id(message_id: str) -> List[Dict]:
     """
     Find ALL transactions by MessageID across all dompet sheets.
@@ -2935,18 +3041,7 @@ def find_all_transactions_by_message_id(message_id: str) -> List[Dict]:
     results = []
 
     def _match_message_id(cell_value: str, target: str) -> bool:
-        if not cell_value or not target:
-            return False
-        if cell_value == target:
-            return True
-        # Support combined format: event_id|idx
-        if '|' in cell_value:
-            parts = [p.strip() for p in cell_value.split('|') if p.strip()]
-            if target in parts:
-                return True
-            if cell_value.startswith(f"{target}|"):
-                return True
-        return False
+        return _message_id_matches(cell_value, target)
     
     try:
         # Search dompet sheets (split layout)

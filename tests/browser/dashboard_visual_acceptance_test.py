@@ -189,6 +189,17 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             "**/admin/api/presensi.php**",
             lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps({"version": "presensi.admin.v1", "records": []})),
         )
+        context.route(
+            "**/admin/api/inbox-reviews.php**",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({
+                    "api_version": "dashboard.v1",
+                    "data": {"items": [], "writes_enabled": False, "allowed_actions": []},
+                }),
+            ),
+        )
         context.route("**/favicon.ico", lambda route: route.fulfill(status=204, body=""))
         page = context.new_page()
         console_errors = []
@@ -249,6 +260,17 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         context.route(
             "**/admin/api/presensi.php**",
             lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps({"version": "presensi.admin.v1", "records": []})),
+        )
+        context.route(
+            "**/admin/api/inbox-reviews.php**",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({
+                    "api_version": "dashboard.v1",
+                    "data": {"items": [], "writes_enabled": False, "allowed_actions": []},
+                }),
+            ),
         )
         context.route("**/favicon.ico", lambda route: route.fulfill(status=204, body=""))
         return context, page, console_errors, state
@@ -317,7 +339,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 page.get_by_role("button", name="Buka navigasi").click()
                 self.assertTrue(page.locator(".sidebar").evaluate("node => node.classList.contains('is-open')"))
                 navigation = page.get_by_role("navigation", name="Menu utama")
-                self.assertEqual(navigation.get_by_role("button").count(), 7)
+                self.assertEqual(navigation.get_by_role("button").count(), 8)
                 expect(navigation.get_by_role("button", name=re.compile(r"^Transaksi"))).to_have_count(0)
                 navigation.get_by_role("button", name=re.compile(r"^Proyek")).click()
                 page.get_by_role("heading", name="Umur dan status proyek").wait_for()
@@ -330,6 +352,20 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 page.screenshot(path=str(ARTIFACTS / f"mobile-{theme}-390x844.png"), full_page=True)
                 context.close()
 
+
+    def test_owner_review_route_is_read_only_and_responsive(self):
+        for width, height in ((390, 844), (1440, 1000)):
+            with self.subTest(width=width):
+                context, page, errors = self.new_page(width, height, "dark")
+                page.goto(self.base_url, wait_until="networkidle")
+                if width <= 760:
+                    page.get_by_role("button", name="Buka navigasi").click()
+                page.locator(".sidebar nav button").filter(has_text="Perlu Ditinjau").click()
+                page.get_by_role("heading", name="Perlu Ditinjau", exact=True).wait_for()
+                expect(page.get_by_text("Tidak ada pesan yang menunggu keputusan.")).to_be_visible()
+                self.assertFalse(page.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth"))
+                self.assertEqual(errors, [])
+                context.close()
 
     def test_projects_route_uses_lifecycle_market_and_project_registry(self):
         for width, height in ((390, 844), (1440, 1000)):

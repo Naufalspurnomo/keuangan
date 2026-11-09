@@ -509,15 +509,31 @@ def health_check():
             'transaction_correction_reversal': False,
             'hard_delete': False,
         }
+        review_writes_enabled = bool(inbox.get('review_writes_enabled'))
+        review_schema_ready = (
+            not review_writes_enabled
+            or (
+                durable
+                and bool(inbox.get('review_schema_ready'))
+                and bool(inbox.get('review_audit_ready'))
+            )
+        )
+        review_readiness = {
+            'writes_enabled': review_writes_enabled,
+            'schema_ready': bool(inbox.get('review_schema_ready')),
+            'audit_ready': bool(inbox.get('review_audit_ready')),
+            'ready': review_schema_ready,
+        }
         serving = (
             (durable or not inbox_required())
             and security_ready
             and dashboard_schema_ready
             and project_schema_ready
+            and review_schema_ready
         )
         if not security_ready:
             overall_status = 'unhealthy'
-        elif not dashboard_schema_ready or not project_schema_ready:
+        elif not dashboard_schema_ready or not project_schema_ready or not review_schema_ready:
             overall_status = 'unhealthy'
         elif durable and whatsapp_ready:
             overall_status = 'healthy'
@@ -531,6 +547,7 @@ def health_check():
             'dashboard_write_schema': dashboard_schema,
             'project_document_schema': project_schema,
             'project_document_readiness': project_document_readiness,
+            'inbox_review_readiness': review_readiness,
             'security': {
                 'ready': security_ready,
                 'required': security_required,

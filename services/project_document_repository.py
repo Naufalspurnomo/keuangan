@@ -824,7 +824,7 @@ class ProjectDocumentRepository:
                             %s, %s, %s, NULLIF(%s, ''), NULLIF(%s, ''),
                             NULLIF(%s, ''), %s, NULLIF(%s, ''), NULLIF(%s, ''),
                             %s, %s, %s, NULLIF(%s, ''), %s::jsonb, %s::jsonb
-                        ) RETURNING """ + _SELECT_PROJECT,
+                        ) RETURNING """ + _SELECT_PROJECT,  # nosec B608 -- selected columns are module constants
                         (
                             project_id, name, client_name,
                             str(command.get("client_company") or "").strip(),
@@ -890,7 +890,7 @@ class ProjectDocumentRepository:
         try:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
-                    cursor.execute("SELECT " + _SELECT_PROJECT + " FROM projects ORDER BY created_at DESC, id")
+                    cursor.execute("SELECT " + _SELECT_PROJECT + " FROM projects ORDER BY created_at DESC, id")  # nosec B608 -- selected columns are module constants
                     rows = cursor.fetchall()
             return [_row_dict(None, _PROJECT_COLUMNS, row) or {} for row in rows]
         except ProjectDocumentError:
@@ -904,7 +904,7 @@ class ProjectDocumentRepository:
         try:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
-                    cursor.execute("SELECT " + _SELECT_PROJECT + " FROM projects WHERE id = %s", (project_id,))
+                    cursor.execute("SELECT " + _SELECT_PROJECT + " FROM projects WHERE id = %s", (project_id,))  # nosec B608 -- selected columns are module constants
                     row = cursor.fetchone()
             if not row:
                 raise ProjectDocumentNotFound("project not found")
@@ -1096,7 +1096,9 @@ class ProjectDocumentRepository:
 
     @staticmethod
     def _raise_version_or_not_found(cursor: Any, table: str, record_id: str) -> None:
-        cursor.execute(f"SELECT 1 FROM {table} WHERE id = %s", (record_id,))
+        if table != "projects":
+            raise ValueError("unsupported optimistic-lock table")
+        cursor.execute("SELECT 1 FROM projects WHERE id = %s", (record_id,))
         if cursor.fetchone():
             raise ProjectDocumentConflict("optimistic lock version conflict")
         raise ProjectDocumentNotFound(f"{table.rstrip('s')} not found")
@@ -1160,7 +1162,7 @@ class ProjectDocumentRepository:
                 %s, %s, %s, NULLIF(%s, ''), NULLIF(%s, ''),
                 NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''), %s,
                 %s::jsonb, %s::jsonb
-            ) RETURNING """ + _SELECT_DOCUMENT,
+            ) RETURNING """ + _SELECT_DOCUMENT,  # nosec B608 -- selected columns are module constants
             (
                 document_id, project_id, issuer_key, document_type, invoice_kind,
                 values.get("issue_date"), values.get("due_date"), values.get("valid_until"),
@@ -1742,7 +1744,7 @@ class ProjectDocumentRepository:
     @classmethod
     def _load_document(cls, cursor: Any, document_id: str, *, for_update: bool = False) -> dict[str, Any]:
         cursor.execute(
-            "SELECT " + _SELECT_DOCUMENT + " FROM project_documents WHERE id = %s" + (" FOR UPDATE" if for_update else ""),
+            "SELECT " + _SELECT_DOCUMENT + " FROM project_documents WHERE id = %s" + (" FOR UPDATE" if for_update else ""),  # nosec B608 -- columns and lock suffix are internal constants
             (document_id,),
         )
         document = _row_dict(cursor, _DOCUMENT_COLUMNS, cursor.fetchone())
@@ -1864,7 +1866,7 @@ class ProjectDocumentRepository:
                             "FINAL monetary fields are repository-generated"
                         )
                     cursor.execute(
-                        f"UPDATE project_documents SET {', '.join(assignments)} "
+                        f"UPDATE project_documents SET {', '.join(assignments)} "  # nosec B608 -- assignments come from a field allowlist
                         "WHERE id = %s AND lock_version = %s AND status = 'draft' RETURNING project_id",
                         tuple(params),
                     )
@@ -1911,7 +1913,7 @@ class ProjectDocumentRepository:
             "project", "category", "description", "is_valid", "payload",
         ]
         cursor.execute(
-            "SELECT " + ", ".join(columns) + " FROM financial_ledger WHERE source_key = %s" +
+            "SELECT " + ", ".join(columns) + " FROM financial_ledger WHERE source_key = %s" +  # nosec B608 -- columns and lock suffix are internal constants
             (" FOR UPDATE" if for_update else ""),
             (source_key,),
         )
@@ -2671,7 +2673,7 @@ class ProjectDocumentRepository:
                     if not identity:
                         raise ProjectDocumentNotFound("document not found")
                     cursor.execute(
-                        "SELECT " + _SELECT_PROJECT + " FROM projects WHERE id = %s FOR UPDATE",
+                        "SELECT " + _SELECT_PROJECT + " FROM projects WHERE id = %s FOR UPDATE",  # nosec B608 -- selected columns are module constants
                         (identity[0],),
                     )
                     project = _row_dict(cursor, _PROJECT_COLUMNS, cursor.fetchone())
@@ -2733,7 +2735,7 @@ class ProjectDocumentRepository:
                         "logo_path", "profile_version",
                     ]
                     cursor.execute(
-                        "SELECT " + ", ".join(issuer_columns) +
+                        "SELECT " + ", ".join(issuer_columns) +  # nosec B608 -- issuer columns are internal constants
                         " FROM project_issuer_profiles WHERE issuer_key = %s FOR UPDATE",
                         (document["issuer_key"],),
                     )
@@ -3065,7 +3067,7 @@ class ProjectDocumentRepository:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         f"SELECT {', '.join(columns)} FROM project_document_events "
-                        f"WHERE {field} = %s ORDER BY id",
+                        f"WHERE {field} = %s ORDER BY id",  # nosec B608 -- field is selected from a two-value internal allowlist
                         (value,),
                     )
                     rows = cursor.fetchall()
