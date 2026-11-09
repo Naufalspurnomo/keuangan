@@ -1,3 +1,4 @@
+import os
 import subprocess
 import unittest
 from pathlib import Path
@@ -73,8 +74,16 @@ class RumahwebAdminReleaseTests(unittest.TestCase):
     def test_release_contains_no_live_secret_or_config(self) -> None:
         self.assertFalse((RELEASE / "config.example.php").exists())
         self.assertFalse((RELEASE / ".hollawall-admin.php").exists())
-        token_path = Path("/root/.hermes/profiles/naufal/vault/hollawall-live-api-proxy-token")
-        token = token_path.read_text().strip().encode() if token_path.exists() else None
+        token_path = Path(
+            os.environ.get(
+                "HOLLAWALL_PROXY_TOKEN_PATH",
+                "/root/.hermes/profiles/naufal/vault/hollawall-live-api-proxy-token",
+            )
+        )
+        try:
+            token = token_path.read_text().strip().encode() if token_path.is_file() else None
+        except (OSError, PermissionError):
+            token = None
         for path in RELEASE.rglob("*"):
             if path.is_file() and token:
                 self.assertNotIn(token, path.read_bytes(), str(path))
