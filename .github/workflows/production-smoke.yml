@@ -1,0 +1,46 @@
+name: Production Smoke
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Live health smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check dashboard HTTPS
+        run: |
+          curl --fail --silent --show-error --location --max-time 20 \
+            --proto '=https' --tlsv1.2 \
+            -o /tmp/dashboard.html \
+            -w 'dashboard_http=%{http_code}\n' \
+            https://hollawall.com/admin/
+          grep -q 'Hollawall' /tmp/dashboard.html
+
+      - name: Check backend health contract
+        run: |
+          curl --fail --silent --show-error --max-time 20 \
+            --proto '=https' --tlsv1.2 \
+            -o /tmp/health.json \
+            -w 'backend_http=%{http_code}\n' \
+            https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app/health
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path('/tmp/health.json').read_text())
+          assert payload.get('status') == 'healthy', payload
+          inbox = payload.get('transaction_inbox', {})
+          assert inbox.get('durable') is True, payload
+          assert inbox.get('backlog') == 0, payload
+          assert inbox.get('needs_review') == 0, payload
+          assert payload.get('whatsapp_provider', {}).get('reachable') is True, payload
+          assert payload.get('whatsapp_provider', {}).get('logged_in') is True, payload
+          print('health_contract=ok')
+          PY

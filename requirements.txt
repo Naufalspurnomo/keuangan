@@ -9,7 +9,6 @@ google-auth==2.26.1
 # AI & Processing
 groq>=0.9.0
 # easyocr==1.7.1  # COMMENTED: Requires 2GB RAM. Uncomment if USE_EASYOCR=true in .env
-Pillow==12.3.0
 
 # Embeddings for Duplicate Detection (Layer 5) - OPTIONAL
 # COMMENTED: sentence-transformers pulls PyTorch (~2GB), exceeds Koyeb free tier
@@ -25,7 +24,8 @@ psycopg[binary]>=3.2.0,<4
 # Image Processing (Lightweight)
 opencv-python-headless==4.9.0.80
 numpy==1.26.3
+Pillow==13.0.0
 
 # PDF
 reportlab==4.0.9
-pypdf==6.16.1
+pypdf==6.21.4
