@@ -32,8 +32,21 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dashboard dependencies
+        run: npm ci --prefix dashboard
+
+      - name: Build dashboard fixture used by backend tests
+        run: npm run build --prefix dashboard
+
       - name: Install backend dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt pip-audit bandit ruff
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt pytest pip-audit bandit ruff
 
       - name: Compile backend
         run: python -m py_compile agent_core/conversation_memory.py agent_core/audit_log.py agent_core/intent_router.py agent_core/query_engine.py agent_core/semantic_dedup.py handlers/nl_query_handler.py services/finance_agent.py main.py
