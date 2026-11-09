@@ -1,0 +1,117 @@
+name: Production Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend tests and security
+    runs-on: ubuntu-latest
+    env:
+      PYTHON_DOTENV_DISABLED: "1"
+      STATE_STORE_BACKEND: local
+      STATE_STORE_REQUIRED: "0"
+      DURABLE_INBOX_REQUIRED: "0"
+      LEDGER_STORE_BACKEND: off
+      LEDGER_READ_BACKEND: off
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt pip-audit bandit ruff
+
+      - name: Compile backend
+        run: python -m py_compile agent_core/conversation_memory.py agent_core/audit_log.py agent_core/intent_router.py agent_core/query_engine.py agent_core/semantic_dedup.py handlers/nl_query_handler.py services/finance_agent.py main.py
+
+      - name: Backend tests (excluding browser acceptance)
+        run: |
+          python - <<'PY'
+          import unittest
+
+          discovered = unittest.TestLoader().discover('tests', pattern='*_test.py')
+          selected = unittest.TestSuite()
+
+          def collect(node):
+              try:
+                  children = iter(node)
+              except TypeError:
+                  if not node.id().startswith('browser.'):
+                      selected.addTest(node)
+                  return
+              for child in children:
+                  collect(child)
+
+          collect(discovered)
+          print(f'Running {selected.countTestCases()} backend tests')
+          result = unittest.TextTestRunner(verbosity=1).run(selected)
+          raise SystemExit(0 if result.wasSuccessful() else 1)
+          PY
+
+      - name: Browser acceptance tests
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+          python -m unittest discover -s tests/browser -p '*_test.py'
+
+      - name: Dependency audit
+        run: pip-audit -r requirements.txt --progress-spinner off
+
+      - name: Security lint
+        run: bandit -r . -x archive,tests,output,tmp --severity-level medium --confidence-level medium
+
+      - name: Static lint
+        run: ruff check . --select F821,E9 --exclude archive --exclude tests --exclude output --exclude tmp
+
+  dashboard:
+    name: Dashboard tests and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dashboard dependencies
+        run: npm ci
+
+      - name: Dashboard tests
+        run: npm test -- --run
+
+      - name: Dashboard production build
+        run: npm run build
+
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+
+  diff:
+    name: Release hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check whitespace errors
+        run: git diff --check
