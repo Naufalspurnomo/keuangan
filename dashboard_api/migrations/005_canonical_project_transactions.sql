@@ -32,6 +32,18 @@ BEGIN
         WHERE ledger.project_id IS NULL
           AND LOWER(BTRIM(ledger.project)) = unique_names.normalized_name;
 
+        IF EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'financial_ledger_project_id_fkey'
+              AND conrelid = 'financial_ledger'::regclass
+              AND pg_get_constraintdef(oid, TRUE) <>
+                  'FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE RESTRICT'
+        ) THEN
+            ALTER TABLE financial_ledger
+                DROP CONSTRAINT financial_ledger_project_id_fkey;
+        END IF;
+
         IF NOT EXISTS (
             SELECT 1
             FROM pg_constraint

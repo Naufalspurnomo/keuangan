@@ -148,6 +148,64 @@ describe('project/document API', () => {
     expect(await api.getDocument(document.id)).toMatchObject({ id: document.id, type: 'invoice' })
   })
 
+  it('normalizes authoritative payment reads and rejects non-integer money', async () => {
+    const payment = {
+      project_id: project.id,
+      contract_total: 1_000_000,
+      invoiced_total: 400_000,
+      unbilled_total: 600_000,
+      paid_total: 200_000,
+      contract_outstanding: 800_000,
+      overpaid_total: 0,
+      unapplied_total: 0,
+      payment_status: 'PARTIALLY_PAID',
+      invoices: [{
+        invoice_id: document.id,
+        invoice_kind: 'DP',
+        official_number: 'INV/HW/2026/000001',
+        due_date: '2026-11-10',
+        invoice_total: 400_000,
+        paid_total: 200_000,
+        outstanding: 200_000,
+        payment_status: 'PARTIALLY_PAID',
+      }],
+    }
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('payment_summary')) return json({ api_version: 'dashboard.v1', data: payment, meta })
+      if (url.includes('receipt_options')) return json({ api_version: 'dashboard.v1', data: {
+        invoices: payment.invoices,
+        transactions: [{ source_key: 'ledger:1', amount: 200_000, available_amount: 200_000, description: 'Transfer DP', transaction_date: '2026-11-03' }],
+      }, meta })
+      throw new Error(`Unexpected request ${url}`)
+    })
+    const api = createProjectDocumentApi({ request })
+    expect(await api.getPaymentSummary(project.id)).toMatchObject({ paid_total: 200_000, contract_outstanding: 800_000 })
+    expect((await api.getReceiptOptions(project.id)).transactions[0]).toMatchObject({ source_key: 'ledger:1', amount: 200_000 })
+
+    const invalid = createProjectDocumentApi({ request: vi.fn(async () => json({
+      api_version: 'dashboard.v1', data: { ...payment, paid_total: '200000' }, meta,
+    })) })
+    await expect(invalid.getPaymentSummary(project.id)).rejects.toMatchObject({ code: 'invalid_payment_summary' })
+  })
+
+  it('preserves null pre-contract totals instead of inventing zero', async () => {
+    const request = vi.fn(async () => json({ api_version: 'dashboard.v1', data: {
+      project_id: project.id,
+      contract_total: null,
+      invoiced_total: 0,
+      unbilled_total: null,
+      paid_total: 0,
+      contract_outstanding: null,
+      overpaid_total: 0,
+      unapplied_total: 0,
+      payment_status: 'NOT_CONTRACTED',
+      invoices: [],
+    }, meta }))
+    const result = await createProjectDocumentApi({ request }).getPaymentSummary(project.id)
+    expect(result).toMatchObject({ contract_total: null, contract_outstanding: null, payment_status: 'NOT_CONTRACTED' })
+  })
+
   it('sends project commands with proxy-allowlisted fields', async () => {
     const request = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
@@ -184,7 +242,7 @@ describe('project/document API', () => {
     const request = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => json({ api_version: 'dashboard.v1', data: document, meta }))
     const api = createProjectDocumentApi({ request, keyFactory: () => 'idem-key-1234567890' })
     const draft = {
-      id: null, project_id: project.id, type: 'invoice' as const, invoice_kind: 'DP' as const, issue_date: '2026-11-03', due_date: '2026-11-10', valid_until: null, notes: '', payment_terms: '', prepared_by: '', client_signatory: '', project_image_url: null,
+      id: null, project_id: project.id, type: 'invoice' as const, invoice_kind: 'DP' as const, applies_to_invoice_id: null, issue_date: '2026-11-03', due_date: '2026-11-10', valid_until: null, notes: '', payment_terms: '', prepared_by: '', client_signatory: '', project_image_url: null,
       lines: [{ id: 'line-local', description: 'Panel', quantity: '1', unit: 'unit', unit_price: 1000, discount_percent: '0' }], discount_mode: 'none' as const, discount_value: '0', tax_percent: '0', allocations: [],
     }
     await api.createDocument(draft).submit(session)
@@ -205,7 +263,7 @@ describe('project/document API', () => {
     const request = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => json({ api_version: 'dashboard.v1', data: document, meta }))
     const api = createProjectDocumentApi({ request, keyFactory: () => 'idem-key-1234567890' })
     const base = {
-      id: null, project_id: project.id, issue_date: '2026-11-03', due_date: '2026-11-10', valid_until: null,
+      id: null, project_id: project.id, applies_to_invoice_id: null, issue_date: '2026-11-03', due_date: '2026-11-10', valid_until: null,
       notes: 'Metadata only', payment_terms: 'Net 7', prepared_by: 'Naufal', client_signatory: 'PT Client', project_image_url: null,
       lines: [{ id: 'line-local', description: 'Derived', quantity: '1', unit: 'unit', unit_price: 1000, discount_percent: '0' }],
       discount_mode: 'fixed' as const, discount_value: '500', tax_percent: '11', allocations: [],

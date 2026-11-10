@@ -88,6 +88,27 @@ class FakeProjectDocumentRepository:
         self.calls.append(("list_documents", project_id))
         return [dict(self.document)]
 
+    def get_project_payment_summary(self, project_id):
+        self._raise()
+        self.calls.append(("get_project_payment_summary", project_id))
+        return {
+            "project_id": project_id,
+            "contract_total": 1_000_000,
+            "invoiced_total": 400_000,
+            "unbilled_total": 600_000,
+            "paid_total": 200_000,
+            "contract_outstanding": 800_000,
+            "overpaid_total": 0,
+            "unapplied_total": 0,
+            "payment_status": "PARTIALLY_PAID",
+            "invoices": [],
+        }
+
+    def list_receipt_candidates(self, project_id):
+        self._raise()
+        self.calls.append(("list_receipt_candidates", project_id))
+        return [{"source_key": "ledger:1", "available_amount": 200_000}]
+
     def get_document(self, document_id):
         self._raise()
         self.calls.append(("get_document", document_id))
@@ -442,6 +463,48 @@ class ProjectDocumentRouteTests(unittest.TestCase):
         response = client.get(f"/api/dashboard/v1/documents/{DOCUMENT_ID}/download")
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.get_json()["error"]["code"], "project_document_unavailable")
+
+
+    def test_payment_summary_and_receipt_options_are_owner_scoped_reads(self):
+        app, repository = self.make_app(enabled=False)
+        client = app.test_client()
+        self.login(client)
+
+        summary_response = client.get(
+            f"/api/dashboard/v1/projects/{PROJECT_ID}/payment-summary"
+        )
+        options_response = client.get(
+            f"/api/dashboard/v1/projects/{PROJECT_ID}/receipt-options"
+        )
+
+        self.assertEqual(summary_response.status_code, 200)
+        summary = self.envelope(summary_response)["data"]
+        self.assertEqual(summary["paid_total"], 200_000)
+        self.assertEqual(summary["contract_outstanding"], 800_000)
+        self.assertEqual(options_response.status_code, 200)
+        options = self.envelope(options_response)["data"]
+        self.assertEqual(options["transactions"][0]["source_key"], "ledger:1")
+        self.assertIn(("get_project_payment_summary", PROJECT_ID), repository.calls)
+        self.assertIn(("list_receipt_candidates", PROJECT_ID), repository.calls)
+        self.assertIn("no-store", summary_response.headers["Cache-Control"])
+
+    def test_receipt_route_forwards_invoice_target(self):
+        app, repository = self.make_app(enabled=True)
+        client = app.test_client()
+        self.login(client)
+        response = client.post(
+            f"/api/dashboard/v1/projects/{PROJECT_ID}/documents/receipts",
+            headers=self.write_headers(),
+            json={
+                "idempotency_key": IDEMPOTENCY_KEY,
+                "invoice_id": DOCUMENT_ID,
+                "allocations": [{"ledger_source_key": "ledger:1", "amount": 200_000}],
+                "values": {},
+            },
+        )
+        self.assertEqual(response.status_code, 201)
+        call = next(item for item in repository.calls if item[0] == "create_receipt")
+        self.assertEqual(call[2]["values"]["applies_to_invoice_id"], DOCUMENT_ID)
 
 
 class ProjectDocumentProductionWiringTests(unittest.TestCase):

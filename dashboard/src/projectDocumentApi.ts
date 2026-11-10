@@ -8,7 +8,9 @@ import {
   type ProjectDraft,
   type ProjectRecord,
   type ProductionProjectStatus,
+  type ProjectPaymentSummary,
   type ReceiptAllocation,
+  type ReceiptOptions,
 } from './projectDocuments'
 
 export const PROJECTS_ENDPOINT = '/admin/api/projects.php'
@@ -86,6 +88,16 @@ function text(value: unknown) {
 
 function nullableText(value: unknown) {
   return typeof value === 'string' && value ? value : null
+}
+
+function money(value: unknown, field: string): number
+function money(value: unknown, field: string, nullable: true): number | null
+function money(value: unknown, field: string, nullable = false): number | null {
+  if (nullable && value === null) return null
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new ProjectDocumentApiError(`${field} tidak valid.`, { code: 'invalid_payment_summary' })
+  }
+  return value
 }
 
 function sameOriginPath(endpoint: string) {
@@ -219,6 +231,71 @@ function normalizeAllocation(value: unknown): ReceiptAllocation {
   }
 }
 
+function invoicePaymentStatus(value: unknown): ProjectPaymentSummary['invoices'][number]['payment_status'] {
+  if (value === 'UNPAID' || value === 'PARTIALLY_PAID' || value === 'PAID') return value
+  throw new ProjectDocumentApiError('Status pembayaran invoice tidak valid.', { code: 'invalid_payment_summary' })
+}
+
+function paymentStatus(value: unknown): ProjectPaymentSummary['payment_status'] {
+  if (value === 'NOT_CONTRACTED' || value === 'UNPAID' || value === 'PARTIALLY_PAID' || value === 'PAID') return value
+  throw new ProjectDocumentApiError('Status pembayaran tidak valid.', { code: 'invalid_payment_summary' })
+}
+
+function normalizeInvoicePayment(value: unknown): ProjectPaymentSummary['invoices'][number] {
+  const item = record(value)
+  if (!item || typeof item.invoice_id !== 'string' || !UUID.test(item.invoice_id)
+      || !['DP', 'PROGRESS', 'FINAL'].includes(String(item.invoice_kind))) {
+    throw new ProjectDocumentApiError('Ringkasan invoice tidak valid.', { code: 'invalid_payment_summary' })
+  }
+  return {
+    invoice_id: item.invoice_id,
+    invoice_kind: item.invoice_kind as ProjectPaymentSummary['invoices'][number]['invoice_kind'],
+    official_number: text(item.official_number),
+    due_date: nullableText(item.due_date),
+    invoice_total: money(item.invoice_total, 'Total invoice'),
+    paid_total: money(item.paid_total, 'Pembayaran invoice'),
+    outstanding: money(item.outstanding, 'Sisa invoice'),
+    payment_status: invoicePaymentStatus(item.payment_status),
+  }
+}
+
+function normalizePaymentSummary(value: unknown): ProjectPaymentSummary {
+  const item = record(value)
+  if (!item || typeof item.project_id !== 'string' || !UUID.test(item.project_id) || !Array.isArray(item.invoices)) {
+    throw new ProjectDocumentApiError('Ringkasan pembayaran tidak valid.', { code: 'invalid_payment_summary' })
+  }
+  return {
+    project_id: item.project_id,
+    contract_total: money(item.contract_total, 'Nilai kontrak', true),
+    invoiced_total: money(item.invoiced_total, 'Total tagihan'),
+    unbilled_total: money(item.unbilled_total, 'Sisa belum ditagihkan', true),
+    paid_total: money(item.paid_total, 'Total pembayaran'),
+    contract_outstanding: money(item.contract_outstanding, 'Sisa pembayaran', true),
+    overpaid_total: money(item.overpaid_total, 'Kelebihan pembayaran'),
+    unapplied_total: money(item.unapplied_total, 'Pembayaran belum dialokasikan'),
+    payment_status: paymentStatus(item.payment_status),
+    invoices: item.invoices.map(normalizeInvoicePayment),
+  }
+}
+
+function normalizeReceiptOptions(value: unknown): ReceiptOptions {
+  const item = record(value)
+  if (!item || !Array.isArray(item.invoices) || !Array.isArray(item.transactions)) {
+    throw new ProjectDocumentApiError('Pilihan kuitansi tidak valid.', { code: 'invalid_receipt_options' })
+  }
+  return {
+    invoices: item.invoices.map(normalizeInvoicePayment),
+    transactions: item.transactions.map((candidate) => {
+      const allocation = normalizeAllocation(candidate)
+      const source = record(candidate)
+      const available = money(source?.available_amount, 'Saldo transaksi')
+      money(source?.amount, 'Nilai transaksi')
+      if (!allocation.source_key) throw new ProjectDocumentApiError('Source transaksi tidak valid.', { code: 'invalid_receipt_options' })
+      return { ...allocation, transaction_id: allocation.source_key, available_amount: available, amount: available }
+    }),
+  }
+}
+
 function normalizeDocument(value: unknown): ProjectDocumentRecord {
   const item = record(value)
   const documentType = item?.document_type ?? item?.type
@@ -238,6 +315,7 @@ function normalizeDocument(value: unknown): ProjectDocumentRecord {
     ...base,
     id: item.id,
     invoice_kind: item.invoice_kind === 'DP' || item.invoice_kind === 'PROGRESS' || item.invoice_kind === 'FINAL' ? item.invoice_kind : null,
+    applies_to_invoice_id: nullableText(item.applies_to_invoice_id),
     due_date: nullableText(item.due_date),
     valid_until: nullableText(item.valid_until),
     notes: text(item.notes),
@@ -436,6 +514,14 @@ export function createProjectDocumentApi(options: ApiOptions = {}) {
       if (!Array.isArray(result.data.items)) throw new ProjectDocumentApiError('Daftar dokumen dari server tidak lengkap.', { code: 'invalid_documents' })
       return { documents: result.data.items.map(normalizeDocument), capabilities: result.capabilities }
     },
+    async getPaymentSummary(projectId: string): Promise<ProjectPaymentSummary> {
+      const result = await read(query(documentsEndpoint, { action: 'payment_summary', project_id: uuid(projectId) }))
+      return normalizePaymentSummary(result.data)
+    },
+    async getReceiptOptions(projectId: string): Promise<ReceiptOptions> {
+      const result = await read(query(documentsEndpoint, { action: 'receipt_options', project_id: uuid(projectId) }))
+      return normalizeReceiptOptions(result.data)
+    },
     async getDocument(documentId: string): Promise<ProjectDocumentRecord> {
       const result = await read(query(documentsEndpoint, { action: 'get', document_id: uuid(documentId) }))
       return normalizeDocument(result.data)
@@ -445,7 +531,7 @@ export function createProjectDocumentApi(options: ApiOptions = {}) {
       if (document.type === 'sales_order') throw new ProjectDocumentApiError('Sales Order dibuat otomatis bersama proyek.', { code: 'unsupported_document_create' })
       if (document.type === 'receipt') {
         return command(documentsEndpoint, {
-          action: 'create_receipt', project_id: document.project_id,
+          action: 'create_receipt', project_id: document.project_id, invoice_id: document.applies_to_invoice_id,
           allocations: document.allocations.map((allocation) => ({ ledger_source_key: allocation.source_key, amount: allocation.amount })),
           values: documentValues(document),
         }, undefined, 'documentWrites', normalizeDocument)

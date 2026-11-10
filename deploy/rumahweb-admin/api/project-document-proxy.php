@@ -217,6 +217,8 @@ function pd_get_route(string $resource, string $action, array $query, string $pr
     }
     $allowed = [
         'list' => ['action', 'project_id'],
+        'payment_summary' => ['action', 'project_id'],
+        'receipt_options' => ['action', 'project_id'],
         'get' => ['action', 'document_id'],
         'audit' => ['action', 'document_id'],
         'download' => ['action', 'document_id'],
@@ -225,9 +227,14 @@ function pd_get_route(string $resource, string $action, array $query, string $pr
         pd_error(400, 'invalid_action', 'Unsupported document action.');
     }
     pd_exact_fields($query, $allowed[$action]);
-    if ($action === 'list') {
+    if (in_array($action, ['list', 'payment_summary', 'receipt_options'], true)) {
         $id = pd_uuid($query['project_id'] ?? null);
-        return ['GET', $projectsBase . '/' . $id . '/documents', false];
+        $suffix = match ($action) {
+            'payment_summary' => '/payment-summary',
+            'receipt_options' => '/receipt-options',
+            default => '/documents',
+        };
+        return ['GET', $projectsBase . '/' . $id . $suffix, false];
     }
     $id = pd_uuid($query['document_id'] ?? null);
     $suffix = $action === 'get' ? '' : '/' . $action;
@@ -258,7 +265,7 @@ function pd_post_route(string $resource, string $action, array $body, string $pr
     }
     $fields = [
         'create_invoice' => ['action', 'project_id', 'idempotency_key', 'kind', 'values'],
-        'create_receipt' => ['action', 'project_id', 'idempotency_key', 'allocations', 'values'],
+        'create_receipt' => ['action', 'project_id', 'idempotency_key', 'invoice_id', 'allocations', 'values'],
         'update' => ['action', 'document_id', 'idempotency_key', 'expected_version', 'changes'],
         'issue' => ['action', 'document_id', 'idempotency_key', 'expected_version'],
         'void' => ['action', 'document_id', 'idempotency_key', 'expected_version', 'reason'],

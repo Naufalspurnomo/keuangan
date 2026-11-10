@@ -271,6 +271,7 @@ class ProjectDocumentService:
         self,
         project_id: str,
         *,
+        invoice_id: str | None = None,
         allocations: Sequence[Mapping[str, Any]],
         values: Mapping[str, Any],
         idempotency_key: str,
@@ -281,6 +282,7 @@ class ProjectDocumentService:
             raise ValueError("at least one receipt allocation is required")
         command = dict(values)
         command.setdefault("tax_percent", "0")
+        command["applies_to_invoice_id"] = str(invoice_id or "").strip() or None
         return self._repository.create_receipt_draft(
             project_id,
             values=command,

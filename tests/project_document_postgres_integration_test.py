@@ -61,10 +61,10 @@ def dsn():
     selected = os.environ["PROJECT_DOCUMENT_TEST_DATABASE_URL"]
     import psycopg
 
-    migration = (
-        Path(__file__).parents[1]
-        / "dashboard_api/migrations/003_project_documents.sql"
-    ).read_text(encoding="utf-8")
+    migration_root = Path(__file__).parents[1] / "dashboard_api/migrations"
+    project_migration = (migration_root / "003_project_documents.sql").read_text(encoding="utf-8")
+    canonical_migration = (migration_root / "005_canonical_project_transactions.sql").read_text(encoding="utf-8")
+    payment_migration = (migration_root / "006_invoice_payment_applications.sql").read_text(encoding="utf-8")
     with psycopg.connect(selected, autocommit=True) as connection:
         with connection.cursor() as cursor:
             cursor.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
@@ -83,6 +83,7 @@ def dsn():
                     company TEXT,
                     wallet TEXT,
                     project TEXT,
+                    project_id UUID,
                     category TEXT,
                     description TEXT,
                     recorded_by TEXT,
@@ -95,7 +96,9 @@ def dsn():
                 )
                 """
             )
-            cursor.execute(migration)
+            cursor.execute(project_migration)
+            cursor.execute(canonical_migration)
+            cursor.execute(payment_migration)
     return selected
 
 
@@ -338,10 +341,10 @@ def insert_income(
                 INSERT INTO financial_ledger (
                     source_key, source_sheet, source_row, source_block,
                     transaction_date, amount, transaction_type, company,
-                    wallet, project, is_valid, payload
+                    wallet, project, project_id, is_valid, payload
                 ) VALUES (
                     %s, 'CV HB(101)', 1, 'pemasukan', DATE '2026-11-03',
-                    %s, 'Pemasukan', %s, %s, %s, TRUE, %s
+                    %s, 'Pemasukan', %s, %s, %s, %s, TRUE, %s
                 )
                 """,
                 (
@@ -349,6 +352,7 @@ def insert_income(
                     amount,
                     company,
                     wallet,
+                    project_id,
                     project_id,
                     Jsonb({"cash_authority": "sheets"}),
                 ),
@@ -2145,3 +2149,296 @@ def test_schema_health_rejects_same_name_noop_guard_function(repository, dsn):
     status = project_document_schema_health(dsn)
     assert status["ready"] is False
     assert status["triggers"] is False
+
+
+def test_invoice_payment_lifecycle_tracks_paid_outstanding_and_final_balance(repository):
+    created = project(repository, key="payment-lifecycle-project-0001")
+    project_id = created["project"]["id"]
+    pre_contract = repository.get_project_payment_summary(project_id)
+    assert pre_contract["payment_status"] == "NOT_CONTRACTED"
+    assert pre_contract["contract_total"] is None
+    assert pre_contract["contract_outstanding"] is None
+    assert pre_contract["unbilled_total"] is None
+    issue_sales_order(
+        repository,
+        created,
+        total=1_000_000,
+        key="payment-lifecycle-sales-order-0001",
+    )
+    dp = issue(
+        repository,
+        invoice_with_total(
+            repository,
+            project_id,
+            "DP",
+            400_000,
+            "payment-lifecycle-dp-0001",
+        ),
+        "payment-lifecycle-dp-issue-0001",
+    )
+
+    first_source = insert_income(
+        repository._dsn,
+        project_id,
+        amount=200_000,
+        source_key="payment-lifecycle-ledger-0001",
+    )
+    first_receipt = ProjectDocumentService(repository).create_receipt(
+        project_id,
+        invoice_id=dp["id"],
+        allocations=[{"ledger_source_key": first_source, "amount": 200_000}],
+        values={"notes": "Pembayaran sebagian DP"},
+        idempotency_key="payment-lifecycle-receipt-create-0001",
+        actor=ACTOR,
+    )
+    before_issue = repository.get_project_payment_summary(project_id)
+    assert before_issue["paid_total"] == 0
+    assert before_issue["invoices"][0]["payment_status"] == "UNPAID"
+
+    issued_first = issue(
+        repository,
+        first_receipt,
+        "payment-lifecycle-receipt-issue-0001",
+    )
+    partial = repository.get_project_payment_summary(project_id)
+    assert partial["contract_total"] == 1_000_000
+    assert partial["invoiced_total"] == 400_000
+    assert partial["unbilled_total"] == 600_000
+    assert partial["paid_total"] == 200_000
+    assert partial["contract_outstanding"] == 800_000
+    assert partial["unapplied_total"] == 0
+    assert partial["payment_status"] == "PARTIALLY_PAID"
+    assert partial["invoices"][0] == {
+        "invoice_id": dp["id"],
+        "invoice_kind": "DP",
+        "official_number": dp["official_number"],
+        "due_date": dp["due_date"].isoformat() if hasattr(dp["due_date"], "isoformat") else dp["due_date"],
+        "invoice_total": 400_000,
+        "paid_total": 200_000,
+        "outstanding": 200_000,
+        "payment_status": "PARTIALLY_PAID",
+    }
+    assert repository.get_document(issued_first["id"])["applies_to_invoice_id"] == dp["id"]
+
+    overpay_source = insert_income(
+        repository._dsn,
+        project_id,
+        amount=250_000,
+        source_key="payment-lifecycle-overpay-ledger-0001",
+    )
+    with pytest.raises(ProjectDocumentConflict, match="exceeds invoice outstanding"):
+        ProjectDocumentService(repository).create_receipt(
+            project_id,
+            invoice_id=dp["id"],
+            allocations=[{"ledger_source_key": overpay_source, "amount": 250_000}],
+            values={},
+            idempotency_key="payment-lifecycle-overpay-create-0001",
+            actor=ACTOR,
+        )
+
+    second_source = insert_income(
+        repository._dsn,
+        project_id,
+        amount=200_000,
+        source_key="payment-lifecycle-ledger-0002",
+    )
+    second_receipt = ProjectDocumentService(repository).create_receipt(
+        project_id,
+        invoice_id=dp["id"],
+        allocations=[{"ledger_source_key": second_source, "amount": 200_000}],
+        values={},
+        idempotency_key="payment-lifecycle-receipt-create-0002",
+        actor=ACTOR,
+    )
+    issue(repository, second_receipt, "payment-lifecycle-receipt-issue-0002")
+    dp_paid = repository.get_project_payment_summary(project_id)
+    assert dp_paid["invoices"][0]["payment_status"] == "PAID"
+    assert dp_paid["invoices"][0]["outstanding"] == 0
+
+    final_invoice = issue(
+        repository,
+        invoice_with_total(
+            repository,
+            project_id,
+            "FINAL",
+            600_000,
+            "payment-lifecycle-final-0001",
+        ),
+        "payment-lifecycle-final-issue-0001",
+    )
+    final_ready = repository.get_project_payment_summary(project_id)
+    assert final_ready["invoiced_total"] == 1_000_000
+    assert final_ready["unbilled_total"] == 0
+    assert final_ready["contract_outstanding"] == 600_000
+    assert [invoice["payment_status"] for invoice in final_ready["invoices"]] == [
+        "PAID",
+        "UNPAID",
+    ]
+
+    final_source = insert_income(
+        repository._dsn,
+        project_id,
+        amount=600_000,
+        source_key="payment-lifecycle-ledger-final-0001",
+    )
+    final_receipt = ProjectDocumentService(repository).create_receipt(
+        project_id,
+        invoice_id=final_invoice["id"],
+        allocations=[{"ledger_source_key": final_source, "amount": 600_000}],
+        values={"notes": "Pelunasan"},
+        idempotency_key="payment-lifecycle-final-receipt-create-0001",
+        actor=ACTOR,
+    )
+    issue(repository, final_receipt, "payment-lifecycle-final-receipt-issue-0001")
+
+    paid = repository.get_project_payment_summary(project_id)
+    assert paid["paid_total"] == 1_000_000
+    assert paid["contract_outstanding"] == 0
+    assert paid["overpaid_total"] == 0
+    assert paid["payment_status"] == "PAID"
+    assert all(invoice["payment_status"] == "PAID" for invoice in paid["invoices"])
+    assert repository.get_project_payment_summary(project_id) == paid
+
+
+
+def test_void_invoice_keeps_cash_and_marks_payment_unapplied(repository):
+    created = project(repository, key="void-payment-project-0001")
+    project_id = created["project"]["id"]
+    issue_sales_order(repository, created, total=500_000, key="void-payment-sales-order-0001")
+    invoice = issue(
+        repository,
+        invoice_with_total(repository, project_id, "DP", 250_000, "void-payment-dp-0001"),
+        "void-payment-dp-issue-0001",
+    )
+    source_key = insert_income(
+        repository._dsn,
+        project_id,
+        amount=100_000,
+        source_key="void-payment-income-0001",
+    )
+    receipt_document = ProjectDocumentService(repository).create_receipt(
+        project_id,
+        invoice_id=invoice["id"],
+        allocations=[{"ledger_source_key": source_key, "amount": 100_000}],
+        values={},
+        idempotency_key="void-payment-receipt-create-0001",
+        actor=ACTOR,
+    )
+    issue(repository, receipt_document, "void-payment-receipt-issue-0001")
+    repository.void_document(
+        invoice["id"],
+        reason="Tagihan dibatalkan",
+        expected_version=invoice["lock_version"],
+        idempotency_key="void-payment-invoice-void-0001",
+        actor=ACTOR,
+    )
+    summary = repository.get_project_payment_summary(project_id)
+    assert summary["invoiced_total"] == 0
+    assert summary["paid_total"] == 100_000
+    assert summary["unapplied_total"] == 100_000
+    assert summary["contract_outstanding"] == 400_000
+    assert summary["invoices"] == []
+
+
+
+def test_void_receipt_releases_transaction_for_reallocation(repository):
+    created = project(repository, key="void-receipt-candidate-project-0001")
+    project_id = created["project"]["id"]
+    source_key = insert_income(
+        repository._dsn,
+        project_id,
+        amount=100_000,
+        source_key="void-receipt-candidate-income-0001",
+    )
+    draft = ProjectDocumentService(repository).create_receipt(
+        project_id,
+        allocations=[{"ledger_source_key": source_key, "amount": 100_000}],
+        values={},
+        idempotency_key="void-receipt-candidate-create-0001",
+        actor=ACTOR,
+    )
+    issued = issue(repository, draft, "void-receipt-candidate-issue-0001")
+    assert repository.list_receipt_candidates(project_id) == []
+
+    repository.void_document(
+        issued["id"],
+        reason="Pembayaran dibatalkan",
+        expected_version=issued["lock_version"],
+        idempotency_key="void-receipt-candidate-void-0001",
+        actor=ACTOR,
+    )
+    candidates = repository.list_receipt_candidates(project_id)
+    assert candidates[0]["source_key"] == source_key
+    assert candidates[0]["available_amount"] == 100_000
+
+
+
+def test_receipt_allocation_uses_canonical_project_id_not_legacy_label(repository, dsn):
+    import psycopg
+
+    first = project(repository, key="canonical-allocation-first-project-0001")["project"]
+    second = project(repository, key="canonical-allocation-second-project-0001")["project"]
+    source_key = insert_income(
+        dsn,
+        first["id"],
+        source_key="canonical-allocation-cross-project-income-0001",
+    )
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE financial_ledger SET project_id = %s WHERE source_key = %s",
+                (second["id"], source_key),
+            )
+
+    with pytest.raises(ProjectDocumentConflict, match="canonical project identity"):
+        ProjectDocumentService(repository).create_receipt(
+            first["id"],
+            allocations=[{"ledger_source_key": source_key, "amount": 100_000}],
+            values={},
+            idempotency_key="canonical-allocation-cross-project-receipt-0001",
+            actor=ACTOR,
+        )
+
+
+def test_receipt_allocation_accepts_project_name_label_when_canonical_id_matches(repository, dsn):
+    import psycopg
+
+    created = project(repository, key="canonical-allocation-name-project-0001")["project"]
+    source_key = insert_income(
+        dsn,
+        created["id"],
+        source_key="canonical-allocation-name-income-0001",
+    )
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE financial_ledger SET project = %s WHERE source_key = %s",
+                (created["name"], source_key),
+            )
+
+    receipt_document = ProjectDocumentService(repository).create_receipt(
+        created["id"],
+        allocations=[{"ledger_source_key": source_key, "amount": 100_000}],
+        values={},
+        idempotency_key="canonical-allocation-name-receipt-0001",
+        actor=ACTOR,
+    )
+    assert receipt_document["project_id"] == created["id"]
+
+
+def test_schema_migration_repairs_malformed_canonical_project_fk(dsn):
+    import psycopg
+
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "ALTER TABLE financial_ledger DROP CONSTRAINT financial_ledger_project_id_fkey"
+            )
+            cursor.execute(
+                "ALTER TABLE financial_ledger ADD CONSTRAINT financial_ledger_project_id_fkey "
+                "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE"
+            )
+
+    assert project_document_schema_health(dsn)["ready"] is False
+    assert ensure_project_document_schema(dsn)["ready"] is True
+    assert project_document_schema_health(dsn)["ready"] is True

@@ -53,6 +53,28 @@ describe('ProjectDocumentComposer', () => {
     expect(within(preview).getByText('Total').nextElementSibling).toHaveTextContent('Rp100.000')
   })
 
+  it('locks invoice target and allocations after a receipt draft is created', () => {
+    const receipt = {
+      ...createEmptyDocumentDraft(project.id, 'receipt', '2026-11-03'),
+      id: '55555555-5555-4555-8555-555555555555',
+      applies_to_invoice_id: '33333333-3333-4333-8333-333333333333',
+      allocations: [{
+        transaction_id: 'income-1',
+        source_key: 'income-1',
+        amount: 100_000,
+        available_amount: 100_000,
+        description: 'Transfer DP',
+        transaction_date: '2026-11-03',
+      }],
+    }
+    render(<ProjectDocumentComposer project={project} document={receipt} writesEnabled onSave={vi.fn()} onClose={vi.fn()} />)
+
+    expect(screen.getByText(/Invoice tujuan dan transaksi dikunci/)).toBeTruthy()
+    expect(screen.getByText(/Transfer DP/)).toBeTruthy()
+    expect(screen.queryByRole('combobox', { name: 'Invoice tujuan' })).toBeNull()
+    expect(screen.queryByRole('checkbox')).toBeNull()
+  })
+
   it('accepts only a capped PNG or JPEG data URL for the project image', async () => {
     const draft = createEmptyDocumentDraft(project.id, 'invoice', '2026-11-03')
     const onSave = vi.fn()

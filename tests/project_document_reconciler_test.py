@@ -105,7 +105,8 @@ def test_repository_income_validator_excludes_expense_office_and_internal_transf
         "is_valid": True,
         "transaction_type": "Pemasukan",
         "source_block": "pemasukan",
-        "project": "project-1",
+        "project": "Project display label",
+        "project_id": "project-1",
         "wallet": "CV HB(101)",
         "company": "HOLLA",
         "amount": 1000,
@@ -113,11 +114,16 @@ def test_repository_income_validator_excludes_expense_office_and_internal_transf
     issuer = {"wallet": "CV HB(101)", "company": "HOLLA"}
 
     ProjectDocumentRepository._validate_income_row(base, project_id="project-1", issuer=issuer)
+    ProjectDocumentRepository._validate_income_row(
+        {**base, "project": "Renamed project display label"},
+        project_id="project-1",
+        issuer=issuer,
+    )
     for changes in (
         {"transaction_type": "Pengeluaran"},
         {"source_block": "operasional"},
         {"source_block": "internal_transfer"},
-        {"project": "project-2"},
+        {"project_id": "project-2"},
         {"wallet": "OTHER"},
     ):
         with pytest.raises(ProjectDocumentConflict):
