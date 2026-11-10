@@ -31,6 +31,8 @@ from services.project_documents import ProjectDocumentService
 API_VERSION = "dashboard.v1"
 MAX_JSON_BODY_BYTES = 256 * 1024
 MAX_JSON_DEPTH = 32
+MAX_EVIDENCE_BYTES = 5 * 1024 * 1024
+_EVIDENCE_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
 _IDEMPOTENCY_KEY = re.compile(r"^[^\s\x00-\x1f\x7f]{16,128}$")
 _CONTENT_TYPE = re.compile(r"^application/json(?:\s*;\s*charset=utf-8)?$", re.IGNORECASE)
 _QUOTED_VERSION = re.compile(r'^"(0|[1-9][0-9]*)"$')
@@ -346,6 +348,134 @@ def create_project_document_blueprint(repository: Any) -> Blueprint:
             ],
             "transactions": repository.list_receipt_candidates(str(project_id)),
         })
+
+    @blueprint.get("/projects/<uuid:project_id>/quotations")
+    @owner_required
+    def list_project_quotations(project_id: UUID):
+        return _response({"items": repository.list_project_quotations(str(project_id))})
+
+    @blueprint.post("/projects/<uuid:project_id>/quotations")
+    @owner_required
+    def create_project_quotation(project_id: UUID):
+        body, key, _, actor = _write_request(
+            allowed_fields=frozenset({"idempotency_key", "values"}), create=True
+        )
+        result = repository.create_project_quotation(
+            str(project_id), values=_mapping(body.get("values"), field="values"),
+            idempotency_key=key, actor=actor,
+        )
+        return _response(result, 201)
+
+    @blueprint.post("/quotations/<uuid:quotation_id>/transition")
+    @owner_required
+    def transition_project_quotation(quotation_id: UUID):
+        body, key, version, actor = _write_request(
+            allowed_fields=frozenset({"idempotency_key", "expected_version", "status", "note"})
+        )
+        result = repository.transition_project_quotation(
+            str(quotation_id), status=str(body.get("status") or ""),
+            note=str(body.get("note") or ""), expected_version=int(version),
+            idempotency_key=key, actor=actor,
+        )
+        return _response(result)
+
+    @blueprint.post("/quotations/<uuid:quotation_id>/apply")
+    @owner_required
+    def apply_project_quotation(quotation_id: UUID):
+        body, key, _, actor = _write_request(
+            allowed_fields=frozenset({"idempotency_key", "sales_order_version"}), create=True
+        )
+        expected = body.get("sales_order_version")
+        if not isinstance(expected, int) or isinstance(expected, bool) or expected < 1:
+            raise RequestContractError(
+                "invalid_sales_order_version", "sales_order_version must be a positive integer"
+            )
+        result = repository.apply_accepted_quotation_to_sales_order(
+            str(quotation_id), expected_document_version=expected,
+            idempotency_key=key, actor=actor,
+        )
+        return _response(result)
+
+    @blueprint.get("/projects/<uuid:project_id>/evidence")
+    @owner_required
+    def list_transaction_evidence(project_id: UUID):
+        return _response({"items": repository.list_transaction_evidence(str(project_id))})
+
+    @blueprint.post("/projects/<uuid:project_id>/evidence")
+    @owner_required
+    def upload_transaction_evidence(project_id: UUID):
+        if not current_app.config.get("PROJECT_DOCUMENT_WRITES_ENABLED", False):
+            raise RequestContractError(
+                "project_document_writes_disabled", "Project and document writes are disabled", 503
+            )
+        if not write_csrf_valid():
+            raise RequestContractError("csrf_validation_failed", "CSRF validation failed", 403)
+        content_length = request.content_length
+        if content_length is not None and content_length > MAX_EVIDENCE_BYTES + 64 * 1024:
+            raise RequestContractError("request_too_large", "Evidence image is too large", 413)
+        key = str(request.headers.get("Idempotency-Key") or "")
+        if not _IDEMPOTENCY_KEY.fullmatch(key):
+            raise RequestContractError("invalid_idempotency_key", "Idempotency-Key header is invalid")
+        if set(request.form) != {"ledger_source_key"} or set(request.files) != {"evidence"}:
+            raise RequestContractError("invalid_evidence_upload", "Evidence upload fields are invalid")
+        source_key = str(request.form.get("ledger_source_key") or "").strip()
+        upload = request.files["evidence"]
+        raw = upload.stream.read(MAX_EVIDENCE_BYTES + 1)
+        if not raw or len(raw) > MAX_EVIDENCE_BYTES:
+            raise RequestContractError("request_too_large", "Evidence image must be 1 byte to 5 MiB", 413)
+        mime_type = str(upload.mimetype or "").casefold()
+        magic_ok = (
+            (mime_type == "image/jpeg" and raw.startswith(b"\xff\xd8\xff"))
+            or (mime_type == "image/png" and raw.startswith(b"\x89PNG\r\n\x1a\n"))
+            or (mime_type == "image/webp" and len(raw) >= 12 and raw.startswith(b"RIFF") and raw[8:12] == b"WEBP")
+        )
+        if mime_type not in _EVIDENCE_MIME_TYPES or not magic_ok:
+            raise RequestContractError("invalid_evidence_image", "Evidence must be a valid JPEG, PNG, or WebP", 415)
+        original_name = str(upload.filename or "evidence").replace("\\", "/").rsplit("/", 1)[-1].strip()
+        result = repository.upload_transaction_evidence(
+            str(project_id), ledger_source_key=source_key, mime_type=mime_type,
+            original_name=original_name, image_bytes=raw, idempotency_key=key, actor=_actor(),
+        )
+        return _response(result, 201)
+
+    @blueprint.post("/evidence/<uuid:evidence_id>/review")
+    @owner_required
+    def review_transaction_evidence(evidence_id: UUID):
+        body, key, version, actor = _write_request(
+            allowed_fields=frozenset(
+                {"idempotency_key", "expected_version", "status", "note"}
+            )
+        )
+        result = repository.review_transaction_evidence(
+            str(evidence_id), status=str(body.get("status") or ""),
+            note=str(body.get("note") or ""), expected_version=version,
+            idempotency_key=key, actor=actor,
+        )
+        return _response(result)
+
+    @blueprint.get("/evidence/<uuid:evidence_id>/download")
+    @owner_required
+    def download_transaction_evidence(evidence_id: UUID):
+        evidence = repository.get_transaction_evidence_bytes(str(evidence_id))
+        raw = evidence.get("bytes")
+        expected_size = evidence.get("byte_size")
+        expected_hash = str(evidence.get("sha256") or "").casefold()
+        mime_type = str(evidence.get("mime_type") or "")
+        if (
+            not isinstance(raw, bytes)
+            or not isinstance(expected_size, int)
+            or isinstance(expected_size, bool)
+            or len(raw) != expected_size
+            or hashlib.sha256(raw).hexdigest() != expected_hash
+            or mime_type not in _EVIDENCE_MIME_TYPES
+        ):
+            raise ProjectDocumentUnavailable("persisted evidence integrity validation failed")
+        response = make_response(raw)
+        response.headers["Content-Type"] = mime_type
+        response.headers["Content-Length"] = str(len(raw))
+        response.headers["Content-Disposition"] = f'attachment; filename="evidence-{evidence_id}"'
+        response.headers["X-Content-SHA256"] = expected_hash
+        return response
 
     @blueprint.get("/documents/<uuid:document_id>")
     @owner_required

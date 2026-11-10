@@ -80,6 +80,23 @@ export interface InvoicePaymentSummary {
   payment_status: PaymentStatus
 }
 
+export interface ProjectQuotation {
+  id: string
+  project_id: string
+  version: number
+  canva_url: string
+  amount: number
+  status: 'draft' | 'sent' | 'revised' | 'accepted' | 'rejected'
+  channel: 'whatsapp' | 'phone' | 'email' | 'meeting' | 'other'
+  negotiation_notes: string | null
+  sent_at: string | null
+  decided_at: string | null
+  sales_order_id: string | null
+  created_at: string
+  updated_at: string
+  lock_version: number
+}
+
 export interface ProjectPaymentSummary {
   project_id: string
   contract_total: number | null

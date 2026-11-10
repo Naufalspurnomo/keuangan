@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import unittest
 from unittest.mock import patch
@@ -19,6 +20,7 @@ CSRF_TOKEN = "project-document-csrf-token"
 IDEMPOTENCY_KEY = "project-document-test-0001"
 PROJECT_ID = "11111111-1111-4111-8111-111111111111"
 DOCUMENT_ID = "22222222-2222-4222-8222-222222222222"
+EVIDENCE_ID = "44444444-4444-4444-8444-444444444444"
 
 
 class FakeDashboardRepository:
@@ -150,6 +152,49 @@ class FakeProjectDocumentRepository:
         self._raise()
         self.calls.append(("replay_audit", kwargs))
         return [{"id": 1, "event_type": "document.created"}]
+
+    def list_project_quotations(self, project_id):
+        self._raise()
+        self.calls.append(("list_project_quotations", project_id))
+        return [{"id": EVIDENCE_ID, "project_id": project_id, "version": 1, "canva_url": "https://canva.com/design/test", "amount": 1_000_000, "status": "draft", "channel": "whatsapp", "negotiation_notes": None, "sent_at": None, "decided_at": None, "created_at": "2026-11-10T00:00:00Z", "updated_at": "2026-11-10T00:00:00Z", "lock_version": 1}]
+
+    def create_project_quotation(self, project_id, **kwargs):
+        self.calls.append(("create_project_quotation", project_id, kwargs))
+        return self.list_project_quotations(project_id)[0]
+
+    def transition_project_quotation(self, quotation_id, **kwargs):
+        self.calls.append(("transition_project_quotation", quotation_id, kwargs))
+        return {**self.list_project_quotations(PROJECT_ID)[0], "status": kwargs["status"], "lock_version": kwargs["expected_version"] + 1}
+
+    def apply_accepted_quotation_to_sales_order(self, quotation_id, **kwargs):
+        self.calls.append(("apply_accepted_quotation_to_sales_order", quotation_id, kwargs))
+        return dict(self.document)
+
+    def list_transaction_evidence(self, project_id):
+        self._raise()
+        self.calls.append(("list_transaction_evidence", project_id))
+        return [{
+            "id": EVIDENCE_ID, "project_id": project_id, "ledger_source_key": "ledger:1",
+            "mime_type": "image/png", "byte_size": 12, "sha256": "a" * 64,
+            "original_name": "bukti.png", "review_status": "pending", "review_note": None,
+            "reviewed_at": None, "created_at": "2026-11-10T00:00:00+00:00", "lock_version": 0,
+        }]
+
+    def upload_transaction_evidence(self, project_id, **kwargs):
+        self._raise()
+        self.calls.append(("upload_transaction_evidence", project_id, kwargs))
+        return {**self.list_transaction_evidence(project_id)[0], "sha256": hashlib.sha256(kwargs["image_bytes"]).hexdigest(), "byte_size": len(kwargs["image_bytes"])}
+
+    def review_transaction_evidence(self, evidence_id, **kwargs):
+        self._raise()
+        self.calls.append(("review_transaction_evidence", evidence_id, kwargs))
+        return {**self.list_transaction_evidence(PROJECT_ID)[0], "review_status": kwargs["status"], "review_note": kwargs["note"], "lock_version": kwargs["expected_version"] + 1}
+
+    def get_transaction_evidence_bytes(self, evidence_id):
+        self._raise()
+        image = b"\x89PNG\r\n\x1a\nroute-evidence"
+        self.calls.append(("get_transaction_evidence_bytes", evidence_id))
+        return {"mime_type": "image/png", "byte_size": len(image), "sha256": hashlib.sha256(image).hexdigest(), "original_name": "bukti.png", "bytes": image}
 
     def get_artifact(self, document_id):
         self._raise()
@@ -507,6 +552,97 @@ class ProjectDocumentRouteTests(unittest.TestCase):
         self.assertEqual(call[2]["values"]["applies_to_invoice_id"], DOCUMENT_ID)
 
 
+    def test_evidence_upload_list_review_and_download_are_owner_scoped(self):
+        app, repository = self.make_app(enabled=True)
+        client = app.test_client()
+        self.login(client)
+        image = b"\x89PNG\r\n\x1a\nroute-upload"
+
+        uploaded = client.post(
+            f"/api/dashboard/v1/projects/{PROJECT_ID}/evidence",
+            data={"ledger_source_key": "ledger:1", "evidence": (io.BytesIO(image), "bukti.png", "image/png")},
+            headers={"X-CSRF-Token": CSRF_TOKEN, "Idempotency-Key": IDEMPOTENCY_KEY},
+        )
+        self.assertEqual(uploaded.status_code, 201)
+        self.assertEqual(self.envelope(uploaded)["data"]["review_status"], "pending")
+        upload_call = next(call for call in repository.calls if call[0] == "upload_transaction_evidence")
+        self.assertEqual(upload_call[1], PROJECT_ID)
+        self.assertEqual(upload_call[2]["image_bytes"], image)
+
+        listed = client.get(f"/api/dashboard/v1/projects/{PROJECT_ID}/evidence")
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(self.envelope(listed)["data"]["items"][0]["id"], EVIDENCE_ID)
+
+        reviewed = client.post(
+            f"/api/dashboard/v1/evidence/{EVIDENCE_ID}/review",
+            data=json.dumps({
+                "idempotency_key": IDEMPOTENCY_KEY, "expected_version": 0,
+                "status": "approved", "note": "",
+            }),
+            headers=self.write_headers(version='"0"'),
+        )
+        self.assertEqual(reviewed.status_code, 200)
+        self.assertEqual(self.envelope(reviewed)["data"]["review_status"], "approved")
+
+        downloaded = client.get(f"/api/dashboard/v1/evidence/{EVIDENCE_ID}/download")
+        self.assertEqual(downloaded.status_code, 200)
+        self.assertEqual(downloaded.content_type, "image/png")
+        self.assertEqual(downloaded.headers["Cache-Control"], "no-store, private")
+        self.assertEqual(downloaded.data, b"\x89PNG\r\n\x1a\nroute-evidence")
+
+    def test_evidence_upload_rejects_invalid_signature_before_repository(self):
+        app, repository = self.make_app(enabled=True)
+        client = app.test_client()
+        self.login(client)
+        response = client.post(
+            f"/api/dashboard/v1/projects/{PROJECT_ID}/evidence",
+            data={"ledger_source_key": "ledger:1", "evidence": (io.BytesIO(b"fake"), "fake.png", "image/png")},
+            headers={"X-CSRF-Token": CSRF_TOKEN, "Idempotency-Key": IDEMPOTENCY_KEY},
+        )
+        self.assertEqual(response.status_code, 415)
+        self.assertFalse(any(call[0] == "upload_transaction_evidence" for call in repository.calls))
+
+    def test_quotation_routes_preserve_version_and_apply_to_sales_order(self):
+        app, repository = self.make_app(enabled=True)
+        client = app.test_client()
+        self.login(client)
+        listed = client.get(f"/api/dashboard/v1/projects/{PROJECT_ID}/quotations")
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(self.envelope(listed)["data"]["items"][0]["version"], 1)
+
+        created = client.post(
+            f"/api/dashboard/v1/projects/{PROJECT_ID}/quotations",
+            data=json.dumps({
+                "idempotency_key": IDEMPOTENCY_KEY,
+                "values": {"canva_url": "https://canva.com/design/test", "amount": 1_000_000},
+            }),
+            headers=self.write_headers(version="*"),
+        )
+        self.assertEqual(created.status_code, 201)
+        create_call = next(call for call in repository.calls if call[0] == "create_project_quotation")
+        self.assertEqual(create_call[2]["values"]["amount"], 1_000_000)
+
+        transitioned = client.post(
+            f"/api/dashboard/v1/quotations/{EVIDENCE_ID}/transition",
+            data=json.dumps({
+                "idempotency_key": IDEMPOTENCY_KEY,
+                "expected_version": 1, "status": "sent", "note": "",
+            }),
+            headers=self.write_headers(version='"1"'),
+        )
+        self.assertEqual(transitioned.status_code, 200)
+        self.assertEqual(self.envelope(transitioned)["data"]["status"], "sent")
+
+        applied = client.post(
+            f"/api/dashboard/v1/quotations/{EVIDENCE_ID}/apply",
+            data=json.dumps({"idempotency_key": IDEMPOTENCY_KEY, "sales_order_version": 4}),
+            headers=self.write_headers(version="*"),
+        )
+        self.assertEqual(applied.status_code, 200)
+        apply_call = next(call for call in repository.calls if call[0] == "apply_accepted_quotation_to_sales_order")
+        self.assertEqual(apply_call[2]["expected_document_version"], 4)
+
+
 class ProjectDocumentProductionWiringTests(unittest.TestCase):
     def test_default_repository_receives_the_committed_a5_renderer(self):
         from services.project_document_pdf import render_project_document_artifact
@@ -621,6 +757,7 @@ class ProjectDocumentHealthContractTests(unittest.TestCase):
         self.assertFalse(readiness["writes_enabled"])
         self.assertFalse(readiness["schema_ready"])
         self.assertTrue(readiness["ready"])
+
 
 
 if __name__ == "__main__":

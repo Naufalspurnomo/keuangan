@@ -393,6 +393,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
         rows={finance.workspace.transactions.filter((row) => row.project_id === productionProject.id)}
         projects={transactionProjects}
         api={projectApi}
+        session={projectSession}
       />
     : null
   const content = active === 'overview'
@@ -447,7 +448,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
       {!readOnly && modal?.kind === 'complete-project' && <ProjectCompleteDialog project={modal.value} onSave={completeProject} onClose={() => setModal(null)} />}
       {(!readOnly || canCreateTransactions) && modal?.kind === 'transaction' && <TransactionForm projects={transactionProjects} transaction={modal.value} initialScope={modal.scope} lockedProjectId={modal.projectId} onSave={saveTransaction} onClose={() => setModal(null)} liveWrite={readOnly} currentDate={readOnly ? jakartaToday() : undefined} />}
       {!readOnly && modal?.kind === 'debt' && <DebtForm debt={modal.value} onSave={saveDebt} onClose={() => setModal(null)} />}
-      {projectModal && <ProjectRecordForm project={projectModal === 'create' ? undefined : projectModal} saving={projectBusy} onSave={saveProductionProject} onClose={() => setProjectModal(null)} />}
+      {projectModal && <ProjectRecordForm project={projectModal === 'create' ? undefined : projectModal} clients={productionProjects} saving={projectBusy} onSave={saveProductionProject} onClose={() => setProjectModal(null)} />}
     </div>
   )
 }

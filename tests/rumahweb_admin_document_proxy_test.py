@@ -1,3 +1,4 @@
+import base64
 import contextlib
 import http.server
 import json
@@ -21,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "deploy" / "rumahweb-admin"
 PROJECT_ID = "11111111-1111-4111-8111-111111111111"
 DOCUMENT_ID = "22222222-2222-4222-8222-222222222222"
+EVIDENCE_ID = "44444444-4444-4444-8444-444444444444"
 IDEMPOTENCY_KEY = "project-proxy-key-0001"
 PDF_BYTES = b"%PDF-1.4\nsynthetic persisted pdf\n%%EOF\n"
 
@@ -418,6 +420,102 @@ class RumahwebAdminProjectDocumentProxyTests(unittest.TestCase):
             self.assertEqual(oversized.status_code, 413)
 
 
+    def test_private_evidence_upload_list_review_and_download_proxy(self):
+        image = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+        item = {
+            "id": EVIDENCE_ID, "project_id": PROJECT_ID, "ledger_source_key": "ledger:1",
+            "mime_type": "image/png", "byte_size": len(image), "sha256": "a" * 64,
+            "original_name": "bukti.png", "review_status": "pending", "review_note": None,
+            "reviewed_at": None, "created_at": "2026-11-10T00:00:00Z", "lock_version": 0,
+        }
+        responses = [
+            (201, "application/json", self.success(item)),
+            (200, "application/json", self.success({"items": [item]})),
+            (200, "application/json", self.success({**item, "review_status": "approved", "lock_version": 1})),
+            (200, "image/png", image),
+        ]
+        with self.https_upstream(responses) as (root, cert, server):
+            with self.php_server(ca_bundle=cert) as base:
+                self.write_config(
+                    enabled=True,
+                    projects=root + "/projects",
+                    documents=root + "/documents",
+                    public_origin=base.removesuffix("/admin/"),
+                )
+                session_id, csrf = self.login(base)
+                endpoint = base + "api/evidence.php"
+                headers = {
+                    **self.cookie(session_id), "Origin": base.removesuffix("/admin/"),
+                    "Sec-Fetch-Site": "same-origin", "X-CSRF-Token": csrf,
+                    "Idempotency-Key": IDEMPOTENCY_KEY,
+                }
+                uploaded = requests.post(
+                    endpoint, params={"action": "upload", "project_id": PROJECT_ID},
+                    headers=headers, data={"ledger_source_key": "ledger:1"},
+                    files={"evidence": ("bukti.png", image, "image/png")}, timeout=10,
+                )
+                self.assertEqual(uploaded.status_code, 201, uploaded.text)
+                self.assertEqual(uploaded.json()["data"]["review_status"], "pending")
+
+                listed = requests.get(
+                    endpoint, params={"action": "list", "project_id": PROJECT_ID},
+                    headers=self.cookie(session_id), timeout=10,
+                )
+                self.assertEqual(listed.status_code, 200, listed.text)
+                self.assertEqual(listed.json()["data"]["items"][0]["id"], EVIDENCE_ID)
+
+                reviewed = requests.post(
+                    endpoint, params={"action": "review", "evidence_id": EVIDENCE_ID},
+                    headers=headers, json={"expected_version": 0, "status": "approved", "note": ""},
+                    timeout=10,
+                )
+                self.assertEqual(reviewed.status_code, 200, reviewed.text)
+                self.assertEqual(reviewed.json()["data"]["review_status"], "approved")
+
+                downloaded = requests.get(
+                    endpoint, params={"action": "download", "evidence_id": EVIDENCE_ID},
+                    headers=self.cookie(session_id), timeout=10,
+                )
+                self.assertEqual(downloaded.status_code, 200, downloaded.text)
+                self.assertEqual(downloaded.headers["Content-Type"], "image/png")
+                self.assertEqual(downloaded.content, image)
+
+                self.assertEqual(server.received[0]["path"], f"/api/dashboard/v1/projects/{PROJECT_ID}/evidence")
+                self.assertIn("multipart/form-data", server.received[0]["headers"]["Content-Type"])
+                self.assertEqual(server.received[1]["path"], f"/api/dashboard/v1/projects/{PROJECT_ID}/evidence")
+                self.assertEqual(server.received[2]["path"], f"/api/dashboard/v1/evidence/{EVIDENCE_ID}/review")
+                self.assertEqual(server.received[3]["path"], f"/api/dashboard/v1/evidence/{EVIDENCE_ID}/download")
+
+    def test_canva_quotation_proxy_routes_are_exact_and_idempotent(self):
+        item = {"id": EVIDENCE_ID, "project_id": PROJECT_ID, "version": 1, "canva_url": "https://canva.com/design/test", "amount": 1_000_000, "status": "draft", "channel": "whatsapp", "negotiation_notes": None, "sent_at": None, "decided_at": None, "created_at": "2026-11-10T00:00:00Z", "updated_at": "2026-11-10T00:00:00Z", "lock_version": 1}
+        responses = [
+            (200, "application/json", self.success({"items": [item]})),
+            (201, "application/json", self.success(item)),
+            (200, "application/json", self.success({**item, "status": "sent", "lock_version": 2})),
+            (200, "application/json", self.success({"id": DOCUMENT_ID})),
+        ]
+        with self.https_upstream(responses) as (root, cert, server):
+            with self.php_server(ca_bundle=cert) as base:
+                self.write_config(enabled=True, projects=root + "/projects", documents=root + "/documents", public_origin=base.removesuffix("/admin/"))
+                session_id, csrf = self.login(base)
+                endpoint = base + "api/documents.php"
+                common = {**self.cookie(session_id), "Origin": base.removesuffix("/admin/"), "Sec-Fetch-Site": "same-origin", "X-CSRF-Token": csrf, "Idempotency-Key": IDEMPOTENCY_KEY}
+                listed = requests.get(endpoint, params={"action": "quotations", "project_id": PROJECT_ID}, headers=self.cookie(session_id), timeout=10)
+                self.assertEqual(listed.status_code, 200, listed.text)
+                created = requests.post(endpoint, headers={**common, "If-Match": "*"}, json={"action": "create_quotation", "project_id": PROJECT_ID, "idempotency_key": IDEMPOTENCY_KEY, "values": {"canva_url": item["canva_url"], "amount": 1_000_000}}, timeout=10)
+                self.assertEqual(created.status_code, 201, created.text)
+                sent = requests.post(endpoint, headers={**common, "If-Match": '"1"'}, json={"action": "transition_quotation", "quotation_id": EVIDENCE_ID, "idempotency_key": IDEMPOTENCY_KEY, "expected_version": 1, "status": "sent", "note": ""}, timeout=10)
+                self.assertEqual(sent.status_code, 200, sent.text)
+                applied = requests.post(endpoint, headers={**common, "If-Match": "*"}, json={"action": "apply_quotation", "quotation_id": EVIDENCE_ID, "idempotency_key": IDEMPOTENCY_KEY, "sales_order_version": 4}, timeout=10)
+                self.assertEqual(applied.status_code, 200, applied.text)
+                self.assertEqual([request["path"] for request in server.received], [
+                    f"/api/dashboard/v1/projects/{PROJECT_ID}/quotations",
+                    f"/api/dashboard/v1/projects/{PROJECT_ID}/quotations",
+                    f"/api/dashboard/v1/quotations/{EVIDENCE_ID}/transition",
+                    f"/api/dashboard/v1/quotations/{EVIDENCE_ID}/apply",
+                ])
+
+
 class RumahwebAdminProjectDocumentStaticTests(unittest.TestCase):
     def test_config_exposes_independent_default_off_gate_and_explicit_upstreams(self):
         text = (TEMPLATE / "config.example.php").read_text(encoding="utf-8")
@@ -431,6 +529,7 @@ class RumahwebAdminProjectDocumentStaticTests(unittest.TestCase):
             text = (TEMPLATE / "api" / name).read_text(encoding="utf-8")
             self.assertNotRegex(text, r"['\"](?:delete|correct_transaction|reverse_transaction)['\"]\s*=>")
             self.assertIn("Cache-Control: no-store", text)
+
 
 
 if __name__ == "__main__":
