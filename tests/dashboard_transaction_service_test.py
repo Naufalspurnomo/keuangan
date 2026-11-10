@@ -151,7 +151,7 @@ def make_authoritative_row(request, message_id, *, sender_name="Dashboard", sour
     )
 
 
-def make_service(store=None, sheets=None, projection=None):
+def make_service(store=None, sheets=None, projection=None, *, project_uuid_exists=None, project_uuid_name=None):
     store = store or FakeStore()
     sheets = sheets or FakeSheets()
     projection = projection or FakeProjection()
@@ -159,6 +159,8 @@ def make_service(store=None, sheets=None, projection=None):
         store=store,
         sheets=sheets,
         project_exists=lambda project, wallet, company: (project, wallet, company) == ("PROJECT-001", "CV HB(101)", "HOLLA"),
+        project_uuid_exists=project_uuid_exists,
+        project_uuid_name=project_uuid_name,
         projection_repair=projection,
         today=lambda: TODAY,
     )
@@ -203,6 +205,28 @@ def test_project_request_claims_appends_reads_back_completes_and_projects():
     assert projection.rows[0]["sheet_name"] == "CV HB(101)"
     assert projection.rows[0]["company"] == "HOLLA"
     assert projection.rows[0]["kategori"] == "Lain-lain"
+
+
+def test_uuid_project_uses_canonical_name_in_sheet_and_uuid_in_projection_with_alternate_pair():
+    project_id = "00000000-0000-4000-8000-000000000001"
+    probes = []
+    service, store, sheets, projection = make_service(
+        project_uuid_exists=lambda value, wallet, company: probes.append((value, wallet, company)) or value == project_id,
+        project_uuid_name=lambda value: "Project Canonical" if value == project_id else None,
+    )
+
+    response = service.record(
+        valid_payload(project=project_id, wallet="TX SBY(216)", company="TEXTURIN-Surabaya"),
+        actor={"role": "owner"},
+        message_id="http:uuid",
+    )
+
+    assert response["recorded"] is True
+    assert probes == [(project_id, "TX SBY(216)", "TEXTURIN-Surabaya")]
+    assert store.claim_calls[0][0].project == project_id
+    assert sheets.append_calls[0][0].project == "Project Canonical"
+    assert projection.rows[0]["nama_projek"] == "Project Canonical"
+    assert projection.rows[0]["project_id"] == project_id
 
 
 def test_office_request_uses_operational_authority_shape():
@@ -322,6 +346,27 @@ def test_completed_replay_verifies_sheet_and_repairs_projection_without_append()
     assert replay == {**first, "duplicate": True}
     assert len(sheets.append_calls) == 1
     assert len(projection.rows) == 1
+
+
+def test_uuid_replay_survives_project_rename_without_changing_sheet_identity():
+    project_id = "00000000-0000-4000-8000-000000000001"
+    current = {"name": "Original Project"}
+    service, _, sheets, projection = make_service(
+        project_uuid_exists=lambda value, wallet, company: value == project_id,
+        project_uuid_name=lambda _value: current["name"],
+    )
+    payload = valid_payload(project=project_id)
+    first = service.record(payload, actor={"role": "owner"}, message_id="http:first")
+    current["name"] = "Renamed Project"
+    projection.rows.clear()
+
+    replay = service.record(payload, actor={"role": "owner"}, message_id="http:retry")
+
+    assert replay == {**first, "duplicate": True}
+    assert len(sheets.append_calls) == 1
+    assert sheets.append_calls[0][0].project == "Original Project"
+    assert projection.rows[0]["nama_projek"] == "Original Project"
+    assert projection.rows[0]["project_id"] == project_id
 
 
 def test_projection_repair_failure_is_reported_without_undoing_sheet_authority():

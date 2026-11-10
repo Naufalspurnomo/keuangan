@@ -40,6 +40,25 @@ def test_snapshot_emits_canonical_scope_and_normalized_project_identity():
     assert snapshot["project_summaries"][0]["name"] == "Proyek Alpha"
 
 
+def test_snapshot_keeps_canonical_project_id_across_wallets_and_reload():
+    project_id = "00000000-0000-4000-8000-000000000001"
+    snapshot = _snapshot(
+        _row(project_id=project_id),
+        _row(
+            project_id=project_id,
+            sheet_name="TX SBY(216)",
+            company_sheet="TEXTURIN-Surabaya",
+            sheet_row=8,
+            nama_projek="Proyek Alpha",
+        ),
+    )
+
+    assert {row["project_id"] for row in snapshot["transactions"]} == {project_id}
+    assert len(snapshot["project_summaries"]) == 1
+    assert snapshot["project_summaries"][0]["project_id"] == project_id
+    assert snapshot["project_summaries"][0]["portfolio"] == "Lintas portfolio"
+
+
 def test_snapshot_marks_office_rows_explicitly_instead_of_frontend_string_inference():
     snapshot = _snapshot(_row(nama_projek="Operasional", kategori="Operasi Kantor"))
     transaction = snapshot["transactions"][0]

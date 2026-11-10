@@ -168,6 +168,39 @@ describe('production live source mode', () => {
     expect(request).toHaveBeenCalledWith('/admin/api/projects.php?action=list', expect.objectContaining({ credentials: 'same-origin' }))
   }, 30_000)
 
+  it('posts the first transaction for a PostgreSQL project using its UUID', async () => {
+    let postedBody: Record<string, unknown> | undefined
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/admin/api/write-session.php') return writeSessionResponse()
+      if (url === '/admin/api/transactions.php') {
+        postedBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+        return recordedTransactionResponse()
+      }
+      if (url.startsWith('/admin/api/projects.php?action=list')) return productionProjectsResponse()
+      return liveResponse()
+    })
+    vi.stubGlobal('fetch', request)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tambah transaksi' }))
+    const dialog = screen.getByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText('Proyek *'), {
+      target: { value: '123e4567-e89b-42d3-a456-426614174000' },
+    })
+    fireEvent.change(within(dialog).getByLabelText('Jumlah *'), { target: { value: '500000' } })
+    fireEvent.change(within(dialog).getByLabelText('Keterangan *'), { target: { value: 'Biaya proyek pertama' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Simpan transaksi' }))
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+
+    expect(postedBody).toMatchObject({
+      project: '123e4567-e89b-42d3-a456-426614174000',
+      wallet: 'CV HB(101)',
+      company: 'HOLLA',
+    })
+  }, 30_000)
+
   it('keeps the complete dashboard shell, analytics, routes, reports, and source-grounded unknown values', async () => {
     const request = vi.fn(async (_input?: RequestInfo | URL) => liveResponse())
     vi.stubGlobal('fetch', request)

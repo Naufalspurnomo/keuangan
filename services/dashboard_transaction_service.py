@@ -13,7 +13,7 @@ import json
 import re
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Any, Protocol
 
@@ -100,6 +100,7 @@ class SheetsTransactionAdapter(Protocol):
 
 ProjectExists = Callable[[str, str, str], bool]
 ProjectUuidExists = Callable[[str, str, str], bool]
+ProjectUuidName = Callable[[str], str | None]
 ProjectionRepair = Callable[[dict[str, Any]], Any]
 Today = Callable[[], date]
 _SOURCE_WALLET_RE = re.compile(r"^(?P<description>.*) \[Sumber: (?P<wallet>[^\]]+)\]$")
@@ -404,6 +405,7 @@ class DashboardTransactionService:
         sheets: SheetsTransactionAdapter | None = None,
         project_exists: ProjectExists,
         project_uuid_exists: ProjectUuidExists | None = None,
+        project_uuid_name: ProjectUuidName | None = None,
         projection_repair: ProjectionRepair | None = None,
         today: Today | None = None,
     ) -> None:
@@ -411,6 +413,7 @@ class DashboardTransactionService:
         self._sheets = sheets or GoogleSheetsTransactionAdapter()
         self._project_exists = project_exists
         self._project_uuid_exists = project_uuid_exists
+        self._project_uuid_name = project_uuid_name
         self._projection_repair = projection_repair or _default_projection_repair
         self._today = today
 
@@ -434,6 +437,37 @@ class DashboardTransactionService:
             kwargs["today"] = self._today
         return validate_transaction_request(payload, **kwargs)
 
+    def _sheet_request(self, request: TransactionRequest) -> TransactionRequest:
+        if request.scope != "project" or request.project is None:
+            return request
+        try:
+            uuid.UUID(request.project)
+        except (TypeError, ValueError):
+            return request
+        if self._project_uuid_name is None:
+            raise DashboardTransactionUnavailable("canonical project name resolver is not configured")
+        name = self._project_uuid_name(request.project)
+        if not isinstance(name, str) or not name.strip():
+            raise DashboardTransactionUnavailable("canonical project name is unavailable")
+        return replace(request, project=name.strip())
+
+    @staticmethod
+    def _verification_request(
+        request: TransactionRequest,
+        sheet_request: TransactionRequest,
+        row: AuthoritativeSheetRow,
+    ) -> TransactionRequest:
+        if request.scope != "project" or request.project is None or row.project is None:
+            return sheet_request
+        try:
+            uuid.UUID(request.project)
+        except (TypeError, ValueError):
+            return sheet_request
+        # The unique message id proves this is the authoritative row created for
+        # the immutable UUID request. Preserve its historical display name when
+        # a project is renamed after append.
+        return replace(sheet_request, project=row.project)
+
     def record(
         self,
         payload: Mapping[str, Any],
@@ -442,21 +476,27 @@ class DashboardTransactionService:
         message_id: str,
     ) -> dict[str, Any]:
         request = self.validate(payload)
+        sheet_request = self._sheet_request(request)
         claim = self._store.claim(request, actor=actor, message_id=message_id)
         sheet_message_id = self._sheet_message_id(claim)
 
         if claim.status == "completed":
-            return self._replay_completed(request, claim, sheet_message_id=sheet_message_id)
+            return self._replay_completed(
+                request,
+                sheet_request,
+                claim,
+                sheet_message_id=sheet_message_id,
+            )
         if claim.status != "claimed":
             raise DashboardTransactionConflict(f"write request has unsupported terminal status: {claim.status}")
 
-        row = self._sheets.read_by_message_id(request, message_id=sheet_message_id)
+        row = self._sheets.read_by_message_id(sheet_request, message_id=sheet_message_id)
         if not claim.claimed and row is None:
             raise DashboardTransactionConflict("write request is already in progress")
         if row is None:
             try:
                 self._sheets.append(
-                    request,
+                    sheet_request,
                     sender_name="Dashboard",
                     source="Dashboard",
                     message_id=sheet_message_id,
@@ -464,15 +504,16 @@ class DashboardTransactionService:
             except Exception:
                 # An append transport failure is ambiguous. Read authority before
                 # deciding whether a retry may append again.
-                row = self._sheets.read_by_message_id(request, message_id=sheet_message_id)
+                row = self._sheets.read_by_message_id(sheet_request, message_id=sheet_message_id)
                 if row is None:
                     raise
             if row is None:
-                row = self._sheets.read_by_message_id(request, message_id=sheet_message_id)
+                row = self._sheets.read_by_message_id(sheet_request, message_id=sheet_message_id)
 
         if row is None:
             raise DashboardTransactionUnavailable("authoritative Sheet row is missing after append")
-        self._verify_row(request, row, sheet_message_id=sheet_message_id)
+        verification_request = self._verification_request(request, sheet_request, row)
+        self._verify_row(verification_request, row, sheet_message_id=sheet_message_id)
         projection_status = "converged" if self._repair_projection(request, row) else "pending"
         response = {**self._completion_response(row), "projection_status": projection_status}
         self._store.complete(claim, response)
@@ -485,6 +526,7 @@ class DashboardTransactionService:
     def _replay_completed(
         self,
         request: TransactionRequest,
+        sheet_request: TransactionRequest,
         claim: DashboardWriteClaim,
         *,
         sheet_message_id: str,
@@ -492,10 +534,11 @@ class DashboardTransactionService:
         stored = claim.completion_response
         if not isinstance(stored, dict):
             raise DashboardTransactionConflict("completed request has no stored completion response")
-        row = self._sheets.read_by_message_id(request, message_id=sheet_message_id)
+        row = self._sheets.read_by_message_id(sheet_request, message_id=sheet_message_id)
         if row is None:
             raise DashboardTransactionConflict("completed request authoritative Sheet row is missing")
-        self._verify_row(request, row, sheet_message_id=sheet_message_id)
+        verification_request = self._verification_request(request, sheet_request, row)
+        self._verify_row(verification_request, row, sheet_message_id=sheet_message_id)
         expected = self._completion_response(row)
         stored_authority = {key: value for key, value in stored.items() if key != "projection_status"}
         if stored_authority != expected:
@@ -547,7 +590,14 @@ class DashboardTransactionService:
         }
 
     def _repair_projection(self, request: TransactionRequest, row: AuthoritativeSheetRow) -> bool:
+        project_id = None
+        if request.scope == "project" and request.project:
+            try:
+                project_id = str(uuid.UUID(request.project))
+            except (TypeError, ValueError):
+                pass
         projection = {
+            "project_id": project_id,
             "tanggal": row.transaction_date.isoformat(),
             "jumlah": row.amount,
             "tipe": row.direction,

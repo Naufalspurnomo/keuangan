@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from dashboard_api import live_source
+from services.ledger_store import build_source_key
 
 
 class DashboardLiveSourceTests(unittest.TestCase):
@@ -32,6 +33,43 @@ class DashboardLiveSourceTests(unittest.TestCase):
         self.assertEqual(balances.call_count, 1)
         self.assertEqual(projection.call_count, 1)
         balances.assert_called_once_with(force_refresh=False, strict=True, spreadsheet=_spreadsheet.return_value)
+
+    def test_relation_keys_use_the_canonical_builder_for_message_and_manual_rows(self):
+        rows = [
+            {
+                "sheet_name": "CV HB(101)",
+                "source_block": "pemasukan",
+                "message_id": "dashboard:owner:request",
+            },
+            {
+                "sheet_name": "TX SBY(216)",
+                "source_block": "pengeluaran",
+                "sheet_row": 77,
+                "tanggal": "2026-11-10",
+                "jumlah": 500_000,
+                "keterangan": "Bahan proyek",
+                "nama_projek": "Proyek Manual",
+            },
+        ]
+        self.assertEqual(
+            [live_source.build_source_key(row) for row in rows],
+            [build_source_key(row) for row in rows],
+        )
+
+    @patch("psycopg.connect")
+    def test_project_relation_enrichment_prefers_state_database_url(self, connect):
+        source_key = "message:CV HB(101):project:dashboard:owner:request"
+        cursor = connect.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = [(source_key, "00000000-0000-4000-8000-000000000001")]
+        with patch.dict(
+            live_source.os.environ,
+            {"STATE_DATABASE_URL": "postgresql://state", "DATABASE_URL": "postgresql://fallback"},
+            clear=True,
+        ):
+            result = live_source._read_project_ids([source_key])
+
+        connect.assert_called_once_with("postgresql://state", autocommit=True)
+        self.assertEqual(result[source_key], "00000000-0000-4000-8000-000000000001")
 
     def test_cache_ttl_is_bounded_for_ten_second_end_to_end_refresh(self):
         with patch.dict(live_source.os.environ, {"DASHBOARD_LIVE_CACHE_SECONDS": "999"}):

@@ -46,4 +46,16 @@ describe('snapshotFinanceWorkspace', () => {
   ])('normalizes backend company %s into the existing UI company %s', (source, expected) => {
     expect(snapshotFinanceWorkspace(snapshot(source)).projects[0].company).toBe(expected)
   })
+
+  it('keeps the canonical project UUID for project routes and transaction relations after reload', () => {
+    const source = snapshot('HOLLA')
+    const projectId = '00000000-0000-4000-8000-000000000001'
+    source.project_summaries[0].project_id = projectId
+    source.transactions[0].project_id = projectId
+
+    const workspace = snapshotFinanceWorkspace(source)
+
+    expect(workspace.projects[0].id).toBe(projectId)
+    expect(workspace.transactions[0].project_id).toBe(projectId)
+  })
 })
