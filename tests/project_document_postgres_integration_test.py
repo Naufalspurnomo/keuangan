@@ -9,7 +9,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
+from flask import Flask
 
+from dashboard_api.project_document_routes import create_project_document_blueprint
 from services.project_document_repository import (
     ProjectDocumentConflict,
     ProjectDocumentRepository,
@@ -179,6 +181,116 @@ def test_project_creation_requires_durable_wallet_company_binding(repository, ds
                     """,
                     (str(uuid.uuid4()), profile["issuer_key"]),
                 )
+
+
+def test_project_repository_rejects_unknown_issuer_and_noncanonical_mapping(repository):
+    profile = issuer(repository, key="binding-canonical-issuer-0001")
+    base = {
+        "name": "Invalid Binding",
+        "client_name": "Client",
+        "issuer_key": profile["issuer_key"],
+        "wallet": "CV HB(101)",
+        "company": "HOLLA",
+    }
+    before = len(repository.list_projects())
+
+    with pytest.raises(ValueError, match="issuer_key is not available"):
+        repository.create_project_with_sales_order(
+            {**base, "issuer_key": "missing"},
+            idempotency_key="binding-unknown-issuer-0001",
+            actor=ACTOR,
+        )
+    with pytest.raises(ValueError, match="wallet and company pair is unsupported"):
+        repository.create_project_with_sales_order(
+            {**base, "company": "TEXTURIN-Surabaya"},
+            idempotency_key="binding-invalid-pair-0001",
+            actor=ACTOR,
+        )
+
+    assert len(repository.list_projects()) == before
+
+
+def test_project_create_http_contract_uses_production_binding_and_rejects_invalid_values(repository):
+    profile = issuer(repository, key="http-binding-canonical-issuer-0001")
+    app = Flask(__name__)
+    app.config.update(
+        TESTING=True,
+        SECRET_KEY="test-secret",
+        DASHBOARD_OWNER_EMAIL="owner@example.com",
+        PROJECT_DOCUMENT_WRITES_ENABLED=True,
+        PROJECT_DOCUMENT_READS_ENABLED=True,
+    )
+    app.register_blueprint(create_project_document_blueprint(repository))
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["dashboard_user"] = "owner@example.com"
+        session["dashboard_role"] = "owner"
+        session["dashboard_csrf_token"] = "csrf-token"
+
+    def headers(key):
+        return {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": "csrf-token",
+            "Idempotency-Key": key,
+            "If-Match": "*",
+        }
+
+    def payload(key, **changes):
+        values = {
+            "name": "Production Form Contract",
+            "client_name": "Client",
+            "issuer_key": profile["issuer_key"],
+            "wallet": "CV HB(101)",
+            "company": "HOLLA",
+            **changes,
+        }
+        return {"idempotency_key": key, "values": values}
+
+    before = len(repository.list_projects())
+    created_key = "http-production-binding-0001"
+    created = client.post(
+        "/api/dashboard/v1/projects",
+        headers=headers(created_key),
+        json=payload(created_key),
+    )
+    assert created.status_code == 201, created.get_data(as_text=True)
+    assert created.get_json()["data"]["project"]["issuer_key"] == "hollawall"
+    assert len(repository.list_projects()) == before + 1
+
+    unknown_key = "http-unknown-issuer-0001"
+    unknown = client.post(
+        "/api/dashboard/v1/projects",
+        headers=headers(unknown_key),
+        json=payload(unknown_key, name="Unknown Issuer", issuer_key="missing"),
+    )
+    invalid_pair_key = "http-invalid-pair-0001"
+    invalid_pair = client.post(
+        "/api/dashboard/v1/projects",
+        headers=headers(invalid_pair_key),
+        json=payload(invalid_pair_key, name="Invalid Pair", company="TEXTURIN-Surabaya"),
+    )
+    assert unknown.status_code == 422
+    assert invalid_pair.status_code == 422
+    assert unknown.get_json()["error"]["code"] == "invalid_project_document_request"
+    assert invalid_pair.get_json()["error"]["code"] == "invalid_project_document_request"
+    assert len(repository.list_projects()) == before + 1
+
+
+def test_project_update_rejects_noncanonical_mapping(repository):
+    created = project(repository, key="update-binding-project-0001")
+
+    with pytest.raises(ValueError, match="wallet and company pair is unsupported"):
+        repository.update_project(
+            created["project"]["id"],
+            {"company": "TEXTURIN-Surabaya"},
+            expected_version=created["project"]["lock_version"],
+            idempotency_key="update-binding-invalid-0001",
+            actor=ACTOR,
+        )
+
+    unchanged = repository.get_project(created["project"]["id"])
+    assert unchanged["wallet"] == "CV HB(101)"
+    assert unchanged["company"] == "HOLLA"
 
 
 def issue(repository, document, key):
@@ -1006,14 +1118,16 @@ def test_receipt_issue_revalidates_complete_exact_project_ledger_mapping(
         idempotency_key=f"issue-mapping-allocation-{uuid.uuid4()}",
         actor=ACTOR,
     )
-    current_project = repository.get_project(project_id)
-    repository.update_project(
-        project_id,
-        changes,
-        expected_version=current_project["lock_version"],
-        idempotency_key=f"issue-mapping-project-{uuid.uuid4()}",
-        actor=ACTOR,
-    )
+    # Simulate out-of-band database corruption. The public repository now rejects
+    # these invalid mappings before SQL, while issue-time defense must still fail closed.
+    import psycopg
+
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            if "wallet" in changes:
+                cursor.execute("UPDATE projects SET wallet = %s WHERE id = %s", (changes["wallet"], project_id))
+            else:
+                cursor.execute("UPDATE projects SET company = %s WHERE id = %s", (changes["company"], project_id))
 
     with pytest.raises(ProjectDocumentConflict, match=message):
         issue(repository, allocated, f"issue-mapping-attempt-{uuid.uuid4()}")
