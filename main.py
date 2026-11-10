@@ -31,7 +31,7 @@ from services.dashboard_write_requests import (
 )
 from services.project_document_repository import (
     ProjectDocumentUnavailable,
-    project_document_schema_health as read_project_document_schema_health,
+    project_document_runtime_health as read_project_document_runtime_health,
 )
 from werkzeug.exceptions import RequestEntityTooLarge
 
@@ -245,7 +245,7 @@ def project_document_schema_health():
         return {
             'configured': True,
             'writes_enabled': writes_enabled,
-            **read_project_document_schema_health(dsn),
+            **read_project_document_runtime_health(dsn),
         }
     except ProjectDocumentUnavailable as exc:
         secure_log("ERROR", f"Project document schema unavailable: {type(exc).__name__}")

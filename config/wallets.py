@@ -202,6 +202,12 @@ DOMPET_COMPANIES = {
     "TX BALI(087)": ["TEXTURIN-Bali", "TX BALI"]
 }
 
+
+def is_canonical_wallet_company_pair(wallet: str, company: str) -> bool:
+    """Whether a wallet/company binding is accepted by the finance authority."""
+    return company in DOMPET_COMPANIES.get(wallet, ())
+
+
 # Flat selection options for 1-3 display in operational mode
 WALLET_SELECTION_OPTIONS = [
     {"idx": 1, "dompet": "CV HB(101)", "short": "CV HB", "display": "1. CV HB (101)"},

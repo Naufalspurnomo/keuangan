@@ -164,3 +164,61 @@ def test_schema_health_is_read_only_and_requires_exact_catalog_objects(monkeypat
     assert "pg_get_constraintdef" in health_sql
     assert "tgtype" in health_sql or "pg_get_triggerdef" in health_sql
     assert all("CREATE TABLE" not in statement for statement in executed)
+
+
+def test_runtime_health_requires_the_canonical_production_issuer(monkeypatch):
+    import services.project_document_repository as module
+
+    monkeypatch.setattr(
+        module,
+        "project_document_schema_health",
+        lambda _dsn: {
+            "ready": True,
+            "tables": True,
+            "constraints": True,
+            "indexes": True,
+            "triggers": True,
+        },
+    )
+
+    class Cursor:
+        def __init__(self, available):
+            self.available = available
+            self.sql = ""
+
+        def execute(self, sql, params=()):
+            self.sql = " ".join(sql.split())
+
+        def fetchone(self):
+            return (self.available,)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Connection:
+        def __init__(self, available):
+            self.available = available
+
+        def cursor(self):
+            return Cursor(self.available)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(module, "_default_connection_factory", lambda _dsn: Connection(False))
+    missing = module.project_document_runtime_health("postgresql://isolated-test")
+    assert missing["ready"] is False
+    assert missing["canonical_issuer"] is False
+
+    monkeypatch.setattr(module, "_default_connection_factory", lambda _dsn: Connection(True))
+    ready = module.project_document_runtime_health("postgresql://isolated-test")
+    assert ready["ready"] is True
+    assert ready["canonical_issuer"] is True
+    assert "issuer_key = 'hollawall'" in module._CANONICAL_ISSUER_HEALTH_QUERY
+    assert "legal_name = 'CV Holla Berkreasi'" in module._CANONICAL_ISSUER_HEALTH_QUERY

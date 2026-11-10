@@ -237,7 +237,7 @@ class ProjectDocumentRouteTests(unittest.TestCase):
                 "values": {
                     "name": "Project Alpha",
                     "client_name": "Client",
-                    "issuer_key": "holla",
+                    "issuer_key": "hollawall",
                     "wallet": "CV HB(101)",
                     "company": "HOLLA",
                 },
@@ -287,7 +287,7 @@ class ProjectDocumentRouteTests(unittest.TestCase):
                 "values": {
                     "name": "Unbound Project",
                     "client_name": "Client",
-                    "issuer_key": "holla",
+                    "issuer_key": "hollawall",
                     "wallet": "",
                     "company": "",
                 },
@@ -478,7 +478,7 @@ class ProjectDocumentHealthContractTests(unittest.TestCase):
         import main
 
         with patch.dict(main.os.environ, {"PROJECT_DOCUMENT_WRITES_ENABLED": "true", "DASHBOARD_TRANSACTION_WRITES_ENABLED": "false"}, clear=False), patch.object(
-            main, "read_project_document_schema_health", return_value={"ready": True, "tables": True}
+            main, "read_project_document_runtime_health", return_value={"ready": True, "tables": True, "canonical_issuer": True}
         ):
             status = main.project_document_schema_health()
         self.assertTrue(status["writes_enabled"])

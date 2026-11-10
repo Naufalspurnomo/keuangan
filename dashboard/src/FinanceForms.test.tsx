@@ -51,6 +51,24 @@ describe('TransactionForm project lock', () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ scope: 'office', wallet: 'TX Bali', company: null, project_id: null }))
   })
 
+  it('falls back to a writable office transaction when no live project has a mapping', () => {
+    const workspace = seedFinanceWorkspace()
+    const projects = workspace.projects.map(({ write_mapping: _mapping, ...project }) => project)
+    const onSave = vi.fn()
+    render(<TransactionForm projects={projects} initialScope="project" liveWrite currentDate="2026-11-10" onSave={onSave} onClose={vi.fn()} />)
+
+    expect(screen.getByRole('button', { name: 'Proyek' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Operasional Kantor' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('status').textContent).toContain('Belum ada proyek aktif dengan pemetaan pencatatan')
+    expect(screen.queryByText('Pencatatan belum tersedia untuk pilihan ini.')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Simpan transaksi' })).toBeEnabled()
+
+    fireEvent.change(screen.getByLabelText('Jumlah *'), { target: { value: '500000' } })
+    fireEvent.change(screen.getByLabelText('Keterangan *'), { target: { value: 'Operasional kantor live' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan transaksi' }))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ scope: 'office', project_id: null, wallet: 'CV HB(101)', company: 'HOLLA' }))
+  })
+
   it('rejects a missing locked project visibly', () => {
     const workspace = seedFinanceWorkspace()
     const onSave = vi.fn()

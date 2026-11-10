@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from config.wallets import is_canonical_wallet_company_pair
 from services.project_document_models import (
     MAX_DOCUMENT_LINES,
     MAX_RECEIPT_ALLOCATIONS,
@@ -448,6 +449,18 @@ SELECT
     ) AS triggers_ready
 """
 
+_CANONICAL_ISSUER_HEALTH_QUERY = """
+SELECT EXISTS (
+    SELECT 1
+    FROM project_issuer_profiles
+    WHERE issuer_key = 'hollawall'
+      AND legal_name = 'CV Holla Berkreasi'
+      AND LENGTH(TRIM(display_name)) > 0
+      AND number_code = 'HW'
+      AND profile_version > 0
+)
+"""
+
 
 def _schema_status(row: Any) -> dict[str, bool]:
     tables, constraints, indexes, triggers = map(bool, row or (False, False, False, False))
@@ -476,6 +489,24 @@ def project_document_schema_health(dsn: str | None = None) -> dict[str, bool]:
     except Exception as exc:
         raise ProjectDocumentUnavailable(
             f"Project document schema health unavailable: {type(exc).__name__}"
+        ) from exc
+
+
+def project_document_runtime_health(dsn: str | None = None) -> dict[str, bool]:
+    """Require both the exact schema and the canonical issuer used by production writes."""
+    selected = str(dsn or _database_url()).strip()
+    schema = project_document_schema_health(selected)
+    if not schema["ready"]:
+        return {**schema, "canonical_issuer": False, "ready": False}
+    try:
+        with _default_connection_factory(selected) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(_CANONICAL_ISSUER_HEALTH_QUERY)
+                canonical_issuer = bool((cursor.fetchone() or (False,))[0])
+        return {**schema, "canonical_issuer": canonical_issuer, "ready": canonical_issuer}
+    except Exception as exc:
+        raise ProjectDocumentUnavailable(
+            f"Project document runtime health unavailable: {type(exc).__name__}"
         ) from exc
 
 
@@ -800,6 +831,8 @@ class ProjectDocumentRepository:
             raise ValueError(
                 "name, client_name, issuer_key, wallet, and company are required"
             )
+        if not is_canonical_wallet_company_pair(wallet, company):
+            raise ValueError("wallet and company pair is unsupported")
         status = str(command.get("status") or "planned")
         if status not in PROJECT_STATUSES:
             raise ValueError("unsupported project status")
@@ -813,6 +846,12 @@ class ProjectDocumentRepository:
                     key_hash, _, replay = self._claim(cursor, "project.create", idempotency_key, request)
                     if replay is not None:
                         return replay
+                    cursor.execute(
+                        "SELECT EXISTS(SELECT 1 FROM project_issuer_profiles WHERE issuer_key = %s)",
+                        (issuer_key,),
+                    )
+                    if not bool(cursor.fetchone()[0]):
+                        raise ValueError("issuer_key is not available")
                     cursor.execute(
                         """
                         INSERT INTO projects (
@@ -1050,12 +1089,16 @@ class ProjectDocumentRepository:
                     if replay is not None:
                         return replay
                     cursor.execute(
-                        "SELECT issuer_key FROM projects WHERE id = %s FOR UPDATE",
+                        "SELECT issuer_key, wallet, company FROM projects WHERE id = %s FOR UPDATE",
                         (project_id,),
                     )
                     current_project = cursor.fetchone()
                     if not current_project:
                         raise ProjectDocumentNotFound("project not found")
+                    next_wallet = str(supplied.get("wallet", current_project[1]))
+                    next_company = str(supplied.get("company", current_project[2]))
+                    if not is_canonical_wallet_company_pair(next_wallet, next_company):
+                        raise ValueError("wallet and company pair is unsupported")
                     if (
                         "issuer_key" in supplied
                         and str(supplied["issuer_key"]) != str(current_project[0])

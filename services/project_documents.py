@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from decimal import Decimal, DecimalException, ROUND_HALF_UP, localcontext
 from typing import Any, Protocol
 
+from config.wallets import is_canonical_wallet_company_pair
 from services.project_document_models import (
     DocumentCalculationError,
     DocumentLineTotal,
@@ -192,6 +193,12 @@ class ProjectDocumentService:
         company = str(command.get("company") or "").strip()
         if not wallet or not company:
             raise ValueError("wallet and company are required")
+        issuer_key = str(command.get("issuer_key") or "").strip()
+        if not issuer_key:
+            raise ValueError("issuer_key is unsupported")
+        if not is_canonical_wallet_company_pair(wallet, company):
+            raise ValueError("wallet and company pair is unsupported")
+        command["issuer_key"] = issuer_key
         command["wallet"] = wallet
         command["company"] = company
         command.setdefault("tax_percent", "0")

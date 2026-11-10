@@ -234,6 +234,35 @@ def test_create_project_requires_wallet_company_binding(binding):
     assert repository.calls == []
 
 
+@pytest.mark.parametrize(
+    "changes, message",
+    [
+        ({"issuer_key": ""}, "issuer_key is unsupported"),
+        ({"wallet": "CV HB(101)", "company": "TEXTURIN-Surabaya"}, "wallet and company pair is unsupported"),
+        ({"wallet": "unknown", "company": "HOLLA"}, "wallet and company pair is unsupported"),
+    ],
+)
+def test_create_project_rejects_noncanonical_production_binding(changes, message):
+    subject, repository = service()
+    values = {
+        "name": "Expo",
+        "client_name": "Client",
+        "issuer_key": "hollawall",
+        "wallet": "CV HB(101)",
+        "company": "HOLLA",
+        **changes,
+    }
+
+    with pytest.raises(ValueError, match=message):
+        subject.create_project(
+            values,
+            idempotency_key="project-invalid-binding-0001",
+            actor={"email": "owner@example.com"},
+        )
+
+    assert repository.calls == []
+
+
 def test_invoice_leaves_due_date_and_status_validation_to_atomic_repository_command():
     subject, repository = service()
 
