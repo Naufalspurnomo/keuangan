@@ -17,6 +17,12 @@ class DashboardLiveSnapshotTests(unittest.TestCase):
                 "sheet_name": "CV HB(101)",
                 "sheet_row": 9,
                 "source_block": "pemasukan",
+                "kategori": "Income",
+                "oleh": "Admin",
+                "source": "WhatsApp",
+                "message_id": "message-9",
+                "ocr_mode": "vision",
+                "ocr_confidence": "0.98",
             },
             {
                 "tanggal": "2026-10-21",
@@ -81,6 +87,19 @@ class DashboardLiveSnapshotTests(unittest.TestCase):
             ["Operasional Kantor:operasional:2", "CV HB(101):pengeluaran:11", "CV HB(101):pemasukan:9"],
         )
         self.assertTrue(snapshot["transactions"][1]["internal_movement"])
+        self.assertEqual(
+            {
+                key: snapshot["transactions"][2][key]
+                for key in (
+                    "category", "recorded_by", "input_source", "evidence_source",
+                    "ocr_mode", "ocr_confidence",
+                )
+            },
+            {
+                "category": "Income", "recorded_by": "Admin", "input_source": "WhatsApp",
+                "evidence_source": "media_ocr", "ocr_mode": "vision", "ocr_confidence": "0.98",
+            },
+        )
         self.assertEqual(
             [(row["name"], row["net_cashflow"]) for row in snapshot["project_summaries"]],
             [("Villa A", 1_500_000)],

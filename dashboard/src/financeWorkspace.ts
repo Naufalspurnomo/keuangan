@@ -54,6 +54,12 @@ export interface FinanceTransaction {
   company: CompanyId | null
   project_id: string | null
   office_category: OfficeCategory | null
+  category?: string | null
+  recorded_by?: string | null
+  input_source?: string | null
+  evidence_source?: 'manual' | 'message' | 'media_ocr'
+  ocr_mode?: string | null
+  ocr_confidence?: string | null
   notes: string
   created_at: string
   updated_at: string

@@ -31,6 +31,12 @@ export interface Transaction {
   invalid_reason?: string
   updated_at?: string
   office_category?: string
+  category?: string | null
+  recorded_by?: string | null
+  input_source?: string | null
+  evidence_source?: 'manual' | 'message' | 'media_ocr'
+  ocr_mode?: string | null
+  ocr_confidence?: string | null
 }
 
 export interface QualityRow {

@@ -163,3 +163,32 @@ html[data-theme='dark'] .year-command nav button.active { color: #0c2028; }
 @media (max-width: 620px) { .payment-summary-grid { grid-template-columns: 1fr; } .invoice-payment-list article, .receipt-candidates > label { align-items: stretch; grid-template-columns: 1fr; flex-direction: column; } }
 
 .payment-summary-warning { margin: 0; padding: 10px 12px; border-left: 3px solid var(--warning, #b7791f); background: var(--surface-muted); color: var(--text-secondary); font-size: 12px; }
+
+
+.project-profitability { display: grid; gap: 16px; }
+.project-profitability-head, .project-evidence-list header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.project-profitability-head h2, .project-profitability-head p { margin: 0; }
+.project-profitability-head > div { display: grid; gap: 5px; }
+.project-profitability-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.project-profitability-metrics article, .project-profitability-chart, .project-cost-breakdown, .project-evidence-list { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 14px; }
+.project-profitability-metrics article { display: grid; gap: 5px; }
+.project-profitability-metrics small, .project-profitability-metrics span, .project-evidence-list header span, .project-evidence-list article span { color: var(--text-secondary); font-size: 12px; }
+.project-profitability-metrics strong { font-size: 18px; }
+.project-profitability-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(240px, .8fr); gap: 12px; }
+.project-profitability-chart h3, .project-cost-breakdown h3 { margin: 0 0 12px; }
+.project-cost-breakdown { display: grid; align-content: start; gap: 10px; }
+.project-cost-breakdown > div, .project-evidence-list article { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.project-cost-breakdown > div { border-bottom: 1px solid var(--line); padding-bottom: 9px; }
+.project-evidence-list { display: grid; gap: 10px; }
+.project-evidence-list header > div { display: flex; align-items: center; gap: 7px; }
+.project-evidence-list article { padding-top: 10px; border-top: 1px solid var(--line); }
+.project-evidence-list article > div { display: grid; gap: 3px; flex: 1; }
+.positive { color: var(--positive); }
+.negative { color: var(--negative); }
+@media (max-width: 760px) { .project-profitability-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .project-profitability-grid { grid-template-columns: 1fr; } .project-profitability-head, .project-evidence-list header { align-items: stretch; flex-direction: column; } }
+
+
+.project-monthly-table { width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 12px; }
+.project-monthly-table caption { text-align: left; font-weight: 700; margin-bottom: 6px; }
+.project-monthly-table th, .project-monthly-table td { padding: 7px; border-top: 1px solid var(--line); text-align: right; }
+.project-monthly-table th:first-child, .project-monthly-table td:first-child { text-align: left; }

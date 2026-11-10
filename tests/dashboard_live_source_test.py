@@ -60,16 +60,33 @@ class DashboardLiveSourceTests(unittest.TestCase):
     def test_project_relation_enrichment_prefers_state_database_url(self, connect):
         source_key = "message:CV HB(101):project:dashboard:owner:request"
         cursor = connect.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
-        cursor.fetchall.return_value = [(source_key, "00000000-0000-4000-8000-000000000001")]
+        cursor.fetchall.return_value = [(
+            source_key,
+            "00000000-0000-4000-8000-000000000001",
+            "Gaji",
+            "Admin",
+            "WhatsApp",
+            "message-1",
+            "vision",
+            "0.98",
+        )]
         with patch.dict(
             live_source.os.environ,
             {"STATE_DATABASE_URL": "postgresql://state", "DATABASE_URL": "postgresql://fallback"},
             clear=True,
         ):
-            result = live_source._read_project_ids([source_key])
+            result = live_source._read_ledger_enrichment([source_key])
 
         connect.assert_called_once_with("postgresql://state", autocommit=True)
-        self.assertEqual(result[source_key], "00000000-0000-4000-8000-000000000001")
+        self.assertEqual(result[source_key], {
+            "project_id": "00000000-0000-4000-8000-000000000001",
+            "category": "Gaji",
+            "recorded_by": "Admin",
+            "input_source": "WhatsApp",
+            "message_id": "message-1",
+            "ocr_mode": "vision",
+            "ocr_confidence": "0.98",
+        })
 
     def test_cache_ttl_is_bounded_for_ten_second_end_to_end_refresh(self):
         with patch.dict(live_source.os.environ, {"DASHBOARD_LIVE_CACHE_SECONDS": "999"}):
