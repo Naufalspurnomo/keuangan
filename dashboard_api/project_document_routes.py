@@ -330,6 +330,23 @@ def create_project_document_blueprint(repository: Any) -> Blueprint:
     def list_documents(project_id: UUID):
         return _response({"items": repository.list_documents(str(project_id))})
 
+    @blueprint.get("/projects/<uuid:project_id>/payment-summary")
+    @owner_required
+    def get_payment_summary(project_id: UUID):
+        return _response(repository.get_project_payment_summary(str(project_id)))
+
+    @blueprint.get("/projects/<uuid:project_id>/receipt-options")
+    @owner_required
+    def get_receipt_options(project_id: UUID):
+        summary = repository.get_project_payment_summary(str(project_id))
+        return _response({
+            "invoices": [
+                invoice for invoice in summary["invoices"]
+                if invoice["outstanding"] > 0
+            ],
+            "transactions": repository.list_receipt_candidates(str(project_id)),
+        })
+
     @blueprint.get("/documents/<uuid:document_id>")
     @owner_required
     def get_document(document_id: UUID):
@@ -359,7 +376,7 @@ def create_project_document_blueprint(repository: Any) -> Blueprint:
     def create_receipt(project_id: UUID):
         body, key, _version, actor = _write_request(
             allowed_fields=frozenset(
-                {"idempotency_key", "allocations", "values"}
+                {"idempotency_key", "invoice_id", "allocations", "values"}
             ),
             create=True,
         )
@@ -369,8 +386,17 @@ def create_project_document_blueprint(repository: Any) -> Blueprint:
                 "invalid_project_document_request", "allocations must be an array"
             )
         values = _mapping(body.get("values"), field="values")
+        invoice_id = body.get("invoice_id")
+        if invoice_id is not None:
+            try:
+                invoice_id = str(UUID(str(invoice_id)))
+            except ValueError as exc:
+                raise RequestContractError(
+                    "invalid_project_document_request", "invoice_id must be a UUID"
+                ) from exc
         result = _service(repository).create_receipt(
             str(project_id),
+            invoice_id=invoice_id,
             allocations=allocations,
             values=values,
             idempotency_key=key,

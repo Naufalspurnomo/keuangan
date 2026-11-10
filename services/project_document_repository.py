@@ -47,7 +47,7 @@ _SELECT_PROJECT = """
     contract_notes, lock_version, created_by, updated_by, created_at, updated_at
 """
 _SELECT_DOCUMENT = """
-    id, project_id, issuer_key, document_type, invoice_kind, status,
+    id, project_id, issuer_key, document_type, invoice_kind, applies_to_invoice_id, status,
     official_number, issue_date, due_date, valid_until,
     document_discount_amount, document_discount_percent, tax_percent,
     notes, payment_terms, prepared_by, client_signatory, project_image_url,
@@ -239,7 +239,7 @@ SELECT
                 table_name || '|' || column_name || '|' || udt_name || '|' ||
                 is_nullable || '|' || COALESCE(column_default, '') || '|' || is_identity,
                 E'\n' ORDER BY table_name, column_name
-            )) = '77f25137cfdc70728c872ef7c2f442e3'
+            )) = '232ae6b241f3ae5856a4c8550d503576'
             FROM information_schema.columns
             WHERE table_schema = 'public'
               AND table_name IN (
@@ -247,6 +247,43 @@ SELECT
                   'project_document_number_counters', 'project_document_artifacts',
                   'project_document_events'
               )
+        )
+        AND EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'financial_ledger'
+              AND column_name = 'project_id'
+              AND udt_name = 'uuid'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'financial_ledger_project_id_fkey'
+              AND conrelid = 'financial_ledger'::regclass
+              AND pg_get_constraintdef(oid, TRUE) =
+                  'FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE RESTRICT'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'project_documents_applies_to_invoice_id_fkey'
+              AND conrelid = 'project_documents'::regclass
+              AND pg_get_constraintdef(oid, TRUE) =
+                  'FOREIGN KEY (applies_to_invoice_id) REFERENCES project_documents(id) ON DELETE RESTRICT'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'project_documents_receipt_invoice_application_check'
+              AND conrelid = 'project_documents'::regclass
+              AND pg_get_constraintdef(oid, TRUE) =
+                  'CHECK (applies_to_invoice_id IS NULL OR document_type = ''receipt''::text)'
+        )
+        AND EXISTS (
+            SELECT 1
+            FROM pg_index i
+            JOIN pg_class ci ON ci.oid = i.indexrelid
+            WHERE ci.relname = 'idx_project_documents_applies_to_invoice'
+              AND pg_get_indexdef(i.indexrelid, 1, TRUE) = 'applies_to_invoice_id'
+              AND pg_get_expr(i.indpred, i.indrelid, TRUE) =
+                  'applies_to_invoice_id IS NOT NULL'
         )
     ) AS tables_ready,
     (
@@ -516,16 +553,20 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
         raise ProjectDocumentUnavailable(
             "Project document repository requires STATE_DATABASE_URL or DATABASE_URL"
         )
-    migration = (
-        Path(__file__).parents[1]
-        / "dashboard_api"
-        / "migrations"
-        / "003_project_documents.sql"
-    ).read_text(encoding="utf-8")
+    migration_root = Path(__file__).parents[1] / "dashboard_api" / "migrations"
+    migrations = [
+        (migration_root / name).read_text(encoding="utf-8")
+        for name in (
+            "003_project_documents.sql",
+            "005_canonical_project_transactions.sql",
+            "006_invoice_payment_applications.sql",
+        )
+    ]
     try:
         with _default_connection_factory(selected) as connection:
             with connection.cursor() as cursor:
-                cursor.execute(migration)
+                for migration in migrations:
+                    cursor.execute(migration)
                 cursor.execute(_SCHEMA_HEALTH_QUERY)
                 return _schema_status(cursor.fetchone())
     except Exception as exc:
@@ -1023,6 +1064,188 @@ class ProjectDocumentRepository:
                 f"Project document database unavailable: {type(exc).__name__}"
             ) from exc
 
+    def list_receipt_candidates(self, project_id: str) -> list[dict[str, Any]]:
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT 1 FROM projects WHERE id = %s", (project_id,))
+                    if not cursor.fetchone():
+                        raise ProjectDocumentNotFound("project not found")
+                    cursor.execute(
+                        """
+                        SELECT ledger.source_key, ledger.transaction_date, ledger.amount,
+                               COALESCE(NULLIF(ledger.description, ''), NULLIF(ledger.project, ''), 'Pemasukan proyek'),
+                               COALESCE(SUM(allocation.amount), 0)
+                        FROM financial_ledger ledger
+                        LEFT JOIN (
+                            project_document_allocations allocation
+                            JOIN project_documents receipt
+                              ON receipt.id = allocation.document_id
+                             AND receipt.status <> 'void'
+                        ) ON allocation.ledger_source_key = ledger.source_key
+                        WHERE ledger.project_id = %s
+                          AND ledger.transaction_type = 'Pemasukan'
+                          AND ledger.is_valid = TRUE
+                        GROUP BY ledger.source_key, ledger.transaction_date, ledger.amount,
+                                 ledger.description, ledger.project
+                        HAVING ledger.amount - COALESCE(SUM(allocation.amount), 0) > 0
+                        ORDER BY ledger.transaction_date DESC NULLS LAST, ledger.source_key
+                        """,
+                        (project_id,),
+                    )
+                    return [
+                        {
+                            "source_key": str(source_key),
+                            "transaction_date": transaction_date.isoformat() if transaction_date else None,
+                            "description": str(description),
+                            "amount": int(amount),
+                            "allocated_amount": int(allocated or 0),
+                            "available_amount": int(amount) - int(allocated or 0),
+                        }
+                        for source_key, transaction_date, amount, description, allocated
+                        in cursor.fetchall()
+                    ]
+        except ProjectDocumentError:
+            raise
+        except Exception as exc:
+            raise ProjectDocumentUnavailable(
+                f"Project document database unavailable: {type(exc).__name__}"
+            ) from exc
+
+    def get_project_payment_summary(self, project_id: str) -> dict[str, Any]:
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT 1 FROM projects WHERE id = %s", (project_id,))
+                    if not cursor.fetchone():
+                        raise ProjectDocumentNotFound("project not found")
+                    cursor.execute(
+                        """
+                        SELECT id, document_type, invoice_kind, official_number,
+                               due_date, immutable_snapshot
+                        FROM project_documents
+                        WHERE project_id = %s AND status = 'issued'
+                          AND document_type IN ('sales_order', 'invoice')
+                        ORDER BY CASE
+                            WHEN document_type = 'sales_order' THEN 0
+                            WHEN invoice_kind = 'DP' THEN 1
+                            WHEN invoice_kind = 'PROGRESS' THEN 2
+                            WHEN invoice_kind = 'FINAL' THEN 3
+                            ELSE 4
+                        END, issued_at, official_number, id
+                        """,
+                        (project_id,),
+                    )
+                    commercial_documents = cursor.fetchall()
+                    sales_orders = [row for row in commercial_documents if str(row[1]) == "sales_order"]
+                    if len(sales_orders) > 1:
+                        raise ProjectDocumentConflict(
+                            "payment summary requires at most one active issued Sales Order"
+                        )
+                    contract_total = (
+                        self._issued_snapshot_total(sales_orders[0][5], label="Sales Order")
+                        if sales_orders
+                        else None
+                    )
+                    cursor.execute(
+                        """
+                        SELECT receipt.applies_to_invoice_id,
+                               COALESCE(SUM(allocation.amount), 0)
+                        FROM project_documents receipt
+                        JOIN project_document_allocations allocation
+                          ON allocation.document_id = receipt.id
+                        WHERE receipt.project_id = %s
+                          AND receipt.document_type = 'receipt'
+                          AND receipt.status = 'issued'
+                        GROUP BY receipt.applies_to_invoice_id
+                        """,
+                        (project_id,),
+                    )
+                    paid_by_invoice = {
+                        str(invoice_id) if invoice_id is not None else None: int(amount or 0)
+                        for invoice_id, amount in cursor.fetchall()
+                    }
+            invoices = []
+            issued_invoice_ids: set[str] = set()
+            invoiced_total = 0
+            applied_total = 0
+            for document_id, _type, kind, number, due_date, snapshot in commercial_documents:
+                if str(_type) != "invoice":
+                    continue
+                invoice_id = str(document_id)
+                issued_invoice_ids.add(invoice_id)
+                total = self._issued_snapshot_total(snapshot, label="invoice")
+                paid = paid_by_invoice.get(invoice_id, 0)
+                if paid > total:
+                    raise ProjectDocumentConflict("issued receipt allocations exceed invoice total")
+                outstanding = total - paid
+                invoices.append(
+                    {
+                        "invoice_id": invoice_id,
+                        "invoice_kind": str(kind),
+                        "official_number": str(number),
+                        "due_date": due_date.isoformat() if isinstance(due_date, date) else due_date,
+                        "invoice_total": total,
+                        "paid_total": paid,
+                        "outstanding": outstanding,
+                        "payment_status": (
+                            "PAID" if outstanding == 0 else "PARTIALLY_PAID" if paid else "UNPAID"
+                        ),
+                    }
+                )
+                invoiced_total = bounded_idr(
+                    invoiced_total + total, field="project invoiced total"
+                )
+                applied_total = bounded_idr(
+                    applied_total + paid, field="project applied payment total"
+                )
+            unapplied_total = bounded_idr(
+                sum(
+                    amount for target, amount in paid_by_invoice.items()
+                    if target not in issued_invoice_ids
+                ),
+                field="project unapplied payment total",
+            )
+            paid_total = bounded_idr(
+                applied_total + unapplied_total, field="project paid total"
+            )
+            contract_outstanding = (
+                max(contract_total - paid_total, 0)
+                if contract_total is not None
+                else None
+            )
+            return {
+                "project_id": str(project_id),
+                "contract_total": contract_total,
+                "invoiced_total": invoiced_total,
+                "unbilled_total": (
+                    max(contract_total - invoiced_total, 0)
+                    if contract_total is not None
+                    else None
+                ),
+                "paid_total": paid_total,
+                "contract_outstanding": contract_outstanding,
+                "overpaid_total": (
+                    max(paid_total - contract_total, 0)
+                    if contract_total is not None
+                    else 0
+                ),
+                "unapplied_total": unapplied_total,
+                "payment_status": (
+                    "NOT_CONTRACTED" if contract_total is None
+                    else "PAID" if contract_total > 0 and contract_outstanding == 0
+                    else "PARTIALLY_PAID" if paid_total
+                    else "UNPAID"
+                ),
+                "invoices": invoices,
+            }
+        except ProjectDocumentError:
+            raise
+        except Exception as exc:
+            raise ProjectDocumentUnavailable(
+                f"Project document database unavailable: {type(exc).__name__}"
+            ) from exc
+
     def project_exists(self, project_id: str, wallet: str | None = None, company: str | None = None) -> bool:
         try:
             uuid.UUID(str(project_id))
@@ -1192,22 +1415,24 @@ class ProjectDocumentRepository:
         revision_of_id: str | None = None,
     ) -> dict[str, Any]:
         project_image_url = _project_image_url(values.get("project_image_url"))
+        applies_to_invoice_id = str(values.get("applies_to_invoice_id") or "").strip() or None
         cursor.execute(
             """
             INSERT INTO project_documents (
                 id, project_id, issuer_key, document_type, invoice_kind,
-                issue_date, due_date, valid_until,
+                applies_to_invoice_id, issue_date, due_date, valid_until,
                 document_discount_amount, document_discount_percent, tax_percent,
                 notes, payment_terms, prepared_by, client_signatory,
                 project_image_url, revision_of_id, created_by, updated_by
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, NULLIF(%s, ''), NULLIF(%s, ''),
                 NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''), %s,
                 %s::jsonb, %s::jsonb
             ) RETURNING """ + _SELECT_DOCUMENT,  # nosec B608 -- selected columns are module constants
             (
                 document_id, project_id, issuer_key, document_type, invoice_kind,
+                applies_to_invoice_id,
                 values.get("issue_date"), values.get("due_date"), values.get("valid_until"),
                 int(values.get("document_discount_amount") or 0),
                 str(values.get("document_discount_percent") or "0"),
@@ -1500,6 +1725,13 @@ class ProjectDocumentRepository:
             )
         canonical_values = dict(supplied)
         canonical_values.pop("lines", None)
+        invoice_id = str(canonical_values.get("applies_to_invoice_id") or "").strip() or None
+        if invoice_id is not None:
+            try:
+                invoice_id = str(uuid.UUID(invoice_id))
+            except ValueError as exc:
+                raise ValueError("receipt invoice target must be a UUID") from exc
+        canonical_values["applies_to_invoice_id"] = invoice_id
         canonical_values["document_discount_amount"] = 0
         canonical_values["document_discount_percent"] = "0"
         canonical_values["tax_percent"] = "0"
@@ -1533,6 +1765,15 @@ class ProjectDocumentRepository:
                     )
                     if not project:
                         raise ProjectDocumentNotFound("project not found")
+                    invoice_state = (
+                        self._locked_invoice_payment_state(
+                            cursor,
+                            invoice_id=invoice_id,
+                            project_id=project_id,
+                        )
+                        if invoice_id
+                        else None
+                    )
                     prepared_values = self._numeric_document_values(
                         self._with_document_defaults("receipt", canonical_values)
                     )
@@ -1562,6 +1803,10 @@ class ProjectDocumentRepository:
                         sum(item[1] for item in prepared),
                         field="receipt allocation total",
                     )
+                    if invoice_state and allocation_total > invoice_state["outstanding"]:
+                        raise ProjectDocumentConflict(
+                            "receipt total exceeds invoice outstanding amount"
+                        )
                     self._replace_lines(
                         cursor,
                         document_id,
@@ -1953,7 +2198,7 @@ class ProjectDocumentRepository:
         columns = [
             "source_key", "source_sheet", "source_row", "source_block", "message_id",
             "transaction_date", "amount", "transaction_type", "company", "wallet",
-            "project", "category", "description", "is_valid", "payload",
+            "project", "project_id", "category", "description", "is_valid", "payload",
         ]
         cursor.execute(
             "SELECT " + ", ".join(columns) + " FROM financial_ledger WHERE source_key = %s" +  # nosec B608 -- columns and lock suffix are internal constants
@@ -1974,8 +2219,8 @@ class ProjectDocumentRepository:
             "operasional", "office", "internal_transfer", "transfer", "hutang", "debt",
         }:
             raise ProjectDocumentConflict("receipt allocation must reference valid project income")
-        if str(row.get("project") or "") != project_id:
-            raise ProjectDocumentConflict("receipt allocation project does not match")
+        if str(row.get("project_id") or "") != project_id:
+            raise ProjectDocumentConflict("receipt allocation project does not match canonical project identity")
         wallet = str(issuer.get("wallet") or "").strip()
         company = str(issuer.get("company") or "").strip()
         if not wallet or not company:
@@ -1988,6 +2233,57 @@ class ProjectDocumentRepository:
             raise ProjectDocumentConflict("receipt allocation issuer company does not match")
         if int(row.get("amount") or 0) <= 0:
             raise ProjectDocumentConflict("receipt allocation income amount is invalid")
+
+    @classmethod
+    def _locked_invoice_payment_state(
+        cls,
+        cursor: Any,
+        *,
+        invoice_id: str,
+        project_id: str,
+        excluding_receipt_id: str | None = None,
+    ) -> dict[str, int]:
+        cursor.execute(
+            """
+            SELECT immutable_snapshot
+            FROM project_documents
+            WHERE id = %s AND project_id = %s
+              AND document_type = 'invoice' AND status = 'issued'
+            FOR UPDATE
+            """,
+            (invoice_id, project_id),
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise ProjectDocumentConflict(
+                "receipt invoice target must be an issued invoice from the same project"
+            )
+        invoice_total = cls._issued_snapshot_total(row[0], label="invoice")
+        params: list[Any] = [invoice_id]
+        excluding = ""
+        if excluding_receipt_id is not None:
+            excluding = " AND receipt.id <> %s"
+            params.append(excluding_receipt_id)
+        cursor.execute(
+            """
+            SELECT COALESCE(SUM(allocation.amount), 0)
+            FROM project_documents receipt
+            JOIN project_document_allocations allocation
+              ON allocation.document_id = receipt.id
+            WHERE receipt.document_type = 'receipt'
+              AND receipt.status = 'issued'
+              AND receipt.applies_to_invoice_id = %s
+            """ + excluding,
+            tuple(params),
+        )
+        paid = int(cursor.fetchone()[0] or 0)
+        if paid > invoice_total:
+            raise ProjectDocumentConflict("issued receipt allocations exceed invoice total")
+        return {
+            "invoice_total": invoice_total,
+            "paid_total": paid,
+            "outstanding": invoice_total - paid,
+        }
 
     @staticmethod
     def _allocated_amount(cursor: Any, source_key: str, *, excluding_document_id: str) -> int:
@@ -2752,6 +3048,21 @@ class ProjectDocumentRepository:
                             "sales_order and invoice require at least one line"
                         )
                     self._revalidate_allocations(cursor, document)
+                    if (
+                        document["document_type"] == "receipt"
+                        and document.get("applies_to_invoice_id")
+                    ):
+                        payment = self._locked_invoice_payment_state(
+                            cursor,
+                            invoice_id=str(document["applies_to_invoice_id"]),
+                            project_id=str(document["project_id"]),
+                            excluding_receipt_id=str(document["id"]),
+                        )
+                        receipt_total = int(self._calculate_totals(document)["total"])
+                        if receipt_total > payment["outstanding"]:
+                            raise ProjectDocumentConflict(
+                                "receipt total exceeds invoice outstanding amount"
+                            )
                     self._validate_sales_order_commercial_state(cursor, document)
                     self._validate_invoice_commercial_state(
                         cursor,

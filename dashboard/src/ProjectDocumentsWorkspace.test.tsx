@@ -48,6 +48,28 @@ const issued: ProjectDocumentRecord = {
   issued_at: '2026-11-03T11:00:00Z',
 }
 
+const paymentSummary = {
+  project_id: project.id,
+  contract_total: 1_000_000,
+  invoiced_total: 400_000,
+  unbilled_total: 600_000,
+  paid_total: 200_000,
+  contract_outstanding: 800_000,
+  overpaid_total: 0,
+  unapplied_total: 0,
+  payment_status: 'PARTIALLY_PAID' as const,
+  invoices: [{
+    invoice_id: issued.id,
+    invoice_kind: 'DP' as const,
+    official_number: issued.number!,
+    due_date: '2026-11-10',
+    invoice_total: 400_000,
+    paid_total: 200_000,
+    outstanding: 200_000,
+    payment_status: 'PARTIALLY_PAID' as const,
+  }],
+}
+
 const session: ProjectDocumentSession = {
   csrfToken: 'csrf-token-with-16-chars',
   capabilities: { projectWrites: true, documentWrites: true, transactionCorrections: false, transactionReversals: false },
@@ -70,6 +92,18 @@ function api(overrides: Partial<ProjectDocumentApi> = {}): ProjectDocumentApi {
     setProjectStatus: vi.fn(),
     archiveProject: vi.fn(),
     listDocuments: vi.fn(async () => ({ documents: [draft, issued], capabilities: session.capabilities })),
+    getPaymentSummary: vi.fn(async () => paymentSummary),
+    getReceiptOptions: vi.fn(async () => ({
+      invoices: paymentSummary.invoices,
+      transactions: [{
+        transaction_id: 'ledger:income-1',
+        source_key: 'ledger:income-1',
+        amount: 200_000,
+        available_amount: 200_000,
+        description: 'Transfer DP BCA',
+        transaction_date: '2026-11-03',
+      }],
+    })),
     getDocument: vi.fn(async () => draft),
     createDocument: vi.fn(() => command(draft)),
     updateDocument: vi.fn(() => command(draft)),
@@ -114,6 +148,21 @@ describe('ProjectDocumentsWorkspace', () => {
     expect(onRouteChange).toHaveBeenCalledWith(expect.objectContaining({ document: draft.id }))
   })
 
+  it('lets admin target an invoice and allocate an available project payment', async () => {
+    const subject = api()
+    render(<ProjectDocumentsWorkspace project={project} api={subject} session={session} route={{ tab: 'documents', type: 'receipt' }} onRouteChange={vi.fn()} />)
+    const target = await screen.findByRole('combobox', { name: 'Invoice tujuan' })
+    fireEvent.change(target, { target: { value: issued.id } })
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(screen.getByLabelText('Nominal Transfer DP BCA')).toHaveValue(200_000)
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan draf' }))
+    await waitFor(() => expect(subject.createDocument).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'receipt',
+      applies_to_invoice_id: issued.id,
+      allocations: [expect.objectContaining({ source_key: 'ledger:income-1', amount: 200_000 })],
+    })))
+  })
+
   it('issues after confirmation, then performs authoritative readback', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const subject = api()
@@ -123,6 +172,21 @@ describe('ProjectDocumentsWorkspace', () => {
     await waitFor(() => expect(subject.issueDocument).toHaveBeenCalledWith(draft.id, 1))
     await waitFor(() => expect(subject.getDocument).toHaveBeenCalledWith(draft.id))
     expect(screen.getByRole('status')).toHaveTextContent('dibaca kembali')
+  })
+
+  it('keeps a confirmed write successful when payment-summary refresh fails', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const summary = vi.fn()
+      .mockResolvedValueOnce(paymentSummary)
+      .mockRejectedValueOnce(new Error('summary offline'))
+    const subject = api({ getPaymentSummary: summary })
+    render(<ProjectDocumentsWorkspace project={project} api={subject} session={session} route={{ tab: 'documents', document: draft.id }} onRouteChange={vi.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Terbitkan dokumen' }))
+    await waitFor(() => expect(subject.issueDocument).toHaveBeenCalledWith(draft.id, 1))
+    await waitFor(() => expect(subject.getDocument).toHaveBeenCalledWith(draft.id))
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByRole('status')).toHaveTextContent('Perubahan dokumen sudah dikonfirmasi')
   })
 
   it('handles issued download, void with reason, and revision', async () => {

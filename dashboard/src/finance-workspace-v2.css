@@ -139,3 +139,27 @@ html[data-theme='dark'] .year-command nav button.active { color: #0c2028; }
   .year-command { grid-template-columns: 44px minmax(150px, 1fr) 44px; }.year-command > button { min-width: 44px; min-height: 44px; }.year-command nav { grid-column: 1 / -1; border-top: 1px solid var(--border); }.year-command nav button { min-height: 58px; }.year-candle-grid { width: 100%; min-width: 0; grid-template-columns: repeat(12, minmax(82px, 1fr)); }.year-candle-board { min-width: 0; overflow: hidden; }.year-candle-board > header, .year-candle-board footer { align-items: flex-start; display: grid; }.project-controls { margin-top: 8px; }.project-register-headings { display: none; }.project-register article { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; padding: 0 12px 12px; }.project-register-main { width: 100%; grid-column: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto; }.project-register-main > span:first-child { min-width: 0; }.project-register-main > span:first-child strong, .project-register-main > span:first-child small { overflow-wrap: anywhere; }.project-register-main > span:nth-of-type(n+2) { display: none; }.project-register article .row-actions { width: 100%; grid-column: 1; grid-row: auto; justify-content: stretch; padding: 0; }.project-register article .row-actions button { flex: 1 1 72px; }.row-actions .complete-project-action { width: auto; padding: 0 10px; }.complete-project-action span, .row-action-label { display: inline; }
   .form-grid, .document-field-grid, .report-filter-grid { grid-template-columns: 1fr; }.form-grid label.wide { grid-column: auto; }.preview-metrics { grid-template-columns: repeat(2, 1fr); }.preview-metrics article:nth-child(2n) { border-right: 0; }.finance-modal-backdrop, .modal-backdrop { padding: 0; place-items: end stretch; }.finance-modal, .modal-card { max-height: 92vh; width: 100%; }.finance-modal button, .modal-card button { min-height: 44px; }.finance-modal > header > button, .modal-card > header > button { width: 44px; min-width: 44px; }
 }
+
+.payment-summary { display: grid; gap: 14px; padding: 18px; border: 1px solid var(--border); background: var(--surface-raised); }
+.payment-summary h3 { margin: 3px 0 0; color: var(--text); }
+.payment-summary-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--border-subtle); }
+.payment-summary-grid > span { min-width: 0; padding: 14px; border-right: 1px solid var(--border-subtle); }
+.payment-summary-grid > span:last-child { border-right: 0; }
+.payment-summary-grid small, .payment-summary-grid strong { display: block; }
+.payment-summary-grid small { color: var(--text-secondary); }
+.payment-summary-grid strong { margin-top: 6px; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.invoice-payment-list { display: grid; gap: 8px; }
+.invoice-payment-list article { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px; border: 1px solid var(--border-subtle); }
+.invoice-payment-list article div { display: grid; gap: 3px; }
+.invoice-payment-list article span, .invoice-payment-list article small { color: var(--text-secondary); }
+.receipt-allocation-note { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--border); }
+.receipt-allocation-note > label { display: grid; gap: 6px; }
+.receipt-allocation-note select, .receipt-candidates input[type='number'] { min-height: 42px; border: 1px solid var(--border); background: var(--surface-raised); color: var(--text); padding: 8px 10px; }
+.receipt-candidates { display: grid; border: 1px solid var(--border-subtle); }
+.receipt-candidates > label { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 12px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); }
+.receipt-candidates > label:last-child { border-bottom: 0; }
+.receipt-candidates span { display: flex; gap: 8px; align-items: center; min-width: 0; }
+@media (max-width: 900px) { .payment-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .payment-summary-grid > span { border-bottom: 1px solid var(--border-subtle); } }
+@media (max-width: 620px) { .payment-summary-grid { grid-template-columns: 1fr; } .invoice-payment-list article, .receipt-candidates > label { align-items: stretch; grid-template-columns: 1fr; flex-direction: column; } }
+
+.payment-summary-warning { margin: 0; padding: 10px 12px; border-left: 3px solid var(--warning, #b7791f); background: var(--surface-muted); color: var(--text-secondary); font-size: 12px; }

@@ -8,6 +8,7 @@ import {
   type ProjectDocumentDraft,
   type ProjectDocumentRecord,
   type ProjectRecord,
+  type ReceiptOptions,
 } from './projectDocuments'
 
 interface ProjectDocumentComposerProps {
@@ -15,16 +16,17 @@ interface ProjectDocumentComposerProps {
   document: ProjectDocumentDraft | ProjectDocumentRecord
   writesEnabled: boolean
   saving?: boolean
+  receiptOptions?: ReceiptOptions | null
   onSave: (document: ProjectDocumentDraft) => void | Promise<void>
   onClose: () => void
 }
 
 function draftFrom(document: ProjectDocumentDraft | ProjectDocumentRecord): ProjectDocumentDraft {
-  const { id, project_id, type, invoice_kind, issue_date, due_date, valid_until, notes, payment_terms, prepared_by, client_signatory, project_image_url, lines, discount_mode, discount_value, tax_percent, allocations } = document
-  return { id, project_id, type, invoice_kind, issue_date, due_date, valid_until, notes, payment_terms, prepared_by, client_signatory, project_image_url, lines: lines.map((line) => ({ ...line })), discount_mode, discount_value, tax_percent, allocations: allocations.map((allocation) => ({ ...allocation })) }
+  const { id, project_id, type, invoice_kind, applies_to_invoice_id, issue_date, due_date, valid_until, notes, payment_terms, prepared_by, client_signatory, project_image_url, lines, discount_mode, discount_value, tax_percent, allocations } = document
+  return { id, project_id, type, invoice_kind, applies_to_invoice_id, issue_date, due_date, valid_until, notes, payment_terms, prepared_by, client_signatory, project_image_url, lines: lines.map((line) => ({ ...line })), discount_mode, discount_value, tax_percent, allocations: allocations.map((allocation) => ({ ...allocation })) }
 }
 
-export default function ProjectDocumentComposer({ project, document, writesEnabled, saving = false, onSave, onClose }: ProjectDocumentComposerProps) {
+export default function ProjectDocumentComposer({ project, document, writesEnabled, saving = false, receiptOptions = null, onSave, onClose }: ProjectDocumentComposerProps) {
   const [draft, setDraft] = useState(() => draftFrom(document))
   const [view, setView] = useState<'edit' | 'preview'>('edit')
   const [dirty, setDirty] = useState(false)
@@ -44,6 +46,16 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
   }
   const changeLine = (index: number, key: keyof ProjectDocumentDraft['lines'][number], value: string | number) => {
     change('lines', draft.lines.map((line, lineIndex) => lineIndex === index ? { ...line, [key]: value } : line))
+  }
+  const toggleAllocation = (sourceKey: string, enabled: boolean) => {
+    const candidate = receiptOptions?.transactions.find((item) => item.source_key === sourceKey)
+    if (!candidate) return
+    change('allocations', enabled
+      ? [...draft.allocations, { ...candidate, amount: candidate.available_amount ?? candidate.amount }]
+      : draft.allocations.filter((item) => item.source_key !== sourceKey))
+  }
+  const changeAllocationAmount = (sourceKey: string, amount: number) => {
+    change('allocations', draft.allocations.map((item) => item.source_key === sourceKey ? { ...item, amount } : item))
   }
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -92,7 +104,18 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
             <button type="button" className="icon-button danger" aria-label={`Hapus item ${index + 1}`} disabled={draft.lines.length === 1} onClick={() => change('lines', draft.lines.filter((_, lineIndex) => lineIndex !== index))}><Trash2 size={17} /></button>
           </div>)}
           <button type="button" className="secondary-button" onClick={() => change('lines', [...draft.lines, createEmptyDocumentLine()])}><Plus size={16} /> Tambah item</button>
-        </fieldset> : <section className="receipt-allocation-note"><strong>Alokasi transaksi pemasukan</strong><p>{draft.allocations.length ? `${draft.allocations.length} transaksi dipilih.` : 'Belum ada transaksi pemasukan yang dapat dialokasikan.'}</p></section>}
+        </fieldset> : <section className="receipt-allocation-note"><strong>Alokasi pembayaran</strong>
+          {document.id ? <>
+            <p>Invoice tujuan dan transaksi dikunci setelah kuitansi dibuat. Untuk koreksi, batalkan kuitansi lalu buat kuitansi baru.</p>
+            <div className="receipt-candidates">{draft.allocations.map((allocation) => <div key={allocation.source_key}><span>{allocation.transaction_date || 'Tanpa tanggal'} · {allocation.description}</span><strong>{allocation.amount.toLocaleString('id-ID')}</strong></div>)}</div>
+          </> : <>
+            <label>Invoice tujuan<select aria-label="Invoice tujuan" value={draft.applies_to_invoice_id ?? ''} onChange={(event) => change('applies_to_invoice_id', event.target.value || null)}><option value="">Belum dialokasikan ke invoice</option>{receiptOptions?.invoices.map((invoice) => <option key={invoice.invoice_id} value={invoice.invoice_id}>{invoice.invoice_kind} · {invoice.official_number} · sisa {invoice.outstanding.toLocaleString('id-ID')}</option>)}</select></label>
+            {!receiptOptions?.transactions.length ? <p>Belum ada transaksi pemasukan proyek yang tersedia.</p> : <div className="receipt-candidates">{receiptOptions.transactions.map((candidate) => {
+              const selected = draft.allocations.find((item) => item.source_key === candidate.source_key)
+              return <label key={candidate.source_key}><span><input type="checkbox" checked={Boolean(selected)} onChange={(event) => toggleAllocation(candidate.source_key, event.target.checked)} /> {candidate.transaction_date || 'Tanpa tanggal'} · {candidate.description}</span><input aria-label={`Nominal ${candidate.description}`} type="number" min="1" max={candidate.available_amount} disabled={!selected} value={selected?.amount ?? candidate.available_amount ?? candidate.amount} onChange={(event) => changeAllocationAmount(candidate.source_key, Number(event.target.value))} /></label>
+            })}</div>}
+          </>}
+        </section>}
 
         <div className="document-field-grid">
           {draft.type !== 'receipt' && draft.invoice_kind !== 'FINAL' && <>

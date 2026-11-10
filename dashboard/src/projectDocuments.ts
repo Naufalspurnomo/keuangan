@@ -66,11 +66,44 @@ export interface ReceiptAllocation {
   transaction_date?: string
 }
 
+export type PaymentStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID'
+export type ProjectPaymentStatus = PaymentStatus | 'NOT_CONTRACTED'
+
+export interface InvoicePaymentSummary {
+  invoice_id: string
+  invoice_kind: InvoiceKind
+  official_number: string
+  due_date: string | null
+  invoice_total: number
+  paid_total: number
+  outstanding: number
+  payment_status: PaymentStatus
+}
+
+export interface ProjectPaymentSummary {
+  project_id: string
+  contract_total: number | null
+  invoiced_total: number
+  unbilled_total: number | null
+  paid_total: number
+  contract_outstanding: number | null
+  overpaid_total: number
+  unapplied_total: number
+  payment_status: ProjectPaymentStatus
+  invoices: InvoicePaymentSummary[]
+}
+
+export interface ReceiptOptions {
+  invoices: InvoicePaymentSummary[]
+  transactions: ReceiptAllocation[]
+}
+
 export interface ProjectDocumentDraft {
   id: string | null
   project_id: string
   type: ProjectDocumentType
   invoice_kind: InvoiceKind | null
+  applies_to_invoice_id: string | null
   issue_date: string
   due_date: string | null
   valid_until: string | null
@@ -173,6 +206,7 @@ export function createEmptyDocumentDraft(projectId: string, type: ProjectDocumen
     project_id: projectId,
     type,
     invoice_kind: type === 'invoice' ? 'DP' : null,
+    applies_to_invoice_id: null,
     issue_date: today,
     due_date: type === 'invoice' ? addUtcDays(today, 7) : null,
     valid_until: type === 'sales_order' ? addUtcDays(today, 14) : null,
