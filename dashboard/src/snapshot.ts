@@ -92,6 +92,12 @@ export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWo
       company: uiCompany(row.company),
       project_id: project?.id ?? null,
       office_category: office ? (row.office_category || 'Lainnya') as OfficeCategory : null,
+      category: row.category ?? null,
+      recorded_by: row.recorded_by ?? null,
+      input_source: row.input_source ?? null,
+      evidence_source: row.evidence_source,
+      ocr_mode: row.ocr_mode ?? null,
+      ocr_confidence: row.ocr_confidence ?? null,
       notes: row.notes || '', created_at: row.updated_at || updatedAt, updated_at: row.updated_at || updatedAt,
     }]
   })

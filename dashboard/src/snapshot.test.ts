@@ -23,6 +23,12 @@ function snapshot(company: string): DashboardSnapshot {
       company,
       project: 'Surabaya Office',
       scope: 'project',
+      category: 'Gaji',
+      recorded_by: 'Admin',
+      input_source: 'WhatsApp',
+      evidence_source: 'media_ocr',
+      ocr_mode: 'vision',
+      ocr_confidence: '0.98',
       notes: 'Termin',
     }],
     debts: [],
@@ -45,6 +51,15 @@ describe('snapshotFinanceWorkspace', () => {
     ['TEXTURIN-Bali', 'Texturin Bali'],
   ])('normalizes backend company %s into the existing UI company %s', (source, expected) => {
     expect(snapshotFinanceWorkspace(snapshot(source)).projects[0].company).toBe(expected)
+  })
+
+  it('preserves cost category and evidence provenance after reload', () => {
+    const transaction = snapshotFinanceWorkspace(snapshot('HOLLA')).transactions[0]
+
+    expect(transaction).toMatchObject({
+      category: 'Gaji', recorded_by: 'Admin', input_source: 'WhatsApp',
+      evidence_source: 'media_ocr', ocr_mode: 'vision', ocr_confidence: '0.98',
+    })
   })
 
   it('keeps the canonical project UUID for project routes and transaction relations after reload', () => {

@@ -27,13 +27,13 @@ import {
   OverviewWorkspace,
 
   WalletWorkspacePage,
-  TransactionRows,
 } from './FinancePages'
 import ProjectCommandCenter from './ProjectCommandCenter'
 import ProjectCompleteDialog from './ProjectCompleteDialog'
 import ProjectDetailWorkspace from './ProjectDetailWorkspace'
 import ProjectDocumentsWorkspace from './ProjectDocumentsWorkspace'
 import ProjectPresensiPanel from './ProjectPresensiPanel'
+import ProjectProfitabilityWorkspace from './ProjectProfitabilityWorkspace'
 import ProjectRecordForm from './ProjectRecordForm'
 import ProjectTransactionsWorkspace from './ProjectTransactionsWorkspace'
 import ProductionProjectsWorkspace from './ProductionProjectsWorkspace'
@@ -387,8 +387,13 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
         ? { label: 'Tambah hutang', run: () => setModal({ kind: 'debt' } as Modal) }
         : { label: 'Tambah transaksi', run: () => setModal({ kind: 'transaction' } as Modal) }
 
-  const productionTransactions = productionProject
-    ? <section className="recent-command"><header><div><p className="eyebrow">TRANSAKSI PROYEK</p><h2>Aktivitas tercatat</h2></div></header><TransactionRows rows={finance.workspace.transactions.filter((row) => row.project_id === productionProject.id)} projects={finance.workspace.projects} /></section>
+  const productionTransactions = productionProject && projectApi
+    ? <ProjectProfitabilityWorkspace
+        project={productionFinanceProject(productionProject)}
+        rows={finance.workspace.transactions.filter((row) => row.project_id === productionProject.id)}
+        projects={transactionProjects}
+        api={projectApi}
+      />
     : null
   const content = active === 'overview'
     ? <OverviewWorkspace workspace={finance.workspace} readOnly={readOnly} canCreateTransactions={canCreateTransactions} onAddTransaction={() => setModal({ kind: 'transaction' })} onAddProject={() => setModal({ kind: 'project' })} onAddOffice={() => setModal({ kind: 'transaction', scope: 'office' })} />

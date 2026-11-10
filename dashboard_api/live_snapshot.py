@@ -208,6 +208,16 @@ def build_live_snapshot(
                 "office_category": (
                     str(raw.get("kategori") or raw.get("category") or "").strip() or None
                 ) if scope == "office" else None,
+                "category": str(raw.get("kategori") or raw.get("category") or "").strip() or None,
+                "recorded_by": str(raw.get("oleh") or raw.get("recorded_by") or "").strip() or None,
+                "input_source": str(raw.get("source") or raw.get("input_source") or "").strip() or None,
+                "evidence_source": (
+                    "media_ocr" if str(raw.get("ocr_mode") or "").strip()
+                    else "message" if str(raw.get("message_id") or "").strip()
+                    else "manual"
+                ),
+                "ocr_mode": str(raw.get("ocr_mode") or "").strip() or None,
+                "ocr_confidence": str(raw.get("ocr_confidence") or "").strip() or None,
                 "notes": str(raw.get("keterangan") or raw.get("notes") or "").strip(),
                 "internal_movement": internal_movement,
                 "transfer_scope": "internal" if internal_movement else "external",

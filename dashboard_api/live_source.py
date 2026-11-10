@@ -70,7 +70,7 @@ def _cell(row: list[str], column: str) -> str:
     return row[index] if len(row) > index else ""
 
 
-def _read_project_ids(source_keys: list[str]) -> dict[str, str]:
+def _read_ledger_enrichment(source_keys: list[str]) -> dict[str, dict[str, Any]]:
     dsn = os.getenv("STATE_DATABASE_URL") or os.getenv("DATABASE_URL") or os.getenv("POSTGRES_DSN")
     if not dsn or not source_keys:
         return {}
@@ -80,12 +80,31 @@ def _read_project_ids(source_keys: list[str]) -> dict[str, str]:
         with psycopg.connect(dsn, autocommit=True) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "SELECT source_key, project_id::text FROM financial_ledger WHERE source_key = ANY(%s) AND project_id IS NOT NULL",
+                    """
+                    SELECT source_key, project_id::text, category, recorded_by, input_source,
+                           message_id, payload->>'_ocr_mode', payload->>'_ocr_confidence'
+                    FROM financial_ledger
+                    WHERE source_key = ANY(%s)
+                    """,
                     (source_keys,),
                 )
-                return {str(source_key): str(project_id) for source_key, project_id in cursor.fetchall()}
+                return {
+                    str(source_key): {
+                        "project_id": str(project_id) if project_id else None,
+                        "category": str(category or "").strip() or None,
+                        "recorded_by": str(recorded_by or "").strip() or None,
+                        "input_source": str(input_source or "").strip() or None,
+                        "message_id": str(message_id or "").strip() or None,
+                        "ocr_mode": str(ocr_mode or "").strip() or None,
+                        "ocr_confidence": str(ocr_confidence or "").strip() or None,
+                    }
+                    for (
+                        source_key, project_id, category, recorded_by, input_source,
+                        message_id, ocr_mode, ocr_confidence,
+                    ) in cursor.fetchall()
+                }
     except Exception as exc:
-        logger.warning("Canonical project relation enrichment failed: %s", type(exc).__name__)
+        logger.warning("Canonical ledger enrichment failed: %s", type(exc).__name__)
         return {}
 
 
@@ -117,10 +136,17 @@ def _read_fresh_snapshot(*, force_refresh: bool) -> dict[str, Any]:
         _verify_required_worksheets(spreadsheet)
         raw_rows = get_raw_rows_for_audit()
         ledger_keys = [build_source_key(row) for row in raw_rows]
-        project_ids = _read_project_ids(ledger_keys)
+        enrichment = _read_ledger_enrichment(ledger_keys)
         for row, ledger_key in zip(raw_rows, ledger_keys):
             row["internal_movement"] = is_internal_transfer_transaction(row)
-            row["project_id"] = project_ids.get(ledger_key)
+            ledger = enrichment.get(ledger_key, {})
+            row["project_id"] = ledger.get("project_id")
+            row["kategori"] = ledger.get("category") or row.get("kategori")
+            row["oleh"] = ledger.get("recorded_by") or row.get("oleh")
+            row["source"] = ledger.get("input_source") or row.get("source")
+            row["message_id"] = ledger.get("message_id") or row.get("message_id")
+            row["ocr_mode"] = ledger.get("ocr_mode")
+            row["ocr_confidence"] = ledger.get("ocr_confidence")
         balances = get_wallet_balances(
             force_refresh=force_refresh,
             strict=True,
