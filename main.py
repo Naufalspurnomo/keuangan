@@ -31,6 +31,7 @@ from services.dashboard_write_requests import (
 )
 from services.project_document_repository import (
     ProjectDocumentUnavailable,
+    ensure_project_document_schema,
     project_document_runtime_health as read_project_document_runtime_health,
 )
 from werkzeug.exceptions import RequestEntityTooLarge
@@ -276,7 +277,43 @@ def migrate_dashboard_write_schema_at_startup():
         }
 
 
+def migrate_project_document_schema_at_startup():
+    """Apply additive project migrations only when production writes are enabled."""
+    writes_enabled = str(
+        os.getenv('PROJECT_DOCUMENT_WRITES_ENABLED') or ''
+    ).strip().casefold() in {'1', 'true', 'yes', 'on'}
+    dsn = str(os.getenv('STATE_DATABASE_URL') or os.getenv('DATABASE_URL') or '').strip()
+    if not dsn:
+        return {
+            'configured': False,
+            'writes_enabled': writes_enabled,
+            'ready': False,
+        }
+    if not writes_enabled:
+        return {
+            'configured': True,
+            'writes_enabled': False,
+            'ready': False,
+            'skipped': True,
+        }
+    try:
+        return {
+            'configured': True,
+            'writes_enabled': True,
+            **ensure_project_document_schema(dsn),
+        }
+    except ProjectDocumentUnavailable as exc:
+        secure_log("ERROR", f"Project document migration unavailable: {type(exc).__name__}")
+        return {
+            'configured': True,
+            'writes_enabled': True,
+            'ready': False,
+            'error': type(exc).__name__,
+        }
+
+
 _DASHBOARD_WRITE_SCHEMA_AT_STARTUP = migrate_dashboard_write_schema_at_startup()
+_PROJECT_DOCUMENT_SCHEMA_AT_STARTUP = migrate_project_document_schema_at_startup()
 
 # Register the optional private dashboard only when its database is configured.
 # This does not alter /health, /webhook_wuzapi, or /telegram behavior.
