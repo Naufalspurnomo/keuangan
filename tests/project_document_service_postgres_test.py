@@ -36,10 +36,15 @@ def repository():
     import psycopg
 
     dsn = os.environ["PROJECT_DOCUMENT_TEST_DATABASE_URL"]
-    migration = (
-        Path(__file__).parents[1]
-        / "dashboard_api/migrations/003_project_documents.sql"
-    ).read_text(encoding="utf-8")
+    migration_root = Path(__file__).parents[1] / "dashboard_api/migrations"
+    migrations = [
+        (migration_root / name).read_text(encoding="utf-8")
+        for name in (
+            "003_project_documents.sql",
+            "005_canonical_project_transactions.sql",
+            "006_invoice_payment_applications.sql",
+        )
+    ]
     with psycopg.connect(dsn, autocommit=True) as connection:
         with connection.cursor() as cursor:
             cursor.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
@@ -70,7 +75,8 @@ def repository():
                 )
                 """
             )
-            cursor.execute(migration)
+            for migration in migrations:
+                cursor.execute(migration)
     store = ProjectDocumentRepository(
         dsn,
         now=lambda: FIXED_NOW,

@@ -2259,23 +2259,33 @@ class ProjectDocumentRepository:
                 "receipt invoice target must be an issued invoice from the same project"
             )
         invoice_total = cls._issued_snapshot_total(row[0], label="invoice")
-        params: list[Any] = [invoice_id]
-        excluding = ""
-        if excluding_receipt_id is not None:
-            excluding = " AND receipt.id <> %s"
-            params.append(excluding_receipt_id)
-        cursor.execute(
-            """
-            SELECT COALESCE(SUM(allocation.amount), 0)
-            FROM project_documents receipt
-            JOIN project_document_allocations allocation
-              ON allocation.document_id = receipt.id
-            WHERE receipt.document_type = 'receipt'
-              AND receipt.status = 'issued'
-              AND receipt.applies_to_invoice_id = %s
-            """ + excluding,
-            tuple(params),
-        )
+        if excluding_receipt_id is None:
+            cursor.execute(
+                """
+                SELECT COALESCE(SUM(allocation.amount), 0)
+                FROM project_documents receipt
+                JOIN project_document_allocations allocation
+                  ON allocation.document_id = receipt.id
+                WHERE receipt.document_type = 'receipt'
+                  AND receipt.status = 'issued'
+                  AND receipt.applies_to_invoice_id = %s
+                """,
+                (invoice_id,),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT COALESCE(SUM(allocation.amount), 0)
+                FROM project_documents receipt
+                JOIN project_document_allocations allocation
+                  ON allocation.document_id = receipt.id
+                WHERE receipt.document_type = 'receipt'
+                  AND receipt.status = 'issued'
+                  AND receipt.applies_to_invoice_id = %s
+                  AND receipt.id <> %s
+                """,
+                (invoice_id, excluding_receipt_id),
+            )
         paid = int(cursor.fetchone()[0] or 0)
         if paid > invoice_total:
             raise ProjectDocumentConflict("issued receipt allocations exceed invoice total")
