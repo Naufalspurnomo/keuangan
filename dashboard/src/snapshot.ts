@@ -36,7 +36,7 @@ export interface DashboardSnapshot {
 }
 
 function liveProjectRouteId(project: ProjectSummary, index: number) {
-  return project.source_key_first || project.source_key_latest || `live-project-${index + 1}`
+  return project.project_id || project.source_key_first || project.source_key_latest || `live-project-${index + 1}`
 }
 
 function uiCompany(company: string): CompanyId {
@@ -52,7 +52,7 @@ function uiCompany(company: string): CompanyId {
 export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWorkspace {
   const updatedAt = snapshot.meta.as_of
   const projects = snapshot.project_summaries.map((project, index) => {
-    const matching = snapshot.transactions.filter((row) => row.project === project.name)
+    const matching = snapshot.transactions.filter((row) => project.project_id ? row.project_id === project.project_id : row.project === project.name)
     const first = matching[0]
     const mappings = new Map(
       matching
@@ -77,9 +77,10 @@ export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWo
     }
   })
   const projectsByName = new Map(projects.map((project) => [project.name, project]))
+  const projectsById = new Map(projects.map((project) => [project.id, project]))
   const transactions = snapshot.transactions.flatMap((row) => {
     if (row.scope === 'internal_transfer' || row.internal_movement) return []
-    const project = row.project ? projectsByName.get(row.project) : undefined
+    const project = (row.project_id ? projectsById.get(row.project_id) : undefined) || (row.project ? projectsByName.get(row.project) : undefined)
     const office = row.scope === 'office' || !project
     return [{
       id: row.source_key || `live-transaction-${row.id}`,

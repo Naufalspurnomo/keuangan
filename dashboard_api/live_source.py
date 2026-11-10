@@ -18,6 +18,7 @@ from config.constants import (
 )
 from config.wallets import DOMPET_SHEETS
 from dashboard_api.live_snapshot import build_live_snapshot
+from services.ledger_store import build_source_key
 from sheets_helper import (
     get_raw_rows_for_audit,
     get_spreadsheet,
@@ -69,6 +70,25 @@ def _cell(row: list[str], column: str) -> str:
     return row[index] if len(row) > index else ""
 
 
+def _read_project_ids(source_keys: list[str]) -> dict[str, str]:
+    dsn = os.getenv("STATE_DATABASE_URL") or os.getenv("DATABASE_URL") or os.getenv("POSTGRES_DSN")
+    if not dsn or not source_keys:
+        return {}
+    try:
+        import psycopg
+
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT source_key, project_id::text FROM financial_ledger WHERE source_key = ANY(%s) AND project_id IS NOT NULL",
+                    (source_keys,),
+                )
+                return {str(source_key): str(project_id) for source_key, project_id in cursor.fetchall()}
+    except Exception as exc:
+        logger.warning("Canonical project relation enrichment failed: %s", type(exc).__name__)
+        return {}
+
+
 def _read_debts(spreadsheet: Any) -> list[dict[str, Any]]:
     rows = spreadsheet.worksheet(HUTANG_SHEET_NAME).get_all_values()[HUTANG_DATA_START - 1 :]
     debts = []
@@ -96,8 +116,11 @@ def _read_fresh_snapshot(*, force_refresh: bool) -> dict[str, Any]:
         spreadsheet = get_spreadsheet()
         _verify_required_worksheets(spreadsheet)
         raw_rows = get_raw_rows_for_audit()
-        for row in raw_rows:
+        ledger_keys = [build_source_key(row) for row in raw_rows]
+        project_ids = _read_project_ids(ledger_keys)
+        for row, ledger_key in zip(raw_rows, ledger_keys):
             row["internal_movement"] = is_internal_transfer_transaction(row)
+            row["project_id"] = project_ids.get(ledger_key)
         balances = get_wallet_balances(
             force_refresh=force_refresh,
             strict=True,

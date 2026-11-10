@@ -12,6 +12,7 @@ import json
 import os
 import re
 import threading
+import uuid
 from datetime import date, datetime
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -72,6 +73,13 @@ def _source_row(value: Any) -> int:
     return parsed if parsed > 0 else 0
 
 
+def _project_id(value: Any) -> str | None:
+    try:
+        return str(uuid.UUID(str(value)))
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
 def _canonical_payload(row: Dict[str, Any]) -> Dict[str, Any]:
     """Keep the source evidence JSON serializable and bounded."""
     return {
@@ -126,6 +134,7 @@ def normalize_row(row: Dict[str, Any]) -> Dict[str, Any]:
         "company": _clean(row.get("company") or row.get("company_sheet"), 160) or None,
         "wallet": _clean(row.get("dompet_sheet") or source_sheet, 160) or None,
         "project": _clean(row.get("nama_projek"), 160) or None,
+        "project_id": _project_id(row.get("project_id")),
         "category": _clean(row.get("kategori"), 120) or None,
         "description": _clean(row.get("keterangan"), 1000) or None,
         "recorded_by": _clean(row.get("oleh") or row.get("sender_name"), 160) or None,
@@ -166,6 +175,7 @@ def _ensure_table() -> bool:
                         company TEXT,
                         wallet TEXT,
                         project TEXT,
+                        project_id UUID,
                         category TEXT,
                         description TEXT,
                         recorded_by TEXT,
@@ -177,6 +187,12 @@ def _ensure_table() -> bool:
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                     )
                     """
+                )
+                cur.execute(
+                    "ALTER TABLE financial_ledger ADD COLUMN IF NOT EXISTS project_id UUID"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_financial_ledger_project_id_date ON financial_ledger (project_id, transaction_date DESC) WHERE project_id IS NOT NULL"
                 )
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_financial_ledger_date ON financial_ledger (transaction_date DESC)"
@@ -239,11 +255,11 @@ def upsert_row(row: Dict[str, Any]) -> bool:
                     INSERT INTO financial_ledger (
                         source_key, source_sheet, source_row, source_block, message_id,
                         transaction_date, amount, transaction_type, company, wallet,
-                        project, category, description, recorded_by, input_source,
+                        project, project_id, category, description, recorded_by, input_source,
                         source_wallet, is_valid, payload
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT (source_key) DO UPDATE SET
                         source_sheet = EXCLUDED.source_sheet,
@@ -256,6 +272,7 @@ def upsert_row(row: Dict[str, Any]) -> bool:
                         company = EXCLUDED.company,
                         wallet = EXCLUDED.wallet,
                         project = EXCLUDED.project,
+                        project_id = COALESCE(EXCLUDED.project_id, financial_ledger.project_id),
                         category = EXCLUDED.category,
                         description = EXCLUDED.description,
                         recorded_by = EXCLUDED.recorded_by,
@@ -268,8 +285,8 @@ def upsert_row(row: Dict[str, Any]) -> bool:
                     (
                         values["source_key"], values["source_sheet"], values["source_row"], values["source_block"],
                         values["message_id"], values["transaction_date"], values["amount"], values["transaction_type"],
-                        values["company"], values["wallet"], values["project"], values["category"], values["description"],
-                        values["recorded_by"], values["input_source"], values["source_wallet"], values["is_valid"],
+                        values["company"], values["wallet"], values["project"], values["project_id"], values["category"],
+                        values["description"], values["recorded_by"], values["input_source"], values["source_wallet"], values["is_valid"],
                         Jsonb(values["payload"]),
                     ),
                 )
@@ -291,17 +308,19 @@ def import_rows(rows: Iterable[Dict[str, Any]], source: str = "google_sheets") -
 
     columns = (
         "source_key, source_sheet, source_row, source_block, message_id, transaction_date, amount, "
-        "transaction_type, company, wallet, project, category, description, recorded_by, input_source, "
+        "transaction_type, company, wallet, project, project_id, category, description, recorded_by, input_source, "
         "source_wallet, is_valid, payload"
     )
     assignments = ", ".join(
         f"{column} = EXCLUDED.{column}"
         for column in columns.split(", ")
-        if column != "source_key"
+        if column not in {"source_key", "project_id"}
     )
     statement = f"""
-        INSERT INTO financial_ledger ({columns}) VALUES ({", ".join(["%s"] * 18)})
-        ON CONFLICT (source_key) DO UPDATE SET {assignments}, updated_at = NOW()
+        INSERT INTO financial_ledger ({columns}) VALUES ({", ".join(["%s"] * 19)})
+        ON CONFLICT (source_key) DO UPDATE SET {assignments},
+            project_id = COALESCE(EXCLUDED.project_id, financial_ledger.project_id),
+            updated_at = NOW()
     """
     normalized_rows = [normalize_row(row) for row in materialized]
     invalid = sum(1 for row in normalized_rows if not row["is_valid"])
@@ -313,8 +332,8 @@ def import_rows(rows: Iterable[Dict[str, Any]], source: str = "google_sheets") -
                     (
                         values["source_key"], values["source_sheet"], values["source_row"], values["source_block"],
                         values["message_id"], values["transaction_date"], values["amount"], values["transaction_type"],
-                        values["company"], values["wallet"], values["project"], values["category"], values["description"],
-                        values["recorded_by"], values["input_source"], values["source_wallet"], values["is_valid"],
+                        values["company"], values["wallet"], values["project"], values["project_id"], values["category"],
+                        values["description"], values["recorded_by"], values["input_source"], values["source_wallet"], values["is_valid"],
                         Jsonb(values["payload"]),
                     ),
                 )

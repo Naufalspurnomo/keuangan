@@ -39,7 +39,7 @@ import ProjectTransactionsWorkspace from './ProjectTransactionsWorkspace'
 import ProductionProjectsWorkspace from './ProductionProjectsWorkspace'
 import ReportsWorkspace from './ReportsWorkspace'
 import InboxReviewWorkspace from './InboxReviewWorkspace'
-import type { FinanceDebt, FinanceProject, FinanceTransaction, FinanceWorkspace, ProjectInput, TransactionInput, TransactionFormInput, DebtInput } from './financeWorkspace'
+import type { CompanyId, FinanceDebt, FinanceProject, FinanceTransaction, FinanceWorkspace, ProjectInput, TransactionInput, TransactionFormInput, DebtInput, WalletId } from './financeWorkspace'
 import { snapshotFinanceWorkspace } from './snapshot'
 import { useLiveSnapshot } from './liveSnapshotView'
 import { createTransactionWriteAttempt, jakartaToday, loadTransactionWriteSession, type RecordedTransaction, type TransactionWriteAttempt, type TransactionWriteSession } from './transactionApi'
@@ -149,6 +149,33 @@ function localIsoDate() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
 
+function productionFinanceProject(project: ProjectRecord): FinanceProject {
+  const wallet: WalletId = project.wallet === 'TX SBY(216)' ? 'TX SBY' : project.wallet === 'TX BALI(087)' ? 'TX Bali' : 'CV HB'
+  const company: CompanyId = project.company === 'HOJJA'
+    ? 'Hojja'
+    : ['TEXTURIN-Surabaya', 'TX SBY'].includes(project.company)
+      ? 'Texturin Surabaya'
+      : ['TEXTURIN-Bali', 'TX BALI'].includes(project.company)
+        ? 'Texturin Bali'
+        : 'Holla'
+  return {
+    id: project.id,
+    name: project.name,
+    company,
+    wallet,
+    status: project.status === 'cancelled' ? 'completed' : project.status,
+    started_on: project.started_on,
+    completed_on: project.completed_on,
+    client: project.client_company || project.client_name,
+    contract_value: null,
+    notes: project.contract_notes,
+    created_at: project.created_at,
+    updated_at: project.updated_at,
+    presensi_project_id: project.id,
+    write_mapping: { wallet: project.wallet, company: project.company, project: project.id },
+  }
+}
+
 export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, onCreateLiveTransaction, projectApi, inboxReviewApi }: { suppliedWorkspace?: Readonly<FinanceWorkspace>; liveWriteSession?: TransactionWriteSession; liveWriteStatus?: string; onCreateLiveTransaction?: (input: TransactionFormInput) => Promise<RecordedTransaction>; projectApi?: ProjectDocumentApi; inboxReviewApi?: InboxReviewApi } = {}) {
   const finance = useFinanceWorkspace(suppliedWorkspace)
   const readOnly = finance.readOnly
@@ -175,6 +202,11 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
   const selectedProject = projectFilter ? finance.workspace.projects.find((project) => project.id === projectFilter) : undefined
   const productionProject = projectFilter ? productionProjects.find((project) => project.id === projectFilter) : undefined
   const projectSession: ProjectDocumentSession = { csrfToken: liveWriteSession?.csrfToken ?? '', capabilities: projectCapabilities }
+  const transactionProjects = useMemo(() => {
+    const merged = new Map(finance.workspace.projects.map((project) => [project.id, project]))
+    productionProjects.forEach((project) => merged.set(project.id, productionFinanceProject(project)))
+    return [...merged.values()]
+  }, [finance.workspace.projects, productionProjects])
 
   const loadProductionProjects = async () => {
     if (!readOnly || !projectApi) return
@@ -408,7 +440,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
       {notice && <div className="finance-toast" role="status">{notice}</div>}
       {!readOnly && modal?.kind === 'project' && <ProjectForm project={modal.value} onSave={saveProject} onClose={() => setModal(null)} />}
       {!readOnly && modal?.kind === 'complete-project' && <ProjectCompleteDialog project={modal.value} onSave={completeProject} onClose={() => setModal(null)} />}
-      {(!readOnly || canCreateTransactions) && modal?.kind === 'transaction' && <TransactionForm projects={finance.workspace.projects} transaction={modal.value} initialScope={modal.scope} lockedProjectId={modal.projectId} onSave={saveTransaction} onClose={() => setModal(null)} liveWrite={readOnly} currentDate={readOnly ? jakartaToday() : undefined} />}
+      {(!readOnly || canCreateTransactions) && modal?.kind === 'transaction' && <TransactionForm projects={transactionProjects} transaction={modal.value} initialScope={modal.scope} lockedProjectId={modal.projectId} onSave={saveTransaction} onClose={() => setModal(null)} liveWrite={readOnly} currentDate={readOnly ? jakartaToday() : undefined} />}
       {!readOnly && modal?.kind === 'debt' && <DebtForm debt={modal.value} onSave={saveDebt} onClose={() => setModal(null)} />}
       {projectModal && <ProjectRecordForm project={projectModal === 'create' ? undefined : projectModal} saving={projectBusy} onSave={saveProductionProject} onClose={() => setProjectModal(null)} />}
     </div>
@@ -454,12 +486,8 @@ function LiveDashboardApp() {
       throw new Error('Keterangan wajib diisi tanpa spasi berlebih di awal, akhir, atau tengah.')
     }
     if (/^[=+\-@]/.test(description)) throw new Error('Keterangan tidak boleh diawali =, +, -, atau @.')
-    const selectedProject = input.scope === 'project'
-      ? workspace?.projects.find((project) => project.id === input.project_id)
-      : undefined
-    if (input.scope === 'project' && (!selectedProject?.write_mapping || selectedProject.status !== 'active')) {
-      throw new Error('Proyek ini belum tersedia untuk pencatatan.')
-    }
+    const projectId = input.scope === 'project' ? input.project_id?.trim() : null
+    if (input.scope === 'project' && !projectId) throw new Error('Proyek ini belum tersedia untuk pencatatan.')
     if (!pendingAttempt.current) {
       pendingAttempt.current = createTransactionWriteAttempt({
         date: input.date,
@@ -470,7 +498,7 @@ function LiveDashboardApp() {
         wallet: input.wallet,
         company: input.company,
         category: input.category,
-        ...(input.scope === 'project' ? { project: selectedProject!.write_mapping!.project } : {}),
+        ...(input.scope === 'project' ? { project: projectId! } : {}),
       })
     }
     try {

@@ -60,10 +60,13 @@ def _build_project_summaries(rows: Sequence[Mapping[str, Any]], observed_at: dat
         name, marker = _project_identity(row.get("project_raw") or row["project"])
         if name.casefold() in {"operasional", "tanpa proyek"}:
             continue
+        project_id = row.get("project_id")
+        project_key = str(project_id or name)
         project = projects.setdefault(
-            name,
+            project_key,
             {
                 "name": name,
+                "project_id": project_id,
                 "net_cashflow": 0,
                 "transaction_count": 0,
                 "first_activity_on": row["transaction_date"],
@@ -151,7 +154,7 @@ def _balance(value: Any) -> int:
     return int(value or 0)
 
 
-def _source_key(row: Mapping[str, Any]) -> str:
+def source_key_for_row(row: Mapping[str, Any]) -> str:
     sheet = str(row.get("sheet_name") or row.get("company_sheet") or "unknown").strip()
     block = str(row.get("source_block") or row.get("tipe") or "row").strip().casefold().replace(" ", "_")
     position = str(row.get("sheet_row") or row.get("message_id") or "unknown").strip()
@@ -173,7 +176,7 @@ def build_live_snapshot(
     seen_keys: set[str] = set()
 
     for raw in raw_rows:
-        source_key = _source_key(raw)
+        source_key = source_key_for_row(raw)
         if source_key in seen_keys:
             raise ValueError(f"duplicate source key: {source_key}")
         seen_keys.add(source_key)
@@ -199,6 +202,7 @@ def build_live_snapshot(
                 "wallet": str(raw.get("sheet_name") or "").strip(),
                 "company": str(raw.get("company_sheet") or "").strip(),
                 "project": project_name if scope == "project" else None,
+                "project_id": str(raw.get("project_id") or "").strip() or None if scope == "project" else None,
                 "project_raw": project_raw or None,
                 "scope": scope,
                 "office_category": (

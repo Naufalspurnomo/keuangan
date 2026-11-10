@@ -40,24 +40,34 @@ class FakeRepository:
 
 
 class FakeProjectDocumentRepository:
-    def __init__(self, *, exists=True, error=None):
+    def __init__(self, *, exists=True, error=None, name="Canonical Project", status="active"):
         self.exists = exists
         self.error = error
+        self.name = name
+        self.status = status
         self.calls = []
+        self.get_calls = []
 
-    def project_exists(self, project_id, wallet, company):
-        self.calls.append((project_id, wallet, company))
+    def project_exists(self, project_id, *context):
+        self.calls.append((project_id, *context))
         if self.error is not None:
             raise self.error
         return self.exists
+
+    def get_project(self, project_id):
+        self.get_calls.append(project_id)
+        if self.error is not None:
+            raise self.error
+        return {"id": project_id, "name": self.name, "status": self.status} if self.exists else None
 
 
 class DefaultServiceProbe:
     instances = []
 
-    def __init__(self, *, project_exists, project_uuid_exists):
+    def __init__(self, *, project_exists, project_uuid_exists, project_uuid_name=None):
         self.project_exists = project_exists
         self.project_uuid_exists = project_uuid_exists
+        self.project_uuid_name = project_uuid_name
         self.calls = []
         self.__class__.instances.append(self)
 
@@ -296,11 +306,27 @@ class DashboardTransactionRouteTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(
-            project_repository.calls,
-            [(project_id, "CV HB(101)", "HOLLA")],
-        )
+        self.assertEqual(project_repository.get_calls, [project_id])
         self.assertEqual(response.get_json()["data"]["recorded"], True)
+
+    def test_default_route_rejects_non_active_uuid_projects(self):
+        project_id = "00000000-0000-4000-8000-000000000001"
+        for status in ("planned", "completed", "cancelled"):
+            app = self.make_default_app(
+                project_repository=FakeProjectDocumentRepository(status=status),
+                identities=[],
+            )
+            response = app.test_client().post(
+                "/api/dashboard/v1/transactions",
+                json={**self.payload(), "project": project_id},
+                headers={
+                    "Idempotency-Key": IDEMPOTENCY_KEY,
+                    "X-Hollawall-Proxy-Token": PROXY_TOKEN,
+                },
+            )
+            with self.subTest(status=status):
+                self.assertEqual(response.status_code, 422)
+                self.assertEqual(response.get_json()["error"]["code"], "invalid_transaction")
 
     def test_uuid_never_falls_back_to_projection_and_database_outage_is_503(self):
         project_id = "00000000-0000-4000-8000-000000000001"

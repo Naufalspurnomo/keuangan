@@ -141,6 +141,7 @@ def create_dashboard_blueprint(
     repository: Any,
     *,
     project_uuid_exists: Any,
+    project_uuid_name: Any | None = None,
     transaction_service: Any | None = None,
 ) -> Blueprint:
     blueprint = Blueprint("dashboard_api", __name__, url_prefix="/api/dashboard/v1")
@@ -162,6 +163,7 @@ def create_dashboard_blueprint(
                 company,
             ) in project_identities,
             project_uuid_exists=project_uuid_exists,
+            project_uuid_name=project_uuid_name,
         )
 
     @blueprint.after_request

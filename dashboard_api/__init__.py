@@ -78,17 +78,28 @@ def register_dashboard(
             receipt_authority_reader=GoogleSheetsTransactionAdapter.read_receipt_authority,
         )
 
-    def project_uuid_exists(project_id: str, wallet: str, company: str) -> bool:
+    def project_uuid_exists(project_id: str, _wallet: str, _company: str) -> bool:
         if selected_project_documents is None:
             raise ProjectDocumentUnavailable(
                 "authoritative project repository is not configured"
             )
-        return selected_project_documents.project_exists(project_id, wallet, company)
+        project = selected_project_documents.get_project(project_id)
+        return isinstance(project, dict) and project.get("status") == "active"
+
+    def project_uuid_name(project_id: str) -> str | None:
+        if selected_project_documents is None:
+            raise ProjectDocumentUnavailable(
+                "authoritative project repository is not configured"
+            )
+        project = selected_project_documents.get_project(project_id)
+        name = project.get("name") if isinstance(project, dict) else None
+        return str(name).strip() if name else None
 
     app.register_blueprint(
         create_dashboard_blueprint(
             selected_repository,
             project_uuid_exists=project_uuid_exists,
+            project_uuid_name=project_uuid_name,
             transaction_service=transaction_service,
         )
     )
