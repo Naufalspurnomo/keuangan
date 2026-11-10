@@ -192,3 +192,20 @@ html[data-theme='dark'] .year-command nav button.active { color: #0c2028; }
 .project-monthly-table caption { text-align: left; font-weight: 700; margin-bottom: 6px; }
 .project-monthly-table th, .project-monthly-table td { padding: 7px; border-top: 1px solid var(--line); text-align: right; }
 .project-monthly-table th:first-child, .project-monthly-table td:first-child { text-align: left; }
+
+.project-evidence-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.project-evidence-actions .secondary-button, .project-evidence-actions .danger-button { min-height: 34px; padding: 7px 10px; }
+.evidence-upload { cursor: pointer; }
+.evidence-upload input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+
+.quotation-panel { display: grid; gap: 14px; padding: 18px; border: 1px solid var(--border, #d9e0e7); border-radius: 16px; background: #fff; }
+.quotation-panel > header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.quotation-panel > header > div:last-child, .quotation-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.quotation-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 14px; border-radius: 12px; background: #f7f9fb; }
+.quotation-form label { display: grid; gap: 6px; }
+.quotation-form label:last-of-type, .quotation-form .modal-actions { grid-column: 1 / -1; }
+.quotation-list { display: grid; gap: 10px; }
+.quotation-list article { display: flex; justify-content: space-between; gap: 14px; align-items: center; padding: 13px 0; border-top: 1px solid #e6ebef; }
+.quotation-list article > div:first-child { display: grid; gap: 4px; }
+@media (max-width: 760px) { .quotation-panel > header, .quotation-list article { align-items: stretch; flex-direction: column; } .quotation-form { grid-template-columns: 1fr; } }

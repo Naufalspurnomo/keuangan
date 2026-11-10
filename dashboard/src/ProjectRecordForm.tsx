@@ -10,12 +10,13 @@ const WALLET_OPTIONS = [...new Set(CANONICAL_WALLET_COMPANY_PAIRS.map(({ wallet 
 
 interface ProjectRecordFormProps {
   project?: ProjectRecord
+  clients?: ProjectRecord[]
   saving?: boolean
   onSave: (project: ProjectDraft) => void | Promise<void>
   onClose: () => void
 }
 
-export default function ProjectRecordForm({ project, saving = false, onSave, onClose }: ProjectRecordFormProps) {
+export default function ProjectRecordForm({ project, clients = [], saving = false, onSave, onClose }: ProjectRecordFormProps) {
   const [draft, setDraft] = useState<ProjectDraft>(() => project ? { ...project } : {
     ...createEmptyProjectDraft(new Date().toISOString().slice(0, 10)),
     issuer_key: PROJECT_ISSUER_KEY,
@@ -28,6 +29,20 @@ export default function ProjectRecordForm({ project, saving = false, onSave, onC
   const changeWallet = (wallet: string) => {
     const company = CANONICAL_WALLET_COMPANY_PAIRS.find((pair) => pair.wallet === wallet)?.company ?? ''
     setDraft((current) => ({ ...current, wallet, company }))
+  }
+  const clientOptions = [...new Map(clients.map((item) => [
+    [item.client_name, item.client_company, item.client_contact, item.client_address].join('\u0000'), item,
+  ])).values()]
+  const reuseClient = (id: string) => {
+    const source = clientOptions.find((item) => item.id === id)
+    if (!source) return
+    setDraft((current) => ({
+      ...current,
+      client_name: source.client_name,
+      client_company: source.client_company,
+      client_contact: source.client_contact,
+      client_address: source.client_address,
+    }))
   }
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -43,6 +58,7 @@ export default function ProjectRecordForm({ project, saving = false, onSave, onC
     <form onSubmit={submit} noValidate>
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="document-field-grid">
+        {!project && clientOptions.length > 0 && <label>Gunakan klien tersimpan<select aria-label="Gunakan klien tersimpan" defaultValue="" onChange={(event) => reuseClient(event.target.value)}><option value="">Pilih dari proyek sebelumnya</option>{clientOptions.map((item) => <option key={item.id} value={item.id}>{item.client_name}{item.client_company ? ` · ${item.client_company}` : ''}</option>)}</select></label>}
         <label>Nama proyek<input autoFocus value={draft.name} onChange={(event) => change('name', event.target.value)} /></label>
         <label>Nama klien<input value={draft.client_name} onChange={(event) => change('client_name', event.target.value)} /></label>
         <label>Perusahaan klien<input value={draft.client_company} onChange={(event) => change('client_company', event.target.value)} /></label>

@@ -43,6 +43,8 @@ def repository():
             "003_project_documents.sql",
             "005_canonical_project_transactions.sql",
             "006_invoice_payment_applications.sql",
+            "007_project_transaction_evidence.sql",
+            "008_project_quotation_handoffs.sql",
         )
     ]
     with psycopg.connect(dsn, autocommit=True) as connection:
@@ -77,6 +79,11 @@ def repository():
             )
             for migration in migrations:
                 cursor.execute(migration)
+            # This suite exercises the pre-quotation service/invoice contract. Keep its
+            # fixture legacy; production and quotation integration retain the TRUE default.
+            cursor.execute(
+                "ALTER TABLE projects ALTER COLUMN quotation_required SET DEFAULT FALSE"
+            )
     store = ProjectDocumentRepository(
         dsn,
         now=lambda: FIXED_NOW,

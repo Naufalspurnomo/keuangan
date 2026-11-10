@@ -239,7 +239,7 @@ SELECT
                 table_name || '|' || column_name || '|' || udt_name || '|' ||
                 is_nullable || '|' || COALESCE(column_default, '') || '|' || is_identity,
                 E'\n' ORDER BY table_name, column_name
-            )) = '232ae6b241f3ae5856a4c8550d503576'
+            )) = 'e8001bf02297e5dfd1392b198dafcbee'
             FROM information_schema.columns
             WHERE table_schema = 'public'
               AND table_name IN (
@@ -284,6 +284,154 @@ SELECT
               AND pg_get_indexdef(i.indexrelid, 1, TRUE) = 'applies_to_invoice_id'
               AND pg_get_expr(i.indpred, i.indrelid, TRUE) =
                   'applies_to_invoice_id IS NOT NULL'
+        )
+        AND (
+            SELECT ARRAY_AGG(column_name ORDER BY ordinal_position) = ARRAY[
+                'id', 'project_id', 'ledger_source_key', 'mime_type', 'byte_size',
+                'sha256', 'original_name', 'image_bytes', 'review_status', 'review_note',
+                'reviewed_by', 'reviewed_at', 'created_by', 'created_at', 'lock_version'
+            ]::information_schema.sql_identifier[]
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'project_transaction_evidence'
+        )
+        AND (
+            SELECT ARRAY_AGG(column_name ORDER BY ordinal_position) = ARRAY[
+                'id', 'evidence_id', 'event_type', 'actor', 'data', 'created_at'
+            ]::information_schema.sql_identifier[]
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'project_transaction_evidence_events'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'uq_project_transaction_evidence_content'
+              AND conrelid = 'project_transaction_evidence'::regclass
+              AND pg_get_constraintdef(oid, TRUE) =
+                  'UNIQUE (project_id, ledger_source_key, sha256)'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_trigger
+            WHERE tgname = 'trg_project_transaction_evidence_guard'
+              AND tgrelid = 'project_transaction_evidence'::regclass
+              AND NOT tgisinternal
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_trigger
+            WHERE tgname = 'trg_project_transaction_evidence_events_append_only'
+              AND tgrelid = 'project_transaction_evidence_events'::regclass
+              AND NOT tgisinternal
+        )
+        AND (
+            SELECT MD5(STRING_AGG(
+                column_name || '|' || udt_name || '|' || is_nullable || '|' ||
+                COALESCE(column_default, '') || '|' || is_identity,
+                E'\n' ORDER BY ordinal_position
+            )) = '46180aa779aed49ebea952e1eb1c80d1'
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'project_quotation_handoffs'
+        )
+        AND (
+            SELECT MD5(STRING_AGG(
+                column_name || '|' || udt_name || '|' || is_nullable || '|' ||
+                COALESCE(column_default, '') || '|' || is_identity,
+                E'\n' ORDER BY ordinal_position
+            )) = 'e1ac00cf9c4df8329adb800e9fbe8e67'
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'project_quotation_events'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'uq_project_quotation_version'
+              AND conrelid = 'project_quotation_handoffs'::regclass
+              AND pg_get_constraintdef(oid, TRUE) = 'UNIQUE (project_id, version)'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'chk_project_quotation_sales_order'
+              AND conrelid = 'project_quotation_handoffs'::regclass
+              AND pg_get_constraintdef(oid, TRUE) =
+                  'CHECK (sales_order_id IS NULL OR status = ''accepted''::text)'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'chk_project_quotation_timestamps'
+              AND conrelid = 'project_quotation_handoffs'::regclass
+              AND pg_get_constraintdef(oid, TRUE) =
+                  'CHECK (status = ''draft''::text AND sent_at IS NULL AND decided_at IS NULL OR status = ''sent''::text AND sent_at IS NOT NULL AND decided_at IS NULL OR (status = ANY (ARRAY[''revised''::text, ''accepted''::text, ''rejected''::text])) AND sent_at IS NOT NULL AND decided_at IS NOT NULL)'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'project_quotation_handoffs_project_id_fkey'
+              AND conrelid = 'project_quotation_handoffs'::regclass
+              AND pg_get_constraintdef(oid, TRUE) =
+                  'FOREIGN KEY (project_id) REFERENCES projects(id)'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'project_quotation_handoffs_sales_order_id_fkey'
+              AND conrelid = 'project_quotation_handoffs'::regclass
+              AND pg_get_constraintdef(oid, TRUE) =
+                  'FOREIGN KEY (sales_order_id) REFERENCES project_documents(id)'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'project_quotation_events_quotation_id_fkey'
+              AND conrelid = 'project_quotation_events'::regclass
+              AND pg_get_constraintdef(oid, TRUE) =
+                  'FOREIGN KEY (quotation_id) REFERENCES project_quotation_handoffs(id)'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_index
+            WHERE indexrelid = to_regclass('public.uq_project_accepted_quotation')
+              AND pg_get_indexdef(indexrelid) =
+                  'CREATE UNIQUE INDEX uq_project_accepted_quotation ON public.project_quotation_handoffs USING btree (project_id) WHERE (status = ''accepted''::text)'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_index
+            WHERE indexrelid = to_regclass('public.uq_project_quotation_sales_order')
+              AND pg_get_indexdef(indexrelid) =
+                  'CREATE UNIQUE INDEX uq_project_quotation_sales_order ON public.project_quotation_handoffs USING btree (sales_order_id) WHERE (sales_order_id IS NOT NULL)'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_index
+            WHERE indexrelid = to_regclass('public.idx_project_quotation_project_version')
+              AND pg_get_indexdef(indexrelid) =
+                  'CREATE INDEX idx_project_quotation_project_version ON public.project_quotation_handoffs USING btree (project_id, version DESC)'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_index
+            WHERE indexrelid = to_regclass('public.idx_project_quotation_events_replay')
+              AND pg_get_indexdef(indexrelid) =
+                  'CREATE INDEX idx_project_quotation_events_replay ON public.project_quotation_events USING btree (quotation_id, id)'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_trigger
+            WHERE tgname = 'trg_project_quotation_transition'
+              AND tgrelid = 'project_quotation_handoffs'::regclass
+              AND NOT tgisinternal
+              AND tgenabled = 'O'
+              AND pg_get_triggerdef(oid, TRUE) =
+                  'CREATE TRIGGER trg_project_quotation_transition BEFORE UPDATE ON project_quotation_handoffs FOR EACH ROW EXECUTE FUNCTION guard_project_quotation_transition()'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_trigger
+            WHERE tgname = 'trg_project_quotation_events_append_only'
+              AND tgrelid = 'project_quotation_events'::regclass
+              AND NOT tgisinternal
+              AND tgenabled = 'O'
+              AND pg_get_triggerdef(oid, TRUE) =
+                  'CREATE TRIGGER trg_project_quotation_events_append_only BEFORE DELETE OR UPDATE ON project_quotation_events FOR EACH ROW EXECUTE FUNCTION reject_project_quotation_event_mutation()'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'public'
+              AND p.proname = 'guard_project_quotation_transition'
+              AND MD5(p.prosrc) = '2b92d36e51058151859b3dd8c8a5c6b8'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'public'
+              AND p.proname = 'reject_project_quotation_event_mutation'
+              AND MD5(p.prosrc) = '06e46fef2577f847a816569c78e6b5f3'
         )
     ) AS tables_ready,
     (
@@ -560,6 +708,8 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
             "003_project_documents.sql",
             "005_canonical_project_transactions.sql",
             "006_invoice_payment_applications.sql",
+            "007_project_transaction_evidence.sql",
+            "008_project_quotation_handoffs.sql",
         )
     ]
     try:
@@ -1110,6 +1260,485 @@ class ProjectDocumentRepository:
         except Exception as exc:
             raise ProjectDocumentUnavailable(
                 f"Project document database unavailable: {type(exc).__name__}"
+            ) from exc
+
+    @staticmethod
+    def _quotation_metadata(row: Sequence[Any] | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        columns = [
+            "id", "project_id", "version", "canva_url", "amount", "status", "channel",
+            "negotiation_notes", "sent_at", "decided_at", "sales_order_id", "created_by", "updated_by",
+            "created_at", "updated_at", "lock_version",
+        ]
+        result = dict(zip(columns, row))
+        result["id"] = str(result["id"])
+        result["project_id"] = str(result["project_id"])
+        result["sales_order_id"] = str(result["sales_order_id"]) if result.get("sales_order_id") else None
+        for field in ("created_by", "updated_by"):
+            result[field] = _safe_json_object(result.get(field)) if result.get(field) else None
+        return result
+
+    @staticmethod
+    def _quotation_values(values: Mapping[str, Any]) -> tuple[str, int, str, str]:
+        canva_url = str(values.get("canva_url") or "").strip()
+        if len(canva_url) > 2048 or not re.fullmatch(
+            r"https://(?:www\.)?canva\.com/[^\s]+", canva_url, re.IGNORECASE
+        ):
+            raise ValueError("quotation Canva URL must use https://canva.com")
+        amount = integer_rupiah(values.get("amount"), field="quotation amount")
+        if amount <= 0:
+            raise ValueError("quotation amount must be positive")
+        channel = str(values.get("channel") or "whatsapp").strip().lower()
+        if channel not in {"whatsapp", "phone", "email", "meeting", "other"}:
+            raise ValueError("unsupported quotation channel")
+        notes = str(values.get("negotiation_notes") or "").strip()
+        if len(notes) > 10_000:
+            raise ValueError("quotation negotiation notes are too long")
+        return canva_url, amount, channel, notes
+
+    def list_project_quotations(self, project_id: str) -> list[dict[str, Any]]:
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT id, project_id, version, canva_url, amount, status, channel,
+                               negotiation_notes, sent_at, decided_at, sales_order_id, created_by, updated_by,
+                               created_at, updated_at, lock_version
+                        FROM project_quotation_handoffs
+                        WHERE project_id = %s
+                        ORDER BY version DESC
+                        """,
+                        (project_id,),
+                    )
+                    return [self._quotation_metadata(row) or {} for row in cursor.fetchall()]
+        except ProjectDocumentError:
+            raise
+        except Exception as exc:
+            raise ProjectDocumentUnavailable(
+                f"Project quotation database unavailable: {type(exc).__name__}"
+            ) from exc
+
+    def create_project_quotation(
+        self, project_id: str, *, values: Mapping[str, Any],
+        idempotency_key: str, actor: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        canva_url, amount, channel, notes = self._quotation_values(values)
+        request = {"project_id": project_id, "canva_url": canva_url, "amount": amount,
+                   "channel": channel, "negotiation_notes": notes}
+        actor_json, _ = _actor(actor)
+        quotation_id = str(uuid.uuid4())
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    key_hash, _, replay = self._claim(cursor, "quotation.create", idempotency_key, request)
+                    if replay is not None:
+                        return replay
+                    cursor.execute("SELECT status FROM projects WHERE id = %s FOR UPDATE", (project_id,))
+                    project = cursor.fetchone()
+                    if not project or str(project[0]) in {"completed", "cancelled"}:
+                        raise ProjectDocumentConflict("quotation project must be open")
+                    cursor.execute(
+                        """SELECT id, version, status FROM project_quotation_handoffs
+                           WHERE project_id = %s ORDER BY version DESC LIMIT 1 FOR UPDATE""",
+                        (project_id,),
+                    )
+                    latest = cursor.fetchone()
+                    if latest and str(latest[2]) in {"draft", "sent", "accepted"}:
+                        raise ProjectDocumentConflict(
+                            "latest quotation must be rejected or revised before creating a new version"
+                        )
+                    version = int(latest[1]) + 1 if latest else 1
+                    cursor.execute(
+                        """INSERT INTO project_quotation_handoffs (
+                               id, project_id, version, canva_url, amount, channel,
+                               negotiation_notes, created_by, updated_by
+                           ) VALUES (%s, %s, %s, %s, %s, %s, NULLIF(%s, ''), %s::jsonb, %s::jsonb)
+                           RETURNING id, project_id, version, canva_url, amount, status, channel,
+                                     negotiation_notes, sent_at, decided_at, sales_order_id, created_by, updated_by,
+                                     created_at, updated_at, lock_version""",
+                        (quotation_id, project_id, version, canva_url, amount, channel,
+                         notes, actor_json, actor_json),
+                    )
+                    quotation = self._quotation_metadata(cursor.fetchone()) or {}
+                    cursor.execute(
+                        """INSERT INTO project_quotation_events (quotation_id, event_type, actor, data)
+                           VALUES (%s, 'quotation.created', %s::jsonb, %s::jsonb)""",
+                        (quotation_id, actor_json, json.dumps({"version": version, "amount": amount})),
+                    )
+                    return self._complete(cursor, key_hash, quotation)
+        except (ProjectDocumentError, ValueError, TypeError):
+            raise
+        except Exception as exc:
+            raise ProjectDocumentUnavailable(
+                f"Project quotation database unavailable: {type(exc).__name__}"
+            ) from exc
+
+    def transition_project_quotation(
+        self, quotation_id: str, *, status: str, note: str, expected_version: int,
+        idempotency_key: str, actor: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        target = str(status or "").strip().lower()
+        if target not in {"sent", "accepted", "rejected", "revised"}:
+            raise ValueError("unsupported quotation status")
+        note = str(note or "").strip()
+        if len(note) > 10_000 or (target in {"rejected", "revised"} and not note):
+            raise ValueError("quotation decision note is required")
+        request = {"quotation_id": quotation_id, "status": target,
+                   "note": note, "expected_version": expected_version}
+        actor_json, _ = _actor(actor)
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    key_hash, _, replay = self._claim(cursor, "quotation.transition", idempotency_key, request)
+                    if replay is not None:
+                        return replay
+                    cursor.execute(
+                        "SELECT status, lock_version FROM project_quotation_handoffs WHERE id = %s FOR UPDATE",
+                        (quotation_id,),
+                    )
+                    current = cursor.fetchone()
+                    if not current:
+                        raise ProjectDocumentNotFound("quotation not found")
+                    if int(current[1]) != expected_version:
+                        raise ProjectDocumentConflict("quotation version is stale")
+                    allowed = {"draft": {"sent"}, "sent": {"accepted", "rejected", "revised"}}
+                    if target not in allowed.get(str(current[0]), set()):
+                        raise ProjectDocumentConflict("quotation status transition is not allowed")
+                    cursor.execute(
+                        """UPDATE project_quotation_handoffs
+                           SET status = %s,
+                               negotiation_notes = CASE WHEN %s = '' THEN negotiation_notes ELSE %s END,
+                               sent_at = CASE WHEN %s = 'sent' THEN NOW() ELSE sent_at END,
+                               decided_at = CASE WHEN %s IN ('accepted', 'rejected', 'revised') THEN NOW() ELSE decided_at END,
+                               updated_by = %s::jsonb, lock_version = lock_version + 1
+                           WHERE id = %s AND lock_version = %s
+                           RETURNING id, project_id, version, canva_url, amount, status, channel,
+                                     negotiation_notes, sent_at, decided_at, sales_order_id, created_by, updated_by,
+                                     created_at, updated_at, lock_version""",
+                        (target, note, note, target, target, actor_json, quotation_id, expected_version),
+                    )
+                    row = cursor.fetchone()
+                    if not row:
+                        raise ProjectDocumentConflict("quotation version is stale")
+                    quotation = self._quotation_metadata(row) or {}
+                    cursor.execute(
+                        """INSERT INTO project_quotation_events (quotation_id, event_type, actor, data)
+                           VALUES (%s, %s, %s::jsonb, %s::jsonb)""",
+                        (quotation_id, f"quotation.{target}", actor_json, json.dumps({"note": note})),
+                    )
+                    return self._complete(cursor, key_hash, quotation)
+        except (ProjectDocumentError, ValueError, TypeError):
+            raise
+        except Exception as exc:
+            if "uq_project_accepted_quotation" in str(exc):
+                raise ProjectDocumentConflict("project already has an accepted quotation") from exc
+            raise ProjectDocumentUnavailable(
+                f"Project quotation database unavailable: {type(exc).__name__}"
+            ) from exc
+
+    def apply_accepted_quotation_to_sales_order(
+        self, quotation_id: str, *, expected_document_version: int,
+        idempotency_key: str, actor: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        actor_json, _ = _actor(actor)
+        request = {"quotation_id": quotation_id,
+                   "expected_document_version": expected_document_version}
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    key_hash, _, replay = self._claim(cursor, "quotation.apply", idempotency_key, request)
+                    if replay is not None:
+                        return replay
+                    cursor.execute(
+                        """SELECT project_id, version, amount, sales_order_id
+                           FROM project_quotation_handoffs
+                           WHERE id = %s AND status = 'accepted' FOR UPDATE""",
+                        (quotation_id,),
+                    )
+                    quotation = cursor.fetchone()
+                    if not quotation:
+                        raise ProjectDocumentConflict(
+                            "quotation must be accepted before Sales Order handoff"
+                        )
+                    project_id, quotation_version, amount, linked_sales_order_id = quotation
+                    if linked_sales_order_id is not None:
+                        raise ProjectDocumentConflict("accepted quotation is already applied")
+                    cursor.execute(
+                        """SELECT id, lock_version FROM project_documents
+                           WHERE project_id = %s AND document_type = 'sales_order' AND status = 'draft'
+                           FOR UPDATE""",
+                        (project_id,),
+                    )
+                    document = cursor.fetchone()
+                    if not document:
+                        raise ProjectDocumentConflict("draft Sales Order is required")
+                    document_id, lock_version = str(document[0]), int(document[1])
+                    if lock_version != expected_document_version:
+                        raise ProjectDocumentConflict("Sales Order version is stale")
+                    cursor.execute("SELECT name FROM projects WHERE id = %s", (project_id,))
+                    project_name = str((cursor.fetchone() or ("Proyek",))[0])
+                    self._replace_lines(cursor, document_id, [{
+                        "description": f"Penawaran Canva v{quotation_version} — {project_name}",
+                        "quantity": "1", "unit": "proyek", "unit_price": int(amount),
+                        "line_discount_percent": "0",
+                    }])
+                    cursor.execute(
+                        """UPDATE project_documents
+                           SET document_discount_amount = 0, document_discount_percent = 0,
+                               tax_percent = 0, lock_version = lock_version + 1,
+                               updated_by = %s::jsonb, updated_at = NOW()
+                           WHERE id = %s AND status = 'draft' AND lock_version = %s""",
+                        (actor_json, document_id, expected_document_version),
+                    )
+                    if cursor.rowcount != 1:
+                        raise ProjectDocumentConflict("Sales Order version is stale")
+                    cursor.execute(
+                        """
+                        UPDATE project_quotation_handoffs
+                        SET sales_order_id = %s,
+                            updated_by = %s::jsonb,
+                            lock_version = lock_version + 1
+                        WHERE id = %s AND status = 'accepted' AND sales_order_id IS NULL
+                        """,
+                        (document_id, actor_json, quotation_id),
+                    )
+                    if cursor.rowcount != 1:
+                        raise ProjectDocumentConflict("accepted quotation handoff conflicted")
+                    self._event(
+                        cursor, project_id=str(project_id), document_id=document_id,
+                        event_type="sales_order.quotation_applied", actor_json=actor_json,
+                        data={"quotation_id": quotation_id, "quotation_version": int(quotation_version),
+                              "amount": int(amount)},
+                    )
+                    return self._complete(cursor, key_hash, self._load_document(cursor, document_id))
+        except (ProjectDocumentError, DocumentCalculationError, ValueError, TypeError):
+            raise
+        except Exception as exc:
+            raise ProjectDocumentUnavailable(
+                f"Project quotation database unavailable: {type(exc).__name__}"
+            ) from exc
+
+    @staticmethod
+    def _evidence_metadata(row: Sequence[Any] | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        columns = [
+            "id", "project_id", "ledger_source_key", "mime_type", "byte_size", "sha256",
+            "original_name", "review_status", "review_note", "reviewed_by", "reviewed_at",
+            "created_by", "created_at", "lock_version",
+        ]
+        result = dict(zip(columns, row))
+        result["id"] = str(result["id"])
+        result["project_id"] = str(result["project_id"])
+        for field in ("reviewed_by", "created_by"):
+            result[field] = _safe_json_object(result.get(field)) if result.get(field) else None
+        return result
+
+    def list_transaction_evidence(self, project_id: str) -> list[dict[str, Any]]:
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT id, project_id, ledger_source_key, mime_type, byte_size, sha256,
+                               original_name, review_status, review_note, reviewed_by, reviewed_at,
+                               created_by, created_at, lock_version
+                        FROM project_transaction_evidence
+                        WHERE project_id = %s
+                        ORDER BY created_at DESC, id DESC
+                        """,
+                        (project_id,),
+                    )
+                    return [self._evidence_metadata(row) or {} for row in cursor.fetchall()]
+        except ProjectDocumentError:
+            raise
+        except Exception as exc:
+            raise ProjectDocumentUnavailable(
+                f"Project evidence database unavailable: {type(exc).__name__}"
+            ) from exc
+
+    def upload_transaction_evidence(
+        self,
+        project_id: str,
+        *,
+        ledger_source_key: str,
+        mime_type: str,
+        original_name: str,
+        image_bytes: bytes,
+        idempotency_key: str,
+        actor: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        source_key = str(ledger_source_key or "").strip()
+        name = str(original_name or "").strip()
+        if not source_key or len(source_key) > 512 or not name or len(name) > 255:
+            raise ValueError("invalid evidence identity")
+        if not isinstance(image_bytes, bytes) or not 0 < len(image_bytes) <= 5 * 1024 * 1024:
+            raise ValueError("invalid evidence size")
+        magic_ok = (
+            (mime_type == "image/jpeg" and image_bytes.startswith(b"\xff\xd8\xff"))
+            or (mime_type == "image/png" and image_bytes.startswith(b"\x89PNG\r\n\x1a\n"))
+            or (
+                mime_type == "image/webp" and len(image_bytes) >= 12
+                and image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP"
+            )
+        )
+        if not magic_ok:
+            raise ValueError("invalid evidence image")
+        digest = hashlib.sha256(image_bytes).hexdigest()
+        request = {
+            "project_id": project_id,
+            "ledger_source_key": source_key,
+            "mime_type": mime_type,
+            "original_name": name,
+            "byte_size": len(image_bytes),
+            "sha256": digest,
+        }
+        actor_json, _ = _actor(actor)
+        evidence_id = str(uuid.uuid4())
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    key_hash, _, replay = self._claim(
+                        cursor, "evidence.upload", idempotency_key, request
+                    )
+                    if replay is not None:
+                        return replay
+                    cursor.execute(
+                        "SELECT status FROM projects WHERE id = %s FOR SHARE", (project_id,)
+                    )
+                    project = cursor.fetchone()
+                    if not project or str(project[0]) != "active":
+                        raise ProjectDocumentConflict("evidence project must be active")
+                    cursor.execute(
+                        "SELECT project_id, is_valid FROM financial_ledger WHERE source_key = %s FOR SHARE",
+                        (source_key,),
+                    )
+                    ledger = cursor.fetchone()
+                    if not ledger or str(ledger[0] or "") != project_id or ledger[1] is not True:
+                        raise ProjectDocumentConflict("evidence transaction does not match canonical project")
+                    cursor.execute(
+                        """
+                        INSERT INTO project_transaction_evidence (
+                            id, project_id, ledger_source_key, mime_type, byte_size, sha256,
+                            original_name, image_bytes, created_by
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                        RETURNING id, project_id, ledger_source_key, mime_type, byte_size, sha256,
+                                  original_name, review_status, review_note, reviewed_by, reviewed_at,
+                                  created_by, created_at, lock_version
+                        """,
+                        (
+                            evidence_id, project_id, source_key, mime_type, len(image_bytes), digest,
+                            name, image_bytes, actor_json,
+                        ),
+                    )
+                    result = self._evidence_metadata(cursor.fetchone()) or {}
+                    cursor.execute(
+                        """
+                        INSERT INTO project_transaction_evidence_events (
+                            evidence_id, event_type, actor, data
+                        ) VALUES (%s, 'evidence.uploaded', %s::jsonb, %s::jsonb)
+                        """,
+                        (evidence_id, actor_json, json.dumps({"sha256": digest, "byte_size": len(image_bytes)})),
+                    )
+                    return self._complete(cursor, key_hash, result)
+        except (ProjectDocumentError, ValueError, TypeError):
+            raise
+        except Exception as exc:
+            if "uq_project_transaction_evidence_content" in str(exc):
+                raise ProjectDocumentConflict("identical evidence already exists") from exc
+            raise ProjectDocumentUnavailable(
+                f"Project evidence database unavailable: {type(exc).__name__}"
+            ) from exc
+
+    def review_transaction_evidence(
+        self,
+        evidence_id: str,
+        *,
+        status: str,
+        note: str,
+        expected_version: int,
+        idempotency_key: str,
+        actor: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        if status not in {"approved", "rejected"}:
+            raise ValueError("unsupported evidence review status")
+        review_note = str(note or "").strip()
+        if len(review_note) > 1000 or (status == "rejected" and not review_note):
+            raise ValueError("rejected evidence requires a bounded review note")
+        request = {
+            "evidence_id": evidence_id, "status": status, "note": review_note,
+            "expected_version": expected_version,
+        }
+        actor_json, _ = _actor(actor)
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    key_hash, _, replay = self._claim(
+                        cursor, "evidence.review", idempotency_key, request
+                    )
+                    if replay is not None:
+                        return replay
+                    cursor.execute(
+                        """
+                        UPDATE project_transaction_evidence
+                        SET review_status = %s, review_note = %s, reviewed_by = %s::jsonb,
+                            reviewed_at = NOW(), lock_version = lock_version + 1
+                        WHERE id = %s AND lock_version = %s AND review_status = 'pending'
+                        RETURNING id, project_id, ledger_source_key, mime_type, byte_size, sha256,
+                                  original_name, review_status, review_note, reviewed_by, reviewed_at,
+                                  created_by, created_at, lock_version
+                        """,
+                        (status, review_note or None, actor_json, evidence_id, expected_version),
+                    )
+                    result = self._evidence_metadata(cursor.fetchone())
+                    if result is None:
+                        cursor.execute("SELECT 1 FROM project_transaction_evidence WHERE id = %s", (evidence_id,))
+                        if cursor.fetchone() is None:
+                            raise ProjectDocumentNotFound("evidence not found")
+                        raise ProjectDocumentConflict("evidence optimistic lock or review state conflict")
+                    cursor.execute(
+                        """
+                        INSERT INTO project_transaction_evidence_events (
+                            evidence_id, event_type, actor, data
+                        ) VALUES (%s, 'evidence.reviewed', %s::jsonb, %s::jsonb)
+                        """,
+                        (evidence_id, actor_json, json.dumps({"status": status, "note": review_note})),
+                    )
+                    return self._complete(cursor, key_hash, result)
+        except ProjectDocumentError:
+            raise
+        except (ValueError, TypeError):
+            raise
+        except Exception as exc:
+            raise ProjectDocumentUnavailable(
+                f"Project evidence database unavailable: {type(exc).__name__}"
+            ) from exc
+
+    def get_transaction_evidence_bytes(self, evidence_id: str) -> dict[str, Any]:
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT mime_type, byte_size, sha256, original_name, image_bytes
+                        FROM project_transaction_evidence WHERE id = %s
+                        """,
+                        (evidence_id,),
+                    )
+                    row = cursor.fetchone()
+                    if not row:
+                        raise ProjectDocumentNotFound("evidence not found")
+                    return {
+                        "mime_type": str(row[0]), "byte_size": int(row[1]),
+                        "sha256": str(row[2]), "original_name": str(row[3]), "bytes": bytes(row[4]),
+                    }
+        except ProjectDocumentError:
+            raise
+        except Exception as exc:
+            raise ProjectDocumentUnavailable(
+                f"Project evidence database unavailable: {type(exc).__name__}"
             ) from exc
 
     def get_project_payment_summary(self, project_id: str) -> dict[str, Any]:
@@ -2795,6 +3424,32 @@ class ProjectDocumentRepository:
             str(document["project_id"]),
         )
         proposed_total = int(cls._calculate_totals(document)["total"])
+        cursor.execute(
+            "SELECT quotation_required FROM projects WHERE id = %s FOR SHARE",
+            (document["project_id"],),
+        )
+        quotation_required = bool((cursor.fetchone() or (False,))[0])
+        if quotation_required and not revision_of_id:
+            cursor.execute(
+                """
+                SELECT amount
+                FROM project_quotation_handoffs
+                WHERE project_id = %s
+                  AND status = 'accepted'
+                  AND sales_order_id = %s
+                FOR SHARE
+                """,
+                (document["project_id"], document["id"]),
+            )
+            accepted = cursor.fetchone()
+            if not accepted:
+                raise ProjectDocumentConflict(
+                    "Sales Order requires an accepted quotation handoff"
+                )
+            if int(accepted[0]) != proposed_total:
+                raise ProjectDocumentConflict(
+                    "Sales Order total must equal the accepted quotation"
+                )
         if revision_of_id and issued_invoices["active_final_count"]:
             current_total = cls._issued_snapshot_total(
                 active_sales_orders[0][1],

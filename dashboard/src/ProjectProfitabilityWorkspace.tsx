@@ -1,10 +1,11 @@
-import { RefreshCw, ScanLine, ShieldCheck } from 'lucide-react'
+import { Eye, RefreshCw, ScanLine, ShieldCheck, Upload } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
 import { TransactionRows } from './FinancePages'
 import type { FinanceProject, FinanceTransaction } from './financeWorkspace'
-import type { ProjectDocumentApi } from './projectDocumentApi'
+import type { ProjectDocumentApi, ProjectDocumentSession } from './projectDocumentApi'
+import { createProjectEvidenceApi, type ProjectEvidenceApi, type ProjectTransactionEvidence } from './projectEvidenceApi'
 import type { ProjectPaymentSummary } from './projectDocuments'
 
 const IDR = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })
@@ -26,15 +27,21 @@ function monthLabel(value: string) {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString('id-ID', { month: 'short', year: '2-digit', timeZone: 'UTC' })
 }
 
-export default function ProjectProfitabilityWorkspace({ project, rows, projects, api }: {
+export default function ProjectProfitabilityWorkspace({ project, rows, projects, api, session, evidenceApi: suppliedEvidenceApi }: {
   project: FinanceProject
   rows: FinanceTransaction[]
   projects: FinanceProject[]
   api: ProjectDocumentApi
+  session?: ProjectDocumentSession
+  evidenceApi?: ProjectEvidenceApi
 }) {
+  const evidenceApi = useMemo(() => suppliedEvidenceApi ?? createProjectEvidenceApi(), [suppliedEvidenceApi])
   const [summary, setSummary] = useState<ProjectPaymentSummary | null>(null)
+  const [evidence, setEvidence] = useState<ProjectTransactionEvidence[]>([])
   const [loading, setLoading] = useState(true)
+  const [evidenceBusy, setEvidenceBusy] = useState('')
   const [error, setError] = useState('')
+  const [evidenceError, setEvidenceError] = useState('')
   const activeController = useRef(0)
 
   const load = useCallback(async () => {
@@ -58,6 +65,70 @@ export default function ProjectProfitabilityWorkspace({ project, rows, projects,
     void load()
     return () => { activeController.current += 1 }
   }, [load])
+
+  const loadEvidence = useCallback(async () => {
+    setEvidenceError('')
+    try {
+      setEvidence(await evidenceApi.list(project.id))
+    } catch {
+      setEvidence([])
+      setEvidenceError('Bukti transaksi belum dapat dimuat.')
+    }
+  }, [evidenceApi, project.id])
+
+  useEffect(() => { void loadEvidence() }, [loadEvidence])
+
+  const uploadEvidence = async (row: FinanceTransaction, file: File | undefined) => {
+    if (!file || !session) return
+    setEvidenceBusy(row.id)
+    setEvidenceError('')
+    try {
+      await evidenceApi.upload(project.id, row.id, file, session)
+      await loadEvidence()
+    } catch (uploadError) {
+      setEvidenceError(uploadError instanceof Error ? uploadError.message : 'Bukti gagal diunggah.')
+    } finally {
+      setEvidenceBusy('')
+    }
+  }
+
+  const reviewEvidence = async (item: ProjectTransactionEvidence, status: 'approved' | 'rejected') => {
+    if (!session) return
+    const note = status === 'rejected' ? window.prompt('Alasan penolakan bukti:') : ''
+    if (note === null || (status === 'rejected' && !note.trim())) return
+    if (!window.confirm(status === 'approved' ? 'Setujui bukti ini?' : 'Tolak bukti ini?')) return
+    setEvidenceBusy(item.id)
+    setEvidenceError('')
+    try {
+      await evidenceApi.review(item, status, note, session)
+      await loadEvidence()
+    } catch (reviewError) {
+      setEvidenceError(reviewError instanceof Error ? reviewError.message : 'Review bukti gagal.')
+    } finally {
+      setEvidenceBusy('')
+    }
+  }
+
+  const openEvidence = async (item: ProjectTransactionEvidence) => {
+    setEvidenceBusy(item.id)
+    setEvidenceError('')
+    try {
+      const blob = await evidenceApi.download(item.id)
+      const url = URL.createObjectURL(blob)
+      window.open(url, '_blank', 'noopener,noreferrer')
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch (downloadError) {
+      setEvidenceError(downloadError instanceof Error ? downloadError.message : 'Bukti gagal dibuka.')
+    } finally {
+      setEvidenceBusy('')
+    }
+  }
+
+  const evidenceBySource = useMemo(() => {
+    const map = new Map<string, ProjectTransactionEvidence>()
+    evidence.forEach((item) => { if (!map.has(item.ledger_source_key)) map.set(item.ledger_source_key, item) })
+    return map
+  }, [evidence])
 
   const report = useMemo(() => {
     const incomeRows = rows.filter((row) => row.direction === 'income')
@@ -109,7 +180,27 @@ export default function ProjectProfitabilityWorkspace({ project, rows, projects,
       </section>
       <section className="project-cost-breakdown" aria-label="Rincian biaya proyek"><h3>Rincian biaya</h3>{report.categories.length ? report.categories.map(([category, amount]) => <div key={category}><span>{category}</span><strong>{IDR.format(amount)}</strong></div>) : <p>Belum ada biaya proyek.</p>}</section>
     </div>
-    <section className="project-evidence-list" aria-label="Provenance transaksi proyek"><header><div><ShieldCheck size={17} /><strong>Provenance transaksi</strong></div><span>Metadata sumber yang tercatat</span></header>{rows.map((row) => <article key={row.id}><ScanLine size={16} /><div><strong>{row.notes || row.category || 'Transaksi proyek'}</strong><span>{evidenceLabel(row)}{row.recorded_by ? ` · ${row.recorded_by}` : ''}</span></div><b className={row.direction === 'income' ? 'positive' : 'negative'}>{row.direction === 'income' ? '+' : '−'}{IDR.format(row.amount)}</b></article>)}</section>
+    <section className="project-evidence-list" aria-label="Bukti transaksi proyek">
+      <header><div><ShieldCheck size={17} /><strong>Bukti transaksi</strong></div><span>File privat · review manual</span></header>
+      {evidenceError && <p role="alert" className="document-state-alert">{evidenceError}</p>}
+      {rows.map((row) => {
+        const item = evidenceBySource.get(row.id)
+        return <article key={row.id}>
+          <ScanLine size={16} />
+          <div><strong>{row.notes || row.category || 'Transaksi proyek'}</strong><span>{evidenceLabel(row)}{row.recorded_by ? ` · ${row.recorded_by}` : ''}</span>{item && <span>SHA-256 {item.sha256.slice(0, 12)}… · {item.review_status === 'pending' ? 'Menunggu review' : item.review_status === 'approved' ? 'Disetujui' : 'Ditolak'}</span>}</div>
+          <b className={row.direction === 'income' ? 'positive' : 'negative'}>{row.direction === 'income' ? '+' : '−'}{IDR.format(row.amount)}</b>
+          <div className="project-evidence-actions">
+            {item ? <>
+              <button type="button" className="secondary-button" disabled={evidenceBusy === item.id} onClick={() => void openEvidence(item)}><Eye size={14} /> Buka</button>
+              {item.review_status === 'pending' && session?.capabilities.documentWrites && <>
+                <button type="button" className="secondary-button" disabled={evidenceBusy === item.id} onClick={() => void reviewEvidence(item, 'approved')}>Setujui</button>
+                <button type="button" className="danger-button" disabled={evidenceBusy === item.id} onClick={() => void reviewEvidence(item, 'rejected')}>Tolak</button>
+              </>}
+            </> : session?.capabilities.documentWrites ? <label className="secondary-button evidence-upload"><Upload size={14} /> {evidenceBusy === row.id ? 'Mengunggah…' : 'Unggah bukti'}<input aria-label={`Unggah bukti ${row.notes || row.id}`} type="file" accept="image/jpeg,image/png,image/webp" disabled={evidenceBusy === row.id} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; void uploadEvidence(row, file) }} /></label> : <span>Belum ada file bukti</span>}
+          </div>
+        </article>
+      })}
+    </section>
     <section className="recent-command"><header><div><p className="eyebrow">TRANSAKSI PROYEK</p><h2>Aktivitas tercatat</h2></div></header><TransactionRows rows={rows} projects={projects} /></section>
   </section>
 }

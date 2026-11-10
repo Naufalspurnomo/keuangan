@@ -65,6 +65,8 @@ def dsn():
     project_migration = (migration_root / "003_project_documents.sql").read_text(encoding="utf-8")
     canonical_migration = (migration_root / "005_canonical_project_transactions.sql").read_text(encoding="utf-8")
     payment_migration = (migration_root / "006_invoice_payment_applications.sql").read_text(encoding="utf-8")
+    evidence_migration = (migration_root / "007_project_transaction_evidence.sql").read_text(encoding="utf-8")
+    quotation_migration = (migration_root / "008_project_quotation_handoffs.sql").read_text(encoding="utf-8")
     with psycopg.connect(selected, autocommit=True) as connection:
         with connection.cursor() as cursor:
             cursor.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
@@ -99,6 +101,8 @@ def dsn():
             cursor.execute(project_migration)
             cursor.execute(canonical_migration)
             cursor.execute(payment_migration)
+            cursor.execute(evidence_migration)
+            cursor.execute(quotation_migration)
     return selected
 
 
@@ -131,9 +135,10 @@ def project(
     key="project-create-key-0001",
     status="planned",
     actor=ACTOR,
+    quotation_required=False,
 ):
     profile = issuer(repository)
-    return repository.create_project_with_sales_order(
+    result = repository.create_project_with_sales_order(
         {
             "name": "Backdrop Launch",
             "client_name": "PT Client",
@@ -150,6 +155,15 @@ def project(
         idempotency_key=key,
         actor=actor,
     )
+    if not quotation_required:
+        import psycopg
+        with psycopg.connect(repository._dsn) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE projects SET quotation_required = FALSE WHERE id = %s",
+                    (result["project"]["id"],),
+                )
+    return result
 
 
 def test_project_creation_requires_durable_wallet_company_binding(repository, dsn):
@@ -2441,4 +2455,251 @@ def test_schema_migration_repairs_malformed_canonical_project_fk(dsn):
 
     assert project_document_schema_health(dsn)["ready"] is False
     assert ensure_project_document_schema(dsn)["ready"] is True
+    assert project_document_schema_health(dsn)["ready"] is True
+
+
+def test_transaction_evidence_upload_review_reload_and_bytes_are_authoritative(repository):
+    created = project(repository, key="evidence-project-0001", status="active")
+    project_id = created["project"]["id"]
+    source_key = insert_income(repository._dsn, project_id, amount=450_000)
+    image = b"\x89PNG\r\n\x1a\n" + b"evidence-bytes"
+
+    uploaded = repository.upload_transaction_evidence(
+        project_id,
+        ledger_source_key=source_key,
+        mime_type="image/png",
+        original_name="bukti-transfer.png",
+        image_bytes=image,
+        idempotency_key="evidence-upload-command-0001",
+        actor=ACTOR,
+    )
+    assert uploaded["review_status"] == "pending"
+    assert uploaded["byte_size"] == len(image)
+    assert uploaded["sha256"] == hashlib.sha256(image).hexdigest()
+    assert repository.list_transaction_evidence(project_id)[0]["id"] == uploaded["id"]
+    persisted = repository.get_transaction_evidence_bytes(uploaded["id"])
+    assert persisted["bytes"] == image
+    assert persisted["sha256"] == uploaded["sha256"]
+
+    approved = repository.review_transaction_evidence(
+        uploaded["id"],
+        status="approved",
+        note="",
+        expected_version=uploaded["lock_version"],
+        idempotency_key="evidence-review-command-0001",
+        actor=ACTOR,
+    )
+    assert approved["review_status"] == "approved"
+    assert approved["lock_version"] == 1
+    assert repository.list_transaction_evidence(project_id)[0]["review_status"] == "approved"
+
+    replay = repository.review_transaction_evidence(
+        uploaded["id"],
+        status="approved",
+        note="",
+        expected_version=uploaded["lock_version"],
+        idempotency_key="evidence-review-command-0001",
+        actor=ACTOR,
+    )
+    assert replay == approved
+
+
+def test_transaction_evidence_rejects_cross_project_invalid_bytes_and_duplicate(repository):
+    first = project(repository, key="evidence-project-0002", status="active")
+    second = project(repository, key="evidence-project-0003", status="active")
+    first_id = first["project"]["id"]
+    second_id = second["project"]["id"]
+    source_key = insert_income(repository._dsn, first_id, amount=250_000)
+    image = b"\xff\xd8\xff" + b"private-evidence"
+
+    with pytest.raises(ProjectDocumentConflict, match="canonical project"):
+        repository.upload_transaction_evidence(
+            second_id, ledger_source_key=source_key, mime_type="image/jpeg",
+            original_name="cross.jpg", image_bytes=image,
+            idempotency_key="evidence-cross-project-0001", actor=ACTOR,
+        )
+    with pytest.raises(ValueError, match="invalid evidence image"):
+        repository.upload_transaction_evidence(
+            first_id, ledger_source_key=source_key, mime_type="image/jpeg",
+            original_name="fake.jpg", image_bytes=b"not-an-image",
+            idempotency_key="evidence-invalid-image-0001", actor=ACTOR,
+        )
+
+    repository.upload_transaction_evidence(
+        first_id, ledger_source_key=source_key, mime_type="image/jpeg",
+        original_name="first.jpg", image_bytes=image,
+        idempotency_key="evidence-valid-image-0001", actor=ACTOR,
+    )
+    with pytest.raises(ProjectDocumentConflict, match="identical evidence"):
+        repository.upload_transaction_evidence(
+            first_id, ledger_source_key=source_key, mime_type="image/jpeg",
+            original_name="duplicate.jpg", image_bytes=image,
+            idempotency_key="evidence-duplicate-image-0001", actor=ACTOR,
+        )
+
+
+def test_canva_quotation_acceptance_applies_final_value_to_sales_order(repository):
+    created = project(repository, key="quotation-project-0001", quotation_required=True)
+    project_id = created["project"]["id"]
+    sales_order = created["sales_order"]
+    quotation = repository.create_project_quotation(
+        project_id,
+        values={
+            "canva_url": "https://www.canva.com/design/DAF-example/view",
+            "amount": 12_500_000,
+            "channel": "whatsapp",
+            "negotiation_notes": "Penawaran awal",
+        },
+        idempotency_key="quotation-create-0001",
+        actor=ACTOR,
+    )
+    assert quotation["version"] == 1
+    assert quotation["status"] == "draft"
+
+    with pytest.raises(ProjectDocumentConflict, match="must be accepted"):
+        repository.apply_accepted_quotation_to_sales_order(
+            quotation["id"], expected_document_version=sales_order["lock_version"],
+            idempotency_key="quotation-apply-early-0001", actor=ACTOR,
+        )
+
+    sent = repository.transition_project_quotation(
+        quotation["id"], status="sent", note="", expected_version=quotation["lock_version"],
+        idempotency_key="quotation-sent-0001", actor=ACTOR,
+    )
+    accepted = repository.transition_project_quotation(
+        quotation["id"], status="accepted", note="Disetujui via WhatsApp",
+        expected_version=sent["lock_version"], idempotency_key="quotation-accepted-0001", actor=ACTOR,
+    )
+    forged = repository.update_draft(
+        sales_order["id"],
+        {"lines": [{"description": "Bypass", "quantity": "1", "unit": "proyek", "unit_price": 12_500_000}]},
+        expected_version=sales_order["lock_version"],
+        idempotency_key="quotation-direct-so-bypass-0001", actor=ACTOR,
+    )
+    with pytest.raises(ProjectDocumentConflict, match="accepted quotation handoff"):
+        issue(repository, forged, "quotation-direct-so-issue-0001")
+
+    applied = repository.apply_accepted_quotation_to_sales_order(
+        accepted["id"], expected_document_version=forged["lock_version"],
+        idempotency_key="quotation-apply-0001", actor=ACTOR,
+    )
+    assert applied["lines"][0]["unit_price"] == 12_500_000
+    assert repository._calculate_totals(applied)["total"] == 12_500_000
+    assert repository.list_project_quotations(project_id)[0]["sales_order_id"] == applied["id"]
+    with pytest.raises(ProjectDocumentConflict, match="already applied"):
+        repository.apply_accepted_quotation_to_sales_order(
+            accepted["id"], expected_document_version=applied["lock_version"],
+            idempotency_key="quotation-apply-duplicate-new-key-0001", actor=ACTOR,
+        )
+
+    issued = issue(repository, applied, "quotation-sales-order-issue-0001")
+    summary = repository.get_project_payment_summary(project_id)
+    assert issued["status"] == "issued"
+    assert summary["contract_total"] == 12_500_000
+    assert repository.list_project_quotations(project_id)[0]["status"] == "accepted"
+
+
+def test_canva_quotation_revision_preserves_history_and_requires_valid_url(repository):
+    created = project(repository, key="quotation-project-0002")
+    project_id = created["project"]["id"]
+    with pytest.raises(ValueError, match="Canva URL"):
+        repository.create_project_quotation(
+            project_id, values={"canva_url": "https://example.com/quote", "amount": 1_000_000},
+            idempotency_key="quotation-invalid-url-0001", actor=ACTOR,
+        )
+    first = repository.create_project_quotation(
+        project_id,
+        values={"canva_url": "https://canva.com/design/version-one", "amount": 10_000_000},
+        idempotency_key="quotation-create-0002", actor=ACTOR,
+    )
+    sent = repository.transition_project_quotation(
+        first["id"], status="sent", note="", expected_version=first["lock_version"],
+        idempotency_key="quotation-sent-0002", actor=ACTOR,
+    )
+    revised = repository.transition_project_quotation(
+        first["id"], status="revised", note="Kurangi scope backdrop",
+        expected_version=sent["lock_version"], idempotency_key="quotation-revised-0002", actor=ACTOR,
+    )
+    second = repository.create_project_quotation(
+        project_id,
+        values={"canva_url": "https://canva.com/design/version-two", "amount": 8_500_000,
+                "negotiation_notes": "Scope final"},
+        idempotency_key="quotation-create-0003", actor=ACTOR,
+    )
+    history = repository.list_project_quotations(project_id)
+    assert revised["status"] == "revised"
+    assert second["version"] == 2
+    assert [item["version"] for item in history] == [2, 1]
+    assert history[1]["amount"] == 10_000_000
+
+
+def test_quotation_schema_rerun_repairs_malformed_named_objects(dsn):
+    import psycopg
+
+    with psycopg.connect(dsn, autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("DROP INDEX IF EXISTS uq_project_accepted_quotation")
+            cursor.execute("CREATE INDEX uq_project_accepted_quotation ON project_quotation_handoffs(project_id)")
+            cursor.execute("ALTER TABLE project_quotation_handoffs DROP CONSTRAINT chk_project_quotation_sales_order")
+            cursor.execute(
+                "ALTER TABLE project_quotation_handoffs ADD CONSTRAINT chk_project_quotation_sales_order "
+                "CHECK (sales_order_id IS NULL)"
+            )
+            cursor.execute("ALTER TABLE project_quotation_handoffs DROP CONSTRAINT chk_project_quotation_timestamps")
+            cursor.execute(
+                "ALTER TABLE project_quotation_handoffs ADD CONSTRAINT chk_project_quotation_timestamps "
+                "CHECK (sent_at IS NULL)"
+            )
+            cursor.execute("ALTER TABLE project_quotation_handoffs ALTER COLUMN created_by DROP NOT NULL")
+            cursor.execute("ALTER TABLE project_quotation_handoffs ALTER COLUMN created_by SET DEFAULT '{}'::jsonb")
+            cursor.execute("ALTER TABLE project_quotation_handoffs ALTER COLUMN updated_by DROP NOT NULL")
+            cursor.execute("ALTER TABLE project_quotation_handoffs ALTER COLUMN updated_by SET DEFAULT '{}'::jsonb")
+            cursor.execute("ALTER TABLE project_quotation_handoffs DROP CONSTRAINT project_quotation_handoffs_project_id_fkey")
+            cursor.execute(
+                "ALTER TABLE project_quotation_handoffs ADD CONSTRAINT project_quotation_handoffs_project_id_fkey "
+                "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE"
+            )
+            cursor.execute("ALTER TABLE project_quotation_handoffs DROP CONSTRAINT project_quotation_handoffs_sales_order_id_fkey")
+            cursor.execute(
+                "ALTER TABLE project_quotation_handoffs ADD CONSTRAINT project_quotation_handoffs_sales_order_id_fkey "
+                "FOREIGN KEY (sales_order_id) REFERENCES project_documents(id) ON DELETE CASCADE"
+            )
+            cursor.execute("ALTER TABLE project_quotation_events DROP CONSTRAINT project_quotation_events_quotation_id_fkey")
+            cursor.execute(
+                "ALTER TABLE project_quotation_events ADD CONSTRAINT project_quotation_events_quotation_id_fkey "
+                "FOREIGN KEY (quotation_id) REFERENCES projects(id)"
+            )
+            cursor.execute("ALTER TABLE project_quotation_events ALTER COLUMN actor DROP NOT NULL")
+            cursor.execute("ALTER TABLE project_quotation_events ALTER COLUMN actor SET DEFAULT '{}'::jsonb")
+            cursor.execute("DROP INDEX IF EXISTS uq_project_quotation_sales_order")
+            cursor.execute("CREATE INDEX uq_project_quotation_sales_order ON project_quotation_handoffs(sales_order_id)")
+            cursor.execute("DROP INDEX IF EXISTS idx_project_quotation_project_version")
+            cursor.execute("CREATE INDEX idx_project_quotation_project_version ON project_quotation_handoffs(version)")
+            cursor.execute("DROP INDEX IF EXISTS idx_project_quotation_events_replay")
+            cursor.execute("CREATE INDEX idx_project_quotation_events_replay ON project_quotation_events(id)")
+            cursor.execute(
+                "CREATE OR REPLACE FUNCTION guard_project_quotation_transition() RETURNS trigger "
+                "LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$"
+            )
+            cursor.execute(
+                "CREATE OR REPLACE FUNCTION reject_project_quotation_event_mutation() RETURNS trigger "
+                "LANGUAGE plpgsql AS $$ BEGIN RETURN OLD; END; $$"
+            )
+            cursor.execute("DROP TRIGGER IF EXISTS trg_project_quotation_transition ON project_quotation_handoffs")
+            cursor.execute(
+                "CREATE TRIGGER trg_project_quotation_transition BEFORE UPDATE OF status "
+                "ON project_quotation_handoffs FOR EACH ROW "
+                "EXECUTE FUNCTION guard_project_quotation_transition()"
+            )
+            cursor.execute("ALTER TABLE project_quotation_handoffs DISABLE TRIGGER trg_project_quotation_transition")
+            cursor.execute("DROP TRIGGER IF EXISTS trg_project_quotation_events_append_only ON project_quotation_events")
+            cursor.execute(
+                "CREATE TRIGGER trg_project_quotation_events_append_only BEFORE DELETE ON project_quotation_events "
+                "FOR EACH ROW EXECUTE FUNCTION reject_project_quotation_event_mutation()"
+            )
+            cursor.execute("ALTER TABLE project_quotation_events DISABLE TRIGGER trg_project_quotation_events_append_only")
+
+    assert project_document_schema_health(dsn)["ready"] is False
+    migrated = ensure_project_document_schema(dsn)
+    assert migrated["ready"] is True
     assert project_document_schema_health(dsn)["ready"] is True
