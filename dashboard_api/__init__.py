@@ -12,11 +12,6 @@ from config.wallets import normalize_wallet_company_pair
 from dashboard_api.repository import DashboardRepository
 
 
-# SHA-256 verifier for the owner VPS reverse proxy. The 384-bit bearer token
-# remains owner-scoped outside Git and can be rotated through the environment.
-DEFAULT_DASHBOARD_PROXY_TOKEN_HASH = "4e27151b079d42b5347a988f0a4c24280bd38af3ff23f971a47e4e6a890cc26c"
-
-
 def register_dashboard(
     app: Flask,
     *,
@@ -41,7 +36,21 @@ def register_dashboard(
     )
     app.config.setdefault(
         "DASHBOARD_PROXY_TOKEN_HASH",
-        os.getenv("DASHBOARD_PROXY_TOKEN_HASH", DEFAULT_DASHBOARD_PROXY_TOKEN_HASH),
+        os.getenv("DASHBOARD_PROXY_TOKEN_HASH", ""),
+    )
+    app.config.setdefault(
+        "DASHBOARD_ACTOR_ASSERTION_SECRET",
+        os.getenv("DASHBOARD_ACTOR_ASSERTION_SECRET", ""),
+    )
+    app.config.setdefault(
+        "DASHBOARD_ACTOR_ASSERTION_AUDIENCE",
+        os.getenv("DASHBOARD_ACTOR_ASSERTION_AUDIENCE", "hollawall-finance-api"),
+    )
+    app.config.setdefault("DASHBOARD_ACTOR_ASSERTION_TTL_SECONDS", 60)
+    app.config.setdefault(
+        "DASHBOARD_ACTOR_ASSERTION_REQUIRED",
+        str(os.getenv("DASHBOARD_ACTOR_ASSERTION_REQUIRED") or "").strip().casefold()
+        in {"1", "true", "yes", "on"},
     )
     app.config.setdefault(
         "DASHBOARD_TRANSACTION_WRITES_ENABLED",
