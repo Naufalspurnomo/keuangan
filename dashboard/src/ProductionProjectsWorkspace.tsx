@@ -13,7 +13,7 @@ interface ProductionProjectsWorkspaceProps {
 
 export default function ProductionProjectsWorkspace({ projects, capabilities, loading, onAdd, onEdit, onOpen }: ProductionProjectsWorkspaceProps) {
   return <section className="project-command-center production-projects-workspace">
-    <header className="command-head"><div><p className="eyebrow">PROYEK</p><h1>Daftar proyek</h1><p>Kelola proyek, klien, dan dokumen.</p></div>{capabilities.projectWrites && <button type="button" className="primary-button" onClick={onAdd}><Plus size={16} /> Buat proyek</button>}</header>
+    <header className="command-head"><div><p className="eyebrow">PROYEK</p><h1>Daftar proyek</h1><p>Buat proyek aktif, lalu kelola transaksi, presensi, dan dokumennya dari satu halaman.</p></div>{capabilities.projectWrites && <button type="button" className="primary-button" onClick={onAdd}><Plus size={16} /> Buat proyek</button>}</header>
     {loading ? <section className="command-empty" role="status"><strong>Memuat proyek</strong><p>Menyiapkan data terbaru.</p></section>
       : projects.length ? <section className="project-register" aria-label="Daftar proyek"><header><div><p className="eyebrow">PORTOFOLIO</p><h3>{projects.length} proyek</h3></div></header><div className="project-register-headings" aria-hidden="true"><span>Proyek</span><span>Status</span><span>Klien</span><span>Mulai</span><span>Aksi</span></div>{projects.map((project) => <article key={project.id}>
         <button type="button" className="project-register-main" aria-label={`Buka proyek ${project.name}`} onClick={() => onOpen(project)}>

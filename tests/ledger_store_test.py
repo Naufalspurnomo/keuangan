@@ -64,6 +64,23 @@ class LedgerStoreNormalizationTests(unittest.TestCase):
 
         self.assertIsNone(normalized["source_row"])
 
+    def test_operational_projection_never_inherits_a_project_business_unit(self):
+        normalized = normalize_row({
+            "sheet_name": "Operasional Kantor",
+            "dompet_sheet": "CV HB(101)",
+            "source_block": "operasional",
+            "tanggal": "2026-11-11",
+            "jumlah": 100000,
+            "tipe": "Pengeluaran",
+            "company": "HOLLA",
+            "company_sheet": "Operasional Kantor",
+            "nama_projek": "Operasional",
+        })
+
+        self.assertEqual(normalized["company"], "Operasional Kantor")
+        self.assertEqual(normalized["wallet"], "CV HB(101)")
+        self.assertEqual(normalized["project"], "Operasional")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,8 +10,17 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <script>
+      try {
+        const storedTheme = localStorage.getItem('hollawall-theme')
+        document.documentElement.dataset.theme = storedTheme === 'dark' || storedTheme === 'light'
+          ? storedTheme
+          : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+      } catch { document.documentElement.dataset.theme = 'light' }
+    </script>
   </head>
   <body>
+    <a class="skip-link" href="#main-content">Lewati ke konten utama</a>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -201,6 +201,7 @@ class ProjectDocumentService:
         command["issuer_key"] = issuer_key
         command["wallet"] = wallet
         command["company"] = company
+        command.setdefault("status", "active")
         command.setdefault("tax_percent", "0")
         return self._repository.create_project_with_sales_order(
             command,

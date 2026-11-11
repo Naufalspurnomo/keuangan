@@ -205,6 +205,8 @@ def test_create_project_leaves_volatile_defaults_to_atomic_repository_command():
 
     assert result["sales_order"]["valid_until"] == "2026-11-17"
     assert result["sales_order"]["tax_percent"] == "0"
+    assert result["project"]["status"] == "active"
+    assert repository.calls[0][1]["status"] == "active"
     assert "sales_order_valid_until" not in repository.calls[0][1]
     assert [call[0] for call in repository.calls] == ["create_project_with_sales_order"]
 

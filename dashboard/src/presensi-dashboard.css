@@ -34,7 +34,7 @@
   border-radius: 999px;
   color: inherit;
   background: rgba(255, 255, 255, .16);
-  font-size: 10px;
+  font-size:11px;
 }
 .project-presensi-panel { display: grid; gap: 18px; }
 .presensi-panel-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
@@ -52,11 +52,11 @@
   background: var(--surface-raised);
 }
 .project-status-control > div { min-width: 0; display: grid; grid-template-columns: auto auto; align-items: center; justify-content: start; gap: 7px 10px; }
-.project-status-control small { color: var(--text-secondary); font-size: 10px; font-weight: 800; letter-spacing: .08em; }
+.project-status-control small { color: var(--text-secondary); font-size:11px; font-weight: 800; letter-spacing: .08em; }
 .project-status-control p { grid-column: 1 / -1; margin: 0; color: var(--text-secondary); font-size: 11px; line-height: 1.45; }
 .project-status-control > button { flex: none; min-height: 44px; }
 .presensi-summary article { display: grid; align-content: center; gap: 8px; min-height: 90px; padding: 18px; }
-.presensi-summary small { display: block; color: var(--text-secondary); font-size: 10px; font-weight: 800; letter-spacing: .08em; line-height: 1.35; text-transform: uppercase; }
+.presensi-summary small { display: block; color: var(--text-secondary); font-size:11px; font-weight: 800; letter-spacing: .08em; line-height: 1.35; text-transform: uppercase; }
 .presensi-summary strong { display: block; color: var(--text); font-size: 25px; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .presensi-summary .presensi-location-summary { font-size: 18px; }
 .presensi-record-list { display: grid; gap: 14px; }
@@ -96,7 +96,7 @@
   margin-left: auto;
   padding: 0 10px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size:11px;
   font-weight: 850;
   letter-spacing: .025em;
 }
@@ -121,10 +121,10 @@
 }
 .presensi-photo-placeholder { display: grid; place-items: center; color: var(--text-tertiary); }
 .presensi-evidence > div { min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 5px; }
-.presensi-evidence small { color: var(--text-tertiary); font-size: 10px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+.presensi-evidence small { color: var(--text-tertiary); font-size:11px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
 .presensi-evidence strong { color: var(--text); font-size: 12px; line-height: 1.4; }
-.presensi-evidence span { display: flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size: 10px; line-height: 1.4; }
-.presensi-evidence a { width: fit-content; display: inline-flex; align-items: center; gap: 4px; color: #096b70; font-size: 10px; font-weight: 800; line-height: 1.4; text-decoration: underline; text-underline-offset: 2px; }
+.presensi-evidence span { display: flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size:11px; line-height: 1.4; }
+.presensi-evidence a { width: fit-content; display: inline-flex; align-items: center; gap: 4px; color: #096b70; font-size:11px; font-weight: 800; line-height: 1.4; text-decoration: underline; text-underline-offset: 2px; }
 .presensi-whatsapp-delivery { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 7px; margin-top: 3px; }
 .presensi-evidence .presensi-whatsapp-status {
   width: fit-content;
@@ -135,17 +135,17 @@
   padding: 3px 7px;
   border: 1px solid var(--border-subtle);
   border-radius: 999px;
-  font-size: 9px;
+  font-size:11px;
   font-weight: 850;
   letter-spacing: .025em;
   line-height: 1;
 }
-.presensi-whatsapp-status > span { display: inline-flex; color: inherit; font-size: 8px; font-weight: 900; line-height: 1; }
+.presensi-whatsapp-status > span { display: inline-flex; color: inherit; font-size:11px; font-weight: 900; line-height: 1; }
 .presensi-whatsapp-status.sent { border-color: color-mix(in srgb, var(--positive) 34%, var(--border-subtle)); color: var(--positive); background: color-mix(in srgb, var(--positive) 10%, var(--surface-raised)); }
 .presensi-whatsapp-status.pending { border-color: color-mix(in srgb, var(--warning) 38%, var(--border-subtle)); color: var(--warning); background: color-mix(in srgb, var(--warning) 10%, var(--surface-raised)); }
 .presensi-whatsapp-status.failed { border-color: color-mix(in srgb, var(--negative) 34%, var(--border-subtle)); color: var(--negative); background: color-mix(in srgb, var(--negative) 9%, var(--surface-raised)); }
 .presensi-whatsapp-status.unknown { color: var(--text-secondary); background: var(--surface-soft); }
-.presensi-whatsapp-delivery > span:last-child:not(:first-child) { color: var(--text-tertiary); font-size: 9px; }
+.presensi-whatsapp-delivery > span:last-child:not(:first-child) { color: var(--text-tertiary); font-size:11px; }
 .presensi-evidence.is-empty { opacity: .72; }
 .presensi-record > footer {
   min-height: 42px;

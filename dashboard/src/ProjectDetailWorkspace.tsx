@@ -1,4 +1,4 @@
-import { Archive, ArrowLeft, Ban, CheckCircle2, Pencil, RotateCcw } from 'lucide-react'
+import { Archive, ArrowLeft, Ban, CheckCircle2, Pencil, Plus, RotateCcw } from 'lucide-react'
 import { type KeyboardEvent, type ReactNode } from 'react'
 
 import {
@@ -26,6 +26,7 @@ interface ProjectDetailWorkspaceProps {
   documents: ReactNode
   capabilities?: ProjectDocumentCapabilities
   onEdit?: (project: ProjectRecord) => void
+  onAddTransaction?: (project: ProjectRecord) => void
   onStatusChange?: (status: ProductionProjectStatus) => void
   onArchive?: () => void
 }
@@ -40,6 +41,7 @@ export default function ProjectDetailWorkspace({
   documents,
   capabilities = NO_PROJECT_DOCUMENT_WRITES,
   onEdit,
+  onAddTransaction,
   onStatusChange,
   onArchive,
 }: ProjectDetailWorkspaceProps) {
@@ -67,7 +69,10 @@ export default function ProjectDetailWorkspace({
         <p>{project.client_name}{project.client_company ? ` · ${project.client_company}` : ''} · <span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span></p>
 
       </div>
-      {capabilities.projectWrites && onEdit && <button type="button" className="secondary-button" onClick={() => onEdit(project)}><Pencil size={16} /> Ubah proyek</button>}
+      <div className="project-lifecycle-actions">
+        {tab === 'transactions' && project.status === 'active' && onAddTransaction && <button type="button" className="primary-button" onClick={() => onAddTransaction(project)}><Plus size={16} /> Tambah transaksi</button>}
+        {capabilities.projectWrites && onEdit && <button type="button" className="secondary-button" onClick={() => onEdit(project)}><Pencil size={16} /> Ubah proyek</button>}
+      </div>
     </header>
 
     <section className="project-status-control" aria-label="Status proyek">

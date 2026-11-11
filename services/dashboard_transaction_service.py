@@ -608,7 +608,7 @@ class DashboardTransactionService:
             ),
             "nama_projek": row.project or "Operasional",
             "kategori": request.category,
-            "company": request.company,
+            "company": OPERASIONAL_SHEET_NAME if request.scope == "office" else request.company,
             "company_sheet": OPERASIONAL_SHEET_NAME if request.scope == "office" else request.company,
             "dompet_sheet": request.wallet,
             "oleh": row.recorded_by,

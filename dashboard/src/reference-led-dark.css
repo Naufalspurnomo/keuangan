@@ -82,7 +82,7 @@ html[data-theme='dark'] .brand-mark {
   border-radius: 6px;
   background: var(--brand);
   color: #190b06;
-  font-family: 'DM Sans', sans-serif;
+  font-family:var(--font-sans);
   font-size: 17px;
   font-weight: 800;
 }
@@ -133,7 +133,7 @@ html[data-theme='dark'] .project-health-summary h2,
 html[data-theme='dark'] .project-health-card h3,
 html[data-theme='dark'] .timeline-heading h2,
 html[data-theme='dark'] .inline-state h2 {
-  font-family: 'DM Sans', sans-serif;
+  font-family:var(--font-sans);
   letter-spacing: -.02em;
 }
 html[data-theme='dark'] .metric-card > strong,
@@ -145,7 +145,7 @@ html[data-theme='dark'] .ops-unit-list em,
 html[data-theme='dark'] .ops-ledger em,
 html[data-theme='dark'] .wallet-rail strong,
 html[data-theme='dark'] .wallet-position > div > strong {
-  font-family: 'DM Sans', sans-serif;
+  font-family:var(--font-sans);
   font-variant-numeric: tabular-nums lining-nums;
   font-feature-settings: 'tnum' 1;
 }

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { loadLiveSnapshot, type LiveSnapshotLoadOptions } from './liveSnapshot'
 import type { DashboardSnapshot, ProjectSummary, WalletSnapshot } from './snapshot'
-import './live-snapshot.css'
 
 type LiveSnapshotLoader = (options?: LiveSnapshotLoadOptions) => Promise<DashboardSnapshot>
 

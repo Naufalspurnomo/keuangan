@@ -2,11 +2,10 @@ import { X } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 
 import { createEmptyProjectDraft, validateProjectDraft, type ProjectDraft, type ProjectRecord } from './projectDocuments'
-import { CANONICAL_WALLET_COMPANY_PAIRS } from './transactionMappings'
+import { CANONICAL_WALLETS, CANONICAL_WALLET_COMPANY_PAIRS, canonicalCompaniesForWallet } from './transactionMappings'
 
 const PROJECT_ISSUER_KEY = 'hollawall'
 const DEFAULT_PAIR = CANONICAL_WALLET_COMPANY_PAIRS[0]
-const WALLET_OPTIONS = [...new Set(CANONICAL_WALLET_COMPANY_PAIRS.map(({ wallet }) => wallet))]
 
 interface ProjectRecordFormProps {
   project?: ProjectRecord
@@ -25,7 +24,7 @@ export default function ProjectRecordForm({ project, clients = [], saving = fals
   })
   const [error, setError] = useState('')
   const change = <K extends keyof ProjectDraft>(key: K, value: ProjectDraft[K]) => setDraft((current) => ({ ...current, [key]: value }))
-  const companyOptions = CANONICAL_WALLET_COMPANY_PAIRS.filter(({ wallet }) => wallet === draft.wallet)
+  const companyOptions = canonicalCompaniesForWallet(draft.wallet)
   const changeWallet = (wallet: string) => {
     const company = CANONICAL_WALLET_COMPANY_PAIRS.find((pair) => pair.wallet === wallet)?.company ?? ''
     setDraft((current) => ({ ...current, wallet, company }))
@@ -66,9 +65,9 @@ export default function ProjectRecordForm({ project, clients = [], saving = fals
         {project
           ? <label>Profil penerbit<input value="CV Holla Berkreasi" readOnly aria-readonly="true" /></label>
           : <label>Profil penerbit<select aria-label="Profil penerbit" value={draft.issuer_key} onChange={(event) => change('issuer_key', event.target.value)}><option value={PROJECT_ISSUER_KEY}>CV Holla Berkreasi</option></select></label>}
-        <label>Dompet pencatatan<select aria-label="Dompet pencatatan" value={draft.wallet} onChange={(event) => changeWallet(event.target.value)}>{WALLET_OPTIONS.map((wallet) => <option key={wallet} value={wallet}>{wallet}</option>)}</select><small className="field-help">Sheet/dompet tempat transaksi proyek dicatat.</small></label>
-        <label>Unit usaha<select aria-label="Unit usaha" value={draft.company} onChange={(event) => change('company', event.target.value)}>{companyOptions.map(({ company }) => <option key={company} value={company}>{company}</option>)}</select><small className="field-help">Perusahaan atau brand pemilik transaksi di dompet tersebut.</small></label>
-        <label>Status<select value={draft.status} onChange={(event) => change('status', event.target.value as ProjectDraft['status'])}><option value="planned">Direncanakan</option><option value="active">Aktif</option><option value="completed">Selesai</option><option value="cancelled">Dibatalkan</option></select></label>
+        <label>Dompet pencatatan<select aria-label="Dompet pencatatan" value={draft.wallet} onChange={(event) => changeWallet(event.target.value)}>{CANONICAL_WALLETS.map((wallet) => <option key={wallet} value={wallet}>{wallet}</option>)}</select><small className="field-help">Dompet sumber seluruh transaksi proyek ini.</small></label>
+        <label>Unit usaha<select aria-label="Unit usaha" value={draft.company} onChange={(event) => change('company', event.target.value)}>{companyOptions.map(({ company }) => <option key={company} value={company}>{company}</option>)}</select><small className="field-help">Hanya unit usaha yang berada di dompet terpilih.</small></label>
+        <label>Status proyek<input aria-label="Status proyek" value={project ? (draft.status === 'active' ? 'Aktif' : draft.status === 'completed' ? 'Selesai' : draft.status === 'cancelled' ? 'Dibatalkan' : 'Direncanakan') : 'Aktif setelah dibuat'} readOnly aria-readonly="true" /><small className="field-help">Status diubah dari halaman proyek, bukan saat mengisi identitas.</small></label>
         <label>Tanggal mulai<input type="date" value={draft.started_on} onChange={(event) => change('started_on', event.target.value)} /></label>
         {(draft.status === 'completed' || draft.completed_on) && <label>Tanggal selesai<input type="date" value={draft.completed_on ?? ''} onChange={(event) => change('completed_on', event.target.value || null)} /></label>}
       </div>

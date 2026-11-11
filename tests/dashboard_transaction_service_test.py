@@ -245,6 +245,9 @@ def test_office_request_uses_operational_authority_shape():
     assert response["sheet_name"] == "Operasional Kantor"
     assert response["source_block"] == "operasional"
     assert projection.rows[0]["keterangan"] == "Pembayaran termin [Sumber: CV HB]"
+    assert projection.rows[0]["company"] == "Operasional Kantor"
+    assert projection.rows[0]["company_sheet"] == "Operasional Kantor"
+    assert projection.rows[0]["dompet_sheet"] == "CV HB(101)"
     assert store.complete_calls[0][2] == "completed"
 
 

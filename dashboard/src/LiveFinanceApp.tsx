@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { PresensiPanel } from './ProjectTransactionsWorkspace'
 import { useLiveSnapshot } from './liveSnapshotView'
 import type { ProjectSummary } from './snapshot'
-import './live-snapshot.css'
 
 type LivePage = 'Ringkasan' | 'Proyek' | 'Transaksi' | 'Dompet'
 type ProjectTab = 'Transaksi' | 'Presensi'

@@ -24,9 +24,12 @@ afterEach(cleanup)
 describe('ProjectDetailWorkspace', () => {
   it('renders URL-controlled Transaksi, Presensi, and Dokumen tabs', () => {
     const onRouteChange = vi.fn()
-    render(<ProjectDetailWorkspace project={project} tab="transactions" onRouteChange={onRouteChange} onBack={vi.fn()} transactions={<p>Ledger proyek</p>} presensi={<p>Bukti presensi</p>} documents={<p>Pusat dokumen</p>} />)
+    const onAddTransaction = vi.fn()
+    render(<ProjectDetailWorkspace project={project} tab="transactions" onRouteChange={onRouteChange} onBack={vi.fn()} transactions={<p>Ledger proyek</p>} presensi={<p>Bukti presensi</p>} documents={<p>Pusat dokumen</p>} onAddTransaction={onAddTransaction} />)
     expect(screen.getByText('Ledger proyek')).toBeTruthy()
     expect(screen.queryByText(project.id!)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Tambah transaksi' }))
+    expect(onAddTransaction).toHaveBeenCalledWith(project)
     fireEvent.click(screen.getByRole('tab', { name: 'Dokumen' }))
     expect(onRouteChange).toHaveBeenCalledWith({ tab: 'documents' })
   })

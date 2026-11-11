@@ -194,17 +194,27 @@ DOMPET_ALIASES = {
     "projek bali": "TX BALI(087)",
 }
 
-# Company -> Dompet mapping (for backward compatibility)
-# NOTE: KANTOR is NOT a company - it's operational expense category
+# Canonical business-unit ownership per wallet.
+# Wallet labels (CV HB / TX SBY / TX BALI) are funding containers, never
+# business units. Keep historical aliases outside this write-authority map.
+# NOTE: KANTOR is NOT a company - it's operational expense category.
 DOMPET_COMPANIES = {
-    "CV HB(101)": ["HOLLA", "HOJJA", "CV HB"],
-    "TX SBY(216)": ["TEXTURIN-Surabaya", "TX SBY"],
-    "TX BALI(087)": ["TEXTURIN-Bali", "TX BALI"]
+    "CV HB(101)": ["HOLLA", "HOJJA"],
+    "TX SBY(216)": ["TEXTURIN-Surabaya"],
+    "TX BALI(087)": ["TEXTURIN-Bali"],
+}
+
+# Read compatibility only. These labels exist in historical Sheets rows and
+# old AI output, but must never be exposed or accepted as a new unit binding.
+LEGACY_COMPANY_ALIASES = {
+    "cv hb": None,  # Ambiguous: wallet 101 contains HOLLA and HOJJA.
+    "tx sby": "TEXTURIN-Surabaya",
+    "tx bali": "TEXTURIN-Bali",
 }
 
 
 def is_canonical_wallet_company_pair(wallet: str, company: str) -> bool:
-    """Whether a wallet/company binding is accepted by the finance authority."""
+    """Whether a wallet/business-unit binding is accepted for new writes."""
     return company in DOMPET_COMPANIES.get(wallet, ())
 
 
@@ -359,11 +369,14 @@ def normalize_company_name(company_name: str) -> Optional[str]:
     if not clean:
         return None
 
-    # Direct canonical match first.
+    # Direct canonical business-unit match first.
     for companies in DOMPET_COMPANIES.values():
         for canonical in companies:
             if clean == canonical.lower():
                 return canonical
+
+    if clean in LEGACY_COMPANY_ALIASES:
+        return LEGACY_COMPANY_ALIASES[clean]
 
     # Explicit HOLLA / HOJJA split (CV HB has 2 companies).
     has_holla = bool(re.search(r"\b(?:holla|hollawall)\b", clean))
@@ -384,8 +397,31 @@ def normalize_company_name(company_name: str) -> Optional[str]:
 
     # Generic CV HB mention is intentionally ambiguous for project routing.
     if re.search(r"\bcv\s*hb\b", clean):
-        return "CV HB"
+        return None
 
+    return None
+
+
+def normalize_wallet_company_pair(wallet: str, company: str) -> Optional[tuple[str, str]]:
+    """Normalize an unambiguous historical binding for read/compare operations.
+
+    This does not expand the write allowlist. New writes must still pass
+    ``is_canonical_wallet_company_pair`` with exact canonical values.
+    """
+    wallet_key = re.sub(r"\s+", " ", str(wallet or "").strip().lower())
+    canonical_wallet = {
+        "cv hb": "CV HB(101)",
+        "cv hb(101)": "CV HB(101)",
+        "tx sby": "TX SBY(216)",
+        "tx sby(216)": "TX SBY(216)",
+        "tx bali": "TX BALI(087)",
+        "tx bali(087)": "TX BALI(087)",
+    }.get(wallet_key)
+    canonical_company = normalize_company_name(company)
+    if canonical_wallet and canonical_company and is_canonical_wallet_company_pair(
+        canonical_wallet, canonical_company
+    ):
+        return canonical_wallet, canonical_company
     return None
 
 

@@ -11,7 +11,7 @@
 .project-ledger-filter-block > p {
   margin: 0 0 8px;
   color: var(--text-tertiary);
-  font-size: 9px;
+  font-size:11px;
   font-weight: 800;
   letter-spacing: .11em;
 }
@@ -110,7 +110,7 @@
 .active-age-identity p {
   margin: 0 0 2px;
   color: var(--unit-color);
-  font-size: 9px;
+  font-size:11px;
   font-weight: 800;
   letter-spacing: .12em;
   text-transform: uppercase;
@@ -126,7 +126,7 @@
   display: block;
   margin-top: 2px;
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size:11px;
 }
 .active-age-summary { flex: none; text-align: right; }
 .active-age-summary strong {
@@ -138,7 +138,7 @@
 }
 .active-age-summary span {
   color: var(--text-tertiary);
-  font-size: 9px;
+  font-size:11px;
   font-weight: 700;
   letter-spacing: .08em;
   text-transform: uppercase;
@@ -147,7 +147,7 @@
   display: block;
   margin-top: 3px;
   color: var(--text-secondary);
-  font-size: 9px;
+  font-size:11px;
   font-style: normal;
 }
 
@@ -172,13 +172,13 @@
   border-radius: 999px;
   background: color-mix(in srgb, var(--unit-color) 9%, var(--surface));
   color: var(--unit-color);
-  font-size: 9px;
+  font-size:11px;
   font-weight: 700;
   letter-spacing: .04em;
 }
 .active-calendar-toolbar b {
   color: var(--text-secondary);
-  font-size: 9px;
+  font-size:11px;
   font-weight: 700;
 }
 
@@ -269,7 +269,7 @@
   display: -webkit-box;
   overflow: hidden;
   color: var(--text);
-  font-size: 9px;
+  font-size:11px;
   font-weight: 700;
   line-height: 1.15;
   -webkit-box-orient: vertical;
@@ -278,7 +278,7 @@
 .active-calendar-project-heads small {
   margin-top: 3px;
   color: var(--text-tertiary);
-  font-size: 8px;
+  font-size:11px;
 }
 
 .active-calendar-axis {
@@ -305,7 +305,7 @@
   padding: 3px 5px 3px 0;
   background: color-mix(in srgb, var(--surface) 94%, transparent);
   color: var(--text-tertiary);
-  font-size: 10px;
+  font-size:11px;
   font-weight: 800;
   letter-spacing: .07em;
   text-align: right;
@@ -403,7 +403,7 @@
 .active-calendar-activity::after { bottom: -4px; }
 .active-calendar-fill small {
   color: currentColor;
-  font-size: 9px;
+  font-size:11px;
   font-weight: 800;
   letter-spacing: .04em;
   text-transform: uppercase;
@@ -446,7 +446,7 @@
   border-radius: 3px;
   background: color-mix(in srgb, var(--surface) 92%, transparent);
   color: var(--text-secondary);
-  font-size: 9px;
+  font-size:11px;
 }
 
 .active-age-section > footer {
@@ -461,8 +461,8 @@
 .candle-legend { display: flex; flex-wrap: wrap; gap: 12px 24px; }
 .candle-legend > div { display: flex; align-items: center; gap: 9px; }
 .candle-legend p { display: grid; gap: 2px; margin: 0; line-height: 1.35; }
-.candle-legend strong { color: var(--text-secondary); font-size: 9px; font-weight: 700; }
-.candle-legend small { color: var(--text-tertiary); font-size: 8px; }
+.candle-legend strong { color: var(--text-secondary); font-size:11px; font-weight: 700; }
+.candle-legend small { color: var(--text-tertiary); font-size:11px; }
 .age-gradient { width: 62px; height: 7px; flex: none; border-radius: 999px; background: linear-gradient(90deg, hsl(138 64% 40%), hsl(70 64% 40%), hsl(34 64% 40%), hsl(0 64% 40%)); }
 .activity-key { width: 3px; height: 23px; position: relative; flex: none; margin-inline: 5px; border-radius: 999px; background: #fff; box-shadow: 0 0 0 4px #53636a; }
 .activity-key::before,
@@ -482,7 +482,7 @@
   cursor: pointer;
 }
 .active-age-section > footer nav button:disabled { opacity: .35; cursor: default; }
-.active-age-section > footer nav span { min-width: 34px; color: var(--text-secondary); font-size: 10px; text-align: center; }
+.active-age-section > footer nav span { min-width: 34px; color: var(--text-secondary); font-size:11px; text-align: center; }
 .active-age-empty { margin: 0; padding: 30px 20px; color: var(--text-tertiary); font-size: 11px; }
 
 @media (max-width: 640px) {
@@ -498,21 +498,21 @@
   .active-age-identity h3 { font-size: 16px; }
   .active-age-summary strong { font-size: 20px; }
   .active-calendar-toolbar { min-height: 44px; padding-inline: 10px; }
-  .active-calendar-toolbar span { font-size: 9px; }
-  .active-calendar-toolbar b { font-size: 8px; }
+  .active-calendar-toolbar span { font-size:11px; }
+  .active-calendar-toolbar b { font-size:11px; }
   .active-calendar-frame.has-more-right { padding-right: 50px; }
   .active-calendar-frame.has-more-right::after { right: 50px; }
   .active-calendar-pan-cue { right: 3px; }
   .active-calendar { min-width: max(760px, calc(var(--project-columns) * 92px + 92px)); }
   .active-calendar-project-heads { margin-left: 75px; grid-template-columns: repeat(var(--project-columns), 82px); gap: 8px; }
-  .active-calendar-project-heads strong { font-size: 10px; line-height: 1.15; -webkit-line-clamp: 2; }
+  .active-calendar-project-heads strong { font-size:11px; line-height: 1.15; -webkit-line-clamp: 2; }
   .active-calendar-axis > span { grid-template-columns: 66px 1fr; gap: 7px; }
-  .active-calendar-axis b { font-size: 9px; }
+  .active-calendar-axis b { font-size:11px; }
   .active-calendar-bars { left: 75px; grid-template-columns: repeat(var(--project-columns), 82px); gap: 8px; }
   .active-calendar-fill { inset-inline: 5px; padding: 8px 6px; }
   .active-calendar-activity { left: calc(50% + 20px); }
-  .active-calendar-fill strong { font-size: 9px; -webkit-line-clamp: 4; }
-  .active-calendar-fill small { font-size: 8px; }
+  .active-calendar-fill strong { font-size:11px; -webkit-line-clamp: 4; }
+  .active-calendar-fill small { font-size:11px; }
   .active-calendar-viewport { max-height: 500px; }
   .active-age-section > footer { align-items: flex-start; padding: 12px 14px; }
   .candle-legend { max-width: 270px; gap: 10px; }

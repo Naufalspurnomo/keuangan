@@ -86,8 +86,8 @@ function productionProjectsResponse() {
         start_date: '2026-11-01',
         completion_date: null,
         contract_notes: '',
-        wallet: 'CV HB',
-        company: 'Holla',
+        wallet: 'CV HB(101)',
+        company: 'HOLLA',
         lock_version: 1,
         archived_at: null,
         created_at: '2026-11-01T00:00:00Z',
@@ -96,6 +96,14 @@ function productionProjectsResponse() {
     },
     meta: { capabilities: { project_document_writes_enabled: false, transaction_correction_reversal: false } },
   }), { status: 200, headers: { 'content-type': 'application/json' } })
+}
+
+function writableProductionProjectsResponse() {
+  const response = productionProjectsResponse()
+  return response.json().then((body) => new Response(JSON.stringify({
+    ...body,
+    meta: { capabilities: { project_document_writes_enabled: true, transaction_correction_reversal: false } },
+  }), { status: 200, headers: { 'content-type': 'application/json' } }))
 }
 
 function writeSessionResponse() {
@@ -184,11 +192,13 @@ describe('production live source mode', () => {
     render(<App />)
     await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
 
+    fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Buka proyek Kontrak Panggung Utama' }))
     fireEvent.click(screen.getByRole('button', { name: 'Tambah transaksi' }))
     const dialog = screen.getByRole('dialog')
-    fireEvent.change(within(dialog).getByLabelText('Proyek *'), {
-      target: { value: '123e4567-e89b-42d3-a456-426614174000' },
-    })
+    expect(within(dialog).queryByLabelText('Proyek *')).toBeNull()
+    expect(within(dialog).getByLabelText('Dompet proyek')).toHaveValue('CV HB(101)')
+    expect(within(dialog).getByLabelText('Unit usaha proyek')).toHaveValue('HOLLA')
     fireEvent.change(within(dialog).getByLabelText('Jumlah *'), { target: { value: '500000' } })
     fireEvent.change(within(dialog).getByLabelText('Keterangan *'), { target: { value: 'Biaya proyek pertama' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Simpan transaksi' }))
@@ -199,6 +209,52 @@ describe('production live source mode', () => {
       wallet: 'CV HB(101)',
       company: 'HOLLA',
     })
+  }, 30_000)
+
+  it('creates an active production project and opens its transaction workspace', async () => {
+    const createdId = '223e4567-e89b-42d3-a456-426614174001'
+    const created = {
+      id: createdId,
+      name: 'Proyek Online Baru',
+      client_name: 'Klien Online',
+      client_company: '', client_address: '', client_contact: '',
+      issuer_key: 'hollawall', wallet: 'TX SBY(216)', company: 'TEXTURIN-Surabaya',
+      status: 'active', start_date: '2026-11-11', completion_date: null, contract_notes: '',
+      lock_version: 1, archived_at: null, created_at: '2026-11-11T00:00:00Z', updated_at: '2026-11-11T00:00:00Z',
+    }
+    let createBody: Record<string, unknown> | undefined
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/admin/api/write-session.php') return writeSessionResponse()
+      if (url.startsWith('/admin/api/projects.php?action=list')) return writableProductionProjectsResponse()
+      if (url === `/admin/api/projects.php?action=get&project_id=${createdId}`) {
+        return new Response(JSON.stringify({ api_version: 'dashboard.v1', data: created, meta: { capabilities: { project_document_writes_enabled: true } } }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url === '/admin/api/projects.php' && init?.method === 'POST') {
+        createBody = JSON.parse(String(init.body)) as Record<string, unknown>
+        return new Response(JSON.stringify({ api_version: 'dashboard.v1', data: { project: created }, meta: { capabilities: { project_document_writes_enabled: true } } }), { status: 201, headers: { 'content-type': 'application/json' } })
+      }
+      return liveResponse()
+    })
+    vi.stubGlobal('fetch', request)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
+
+    fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Buat proyek' }))
+    fireEvent.change(screen.getByLabelText('Nama proyek'), { target: { value: created.name } })
+    fireEvent.change(screen.getByLabelText('Nama klien'), { target: { value: created.client_name } })
+    fireEvent.change(screen.getByLabelText('Dompet pencatatan'), { target: { value: 'TX SBY(216)' } })
+    expect(screen.getByLabelText('Unit usaha')).toHaveValue('TEXTURIN-Surabaya')
+    expect(screen.queryByRole('option', { name: 'TX SBY' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan proyek' }))
+
+    await screen.findByRole('heading', { name: created.name })
+    expect(window.location.hash).toBe(`#projects?project=${createdId}&tab=transactions`)
+    expect(screen.getByRole('tab', { name: 'Transaksi' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('button', { name: 'Tambah transaksi' })).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toBe('Proyek aktif dibuat. Lanjutkan dengan mencatat transaksi proyek.')
+    expect(createBody).toMatchObject({ action: 'create', values: { name: created.name, wallet: 'TX SBY(216)', company: 'TEXTURIN-Surabaya', status: 'active' } })
   }, 30_000)
 
   it('keeps the complete dashboard shell, analytics, routes, reports, and source-grounded unknown values', async () => {
@@ -234,7 +290,7 @@ describe('production live source mode', () => {
     expect(window.location.hash).toBe('#reports')
     expect(screen.getByRole('heading', { name: 'Pratinjau dan ekspor PDF' })).toBeTruthy()
     expect(screen.getByText('Texturin Regional Baru')).toBeTruthy()
-    expect(screen.getByText('Unit Operasional Baru')).toBeTruthy()
+    expect(screen.queryByText('Unit Operasional Baru')).toBeNull()
     expect(screen.queryByText(/DATA LIVE/i)).toBeNull()
     expect(screen.queryByText(/DATA DEMO/i)).toBeNull()
     expect(screen.queryByText(/^DEMO$/i)).toBeNull()
@@ -336,8 +392,9 @@ describe('production live source mode', () => {
     expectNoProductionChatter()
 
     fireEvent.click(navigation().getByRole('button', { name: 'Ringkasan' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Tambah transaksi' }))
-    expect(screen.getByRole('dialog')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: 'Transaksi proyek' }))
+    expect(await screen.findByRole('heading', { name: 'Daftar proyek' })).toBeTruthy()
+    expect(screen.queryByRole('dialog')).toBeNull()
     expectNoProductionChatter()
   })
 
@@ -356,8 +413,9 @@ describe('production live source mode', () => {
     render(<App />)
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Tambah transaksi' }))
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Operasional Kantor' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Operasional kantor' }))
+    fireEvent.click(screen.getAllByRole('button', { name: /Biaya kantor|Catat biaya/ })[0])
+    expect(within(screen.getByRole('dialog')).queryByRole('group', { name: 'Pilih aktivitas' })).toBeNull()
     fireEvent.change(screen.getByLabelText('Jumlah *'), { target: { value: '500000' } })
     fireEvent.change(screen.getByLabelText('Keterangan *'), { target: { value: 'Biaya kantor hari ini' } })
     fireEvent.click(screen.getByRole('button', { name: 'Simpan transaksi' }))

@@ -14,7 +14,7 @@ describe('project document domain', () => {
   it('creates explicit production identities and supports cancelled projects', () => {
     const draft = createEmptyProjectDraft('2026-11-03')
     expect(draft.id).toBeNull()
-    expect(draft.status).toBe('planned')
+    expect(draft.status).toBe('active')
     expect(draft.started_on).toBe('2026-11-03')
 
     const clean = validateProjectDraft({
@@ -29,6 +29,16 @@ describe('project document domain', () => {
     expect(clean.name).toBe('Lobby Marvell')
     expect(clean.client_name).toBe('PT Marvell')
     expect(clean.status).toBe('cancelled')
+  })
+
+  it('rejects wallet labels as business units and mismatched project bindings', () => {
+    const draft = {
+      ...createEmptyProjectDraft('2026-11-03'),
+      name: 'Lobby Marvell', client_name: 'PT Marvell', issuer_key: 'hollawall', wallet: 'TX SBY(216)', company: 'TEXTURIN-Surabaya',
+    }
+    expect(() => validateProjectDraft(draft)).not.toThrow()
+    expect(() => validateProjectDraft({ ...draft, company: 'TX SBY' })).toThrow('Unit usaha tidak sesuai')
+    expect(() => validateProjectDraft({ ...draft, company: 'HOLLA' })).toThrow('Unit usaha tidak sesuai')
   })
 
   it('calculates integer rupiah with half-up rounding and one document discount mode', () => {
