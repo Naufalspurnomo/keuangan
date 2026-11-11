@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 
-APPLICATION_SCHEMA_MIN = 12
-APPLICATION_SCHEMA_MAX = 12
+APPLICATION_SCHEMA_MIN = 13
+APPLICATION_SCHEMA_MAX = 13
 MIGRATION_LOCK_ID = 0x484F4C4C415741  # stable "HOLLAWA" advisory lock namespace
 _MIGRATION_PATTERN = re.compile(r"^(?P<version>\d{3})_.*\.sql$")
 
@@ -42,7 +42,7 @@ def load_financial_migrations(root: Path | None = None) -> list[Migration]:
             Migration(version, path.name, sql, hashlib.sha256(sql.encode("utf-8")).hexdigest())
         )
     versions = [migration.version for migration in migrations]
-    if versions != list(range(9, 13)):
+    if versions != list(range(9, 14)):
         raise FinancialSchemaError(f"canonical migration set is incomplete: {versions}")
     return migrations
 

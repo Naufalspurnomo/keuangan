@@ -242,7 +242,7 @@ def test_backup_manifest_records_cutoff_schema_migration_and_application_hashes(
             '{"column_name":"event_key","data_type":"text","table_name":"transaction_inbox"}',
         ]),
     }
-    assert contract["migration_version"] == "012_financial_schema_ledger"
+    assert contract["migration_version"] == "013_interwallet_debt_event_contract"
     assert contract["application"] == {
         table: {"total": len(rows), "sha256": rows_sha256(rows)}
         for table, rows in CONTRACT_ROWS.items()

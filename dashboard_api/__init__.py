@@ -18,6 +18,8 @@ def register_dashboard(
     repository: Optional[Any] = None,
     project_document_repository: Optional[Any] = None,
     transaction_service: Optional[Any] = None,
+    canonical_transaction_service: Optional[Any] = None,
+    canonical_debt_service: Optional[Any] = None,
 ) -> None:
     """Register dashboard routes without modifying existing webhook behavior."""
     # Import lazily so standalone transaction services can import contracts.
@@ -60,6 +62,11 @@ def register_dashboard(
     app.config.setdefault(
         "PROJECT_DOCUMENT_WRITES_ENABLED",
         str(os.getenv("PROJECT_DOCUMENT_WRITES_ENABLED") or "").strip().casefold()
+        in {"1", "true", "yes", "on"},
+    )
+    app.config.setdefault(
+        "CANONICAL_FINANCE_API_ENABLED",
+        str(os.getenv("CANONICAL_FINANCE_API_ENABLED") or "").strip().casefold()
         in {"1", "true", "yes", "on"},
     )
     # Health must only advertise project/document reads when this process has
@@ -135,6 +142,39 @@ def register_dashboard(
             create_project_document_blueprint(selected_project_documents)
         )
         app.config["PROJECT_DOCUMENT_READS_ENABLED"] = True
+
+    if app.config["CANONICAL_FINANCE_API_ENABLED"]:
+        # Never expose canonical mutation routes with an in-memory fallback.
+        if canonical_transaction_service is None or canonical_debt_service is None:
+            if not dsn:
+                raise RuntimeError("canonical finance API requires a database DSN")
+            from services.canonical_finance import CanonicalFinanceService
+            from services.financial_debt_repository import (
+                PostgresInterwalletDebtRepository,
+            )
+            from services.financial_schema import verify_financial_schema
+            from services.financial_transaction_repository import (
+                PostgresFinancialTransactionRepository,
+            )
+            from services.interwallet_debt_service import InterwalletDebtService
+
+            verify_financial_schema(dsn)
+            canonical_transaction_service = canonical_transaction_service or CanonicalFinanceService(
+                PostgresFinancialTransactionRepository(dsn)
+            )
+            canonical_debt_service = canonical_debt_service or InterwalletDebtService(
+                PostgresInterwalletDebtRepository(dsn)
+            )
+
+        from dashboard_api.canonical_finance_routes import (
+            create_canonical_finance_blueprint,
+        )
+        from dashboard_api.debt_routes import create_debt_blueprint
+
+        app.register_blueprint(
+            create_canonical_finance_blueprint(canonical_transaction_service)
+        )
+        app.register_blueprint(create_debt_blueprint(canonical_debt_service))
 
 
 __all__ = ["register_dashboard"]
