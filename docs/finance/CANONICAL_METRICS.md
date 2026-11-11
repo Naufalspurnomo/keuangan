@@ -1,7 +1,9 @@
 # Canonical Finance Metrics v1
 
-**Version:** `canonical.finance.metrics.v1`  
-**Service oracle:** `services/canonical_finance_metrics.py`  
+**Version:** `canonical.finance.metrics.v1`
+
+**Service oracle:** `services/canonical_finance_metrics.py`
+
 **SQL oracle:** `dashboard_api/queries/canonical_finance_metrics_v1.sql`
 
 Every dashboard, wallet, project, debt, WhatsApp, and report value must be compared to this oracle at the same inclusive UTC cutoff. A formula change requires a new oracle version, compatibility note, fixtures, and reconciliation evidence.

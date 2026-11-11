@@ -165,7 +165,9 @@ def test_sql_and_documentation_are_versioned_with_the_service_oracle():
     documentation = (ROOT / "docs" / "finance" / "CANONICAL_METRICS.md").read_text()
 
     assert sql.startswith(f"-- {METRIC_ORACLE_VERSION}")
-    assert "$1::timestamptz" in sql
+    assert "%(cutoff)s::timestamptz" in sql
+    assert "%(monthly_operating_outflow)s::bigint" in sql
+    assert "$1" not in sql and "$2" not in sql
     assert "is_acceptance_test" in sql
     assert "review_status" in sql
     assert "status <> 'reversal'" in sql

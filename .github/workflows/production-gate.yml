@@ -79,7 +79,7 @@ jobs:
           npm ci --prefix dashboard
           npm run build --prefix dashboard
           python -m pip install -r requirements.txt pytest==9.0.2 playwright==1.55.0
-          python -m playwright install --with-deps chromium
+          python -m playwright install chromium
       - name: Browser E2E
         run: >-
           python -m pytest -q
@@ -107,7 +107,7 @@ jobs:
           npm ci --prefix dashboard
           npm run build --prefix dashboard
           python -m pip install -r requirements.txt pytest==9.0.2 playwright==1.55.0
-          python -m playwright install --with-deps chromium
+          python -m playwright install chromium
       - name: Visual and responsive acceptance
         run: >-
           python -m pytest -q
@@ -319,7 +319,7 @@ jobs:
           npm ci --prefix dashboard
           npm run build --prefix dashboard
           python -m pip install -r requirements.txt pytest==9.0.2 playwright==1.55.0
-          python -m playwright install --with-deps chromium
+          python -m playwright install chromium
       - name: Accessibility acceptance
         run: >-
           python -m pytest -q

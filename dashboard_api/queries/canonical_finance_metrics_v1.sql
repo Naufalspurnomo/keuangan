@@ -1,5 +1,5 @@
 -- canonical.finance.metrics.v1
--- Bind parameters: $1 = inclusive cutoff timestamptz, $2 = monthly operating outflow bigint.
+-- Psycopg named parameters: cutoff and monthly_operating_outflow.
 WITH RECURSIVE transaction_lineage AS (
     SELECT id, id AS root_id
     FROM financial_transactions
@@ -18,8 +18,8 @@ transaction_ranked AS (
            ) AS state_rank
     FROM transaction_lineage
     JOIN financial_transactions AS transaction ON transaction.id = transaction_lineage.id
-    WHERE transaction.created_at <= $1::timestamptz
-      AND transaction.occurred_at <= $1::timestamptz
+    WHERE transaction.created_at <= %(cutoff)s::timestamptz
+      AND transaction.occurred_at <= %(cutoff)s::timestamptz
 ),
 effective_transactions AS (
     SELECT *
@@ -55,7 +55,7 @@ latest_opening_per_unit AS (
     SELECT DISTINCT ON (wallet_id, business_unit_id)
            wallet_id, business_unit_id, amount
     FROM wallet_opening_balances
-    WHERE effective_at <= $1::timestamptz
+    WHERE effective_at <= %(cutoff)s::timestamptz
     ORDER BY wallet_id, business_unit_id, effective_at DESC, id DESC
 ),
 wallet_openings AS (
@@ -66,7 +66,7 @@ wallet_openings AS (
 wallet_adjustments AS (
     SELECT wallet_id, SUM(delta_amount)::bigint AS adjustments
     FROM balance_adjustments
-    WHERE effective_at <= $1::timestamptz
+    WHERE effective_at <= %(cutoff)s::timestamptz
     GROUP BY wallet_id
 ),
 wallet_cash AS (
@@ -94,8 +94,8 @@ debt_ranked AS (
            ) AS state_rank
     FROM debt_lineage
     JOIN interwallet_debt_events AS event ON event.id = debt_lineage.id
-    WHERE event.created_at <= $1::timestamptz
-      AND event.occurred_at <= $1::timestamptz
+    WHERE event.created_at <= %(cutoff)s::timestamptz
+      AND event.occurred_at <= %(cutoff)s::timestamptz
 ),
 effective_debt_events AS (
     SELECT debt_id, COALESCE(corrected_event_type, event_type) AS effective_type, amount
@@ -159,10 +159,10 @@ project_metrics AS (
 ),
 debt_aging AS (
     SELECT CASE
-               WHEN due_at IS NULL OR due_at::date >= ($1::timestamptz)::date THEN 'current'
-               WHEN (($1::timestamptz)::date - due_at::date) <= 30 THEN 'days_1_30'
-               WHEN (($1::timestamptz)::date - due_at::date) <= 60 THEN 'days_31_60'
-               WHEN (($1::timestamptz)::date - due_at::date) <= 90 THEN 'days_61_90'
+               WHEN due_at IS NULL OR due_at::date >= (%(cutoff)s::timestamptz)::date THEN 'current'
+               WHEN ((%(cutoff)s::timestamptz)::date - due_at::date) <= 30 THEN 'days_1_30'
+               WHEN ((%(cutoff)s::timestamptz)::date - due_at::date) <= 60 THEN 'days_31_60'
+               WHEN ((%(cutoff)s::timestamptz)::date - due_at::date) <= 90 THEN 'days_61_90'
                ELSE 'days_over_90'
            END AS bucket,
            SUM(outstanding)::bigint AS amount
@@ -187,10 +187,10 @@ SELECT 'wallet', wallet_id::text,
            'receivable', receivable,
            'payable', payable,
            'adjusted_balance', available_balance + receivable - payable,
-           'runway_months_basis_points', CASE WHEN $2::bigint > 0 THEN available_balance * 10000 / $2::bigint ELSE NULL END,
+           'runway_months_basis_points', CASE WHEN %(monthly_operating_outflow)s::bigint > 0 THEN available_balance * 10000 / %(monthly_operating_outflow)s::bigint ELSE NULL END,
            'health', CASE
                WHEN available_balance <= 0 THEN 'Critical'
-               WHEN $2::bigint > 0 AND available_balance * 10000 / $2::bigint < 30000 THEN 'Watch'
+               WHEN %(monthly_operating_outflow)s::bigint > 0 AND available_balance * 10000 / %(monthly_operating_outflow)s::bigint < 30000 THEN 'Watch'
                ELSE 'Healthy'
            END
        )

@@ -44,6 +44,18 @@ def test_backend_job_installs_yaml_for_release_contract_collection() -> None:
     assert "PyYAML==6.0.3" in install
 
 
+def test_browser_jobs_do_not_depend_on_runtime_apt_mirrors() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+    for job_id in ("browser-e2e", "visual", "accessibility"):
+        commands = "\n".join(
+            str(step.get("run", "")) for step in workflow["jobs"][job_id]["steps"]
+        )
+        assert "playwright install chromium" in commands
+        assert "--with-deps" not in commands
+        assert "apt-get" not in commands
+
+
 def test_history_dependent_jobs_fetch_candidate_ancestry() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
