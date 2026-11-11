@@ -26,11 +26,13 @@ import {
 
   OfficeWorkspace,
   OverviewWorkspace,
+  TransactionRows,
 
   WalletWorkspacePage,
 } from './FinancePages'
 import ProjectCommandCenter from './ProjectCommandCenter'
 import ProjectCompleteDialog from './ProjectCompleteDialog'
+import { ProjectAuditPanel, ProjectDebtPanel, ProjectOverviewPanel } from './ProjectContextPanels'
 import ProjectDetailWorkspace from './ProjectDetailWorkspace'
 import ProjectDocumentsWorkspace from './ProjectDocumentsWorkspace'
 import ProjectPresensiPanel from './ProjectPresensiPanel'
@@ -399,11 +401,17 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
     && ((!readOnly && ['projects', 'office', 'debts'].includes(active))
       || (canCreateTransactions && active === 'office'))
 
-  const productionTransactions = productionProject && projectApi
+  const productionFinance = productionProject ? productionFinanceProject(productionProject) : null
+  const productionRows = productionProject
+    ? finance.workspace.transactions.filter((row) => row.project_id === productionProject.id)
+    : []
+  const productionTransactions = productionFinance
+    ? <section className="recent-command"><header><div><p className="eyebrow">TRANSAKSI PROYEK</p><h2>Aktivitas tercatat</h2></div></header><TransactionRows rows={productionRows} projects={transactionProjects} /></section>
+    : null
+  const productionProfitability = productionFinance && projectApi
     ? <ProjectProfitabilityWorkspace
-        project={productionFinanceProject(productionProject)}
-        rows={finance.workspace.transactions.filter((row) => row.project_id === productionProject.id)}
-        projects={transactionProjects}
+        project={productionFinance}
+        rows={productionRows}
         api={projectApi}
         session={projectSession}
       />
@@ -418,11 +426,16 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
             onRouteChange={({ tab }) => setProjectDetailRoute({ projectId: productionProject.id, tab })}
             onBack={backToProjects}
             transactions={productionTransactions}
+            overview={productionFinance ? <ProjectOverviewPanel project={productionFinance} workspace={finance.workspace} /> : null}
+            debts={productionFinance ? <ProjectDebtPanel project={productionFinance} workspace={finance.workspace} /> : null}
+            profitability={productionProfitability}
             presensi={<ProjectPresensiPanel project={productionProject} />}
             documents={<ProjectDocumentsWorkspace project={productionProject} api={projectApi} session={projectSession} route={{ projectId: productionProject.id, tab: route.tab ?? 'documents', document: route.document, type: route.type }} onRouteChange={setProjectDetailRoute} />}
+            audit={productionFinance ? <ProjectAuditPanel project={productionFinance} workspace={finance.workspace} /> : null}
             capabilities={projectCapabilities}
             onEdit={setProjectModal}
             onAddTransaction={productionProject.status === 'active' && canCreateTransactions ? (project) => setModal({ kind: 'transaction', projectId: project.id }) : undefined}
+            onOpenDebt={() => navigate('debts')}
             onStatusChange={changeProductionProjectStatus}
             onArchive={archiveProductionProject}
           />

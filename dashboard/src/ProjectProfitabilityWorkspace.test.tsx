@@ -50,7 +50,7 @@ describe('ProjectProfitabilityWorkspace', () => {
   })
 
   it('renders contract margin, cash P&L, salary, cost categories, and evidence provenance', async () => {
-    render(<ProjectProfitabilityWorkspace project={project} rows={rows} projects={[project]} api={api} evidenceApi={evidenceApi} />)
+    render(<ProjectProfitabilityWorkspace project={project} rows={rows} api={api} evidenceApi={evidenceApi} />)
 
     await waitFor(() => expect(api.getPaymentSummary).toHaveBeenCalledWith(project.id))
     const metrics = within(screen.getByRole('region', { name: 'Ringkasan kas Surabaya Office' }))
@@ -87,7 +87,7 @@ describe('ProjectProfitabilityWorkspace', () => {
       csrfToken: 'csrf-token-that-is-long-enough',
       capabilities: { projectWrites: true, documentWrites: true, transactionCorrections: false, transactionReversals: false },
     }
-    render(<ProjectProfitabilityWorkspace project={project} rows={rows} projects={[project]} api={api} evidenceApi={evidence} session={session} />)
+    render(<ProjectProfitabilityWorkspace project={project} rows={rows} api={api} evidenceApi={evidence} session={session} />)
 
     const file = new File([new Uint8Array([137, 80, 78, 71])], 'bukti.png', { type: 'image/png' })
     fireEvent.change(await screen.findByLabelText('Unggah bukti DP'), { target: { files: [file] } })
@@ -100,7 +100,7 @@ describe('ProjectProfitabilityWorkspace', () => {
 
   it('does not invent contract remainder when authoritative summary is unavailable', async () => {
     const unavailable = { getPaymentSummary: vi.fn(async () => { throw new Error('offline') }) } as unknown as ProjectDocumentApi
-    render(<ProjectProfitabilityWorkspace project={project} rows={rows} projects={[project]} api={unavailable} evidenceApi={evidenceApi} />)
+    render(<ProjectProfitabilityWorkspace project={project} rows={rows} api={unavailable} evidenceApi={evidenceApi} />)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Nilai kontrak dan sisa kontrak belum dapat dimuat')
     expect(screen.getByText('Sisa kontrak setelah kas keluar').parentElement).toHaveTextContent('—')

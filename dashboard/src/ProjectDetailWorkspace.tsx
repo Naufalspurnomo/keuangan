@@ -102,7 +102,7 @@ export default function ProjectDetailWorkspace({
       </div>
       <div className="project-lifecycle-actions">
         {tab === 'transactions' && project.status === 'active' && onAddTransaction && <button type="button" className="primary-button" onClick={() => onAddTransaction(project)} {...actionProps('projects.transaction-create')}><Plus size={16} /> Tambah transaksi</button>}
-        {tab === 'debts' && onOpenDebt && <button type="button" className="primary-button" onClick={() => onOpenDebt(project)} {...actionProps('projects.tab-debts')}><Landmark size={16} /> Catat pinjaman</button>}
+        {tab === 'debts' && onOpenDebt && <button type="button" className="primary-button" onClick={() => onOpenDebt(project)} {...actionProps('projects.tab-debts')}><Landmark size={16} /> Buka Hutang</button>}
         {capabilities.projectWrites && onEdit && <button type="button" className="secondary-button" onClick={() => onEdit(project)} {...actionProps('projects.edit')}><Pencil size={16} /> Ubah proyek</button>}
       </div>
     </header>

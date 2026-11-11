@@ -87,6 +87,8 @@ export interface FinanceDebt {
   lender: WalletId
   amount: number
   repaid: number
+  /** Canonical project identity. Absent means the debt is not project-linked. */
+  project_id?: string | null
   notes: string
   created_at: string
   updated_at: string

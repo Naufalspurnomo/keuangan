@@ -3,7 +3,7 @@ import type { CompanyId, FinanceWorkspace, OfficeCategory, WalletId } from './fi
 import { normalizeCanonicalPair } from './transactionMappings'
 
 export interface WalletSnapshot { source_key: string; name: string; balance: number }
-export interface DebtSnapshot { source_key: string; date: string | null; amount: number; notes: string; borrower: string; lender: string; status: string }
+export interface DebtSnapshot { source_key: string; date: string | null; amount: number; notes: string; borrower: string; lender: string; status: string; project_id?: string | null }
 export interface CashTrendPoint { month: string; balance: number; net_movement: number }
 export type ProjectHealth = 'healthy' | 'watch' | 'overdue' | 'completed' | 'unmarked'
 export interface ProjectSummary {
@@ -106,6 +106,7 @@ export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWo
     id: row.source_key || `live-debt-${index + 1}`, date: row.date.slice(0, 10),
     borrower: row.borrower as WalletId, lender: row.lender as WalletId, amount: row.amount,
     repaid: row.status.toLocaleLowerCase('id-ID') === 'open' ? 0 : row.amount,
+    project_id: row.project_id ?? null,
     notes: row.notes, created_at: updatedAt, updated_at: updatedAt,
   }] : [])
   return {
