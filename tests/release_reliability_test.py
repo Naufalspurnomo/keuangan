@@ -36,6 +36,17 @@ def test_production_gate_job_ids_are_the_promotion_contract() -> None:
         assert any("run" in step or "uses" in step for step in job["steps"])
 
 
+def test_history_dependent_jobs_fetch_candidate_ancestry() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+    for job_id in ("backend", "accessibility"):
+        checkout = next(
+            step for step in workflow["jobs"][job_id]["steps"]
+            if str(step.get("uses", "")).startswith("actions/checkout@")
+        )
+        assert checkout.get("with", {}).get("fetch-depth") == "0"
+
+
 def test_backup_cli_wires_the_selected_psql_command(monkeypatch, capsys) -> None:
     from scripts import hollawall_backup
 
