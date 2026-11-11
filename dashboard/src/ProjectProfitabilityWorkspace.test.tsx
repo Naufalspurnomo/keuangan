@@ -1,5 +1,10 @@
+// @ts-expect-error Vitest runs in Node; the browser app tsconfig intentionally omits Node types.
+import { readFileSync } from 'node:fs'
+
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+
+const financeWorkspaceCss = readFileSync('src/finance-workspace-v2.css', 'utf8')
 
 import ProjectProfitabilityWorkspace from './ProjectProfitabilityWorkspace'
 import type { FinanceProject, FinanceTransaction } from './financeWorkspace'
@@ -35,6 +40,15 @@ const api = {
 } as unknown as ProjectDocumentApi
 
 describe('ProjectProfitabilityWorkspace', () => {
+  it('keeps the profitability workspace within a mobile project viewport', () => {
+    expect(financeWorkspaceCss).toContain('@media (max-width: 760px)')
+    expect(financeWorkspaceCss).toMatch(/\.project-profitability\s*>\s*\*\s*\{\s*min-width:\s*0/)
+    expect(financeWorkspaceCss).toMatch(/\.project-profitability-head\s*\.secondary-button\s*\{[^}]*width:\s*100%/)
+    expect(financeWorkspaceCss).toMatch(/\.project-profitability-metrics\s*\{\s*grid-template-columns:\s*1fr/)
+    expect(financeWorkspaceCss).toMatch(/\.project-profitability\s+\.workspace-table-wrap\s*\{[^}]*overflow-x:\s*auto/)
+    expect(financeWorkspaceCss).toMatch(/\.project-profitability\s+\.workspace-table\s*\{[^}]*min-width:\s*680px/)
+  })
+
   it('renders contract margin, cash P&L, salary, cost categories, and evidence provenance', async () => {
     render(<ProjectProfitabilityWorkspace project={project} rows={rows} projects={[project]} api={api} evidenceApi={evidenceApi} />)
 
