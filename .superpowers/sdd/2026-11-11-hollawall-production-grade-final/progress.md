@@ -1,0 +1,31 @@
+# SDD ledger — plan: docs/superpowers/plans/2026-11-11-hollawall-production-grade-final.md
+
+Mission base: 0ee6a95e253bdb616382fca86a8c7285f7d02fd4
+Plan commit: 4446c2d14ea9f9a3a089348a490186c8cb8d1456
+Implementation branch: feature/hollawall-production-grade-final
+
+2026-11-11 Setup: exact baseline guard PASS (`HEAD^=0ee6a95`, merge-base ancestor PASS); isolated linked worktree `/root/workspaces/naufal/.worktrees/keuangan-production-grade`.
+Pre-flight interfaces:
+- PG-101 schema → PG-200/201 services → PG-400..470 UI consumers: schema/API contracts must land before authority activation; additive compatibility required.
+- PG-102 migration manifest → PG-1010 activation: zero unexplained row/amount/balance/reference drift is a hard blocker.
+- PG-205 auth actor contract → every mutation/E2E: actor identity and capability checks are cross-cutting.
+- PG-206 metric oracle → Dashboard/Wallet/Project/Debt/Report: all surfaces must consume the same versioned metric definitions.
+- PG-103 one-way Sheets export → PG-204 legacy retirement → PG-1010 authority activation: no dual primary.
+- PG-300/301 shell/action registry → PG-1020 registry-derived production mutation suite: every enabled action must have production evidence.
+- PG-302 lifecycle events → PG-430/431 candles: cancelled/archive semantics must remain distinct.
+- PG-900/910 provenance → PG-930 promotion guard → PG-1000..1050 go-live: red or unverifiable artifacts are ineligible.
+Ruling: implementation may proceed in isolated path-scoped workstreams; one active writer per worktree/path. Parent integrates only committed branches after review. Cost if wrong: merge conflicts or contract drift requiring rework.
+Ruling: no production authority switch, destructive migration, merge to main, or live deploy until all pre-activation gates pass. Cost if wrong: delayed deployment, preferred over split-brain or data loss.
+2026-11-11 Baseline frontend: `npm test && npm run build` PASS — 31 files, 222 tests; TypeScript/Vite production build PASS. Existing jsdom scroll/navigation warnings recorded.
+2026-11-11 Baseline backend: `.venv/bin/python -m pytest -q tests --ignore=tests/browser -o addopts=''` PASS — 675 passed, 80 skipped, 48 subtests.
+2026-11-11 Baseline browser: 14 passed, 1 failed, 18 subtests; known baseline failure `test_light_filled_color_surfaces_use_white_text` on Proyek year/status text (`rgb(23,52,67)` instead of white). Must be GREEN before integration completion.
+2026-11-11 Readiness: GitHub auth valid; `main` branch protection absent (release blocker); Koyeb release SHA `0ee6a95...`; Rumahweb admin login reachable and anonymous snapshot denied; PostgreSQL/WuzAPI secrets not exposed into this worktree shell; provider access must be sourced via owner-scoped deployment mechanisms later.
+2026-11-11 Integrated release slice `a76aa88`: exact provenance, immutable manifest, source/artifact SHA binding, Koyeb/Rumahweb admin/presensi builders. Integration gate requires diff-check, compileall, focused tests, and clean status.
+Integration acceptance per child slice: committed only; clean source worktree; file ownership preserved; RED/GREEN evidence; focused tests pass; integration-context tests pass; no provider mutation/deploy/push; unresolved gaps remain NO-GO rather than silently accepted.
+2026-11-11 Integrated backend foundation as `2ad31e9`: migrations 009-012, schema/migration/export contracts. Source slice 11/11 focused tests PASS; targeted secret scan zero findings.
+2026-11-11 Integrated promotion guard as `811b0f8`: ten required checks, artifact/source/candidate SHA parity, dirty/missing/mismatch fail closed, authority-safe rollback eligibility. Combined integration backend/release gate 28/28 PASS.
+Frontend shell/project slice integrated as `a44a389`; exactly seven canonical menus, production Project candle/year route, transaction-default detail, cancelled lifecycle, report action ownership.
+2026-11-11 Main integration compatibility `5ab3c50`: release builders remain fail-closed while legacy integration tests supply explicit provenance. Release builders 15/15, Presensi/Rumahweb integration 33/33, document proxy 2/2 isolated PASS.
+2026-11-11 Browser acceptance alignment `85957f1`: exact seven-menu expectation, review deep-link retained, mobile project breadcrumb preserves selected project, light/dark active-year contrast corrected, responsive matrix labels canonical.
+2026-11-11 Backend core integrated as `a396976`: dormant immutable canonical transaction/debt services, repositories, API contracts, signed actor trust. Integration focused 51/51 PASS. Blueprints intentionally not production-registered until durable PostgreSQL debt/wiring exists.
+2026-11-11 Serial integrated gates: frontend 226/226 + TypeScript/Vite build PASS; backend 703 passed, 80 skipped, 48 subtests PASS; browser 15 passed, 18 subtests PASS. Concurrent earlier failures were reproduced and classified as artifact/resource collisions or stale acceptance labels, then fixed and rerun serially.
