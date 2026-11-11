@@ -26,15 +26,41 @@ const renderApp = () => render(<DemoApp />)
 const nav = (name: string) => fireEvent.click(within(screen.getByRole('navigation', { name: 'Menu utama' })).getByRole('button', { name: new RegExp(`^${name}`) }))
 
 describe('Hollawall demo finance workspace', () => {
-  it('renders one reconciled demo workspace with seven navigation views', () => {
+  it('renders the canonical shell with exactly seven owned navigation views', () => {
     renderApp()
     expect(screen.getByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })).toBeTruthy()
     expect(screen.getByText(/Data keuangan demo tersimpan di browser ini dan tidak terhubung ke buku besar produksi\. Data Presensi privat dibaca dari server\./)).toBeTruthy()
     const menu = screen.getByRole('navigation', { name: 'Menu utama' })
-    for (const label of ['Ringkasan', 'Arus Kas', 'Dompet', 'Proyek', 'Operasional Kantor', 'Hutang Internal', 'Laporan']) {
-      expect(within(menu).getByRole('button', { name: new RegExp(`^${label}`) })).toBeTruthy()
+    expect(within(menu).getAllByRole('button')).toHaveLength(7)
+    for (const [label, id] of [
+      ['Dashboard', 'nav.dashboard'], ['Arus Kas', 'nav.cashflow'], ['Dompet', 'nav.wallets'],
+      ['Proyek', 'nav.projects'], ['Operasional Kantor', 'nav.office'], ['Hutang', 'nav.debts'], ['Laporan', 'nav.reports'],
+    ] as const) {
+      const item = within(menu).getByRole('button', { name: new RegExp(`^${label}`) })
+      expect(item.getAttribute('data-action-id')).toBe(id)
     }
-    expect(within(menu).queryByRole('button', { name: /^Transaksi/ })).toBeNull()
+    expect(within(menu).queryByRole('button', { name: /Perlu Ditinjau/ })).toBeNull()
+  })
+
+  it('keeps exports in Reports and preserves project context in the mobile breadcrumb', () => {
+    renderApp()
+    nav('Proyek')
+    fireEvent.click(document.querySelector('button[data-project-candle]')!)
+    const projectName = document.querySelector('.project-detail-identity h1')?.textContent
+    expect(projectName).toBeTruthy()
+    expect(document.querySelector('.breadcrumbs strong')?.textContent).toBe(projectName)
+    expect(screen.queryByRole('button', { name: 'Ekspor CSV' })).toBeNull()
+    nav('Laporan')
+    expect(screen.getByRole('button', { name: 'Ekspor CSV' }).getAttribute('data-action-id')).toBe('reports.export-csv')
+    expect(screen.getByRole('button', { name: 'Ekspor PDF' }).getAttribute('data-action-id')).toBe('reports.export-pdf')
+  })
+
+  it('registers visible action controls with a stable id and one owner route', () => {
+    renderApp()
+    for (const label of ['Dashboard', 'Arus Kas', 'Dompet', 'Proyek', 'Operasional Kantor', 'Hutang', 'Laporan']) nav(label)
+    const registered = [...document.querySelectorAll<HTMLElement>('[data-action-id]')]
+    expect(registered.length).toBeGreaterThan(7)
+    expect(registered.every((control) => Boolean(control.dataset.ownerRoute))).toBe(true)
   })
 
   it('keeps the overview showcase dense, transparent, and additive', () => {
@@ -125,7 +151,7 @@ describe('Hollawall demo finance workspace', () => {
     renderApp()
     nav('Proyek')
     expect(screen.getAllByText('Proyek Integrasi').length).toBeGreaterThan(0)
-    nav('Ringkasan')
+    nav('Dashboard')
     expect(screen.getByText('Menambah proyek Proyek Integrasi')).toBeTruthy()
   })
 
@@ -160,7 +186,7 @@ describe('Hollawall demo finance workspace', () => {
     expect(document.querySelector('.status-chip.completed')?.textContent).toBe('Selesai')
     expect(document.querySelector('.project-market-completed')?.textContent).toContain('Selesai')
     expect(screen.queryByRole('button', { name: `Selesaikan ${project.name}` })).toBeNull()
-    nav('Ringkasan')
+    nav('Dashboard')
     expect(screen.getByText(`Memperbarui proyek ${project.name}`)).toBeTruthy()
   }, 30_000)
 
@@ -206,7 +232,7 @@ describe('Hollawall demo finance workspace', () => {
     nav('Proyek')
     expect(screen.getByRole('button', { name: '2024, 12 selesai dari 12 proyek' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '2025, 12 selesai dari 15 proyek' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '2026, 7 selesai dari 17 proyek' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '2026, 7 selesai dari 18 proyek' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Tahun sebelumnya' }))
     expect(screen.getByText((_, element) => element?.tagName === 'SPAN' && element.textContent === '12/15 selesai')).toBeTruthy()
     expect(screen.getByLabelText('Status proyek tahun 2025')).toBeTruthy()
@@ -217,9 +243,9 @@ describe('Hollawall demo finance workspace', () => {
     nav('Proyek')
     fireEvent.change(screen.getByLabelText('Perusahaan'), { target: { value: 'Holla' } })
     const summary = screen.getByLabelText('Status proyek tahun 2026')
-    expect(within(summary).getByText(/Hasil filter · \d+\/4/)).toBeTruthy()
+    expect(within(summary).getByText(/Hasil filter · \d+\/5/)).toBeTruthy()
     expect(document.querySelectorAll('.project-market-canvas')).toHaveLength(4)
-    expect(screen.getByText('8 / 17 aktif')).toBeTruthy()
+    expect(screen.getByText('8 / 18 aktif')).toBeTruthy()
     expect(screen.getByText('Garis putih = rentang transaksi')).toBeTruthy()
     expect(screen.getAllByRole('button', { name: /transaksi pertama .* transaksi terakhir/ }).length).toBeGreaterThan(0)
   })
@@ -316,7 +342,7 @@ describe('Hollawall demo finance workspace', () => {
     }))
     vi.stubGlobal('matchMedia', matchMedia)
     renderApp()
-    const activeNavigation = within(document.querySelector('aside.sidebar') as HTMLElement).getByRole('button', { name: 'Ringkasan' })
+    const activeNavigation = within(document.querySelector('aside.sidebar') as HTMLElement).getByRole('button', { name: 'Dashboard' })
     activeNavigation.focus()
     mobile = true
     act(() => navigationListener?.())
@@ -325,7 +351,7 @@ describe('Hollawall demo finance workspace', () => {
     await waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toBe('Tutup navigasi'))
     mobile = false
     act(() => navigationListener?.())
-    await waitFor(() => expect(document.activeElement?.textContent).toContain('Ringkasan'))
+    await waitFor(() => expect(document.activeElement?.textContent).toContain('Dashboard'))
     expect(document.querySelector('aside.sidebar')?.classList.contains('is-open')).toBe(false)
   })
 
@@ -334,7 +360,7 @@ describe('Hollawall demo finance workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Gunakan tema gelap' }))
     await waitFor(() => expect(document.documentElement.dataset.theme).toBe('dark'))
     expect(localStorage.getItem('hollawall-theme')).toBe('dark')
-    nav('Hutang Internal')
+    nav('Hutang')
     expect(screen.getAllByRole('button', { name: 'Tambah hutang' }).length).toBeGreaterThan(0)
     nav('Laporan')
     expect(screen.queryByRole('button', { name: /Tambah transaksi/ })).toBeNull()

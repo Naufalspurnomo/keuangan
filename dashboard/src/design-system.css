@@ -1110,9 +1110,13 @@ html[data-theme='dark'] .project-detail-tabs button[aria-selected='true'] {
 .ops-filter-block button.active,
 .project-filter-rail button.active,
 .year-command nav button.active {
-  border-color: color-mix(in srgb, var(--holla-orange-action) 32%, var(--border));
-  background: var(--brand-soft);
-  color: var(--text);
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+.year-command nav button.active strong,
+.year-command nav button.active span {
+  color: inherit;
 }
 
 .recharts-cartesian-axis-tick text,

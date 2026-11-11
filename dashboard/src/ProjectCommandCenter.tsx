@@ -7,7 +7,7 @@ import ProjectLifecycleMarketChart from './ProjectLifecycleMarketChart'
 
 const PAGE_SIZE = 12
 const PROJECT_VIEW_KEY = 'hollawall-project-view-v1'
-const statusOrder: ProjectStatus[] = ['active', 'planned', 'completed']
+const statusOrder: ProjectStatus[] = ['active', 'planned', 'completed', 'cancelled']
 
 type StoredProjectView = { year?: number; company?: 'all' | CompanyId; status?: 'all' | ProjectStatus; query?: string; page?: number }
 
@@ -31,7 +31,7 @@ export function projectYearOptions(workspace: FinanceWorkspace) {
     const start = projectYear(project)
     const end = project.completed_on
       ? Number(project.completed_on.slice(0, 4))
-      : project.status === 'planned' ? start : snapshotYear
+      : project.status === 'planned' || project.status === 'cancelled' ? start : snapshotYear
     for (let year = start; year <= Math.max(start, end); year += 1) years.add(year)
   }
   return [...years].sort((a, b) => a - b)
@@ -40,7 +40,7 @@ export function projectYearOptions(workspace: FinanceWorkspace) {
 export function projectOverlapsYear(project: FinanceProject, year: number, snapshotDate: string) {
   const yearStart = `${year}-01-01`
   const yearEnd = `${year}-12-31`
-  const projectEnd = project.completed_on ?? (project.status === 'planned' ? project.started_on : snapshotDate)
+  const projectEnd = project.completed_on ?? (project.status === 'planned' || project.status === 'cancelled' ? project.started_on : snapshotDate)
   return project.started_on <= yearEnd && projectEnd >= yearStart
 }
 
@@ -49,7 +49,7 @@ export function projectAsOf(year: number, now = new Date()) {
   return new Date(Math.min(now.getTime(), yearEnd.getTime()))
 }
 
-export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onComplete, onQuickComplete, onDelete, onOpen, readOnly = false }: {
+export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onComplete, onQuickComplete, onDelete, onOpen, readOnly = false, canAdd = !readOnly }: {
   workspace: FinanceWorkspace
   onAdd: () => void
   onEdit: (project: FinanceProject) => void
@@ -58,6 +58,7 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onCompl
   onDelete: (project: FinanceProject) => void
   onOpen: (project: FinanceProject) => void
   readOnly?: boolean
+  canAdd?: boolean
 }) {
   const snapshotYear = projectSnapshotYear(workspace)
   const years = useMemo(() => projectYearOptions(workspace), [workspace])
@@ -98,7 +99,7 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onCompl
   const asOf = projectAsOf(year, projectSnapshotDate(workspace))
 
   return <section className="project-command-center">
-    <header className="command-head"><div><p className="eyebrow">PROYEK{workspace.mode === 'demo' ? ' · DATA DEMO' : ''}</p><h1>Portofolio proyek per tahun</h1><p>Bandingkan proyek selesai, aktif, dan direncanakan.</p></div></header>
+    <header className="command-head"><div><p className="eyebrow">PROYEK{workspace.mode === 'demo' ? ' · DATA DEMO' : ''}</p><h1>Portofolio proyek per tahun</h1><p>Bandingkan proyek selesai, aktif, dibatalkan, dan direncanakan.</p></div>{canAdd && <button type="button" className="primary-button" onClick={onAdd}><Plus size={16} /> Buat proyek</button>}</header>
 
     <section className="year-command" aria-label="Pilih tahun proyek">
       <button type="button" aria-label="Tahun sebelumnya" title={yearIndex <= 0 ? 'Tidak ada tahun sebelumnya' : undefined} disabled={yearIndex <= 0} onClick={() => changeYear(years[yearIndex - 1])}><ArrowLeft size={19} /></button>

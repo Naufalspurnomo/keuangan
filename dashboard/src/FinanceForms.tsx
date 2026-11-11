@@ -95,7 +95,7 @@ export function ProjectForm({ project, onSave, onClose }: { project?: FinancePro
 
 export function TransactionForm({ projects, transaction, initialScope = 'project', lockedProjectId, onSave, onClose, liveWrite = false, currentDate }: { projects: FinanceProject[]; transaction?: FinanceTransaction; initialScope?: TransactionScope; lockedProjectId?: string; onSave: (input: TransactionFormInput) => void | Promise<void>; onClose: () => void; liveWrite?: boolean; currentDate?: string }) {
   const submitting = useRef(false)
-  const selectable = projects.filter((project) => liveWrite ? project.status === 'active' : project.status !== 'planned')
+  const selectable = projects.filter((project) => liveWrite ? project.status === 'active' : !['planned', 'cancelled'].includes(project.status))
   const firstProject = selectable[0]
   const lockedProject = projects.find((project) => project.id === lockedProjectId)
   const locked = Boolean(lockedProjectId)
@@ -138,7 +138,7 @@ export function TransactionForm({ projects, transaction, initialScope = 'project
     setBusy(true)
     setError('')
     try {
-      if (locked && (!lockedProject || (liveWrite ? lockedProject.status !== 'active' : lockedProject.status === 'planned'))) throw new Error('Proyek terkunci tidak tersedia untuk transaksi.')
+      if (locked && (!lockedProject || (liveWrite ? lockedProject.status !== 'active' : ['planned', 'cancelled'].includes(lockedProject.status)))) throw new Error('Proyek terkunci tidak tersedia untuk transaksi.')
       if (liveWrite && date !== currentDate) throw new Error('Tanggal transaksi harus tanggal Jakarta hari ini.')
       if (!writeMappingAvailable) throw new Error('Pilihan dompet, perusahaan, dan proyek belum tersedia.')
       const pair = projectScoped ? projectWritePair : officeWritePair

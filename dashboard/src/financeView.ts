@@ -29,7 +29,7 @@ export function projectLabel(project: FinanceProject | undefined) {
 }
 
 export function projectStatusLabel(status: ProjectStatus) {
-  return status === 'completed' ? 'Selesai' : status === 'active' ? 'Aktif' : 'Direncanakan'
+  return status === 'completed' ? 'Selesai' : status === 'active' ? 'Aktif' : status === 'cancelled' ? 'Dibatalkan' : 'Direncanakan'
 }
 
 export function directionLabel(direction: TransactionDirection) {

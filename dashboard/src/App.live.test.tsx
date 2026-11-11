@@ -265,12 +265,12 @@ describe('production live source mode', () => {
 
     expect(await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })).toBeTruthy()
     expect(document.querySelector('.app-shell.finance-workspace-shell')).toBeTruthy()
-    expect(navigation().getByRole('button', { name: 'Ringkasan' })).toBeTruthy()
+    expect(navigation().getByRole('button', { name: 'Dashboard' })).toBeTruthy()
     expect(navigation().getByRole('button', { name: 'Arus Kas' })).toBeTruthy()
     expect(navigation().getByRole('button', { name: 'Dompet' })).toBeTruthy()
     expect(navigation().getByRole('button', { name: 'Proyek' })).toBeTruthy()
     expect(navigation().getByRole('button', { name: 'Operasional Kantor' })).toBeTruthy()
-    expect(navigation().getByRole('button', { name: 'Hutang Internal' })).toBeTruthy()
+    expect(navigation().getByRole('button', { name: 'Hutang' })).toBeTruthy()
     expect(navigation().getByRole('button', { name: 'Laporan' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Tren kas 12 bulan' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Sebaran saldo dompet' })).toBeTruthy()
@@ -381,19 +381,19 @@ describe('production live source mode', () => {
 
     await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
     expectNoProductionChatter()
-    for (const page of ['Arus Kas', 'Dompet', 'Operasional Kantor', 'Hutang Internal', 'Laporan']) {
+    for (const page of ['Arus Kas', 'Dompet', 'Operasional Kantor', 'Hutang', 'Laporan']) {
       fireEvent.click(navigation().getByRole('button', { name: page }))
       expectNoProductionChatter()
     }
     fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
-    await screen.findByRole('heading', { name: 'Daftar proyek' })
+    await screen.findByRole('heading', { name: 'Portofolio proyek per tahun' })
     expectNoProductionChatter()
     fireEvent.click(screen.getByRole('button', { name: 'Buka proyek Kontrak Panggung Utama' }))
     expectNoProductionChatter()
 
-    fireEvent.click(navigation().getByRole('button', { name: 'Ringkasan' }))
+    fireEvent.click(navigation().getByRole('button', { name: 'Dashboard' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Transaksi proyek' }))
-    expect(await screen.findByRole('heading', { name: 'Daftar proyek' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Portofolio proyek per tahun' })).toBeTruthy()
     expect(screen.queryByRole('dialog')).toBeNull()
     expectNoProductionChatter()
   })

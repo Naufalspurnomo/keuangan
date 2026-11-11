@@ -1,10 +1,11 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
-import { BarChart3, CircleDollarSign, Download, Pencil, Plus, RotateCcw, Search, Trash2, WalletCards } from 'lucide-react'
+import { lazy, Suspense } from 'react'
+import { BarChart3, CircleDollarSign, Download, Pencil, Plus, RotateCcw, Trash2, WalletCards } from 'lucide-react'
 
 import BusinessSectionReport from './BusinessSectionReport'
+import { actionProps } from './actionRegistry'
 import { CashflowWorkspace, WalletWorkspace } from './FinancialOperationsWorkspace'
 import ProjectReportTimeline from './ProjectReportTimeline'
-import { sumMoney, workspaceTotals, type FinanceDebt, type FinanceProject, type FinanceTransaction, type FinanceWorkspace, type TransactionScope } from './financeWorkspace'
+import { sumMoney, workspaceTotals, type FinanceDebt, type FinanceProject, type FinanceTransaction, type FinanceWorkspace } from './financeWorkspace'
 import { cashTrend, chartProjects, chartTransactions, chartWallets, dateLabel, directionLabel, IDR, projectLabel, scopeLabel, walletBalances, workspaceDataThrough } from './financeView'
 
 const FinancialChart = lazy(() => import('./FinancialChart'))
@@ -26,7 +27,7 @@ export function OverviewWorkspace({ workspace, onOpenProjects, onAddProject, onO
   const recent = [...workspace.transactions].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6)
   const audit = [...workspace.audit].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 6)
   return <div className="finance-page-stack overview-showcase">
-    <section className="overview-command"><div><p className="eyebrow">RINGKASAN{workspace.mode === 'demo' ? ' · DATA DEMO' : ''}</p><h1>Pusat kendali keuangan Hollawall</h1><p>{workspace.mode === 'demo' ? 'Saldo, arus kas, dompet, proyek, dan audit dihitung dari workspace demo yang sama.' : 'Saldo, arus kas, dompet, dan proyek dalam satu ringkasan.'}</p></div><div className="quick-actions"><button className="primary-button" onClick={onOpenProjects}><Plus size={16} /> Transaksi proyek</button>{!readOnly && <button className="secondary-button" onClick={onAddProject}>Tambah proyek</button>}<button className="secondary-button" onClick={onOpenOffice}>Operasional kantor</button></div></section>
+    <section className="overview-command"><div><p className="eyebrow">DASHBOARD{workspace.mode === 'demo' ? ' · DATA DEMO' : ''}</p><h1>Pusat kendali keuangan Hollawall</h1><p>{workspace.mode === 'demo' ? 'Saldo, arus kas, dompet, proyek, dan audit dihitung dari workspace demo yang sama.' : 'Saldo, arus kas, dompet, dan proyek dalam satu dashboard.'}</p></div><div className="quick-actions"><button className="primary-button" onClick={onOpenProjects} {...actionProps('dashboard.projects-view')}><Plus size={16} /> Transaksi proyek</button>{!readOnly && <button className="secondary-button" onClick={onAddProject} {...actionProps('dashboard.projects-view')}>Tambah proyek</button>}<button className="secondary-button" onClick={onOpenOffice} {...actionProps('dashboard.office-view')}>Operasional kantor</button></div></section>
     <section className="finance-kpis"><article><small>Posisi kas konsolidasi</small><strong className={totals.net >= 0 ? 'positive' : 'negative'}>{IDR.format(totals.net)}</strong><span>{IDR.format(totals.income)} masuk · {IDR.format(totals.expense)} keluar</span></article><article><small>Proyek aktif</small><strong>{active}</strong><span>{completed} proyek selesai</span></article><article><small>Biaya kantor</small><strong>{IDR.format(totals.office)}</strong><span>Terpisah dari seluruh proyek</span></article><article><small>Hutang internal terbuka</small><strong>{IDR.format(openDebt)}</strong><span>Tidak mengubah kas konsolidasi</span></article></section>
     <BusinessSectionReport transactions={transactions} wallets={wallets} />
     <section className="overview-chart-grid" aria-label="Analitik utama">
@@ -55,14 +56,6 @@ export function TransactionRows({ rows, projects, compact, onEdit, onDelete }: {
   return <div className="workspace-table-wrap"><table className="workspace-table"><thead><tr><th>Tanggal</th><th>Keterangan</th><th>Aktivitas</th><th>Dompet</th><th>Jenis</th><th className="number">Jumlah</th>{!compact && (onEdit || onDelete) && <th>Aksi</th>}</tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td data-label="Tanggal">{dateLabel(row.date)}</td><td data-label="Keterangan"><strong>{row.notes}</strong><small>{row.office_category ?? row.company ?? '—'}</small></td><td data-label="Aktivitas">{row.scope === 'project' ? projectLabel(map.get(row.project_id ?? '')) : 'Operasional Kantor'}</td><td data-label="Dompet"><span className="wallet-chip">{row.wallet}</span></td><td data-label="Jenis"><span className={`direction-chip ${row.direction}`}>{directionLabel(row.direction)}</span></td><td data-label="Jumlah" className={`number ${row.direction === 'income' ? 'positive' : 'negative'}`}>{row.direction === 'income' ? '+' : '−'}{IDR.format(row.amount)}</td>{!compact && (onEdit || onDelete) && <td data-label="Aksi"><div className="row-actions">{onEdit && <button aria-label={`Ubah transaksi ${row.notes}`} onClick={() => onEdit(row)}><Pencil size={15} /></button>}{onDelete && <button className="danger" aria-label={`Hapus transaksi ${row.notes}`} onClick={() => onDelete(row)}><Trash2 size={15} /></button>}</div></td>}</tr>)}</tbody></table></div>
 }
 
-export function TransactionsWorkspace({ workspace, initialProjectId, onAdd, onEdit, onDelete }: { workspace: FinanceWorkspace; initialProjectId?: string; onAdd: () => void; onEdit: (row: FinanceTransaction) => void; onDelete: (row: FinanceTransaction) => void }) {
-  const [query, setQuery] = useState('')
-  const [scope, setScope] = useState<'all' | TransactionScope>('all')
-  const [projectId, setProjectId] = useState(initialProjectId ?? 'all')
-  useEffect(() => setProjectId(initialProjectId ?? 'all'), [initialProjectId])
-  const rows = workspace.transactions.filter((row) => (scope === 'all' || row.scope === scope) && (projectId === 'all' || row.project_id === projectId) && (!query.trim() || `${row.notes} ${row.wallet} ${row.company ?? ''} ${row.office_category ?? ''}`.toLocaleLowerCase('id-ID').includes(query.trim().toLocaleLowerCase('id-ID')))).sort((a, b) => b.date.localeCompare(a.date))
-  return <section className="finance-page-stack"><header className="command-head"><div><p className="eyebrow">TRANSAKSI{workspace.mode === 'demo' ? ' · DATA DEMO' : ''}</p><h2>Semua transaksi</h2><p>{workspace.mode === 'live' ? 'Tinjau seluruh pemasukan dan pengeluaran.' : 'Ubah data demo dan lihat seluruh ringkasan diperbarui otomatis.'}</p></div><button className="primary-button" onClick={onAdd}><Plus size={16} /> Tambah transaksi</button></header><div className="workspace-filters"><label className="command-search"><Search size={17} /><input aria-label="Cari transaksi" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari transaksi" /></label><select aria-label="Filter aktivitas" value={scope} onChange={(event) => setScope(event.target.value as 'all' | TransactionScope)}><option value="all">Semua aktivitas</option><option value="project">Proyek</option><option value="office">Operasional Kantor</option></select><select aria-label="Filter proyek" value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="all">Semua proyek</option>{workspace.projects.map((project) => <option key={project.id} value={project.id}>{project.name} · {project.company}</option>)}</select><span><strong>{rows.length}</strong> transaksi</span></div><TransactionRows rows={rows} projects={workspace.projects} onEdit={onEdit} onDelete={onDelete} /></section>
-}
 
 export function OfficeWorkspace({ workspace, onAdd, onEdit, onDelete, readOnly = false, canCreateTransactions = false }: { workspace: FinanceWorkspace; onAdd: () => void; onEdit: (row: FinanceTransaction) => void; onDelete: (row: FinanceTransaction) => void; readOnly?: boolean; canCreateTransactions?: boolean }) {
   const rows = workspace.transactions.filter((row) => row.scope === 'office').sort((a, b) => b.date.localeCompare(a.date))
@@ -86,5 +79,5 @@ export function downloadCsv(workspace: FinanceWorkspace) {
 }
 
 export function ExportButton({ workspace }: { workspace: FinanceWorkspace }) {
-  return <button className="secondary-button export-button" aria-label="Ekspor CSV" onClick={() => downloadCsv(workspace)}><Download size={16} /><span>Ekspor CSV</span></button>
+  return <button className="secondary-button export-button" aria-label="Ekspor CSV" onClick={() => downloadCsv(workspace)} {...actionProps('reports.export-csv')}><Download size={16} /><span>Ekspor CSV</span></button>
 }

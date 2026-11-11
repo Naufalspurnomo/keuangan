@@ -68,6 +68,7 @@ const DEMO_PROJECT_ROWS: readonly ProjectRow[] = [
   ['p26-fajar', 'Fajar Distribution Hub', 'Texturin Surabaya', 'active', '2026-09-15', null, 'Fajar Distribusi', 146_000_000, 'Area kantor dan penerimaan gudang.'],
   ['p26-griya', 'Griya Wellness Center', 'Holla', 'active', '2026-10-10', null, 'Griya Sehat Indonesia', 98_000_000, 'Wellness center fase konstruksi.'],
   ['p26-harmoni', 'Harmoni Kids Library', 'Hojja', 'active', '2026-10-21', null, 'Yayasan Harmoni Anak', 54_000_000, 'Perpustakaan anak tahap awal.'],
+  ['p26-kirana', 'Kirana Event Pavilion', 'Holla', 'cancelled', '2026-10-24', null, 'Kirana Kreasi', 82_000_000, 'Dibatalkan sebelum mobilisasi; dipertahankan untuk histori portofolio.'],
   ['p26-indrapura', 'Indrapura Co-living', 'Texturin Bali', 'planned', '2026-11-10', null, 'Indrapura Living', 330_000_000, 'Mobilisasi direncanakan November.'],
   ['p26-jenggala', 'Jenggala Innovation Lab', 'Texturin Surabaya', 'planned', '2026-12-05', null, 'Jenggala Inovasi', null, 'Menunggu finalisasi nilai kontrak.'],
 ]

@@ -18,7 +18,7 @@ export interface ProjectSummary {
   started_on?: string | null
   completed_on?: string | null
   age_days?: number | null
-  lifecycle_status?: 'active' | 'completed' | 'unmarked'
+  lifecycle_status?: 'active' | 'completed' | 'cancelled' | 'unmarked'
   health?: ProjectHealth
   source_key_first?: string
   source_key_latest?: string

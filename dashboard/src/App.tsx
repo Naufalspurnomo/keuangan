@@ -5,7 +5,7 @@ import {
   Building2,
 
   FileBarChart,
-  Inbox,
+
   Landmark,
   LayoutDashboard,
   LockKeyhole,
@@ -18,11 +18,12 @@ import {
 } from 'lucide-react'
 
 import { DebtForm, ProjectForm, TransactionForm } from './FinanceForms'
+import { actionProps, type ActionId } from './actionRegistry'
 import {
   CashflowWorkspacePage,
   DebtWorkspace,
   DemoBanner,
-  ExportButton,
+
   OfficeWorkspace,
   OverviewWorkspace,
 
@@ -100,13 +101,13 @@ function currentRoute(): AppRoute {
 }
 
 const pageMeta: Record<Page, { eyebrow: string; title: string; copy: string }> = {
-  overview: { eyebrow: 'RINGKASAN', title: 'Ringkasan', copy: 'Posisi keuangan dari seluruh sumber data.' },
+  overview: { eyebrow: 'DASHBOARD', title: 'Dashboard', copy: 'Posisi keuangan dari seluruh sumber data.' },
   cashflow: { eyebrow: 'ARUS KAS', title: 'Arus Kas', copy: 'Pemasukan dan pengeluaran per bulan.' },
   wallets: { eyebrow: 'SUMBER DANA', title: 'Dompet', copy: 'Posisi CV HB, TX SBY, dan TX Bali.' },
 
   projects: { eyebrow: 'PORTOFOLIO', title: 'Proyek', copy: 'Kinerja proyek per tahun, perusahaan, dan status.' },
   office: { eyebrow: 'KEBUTUHAN KANTOR', title: 'Operasional Kantor', copy: 'Biaya kantor yang terpisah dari proyek.' },
-  debts: { eyebrow: 'PERGERAKAN INTERNAL', title: 'Hutang Internal', copy: 'Hutang antar-dompet tanpa mengubah kas konsolidasi.' },
+  debts: { eyebrow: 'PERGERAKAN INTERNAL', title: 'Hutang', copy: 'Hutang antar-dompet tanpa mengubah kas konsolidasi.' },
   reports: { eyebrow: 'PELAPORAN', title: 'Laporan', copy: 'Filter, pratinjau, dan ekspor PDF.' },
   'inbox-reviews': { eyebrow: 'KOTAK MASUK', title: 'Perlu Ditinjau', copy: 'Pesan tahan gagal yang memerlukan keputusan owner.' },
 }
@@ -126,18 +127,21 @@ function Sidebar({ active, open, mobile, live, close, navigate }: { active: Page
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   useEffect(() => { if (mobile && open) closeButtonRef.current?.focus() }, [mobile, open])
   const items: ReadonlyArray<readonly [Page, string, typeof LayoutDashboard]> = [
-    ['overview', 'Ringkasan', LayoutDashboard], ['cashflow', 'Arus Kas', BarChart3], ['wallets', 'Dompet', WalletCards],
+    ['overview', 'Dashboard', LayoutDashboard], ['cashflow', 'Arus Kas', BarChart3], ['wallets', 'Dompet', WalletCards],
     ['projects', 'Proyek', BriefcaseBusiness], ['office', 'Operasional Kantor', Building2],
-    ['debts', 'Hutang Internal', Landmark], ['reports', 'Laporan', FileBarChart],
-    ...(live ? [['inbox-reviews', 'Perlu Ditinjau', Inbox] as const] : []),
+    ['debts', 'Hutang', Landmark], ['reports', 'Laporan', FileBarChart],
   ]
+  const navAction: Record<Exclude<Page, 'inbox-reviews'>, ActionId> = {
+    overview: 'nav.dashboard', cashflow: 'nav.cashflow', wallets: 'nav.wallets', projects: 'nav.projects',
+    office: 'nav.office', debts: 'nav.debts', reports: 'nav.reports',
+  }
   const hidden = mobile && !open
-  return <>{mobile && open && <button type="button" className="mobile-overlay is-open" onClick={close} aria-label="Tutup navigasi" />}<aside id="app-navigation" className={`sidebar ${open ? 'is-open' : ''}`} aria-hidden={hidden || undefined}><div className="sidebar-head"><img src={hollawallLogo} alt="Hollawall" /><button ref={closeButtonRef} tabIndex={hidden ? -1 : 0} className="icon-button mobile-only" onClick={close} aria-label="Tutup navigasi"><X size={20} /></button></div><div className="workspace-switch"><Building2 size={18} /><span><small>Ruang kerja</small>Hollawall Group</span></div><nav aria-label="Menu utama">{items.map(([key, label, Icon]) => <button type="button" tabIndex={hidden ? -1 : 0} key={key} className={active === key ? 'active' : ''} aria-current={active === key ? 'page' : undefined} onClick={() => { navigate(key); close() }}><Icon size={18} /><span>{label}</span></button>)}</nav><div className="sidebar-bottom"><div className="profile workspace-profile"><span><LockKeyhole size={15} /></span><div><strong>{live ? 'Keuangan Hollawall' : 'Workspace demo'}</strong><small>{live ? 'Ringkasan dan laporan' : 'Data lokal · Teraudit'}</small></div></div></div></aside></>
+  return <>{mobile && open && <button type="button" className="mobile-overlay is-open" onClick={close} aria-label="Tutup navigasi" {...actionProps('shell.navigation-close')} />}<aside id="app-navigation" className={`sidebar ${open ? 'is-open' : ''}`} aria-hidden={hidden || undefined}><div className="sidebar-head"><img src={hollawallLogo} alt="Hollawall" /><button ref={closeButtonRef} tabIndex={hidden ? -1 : 0} className="icon-button mobile-only" onClick={close} aria-label="Tutup navigasi" {...actionProps('shell.navigation-close')}><X size={20} /></button></div><div className="workspace-switch"><Building2 size={18} /><span><small>Ruang kerja</small>Hollawall Group</span></div><nav aria-label="Menu utama">{items.map(([key, label, Icon]) => <button type="button" tabIndex={hidden ? -1 : 0} key={key} className={active === key ? 'active' : ''} aria-current={active === key ? 'page' : undefined} onClick={() => { navigate(key); close() }} {...actionProps(navAction[key as Exclude<Page, 'inbox-reviews'>])}><Icon size={18} /><span>{label}</span></button>)}</nav><div className="sidebar-bottom"><div className="profile workspace-profile"><span><LockKeyhole size={15} /></span><div><strong>{live ? 'Keuangan Hollawall' : 'Workspace demo'}</strong><small>{live ? 'Dashboard dan laporan' : 'Data lokal · Teraudit'}</small></div></div></div></aside></>
 }
 
 function ThemeToggle({ theme, setTheme }: { theme: string; setTheme: (theme: string) => void }) {
   const dark = theme === 'dark'
-  return <button type="button" className="theme-toggle" onClick={() => setTheme(dark ? 'light' : 'dark')} aria-label={`Gunakan tema ${dark ? 'terang' : 'gelap'}`} aria-pressed={dark} title={`Tema ${dark ? 'gelap' : 'terang'}`}><Sun size={16} aria-hidden="true" /><span className={theme} aria-hidden="true" /><Moon size={16} aria-hidden="true" /></button>
+  return <button type="button" className="theme-toggle" onClick={() => setTheme(dark ? 'light' : 'dark')} aria-label={`Gunakan tema ${dark ? 'terang' : 'gelap'}`} aria-pressed={dark} title={`Tema ${dark ? 'gelap' : 'terang'}`} {...actionProps('shell.theme-toggle')}><Sun size={16} aria-hidden="true" /><span className={theme} aria-hidden="true" /><Moon size={16} aria-hidden="true" /></button>
 }
 
 function projectStatusInput(project: FinanceProject, status: 'active' | 'completed', completedOn: string | null): ProjectInput {
@@ -163,7 +167,7 @@ function productionFinanceProject(project: ProjectRecord): FinanceProject {
     name: project.name,
     company,
     wallet,
-    status: project.status === 'cancelled' ? 'completed' : project.status,
+    status: project.status,
     started_on: project.started_on,
     completed_on: project.completed_on,
     client: project.client_company || project.client_name,
@@ -422,7 +426,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
             onStatusChange={changeProductionProjectStatus}
             onArchive={archiveProductionProject}
           />
-          : active === 'projects' && projectApiAvailable ? <ProductionProjectsWorkspace projects={productionProjects} capabilities={projectCapabilities} loading={projectDataLoading} onAdd={() => setProjectModal('create')} onEdit={setProjectModal} onOpen={(project) => setProjectDetailRoute({ projectId: project.id, tab: 'transactions' })} />
+          : active === 'projects' && projectApiAvailable ? <ProductionProjectsWorkspace projects={productionProjects} workspace={{ ...finance.workspace, projects: transactionProjects.filter((project) => productionProjects.some((record) => record.id === project.id)) }} capabilities={projectCapabilities} loading={projectDataLoading} onAdd={() => setProjectModal('create')} onEdit={setProjectModal} onOpen={(project) => setProjectDetailRoute({ projectId: project.id, tab: 'transactions' })} />
             : active === 'projects' && selectedProject ? <ProjectTransactionsWorkspace workspace={finance.workspace} project={selectedProject} onBack={backToProjects} onAdd={(project) => setModal({ kind: 'transaction', projectId: project.id })} onEdit={readOnly ? () => undefined : (value) => setModal({ kind: 'transaction', value, projectId: selectedProject.id })} onDelete={readOnly ? () => undefined : (value) => confirmDelete('transaksi', () => finance.removeTransaction(value.id))} onComplete={readOnly ? () => undefined : completeProjectNow} onReactivate={readOnly ? () => undefined : reactivateProject} readOnly={readOnly} canCreateTransactions={canCreateTransactions} />
               : active === 'projects' ? <ProjectCommandCenter workspace={finance.workspace} onAdd={() => setModal({ kind: 'project' })} onEdit={(value) => setModal({ kind: 'project', value })} onComplete={(value) => setModal({ kind: 'complete-project', value })} onQuickComplete={completeProjectNow} onDelete={(value) => confirmDelete(`proyek ${value.name}`, () => finance.removeProject(value.id))} onOpen={openProject} readOnly={readOnly} />
             : active === 'office' ? <OfficeWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'transaction', scope: 'office' })} onEdit={(value) => setModal({ kind: 'transaction', value })} onDelete={(value) => confirmDelete('biaya kantor', () => finance.removeTransaction(value.id))} readOnly={readOnly} canCreateTransactions={canCreateTransactions} />
@@ -435,11 +439,11 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
       <Sidebar active={active} open={menuOpen} mobile={mobile} live={readOnly} close={closeMenu} navigate={navigate} />
       <main id="main-content" ref={mainRef} className="main-canvas" aria-hidden={mobile && menuOpen ? true : undefined} tabIndex={-1}>
         <header className="topbar">
-          <button ref={menuButtonRef} className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi" aria-controls="app-navigation" aria-expanded={mobile ? menuOpen : undefined}><Menu size={21} /></button>
+          <button ref={menuButtonRef} className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi" aria-controls="app-navigation" aria-expanded={mobile ? menuOpen : undefined} {...actionProps('shell.navigation-open')}><Menu size={21} /></button>
           <img className="mobile-header-logo" src={hollawallLogo} alt="Hollawall" />
-          <div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{mobile ? meta.title : productionProject?.name ?? selectedProject?.name ?? meta.title}</strong></div>
+          <div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{productionProject?.name ?? selectedProject?.name ?? meta.title}</strong></div>
           <div className="topbar-actions">
-            {active === 'projects' && <ExportButton workspace={finance.workspace} />}
+
             {showTopbarAdd && addAction && <button className="topbar-add" onClick={addAction.run}><Plus size={16} /><span>{addAction.label}</span></button>}
             <ThemeToggle theme={theme} setTheme={setTheme} />
           </div>

@@ -6,7 +6,7 @@ export type WalletId = typeof WALLETS[number]
 export const COMPANIES = ['Holla', 'Hojja', 'Texturin Surabaya', 'Texturin Bali'] as const
 export type CompanyId = typeof COMPANIES[number]
 
-export const PROJECT_STATUSES = ['planned', 'active', 'completed'] as const
+export const PROJECT_STATUSES = ['planned', 'active', 'completed', 'cancelled'] as const
 export type ProjectStatus = typeof PROJECT_STATUSES[number]
 export type TransactionDirection = 'income' | 'expense'
 export type TransactionScope = 'project' | 'office'
@@ -218,6 +218,7 @@ export function validateTransactionInput(input: TransactionInput, workspace: Fin
     const project = workspace.projects.find((item) => item.id === input.project_id)
     if (!project) throw new FinanceValidationError('Proyek wajib dipilih.')
     if (project.status === 'planned') throw new FinanceValidationError('Proyek Direncanakan belum dapat memiliki transaksi.')
+    if (project.status === 'cancelled') throw new FinanceValidationError('Proyek Dibatalkan tidak dapat memiliki transaksi baru.')
     if (date < project.started_on) throw new FinanceValidationError('Tanggal transaksi tidak boleh sebelum proyek dimulai.')
     if (project.completed_on && date > project.completed_on) throw new FinanceValidationError('Tanggal transaksi tidak boleh setelah proyek selesai.')
     return { ...input, date, amount, notes, wallet: project.wallet, company: project.company, project_id: project.id, office_category: null }
@@ -339,7 +340,7 @@ export function isFinanceWorkspace(value: unknown): value is FinanceWorkspace {
     if (!isRecord(row) || typeof row.id !== 'string' || transactionIds.has(row.id) || !validIsoDate(row.date) || !['income', 'expense'].includes(String(row.direction)) || !validMoney(row.amount, false) || !['project', 'office'].includes(String(row.scope)) || !WALLETS.includes(row.wallet as WalletId) || typeof row.notes !== 'string' || !validTimestamp(row.created_at) || !validTimestamp(row.updated_at)) return false
     const linkedProject = typeof row.project_id === 'string' ? projectMap.get(row.project_id) : undefined
     const rowDate = String(row.date)
-    if (row.scope === 'project' && (!linkedProject || linkedProject.status === 'planned' || rowDate < String(linkedProject.started_on) || (linkedProject.completed_on !== null && rowDate > String(linkedProject.completed_on)) || row.company !== linkedProject.company || row.wallet !== linkedProject.wallet || row.office_category !== null)) return false
+    if (row.scope === 'project' && (!linkedProject || linkedProject.status === 'planned' || linkedProject.status === 'cancelled' || rowDate < String(linkedProject.started_on) || (linkedProject.completed_on !== null && rowDate > String(linkedProject.completed_on)) || row.company !== linkedProject.company || row.wallet !== linkedProject.wallet || row.office_category !== null)) return false
     if (row.scope === 'office' && (row.direction !== 'expense' || row.company !== null || row.project_id !== null || !OFFICE_CATEGORIES.includes(row.office_category as OfficeCategory))) return false
     transactionIds.add(row.id)
   }

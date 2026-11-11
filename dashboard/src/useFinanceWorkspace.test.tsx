@@ -2,7 +2,7 @@ import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { useFinanceWorkspace } from './useFinanceWorkspace'
-import type { ProjectInput } from './financeWorkspace'
+import { seedFinanceWorkspace, type ProjectInput } from './financeWorkspace'
 
 const project = (name: string): ProjectInput => ({
   name,
@@ -23,7 +23,7 @@ describe('useFinanceWorkspace', () => {
 
     const stored = JSON.parse(localStorage.getItem('hollawall-finance-demo-v3') ?? 'null')
     expect(stored?.version).toBe(3)
-    expect(stored?.projects).toHaveLength(36)
+    expect(stored?.projects).toHaveLength(seedFinanceWorkspace().projects.length)
   })
 
   it('serializes two mutations issued in the same React tick without losing either', () => {
