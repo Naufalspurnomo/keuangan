@@ -1199,9 +1199,13 @@ html[data-theme='dark'] .sidebar nav button.active,
 html[data-theme='dark'] .wallet-rail button.active,
 html[data-theme='dark'] .movement-filters button.active,
 html[data-theme='dark'] .ops-filter-block button.active,
-html[data-theme='dark'] .project-filter-rail button.active,
-html[data-theme='dark'] .year-command nav button.active {
+html[data-theme='dark'] .project-filter-rail button.active {
   color: var(--text);
+}
+html[data-theme='dark'] .year-command nav button.active {
+  border-color: var(--holla-navy);
+  background: var(--holla-navy);
+  color: #fff;
 }
 
 html[data-theme='dark'] .workspace-table tbody tr:hover,

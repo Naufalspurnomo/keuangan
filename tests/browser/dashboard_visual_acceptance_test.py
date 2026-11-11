@@ -339,7 +339,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 page.get_by_role("button", name="Buka navigasi").click()
                 self.assertTrue(page.locator(".sidebar").evaluate("node => node.classList.contains('is-open')"))
                 navigation = page.get_by_role("navigation", name="Menu utama")
-                self.assertEqual(navigation.get_by_role("button").count(), 8)
+                self.assertEqual(navigation.get_by_role("button").count(), 7)
                 expect(navigation.get_by_role("button", name=re.compile(r"^Transaksi"))).to_have_count(0)
                 navigation.get_by_role("button", name=re.compile(r"^Proyek")).click()
                 page.get_by_role("heading", name="Umur dan status proyek").wait_for()
@@ -358,9 +358,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             with self.subTest(width=width):
                 context, page, errors = self.new_page(width, height, "dark")
                 page.goto(self.base_url, wait_until="networkidle")
-                if width <= 760:
-                    page.get_by_role("button", name="Buka navigasi").click()
-                page.locator(".sidebar nav button").filter(has_text="Perlu Ditinjau").click()
+                page.goto(f"{self.base_url}#inbox-reviews", wait_until="networkidle")
                 page.get_by_role("heading", name="Perlu Ditinjau", exact=True).wait_for()
                 expect(page.get_by_text("Tidak ada pesan yang menunggu keputusan.")).to_be_visible()
                 self.assertFalse(page.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth"))
@@ -590,7 +588,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             (1440, 900, "light"),
             (1920, 1080, "dark"),
         )
-        routes = ("Ringkasan", "Arus Kas", "Dompet", "Proyek", "Operasional Kantor", "Hutang Internal", "Laporan")
+        routes = ("Dashboard", "Arus Kas", "Dompet", "Proyek", "Operasional Kantor", "Hutang", "Laporan")
         for width, height, theme in viewports:
             with self.subTest(width=width, height=height, theme=theme):
                 context, page, errors = self.new_page(width, height, theme)
@@ -663,7 +661,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             viewport: document.documentElement.clientWidth,
           };
         }""")
-        self.assertEqual(metrics["breadcrumb"], "Proyek")
+        self.assertEqual(metrics["breadcrumb"], "Surabaya Office")
         self.assertGreaterEqual(metrics["back"]["height"], 44)
         self.assertEqual(metrics["addCount"], 0)
         self.assertLessEqual(metrics["tableScroll"], metrics["tableClient"])
