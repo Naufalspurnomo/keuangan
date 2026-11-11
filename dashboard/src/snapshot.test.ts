@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import { snapshotFinanceWorkspace, type DashboardSnapshot } from './snapshot'
 
+const PROJECT_ID = '00000000-0000-4000-8000-000000000001'
+
 function snapshot(company: string): DashboardSnapshot {
   return {
     version: 'dashboard.snapshot.v1',
@@ -22,6 +24,7 @@ function snapshot(company: string): DashboardSnapshot {
       wallet: 'CV HB(101)',
       company,
       project: 'Surabaya Office',
+      project_id: PROJECT_ID,
       scope: 'project',
       category: 'Gaji',
       recorded_by: 'Admin',
@@ -35,6 +38,7 @@ function snapshot(company: string): DashboardSnapshot {
     cash_trend: [],
     project_summaries: [{
       name: 'Surabaya Office',
+      project_id: PROJECT_ID,
       net_cashflow: 100_000,
       lifecycle_status: 'active',
       started_on: '2026-10-01',
@@ -92,5 +96,66 @@ describe('snapshotFinanceWorkspace', () => {
     const project = snapshotFinanceWorkspace(source).projects[0]
 
     expect(project.write_mapping).toEqual({ wallet: 'TX SBY(216)', company: 'TEXTURIN-Surabaya', project: 'Surabaya Office' })
+  })
+
+  it('uses exact project UUIDs when names are duplicated or renamed', () => {
+    const source = snapshot('HOLLA')
+    const secondId = '00000000-0000-4000-8000-000000000002'
+    source.project_summaries = [
+      { ...source.project_summaries[0], name: 'Renamed Project' },
+      { ...source.project_summaries[0], project_id: secondId, name: 'Renamed Project' },
+    ]
+    source.transactions = [
+      { ...source.transactions[0], project: 'Old Project Name' },
+      { ...source.transactions[0], id: 2, source_key: 'row:2', project_id: secondId },
+    ]
+
+    const workspace = snapshotFinanceWorkspace(source)
+
+    expect(workspace.projects.map((project) => project.id)).toEqual([PROJECT_ID, secondId])
+    expect(workspace.transactions.map((row) => row.project_id)).toEqual([PROJECT_ID, secondId])
+  })
+
+  it('excludes project rows without a canonical UUID instead of coercing them to office', () => {
+    const source = snapshot('HOLLA')
+    delete source.transactions[0].project_id
+
+    const workspace = snapshotFinanceWorkspace(source)
+
+    expect(workspace.transactions).toEqual([])
+  })
+
+  it('excludes project summaries without canonical UUIDs from routable projects', () => {
+    const source = snapshot('HOLLA')
+    delete source.project_summaries[0].project_id
+
+    const workspace = snapshotFinanceWorkspace(source)
+
+    expect(workspace.projects).toEqual([])
+    expect(workspace.transactions).toEqual([])
+  })
+
+  it('keeps explicit office rows while rejecting unresolved project rows', () => {
+    const source = snapshot('HOLLA')
+    source.transactions = [
+      { ...source.transactions[0], id: 1, source_key: 'row:1', scope: 'project', project_id: '00000000-0000-4000-8000-999999999999' },
+      { ...source.transactions[0], id: 2, source_key: 'row:2', scope: 'office', project_id: undefined, office_category: 'Administrasi' },
+    ]
+
+    const workspace = snapshotFinanceWorkspace(source)
+
+    expect(workspace.transactions).toHaveLength(1)
+    expect(workspace.transactions[0]).toMatchObject({ id: 'row:2', scope: 'office', project_id: null })
+  })
+
+  it('preserves cancelled lifecycle semantics', () => {
+    const source = snapshot('HOLLA')
+    source.project_summaries[0].lifecycle_status = 'cancelled'
+    source.project_summaries[0].completed_on = '2026-10-22'
+
+    const project = snapshotFinanceWorkspace(source).projects[0]
+
+    expect(project.status).toBe('cancelled')
+    expect(project.completed_on).toBe('2026-10-22')
   })
 })

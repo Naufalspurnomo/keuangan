@@ -42,6 +42,14 @@ OVERVIEW = {
     },
     "drilldowns": {},
 }
+PROJECT_IDS = {
+    "Surabaya Office": "00000000-0000-4000-8000-000000000001",
+    "Grand Galaxy": "00000000-0000-4000-8000-000000000002",
+    "Mawar Residence": "00000000-0000-4000-8000-000000000003",
+    "Texturin Sisipan": "00000000-0000-4000-8000-000000000004",
+    "Proyek Selesai": "00000000-0000-4000-8000-000000000005",
+}
+
 TRANSACTIONS = [
     {"id": 1, "transaction_date": "2026-10-21", "transaction_type": "Pemasukan", "amount": 125_000_000, "wallet": "TX SBY(216)", "company": "Hollawall", "project": "Surabaya Office", "notes": "Termin pekerjaan utama"},
     {"id": 2, "transaction_date": "2026-10-20", "transaction_type": "Pengeluaran", "amount": 18_400_000, "wallet": "BCA(056)", "company": "Hollawall", "project": "Grand Galaxy", "notes": "Material dan vendor"},
@@ -54,6 +62,17 @@ TRANSACTIONS = [
         {"id": 100 + index, "source_key": f"CV HB(101):acceptance:{100 + index}", "transaction_date": f"2026-10-{15 - index:02d}", "transaction_type": "Pemasukan" if index % 3 == 0 else "Pengeluaran", "amount": 1_000_000 + index * 125_000, "wallet": "CV HB(101)", "company": "Hollawall", "project": f"Audit Wallet {index + 1}", "notes": f"Mutasi acceptance {index + 1}", "internal_movement": index == 1, "transfer_scope": "internal" if index == 1 else "external"}
         for index in range(10)
     ],
+]
+TRANSACTIONS = [
+    {
+        **row,
+        **(
+            {"project_id": PROJECT_IDS[row["project"]], "scope": "project"}
+            if row.get("project") in PROJECT_IDS
+            else {"project": None, "scope": "office"}
+        ),
+    }
+    for row in TRANSACTIONS
 ]
 
 
@@ -85,6 +104,10 @@ SNAPSHOT = {
         {"name": "Proyek Selesai", "portfolio": "Hollawall", "net_cashflow": 12_500_000, "age_days": 999, "health": "completed", "lifecycle_status": "completed", "started_on": "2024-01-01", "completed_on": "2026-05-02", "transaction_count": 9, "last_activity_on": "2026-05-02", "source_key_first": "CV HB(101):project:completed"}
     ],
 }
+SNAPSHOT["project_summaries"] = [
+    {**project, "project_id": PROJECT_IDS[project["name"]]}
+    for project in SNAPSHOT["project_summaries"]
+]
 
 
 UPDATED_SNAPSHOT = json.loads(json.dumps(SNAPSHOT))
@@ -95,8 +118,8 @@ UPDATED_SNAPSHOT["overview"]["counts"]["valid_rows"] += 2
 UPDATED_SNAPSHOT["meta"]["as_of"] = "2026-10-22T08:10:00Z"
 UPDATED_SNAPSHOT["meta"]["data_through"] = "2026-10-22"
 UPDATED_SNAPSHOT["transactions"] = [
-    {"id": 7, "transaction_date": "2026-10-22", "transaction_type": "Pemasukan", "amount": 40_000_000, "wallet": "TX SBY(216)", "company": "Hollawall", "project": "Surabaya Office", "notes": "Termin baru proyek", "internal_movement": False, "transfer_scope": "external", "source_key": "TX SBY(216):pemasukan:217"},
-    {"id": 8, "transaction_date": "2026-10-22", "transaction_type": "Pengeluaran", "amount": 5_000_000, "wallet": "TX SBY(216)", "company": "Hollawall", "project": "Surabaya Office", "notes": "Reversal termin salah", "internal_movement": False, "transfer_scope": "external", "source_key": "TX SBY(216):pengeluaran:218"},
+    {"id": 7, "transaction_date": "2026-10-22", "transaction_type": "Pemasukan", "amount": 40_000_000, "wallet": "TX SBY(216)", "company": "Hollawall", "project": "Surabaya Office", "project_id": PROJECT_IDS["Surabaya Office"], "scope": "project", "notes": "Termin baru proyek", "internal_movement": False, "transfer_scope": "external", "source_key": "TX SBY(216):pemasukan:217"},
+    {"id": 8, "transaction_date": "2026-10-22", "transaction_type": "Pengeluaran", "amount": 5_000_000, "wallet": "TX SBY(216)", "company": "Hollawall", "project": "Surabaya Office", "project_id": PROJECT_IDS["Surabaya Office"], "scope": "project", "notes": "Reversal termin salah", "internal_movement": False, "transfer_scope": "external", "source_key": "TX SBY(216):pengeluaran:218"},
     *UPDATED_SNAPSHOT["transactions"],
 ]
 
@@ -640,7 +663,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
 
     def test_mobile_project_detail_keeps_title_actions_and_ledger_fully_usable(self):
         context, page, errors = self.new_page(390, 844)
-        page.goto(f"{self.base_url}/#projects?project=live-project-1", wait_until="networkidle")
+        page.goto(f"{self.base_url}/#projects?project=00000000-0000-4000-8000-000000000001", wait_until="networkidle")
         page.get_by_role("heading", name="Surabaya Office", exact=True).wait_for()
         metrics = page.evaluate("""() => {
           const size = selector => {
@@ -672,9 +695,9 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
 
     def test_legacy_transaction_route_canonicalizes_to_live_read_only_project(self):
         context, page, errors = self.new_page(1440, 1000)
-        page.goto(f"{self.base_url}/#transactions?project=live-project-1", wait_until="networkidle")
+        page.goto(f"{self.base_url}/#transactions?project=00000000-0000-4000-8000-000000000001", wait_until="networkidle")
         page.get_by_role("heading", name="Surabaya Office", exact=True).wait_for()
-        self.assertEqual(page.evaluate("window.location.hash"), "#projects?project=live-project-1")
+        self.assertEqual(page.evaluate("window.location.hash"), "#projects?project=00000000-0000-4000-8000-000000000001")
         expect(page.locator(".project-detail-head").get_by_role("button", name="Tambah transaksi", exact=True)).to_have_count(0)
         self.assertIsNone(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
 

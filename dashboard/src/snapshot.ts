@@ -35,10 +35,6 @@ export interface DashboardSnapshot {
   project_summaries: ProjectSummary[]
 }
 
-function liveProjectRouteId(project: ProjectSummary, index: number) {
-  return project.project_id || project.source_key_first || project.source_key_latest || `live-project-${index + 1}`
-}
-
 function uiCompany(company: string): CompanyId {
   const key = company.trim().toLocaleLowerCase('id-ID').replaceAll('-', ' ')
   if (key === 'holla' || key === 'hollawall') return 'Holla'
@@ -51,8 +47,10 @@ function uiCompany(company: string): CompanyId {
 /** Adapt authenticated snapshot data to the existing shell without making it writable. */
 export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWorkspace {
   const updatedAt = snapshot.meta.as_of
-  const projects = snapshot.project_summaries.map((project, index) => {
-    const matching = snapshot.transactions.filter((row) => project.project_id ? row.project_id === project.project_id : row.project === project.name)
+  const projects = snapshot.project_summaries
+    .filter((project): project is ProjectSummary & { project_id: string } => Boolean(project.project_id))
+    .map((project) => {
+    const matching = snapshot.transactions.filter((row) => row.project_id === project.project_id)
     const first = matching[0]
     const mappings = new Map(
       matching
@@ -63,26 +61,33 @@ export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWo
     const writeMapping = mappings.size === 1 ? [...mappings.values()][0] : undefined
     const startedOn = project.started_on || project.first_activity_on || matching.map((row) => row.transaction_date).sort()[0]
       || snapshot.meta.data_through || updatedAt.slice(0, 10)
-    const completed = project.lifecycle_status === 'completed'
+    const status = project.lifecycle_status === 'completed'
+      ? 'completed' as const
+      : project.lifecycle_status === 'cancelled'
+        ? 'cancelled' as const
+        : project.lifecycle_status === 'active'
+          ? 'active' as const
+          : 'planned' as const
+    const terminal = status === 'completed' || status === 'cancelled'
     return {
-      id: liveProjectRouteId(project, index),
+      id: project.project_id,
       name: project.name,
       company: uiCompany(first?.company || ''),
       wallet: (first?.wallet || '') as WalletId,
-      status: completed ? 'completed' as const : 'active' as const,
+      status,
       started_on: startedOn,
-      completed_on: completed ? (project.completed_on || project.last_activity_on || null) : null,
+      completed_on: terminal ? (project.completed_on || project.last_activity_on || null) : null,
       client: '', contract_value: null, notes: '', created_at: updatedAt, updated_at: updatedAt,
-      ...(project.project_id ? { presensi_project_id: project.project_id } : {}),
+      presensi_project_id: project.project_id,
       ...(writeMapping ? { write_mapping: writeMapping } : {}),
     }
   })
-  const projectsByName = new Map(projects.map((project) => [project.name, project]))
   const projectsById = new Map(projects.map((project) => [project.id, project]))
   const transactions = snapshot.transactions.flatMap((row) => {
     if (row.scope === 'internal_transfer' || row.internal_movement) return []
-    const project = (row.project_id ? projectsById.get(row.project_id) : undefined) || (row.project ? projectsByName.get(row.project) : undefined)
-    const office = row.scope === 'office' || !project
+    const office = row.scope === 'office'
+    const project = !office && row.project_id ? projectsById.get(row.project_id) : undefined
+    if (!office && !project) return []
     return [{
       id: row.source_key || `live-transaction-${row.id}`,
       date: row.transaction_date.slice(0, 10),
