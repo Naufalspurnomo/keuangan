@@ -36,6 +36,14 @@ def test_production_gate_job_ids_are_the_promotion_contract() -> None:
         assert any("run" in step or "uses" in step for step in job["steps"])
 
 
+def test_backend_job_installs_yaml_for_release_contract_collection() -> None:
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    install = "\n".join(
+        str(step.get("run", "")) for step in workflow["jobs"]["backend"]["steps"]
+    )
+    assert "PyYAML==6.0.3" in install
+
+
 def test_history_dependent_jobs_fetch_candidate_ancestry() -> None:
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
