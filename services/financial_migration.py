@@ -53,7 +53,8 @@ def _source_rows(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
             if not isinstance(raw, Mapping):
                 raise ValueError(f"snapshot tab {tab!r} contains a non-object row")
             row = dict(raw)
-            row["sheet_name"] = str(tab)
+            row["source_tab"] = str(tab)
+            row.setdefault("sheet_name", str(tab))
             try:
                 source_row = int(row.get("sheet_row"))
             except (TypeError, ValueError) as exc:
@@ -62,8 +63,8 @@ def _source_rows(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
                 raise ValueError(f"snapshot tab {tab!r} has invalid sheet_row")
             row["sheet_row"] = source_row
             rows.append(row)
-    rows.sort(key=lambda row: (row["sheet_name"], row["sheet_row"]))
-    coordinates = [(row["sheet_name"], row["sheet_row"]) for row in rows]
+    rows.sort(key=lambda row: (row["source_tab"], row["sheet_row"]))
+    coordinates = [(row["source_tab"], row["sheet_row"]) for row in rows]
     if len(coordinates) != len(set(coordinates)):
         raise ValueError("snapshot contains duplicate tab/row coordinates")
     return rows
@@ -86,7 +87,7 @@ def _manifest_row(
     mappings: Mapping[str, Any],
 ) -> dict[str, Any]:
     normalized = normalize_row(dict(raw))
-    tab = str(raw["sheet_name"])
+    tab = str(raw["source_tab"])
     coordinate = f"{tab}:{raw['sheet_row']}"
     source_key = build_source_key(dict(raw))
     row_sha256 = _sha256(raw)
@@ -95,11 +96,12 @@ def _manifest_row(
     transaction_id = str(uuid.uuid5(_NAMESPACE, f"transaction:{identity}"))
 
     reason: str | None = None
-    wallet_mapping = mappings.get("wallets", {}).get(tab)
+    wallet_source = str(raw.get("wallet_source") or raw.get("sheet_name") or tab).strip()
+    wallet_mapping = mappings.get("wallets", {}).get(wallet_source)
     if not normalized["is_valid"]:
         reason = "invalid date or amount"
     elif not isinstance(wallet_mapping, Mapping):
-        reason = f"wallet mapping missing for source tab {tab}"
+        reason = f"wallet mapping missing for source wallet {wallet_source}"
 
     raw_project_id = raw.get("project_id")
     has_project_reference = bool(raw_project_id or raw.get("nama_projek"))
@@ -220,7 +222,7 @@ def reconcile_manifest(
         raise ValueError("manifest source snapshot hash mismatch")
 
     source_by_coordinate = {
-        (row["sheet_name"], row["sheet_row"]): row for row in source_rows
+        (row["source_tab"], row["sheet_row"]): row for row in source_rows
     }
     manifest_rows = manifest.get("rows")
     if not isinstance(manifest_rows, Sequence):
