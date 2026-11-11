@@ -23,6 +23,8 @@ export interface Transaction {
   company: string
   project: string | null
   project_id?: string | null
+  canonical_transaction_id?: string | null
+  transaction_version?: number | null
   project_raw?: string | null
   scope?: 'project' | 'office' | 'internal_transfer'
   notes?: string

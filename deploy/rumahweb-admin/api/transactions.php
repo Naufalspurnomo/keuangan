@@ -22,6 +22,37 @@ function request_header(string $name): string
     return trim((string) ($_SERVER[$serverName] ?? ''));
 }
 
+function base64url(string $value): string
+{
+    return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
+}
+
+function actor_assertion(array $config, string $path, string $body, string $actor): string
+{
+    $secret = (string) ($config['dashboard_actor_assertion_secret'] ?? '');
+    $audience = (string) ($config['dashboard_actor_assertion_audience'] ?? '');
+    $email = strtolower(trim((string) ($config['owner_email'] ?? '')));
+    if (strlen($secret) < 32 || $audience === '' || $email === '') {
+        json_error(503, 'actor_assertion_unavailable', 'Canonical transaction service unavailable.');
+    }
+    $now = time();
+    $claims = [
+        'actor_id' => $actor,
+        'email' => $email,
+        'role' => 'boss',
+        'aud' => $audience,
+        'method' => 'POST',
+        'path' => $path,
+        'body_sha256' => hash('sha256', $body),
+        'nonce' => bin2hex(random_bytes(16)),
+        'iat' => $now,
+        'exp' => $now + 60,
+    ];
+    $json = json_encode($claims, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    $encoded = base64url($json);
+    return $encoded . '.' . base64url(hash_hmac('sha256', $encoded, $secret, true));
+}
+
 header('X-Robots-Tag: noindex, nofollow, noarchive');
 header('X-Content-Type-Options: nosniff');
 header('Cache-Control: no-store, private');
@@ -87,8 +118,20 @@ $config = require $configPath;
 if (!is_array($config)) {
     json_error(503, 'configuration_invalid', 'Transaction service unavailable.');
 }
-if (($config['transaction_writes_enabled'] ?? false) !== true) {
+$action = trim((string) ($_GET['action'] ?? ''));
+$canonical = in_array($action, ['correction', 'reversal'], true);
+if ($action !== '' && !$canonical) {
+    json_error(422, 'invalid_transaction_action', 'Transaction action is invalid.');
+}
+if ($canonical && ($config['canonical_finance_writes_enabled'] ?? false) !== true) {
+    json_error(503, 'canonical_finance_writes_disabled', 'Canonical transaction writes are disabled.');
+}
+if (!$canonical && ($config['transaction_writes_enabled'] ?? false) !== true) {
     json_error(503, 'transaction_writes_disabled', 'Transaction writes are disabled.');
+}
+$transactionId = trim((string) ($_GET['transaction_id'] ?? ''));
+if ($canonical && !preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iD', $transactionId)) {
+    json_error(422, 'invalid_transaction_id', 'Canonical transaction ID is invalid.');
 }
 
 $owner = (string) ($config['username'] ?? '');
@@ -138,17 +181,41 @@ try {
     json_error(422, 'invalid_json', 'Request body contains invalid JSON.');
 }
 
-$upstream = (string) ($config['upstream_transactions_url'] ?? '');
-$token = (string) ($config['proxy_token'] ?? '');
-$upstreamParts = parse_url($upstream);
+$upstreamBase = (string) ($config[$canonical ? 'upstream_canonical_transactions_url' : 'upstream_transactions_url'] ?? '');
+$upstreamParts = parse_url($upstreamBase);
+$expectedPath = $canonical ? '/api/dashboard/v1/canonical-transactions' : '/api/dashboard/v1/transactions';
 if (!is_array($upstreamParts)
     || strtolower((string) ($upstreamParts['scheme'] ?? '')) !== 'https'
     || (string) ($upstreamParts['host'] ?? '') === ''
+    || rtrim((string) ($upstreamParts['path'] ?? ''), '/') !== $expectedPath
     || isset($upstreamParts['user'])
     || isset($upstreamParts['pass'])
-    || isset($upstreamParts['fragment'])
-    || !preg_match('/^[^\x00-\x1F\x7F]{16,512}$/D', $token)) {
+    || isset($upstreamParts['query'])
+    || isset($upstreamParts['fragment'])) {
     json_error(503, 'configuration_invalid', 'Transaction service unavailable.');
+}
+$upstreamPath = $expectedPath;
+$upstream = rtrim($upstreamBase, '/');
+$actorHeader = null;
+if ($canonical) {
+    $suffix = $action === 'correction' ? 'corrections' : 'reversals';
+    $upstreamPath .= '/' . $transactionId . '/' . $suffix;
+    $upstream .= '/' . $transactionId . '/' . $suffix;
+    $actorHeader = actor_assertion($config, $upstreamPath, $forwardBody, $owner);
+}
+$token = (string) ($config['proxy_token'] ?? '');
+if (!preg_match('/^[^\x00-\x1F\x7F]{16,512}$/D', $token)) {
+    json_error(503, 'configuration_invalid', 'Transaction service unavailable.');
+}
+
+$requestHeaders = [
+    'Accept: application/json',
+    'Content-Type: application/json',
+    'Idempotency-Key: ' . $idempotencyKey,
+    'X-Hollawall-Proxy-Token: ' . $token,
+];
+if ($actorHeader !== null) {
+    $requestHeaders[] = 'X-Hollawall-Actor-Assertion: ' . $actorHeader;
 }
 
 $responseBody = '';
@@ -168,12 +235,7 @@ curl_setopt_array($curl, [
     CURLOPT_TIMEOUT => 75,
     CURLOPT_POST => true,
     CURLOPT_POSTFIELDS => $forwardBody,
-    CURLOPT_HTTPHEADER => [
-        'Accept: application/json',
-        'Content-Type: application/json',
-        'Idempotency-Key: ' . $idempotencyKey,
-        'X-Hollawall-Proxy-Token: ' . $token,
-    ],
+    CURLOPT_HTTPHEADER => $requestHeaders,
     CURLOPT_SSL_VERIFYPEER => true,
     CURLOPT_SSL_VERIFYHOST => 2,
     CURLOPT_WRITEFUNCTION => static function ($handle, string $chunk) use (&$responseBody, &$responseTooLarge): int {
@@ -190,7 +252,7 @@ $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
 $upstreamContentType = (string) curl_getinfo($curl, CURLINFO_CONTENT_TYPE);
 curl_close($curl);
 
-$allowedStatuses = [200, 201, 400, 401, 403, 409, 422, 503];
+$allowedStatuses = [200, 201, 400, 401, 403, 404, 409, 422, 503];
 if ($executed === false
     || $responseTooLarge
     || !in_array($status, $allowedStatuses, true)
@@ -204,7 +266,29 @@ try {
     json_error(502, 'invalid_upstream_response', 'Transaction service unavailable.');
 }
 
-if (in_array($status, [200, 201], true)
+if ($canonical
+    && in_array($status, [200, 201], true)
+    && is_array($decoded)
+    && ($decoded['api_version'] ?? null) === 'finance.v1'
+    && is_array($decoded['data'] ?? null)
+    && is_array($decoded['data']['transaction'] ?? null)
+    && is_string($decoded['data']['transaction']['id'] ?? null)
+    && is_int($decoded['data']['transaction']['version'] ?? null)
+    && in_array($decoded['data']['transaction']['status'] ?? null, ['correction', 'reversal'], true)
+    && is_bool($decoded['data']['duplicate'] ?? null)) {
+    $sanitized = [
+        'api_version' => 'finance.v1',
+        'data' => [
+            'transaction' => [
+                'id' => $decoded['data']['transaction']['id'],
+                'version' => $decoded['data']['transaction']['version'],
+                'status' => $decoded['data']['transaction']['status'],
+            ],
+            'duplicate' => $decoded['data']['duplicate'],
+        ],
+    ];
+} elseif (!$canonical
+    && in_array($status, [200, 201], true)
     && is_array($decoded)
     && ($decoded['api_version'] ?? null) === 'dashboard.v1'
     && is_array($decoded['data'] ?? null)

@@ -103,6 +103,9 @@ echo json_encode([
     'api_version' => 'dashboard.v1',
     'data' => [
         'csrf_token' => $csrf,
-        'capabilities' => ['writes_enabled' => ($config['transaction_writes_enabled'] ?? false) === true],
+        'capabilities' => [
+            'writes_enabled' => ($config['transaction_writes_enabled'] ?? false) === true,
+            'canonical_finance_writes_enabled' => ($config['canonical_finance_writes_enabled'] ?? false) === true,
+        ],
     ],
 ], JSON_UNESCAPED_SLASHES);

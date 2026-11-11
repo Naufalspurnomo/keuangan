@@ -67,14 +67,27 @@ class RumahwebAdminTransactionProxyTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def write_config(self, *, enabled: bool, upstream: str = "https://example.invalid/transactions") -> None:
+    def write_config(
+        self,
+        *,
+        enabled: bool,
+        upstream: str = "https://example.invalid/transactions",
+        canonical_enabled: bool = False,
+        actor_secret: str = "synthetic-actor-secret-0000000000000001",
+    ) -> None:
+        canonical = upstream.replace("/transactions", "/canonical-transactions")
         self.config.write_text(
             "<?php return ["
             f"'username'=>'{self.username}',"
+            "'owner_email'=>'owner@example.test',"
             f"'password_hash'=>'{self.password_hash}',"
             "'proxy_token'=>'synthetic-server-token-0001',"
             "'upstream_snapshot_url'=>'https://example.invalid/snapshot',"
             f"'transaction_writes_enabled'=>{'true' if enabled else 'false'},"
+            f"'canonical_finance_writes_enabled'=>{'true' if canonical_enabled else 'false'},"
+            f"'dashboard_actor_assertion_secret'=>'{actor_secret}',"
+            "'dashboard_actor_assertion_audience'=>'hollawall-canonical-finance',"
+            f"'upstream_canonical_transactions_url'=>'{canonical}',"
             f"'upstream_transactions_url'=>'{upstream}'];",
             encoding="utf-8",
         )
@@ -354,6 +367,79 @@ class RumahwebAdminTransactionProxyTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIs(response.json()["data"]["duplicate"], True)
+
+    def test_canonical_correction_is_capability_gated_and_actor_signed(self) -> None:
+        transaction_id = "00000000-0000-4000-8000-000000000010"
+        payload = {
+            "idempotency_key": IDEMPOTENCY_KEY,
+            "expected_version": 1,
+            "amount": 150_000,
+            "reason": "Nominal bukti diperbaiki",
+        }
+        success = {
+            "api_version": "finance.v1",
+            "data": {
+                "transaction": {"id": "00000000-0000-4000-8000-000000000011", "version": 2, "status": "correction"},
+                "duplicate": False,
+            },
+        }
+        with self.https_upstream([(201, success)]) as (legacy_upstream, cert, server):
+            self.write_config(enabled=True, upstream=legacy_upstream, canonical_enabled=True)
+            with self.php_server(ca_bundle=cert) as base:
+                session_id, csrf = self.login(base)
+                response = requests.post(
+                    self.transaction_url(base) + f"?action=correction&transaction_id={transaction_id}",
+                    headers={
+                        **self.cookie(session_id),
+                        "X-CSRF-Token": csrf,
+                        "Idempotency-Key": IDEMPOTENCY_KEY,
+                    },
+                    json=payload,
+                    timeout=5,
+                )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json(), success)
+        self.assertEqual(len(server.received), 1)
+        received = server.received[0]
+        self.assertEqual(
+            received["path"],
+            f"/api/dashboard/v1/canonical-transactions/{transaction_id}/corrections",
+        )
+        headers = {key.casefold(): value for key, value in received["headers"].items()}
+        assertion = headers["x-hollawall-actor-assertion"]
+        encoded, _signature = assertion.split(".", 1)
+        encoded += "=" * (-len(encoded) % 4)
+        claims = json.loads(__import__("base64").urlsafe_b64decode(encoded))
+        self.assertEqual(claims["actor_id"], self.username)
+        self.assertEqual(claims["email"], "owner@example.test")
+        self.assertEqual(claims["role"], "boss")
+        self.assertEqual(claims["method"], "POST")
+        self.assertEqual(claims["path"], received["path"])
+        self.assertEqual(claims["body_sha256"], __import__("hashlib").sha256(received["body"]).hexdigest())
+        self.assertEqual(claims["aud"], "hollawall-canonical-finance")
+        self.assertGreaterEqual(len(claims["nonce"]), 16)
+
+    def test_canonical_actions_fail_closed_when_capability_is_disabled(self) -> None:
+        with self.php_server() as base:
+            session_id, csrf = self.login(base)
+            response = requests.post(
+                self.transaction_url(base) + "?action=reversal&transaction_id=00000000-0000-4000-8000-000000000010",
+                headers={
+                    **self.cookie(session_id),
+                    "X-CSRF-Token": csrf,
+                    "Idempotency-Key": IDEMPOTENCY_KEY,
+                },
+                json={
+                    "idempotency_key": IDEMPOTENCY_KEY,
+                    "expected_version": 1,
+                    "reason": "Duplikat terkonfirmasi",
+                },
+                timeout=5,
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "canonical_finance_writes_disabled")
 
     def test_http_200_error_envelope_is_rejected_as_invalid_upstream_response(self) -> None:
         malformed_replay = {

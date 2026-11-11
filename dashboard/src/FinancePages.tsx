@@ -51,17 +51,36 @@ export function WalletWorkspacePage({ workspace, onOpenProject }: { workspace: F
   return <WalletWorkspace transactions={chartTransactions(workspace, true)} wallets={chartWallets(workspace)} dataThrough={workspaceDataThrough(workspace)} onOpenProject={onOpenProject} showSourceDetails={workspace.mode === 'demo'} />
 }
 
-export function TransactionRows({ rows, projects, compact, onEdit, onDelete }: { rows: FinanceTransaction[]; projects: FinanceProject[]; compact?: boolean; onEdit?: (row: FinanceTransaction) => void; onDelete?: (row: FinanceTransaction) => void }) {
+export function TransactionRows({
+  rows,
+  projects,
+  compact,
+  onEdit,
+  onDelete,
+  onCorrect,
+  onReverse,
+  lifecycleBusyId,
+}: {
+  rows: FinanceTransaction[]
+  projects: FinanceProject[]
+  compact?: boolean
+  onEdit?: (row: FinanceTransaction) => void
+  onDelete?: (row: FinanceTransaction) => void
+  onCorrect?: (row: FinanceTransaction) => void
+  onReverse?: (row: FinanceTransaction) => void
+  lifecycleBusyId?: string | null
+}) {
   const map = new Map(projects.map((project) => [project.id, project]))
-  return <div className="workspace-table-wrap"><table className="workspace-table"><thead><tr><th>Tanggal</th><th>Keterangan</th><th>Aktivitas</th><th>Dompet</th><th>Jenis</th><th className="number">Jumlah</th>{!compact && (onEdit || onDelete) && <th>Aksi</th>}</tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td data-label="Tanggal">{dateLabel(row.date)}</td><td data-label="Keterangan"><strong>{row.notes}</strong><small>{row.office_category ?? row.company ?? '—'}</small></td><td data-label="Aktivitas">{row.scope === 'project' ? projectLabel(map.get(row.project_id ?? '')) : 'Operasional Kantor'}</td><td data-label="Dompet"><span className="wallet-chip">{row.wallet}</span></td><td data-label="Jenis"><span className={`direction-chip ${row.direction}`}>{directionLabel(row.direction)}</span></td><td data-label="Jumlah" className={`number ${row.direction === 'income' ? 'positive' : 'negative'}`}>{row.direction === 'income' ? '+' : '−'}{IDR.format(row.amount)}</td>{!compact && (onEdit || onDelete) && <td data-label="Aksi"><div className="row-actions">{onEdit && <button aria-label={`Ubah transaksi ${row.notes}`} onClick={() => onEdit(row)}><Pencil size={15} /></button>}{onDelete && <button className="danger" aria-label={`Hapus transaksi ${row.notes}`} onClick={() => onDelete(row)}><Trash2 size={15} /></button>}</div></td>}</tr>)}</tbody></table></div>
+  const actions = Boolean(onEdit || onDelete || onCorrect || onReverse)
+  return <div className="workspace-table-wrap"><table className="workspace-table"><thead><tr><th>Tanggal</th><th>Keterangan</th><th>Aktivitas</th><th>Dompet</th><th>Jenis</th><th className="number">Jumlah</th>{!compact && actions && <th>Aksi</th>}</tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td data-label="Tanggal">{dateLabel(row.date)}</td><td data-label="Keterangan"><strong>{row.notes}</strong><small>{row.office_category ?? row.company ?? '—'}</small></td><td data-label="Aktivitas">{row.scope === 'project' ? projectLabel(map.get(row.project_id ?? '')) : 'Operasional Kantor'}</td><td data-label="Dompet"><span className="wallet-chip">{row.wallet}</span></td><td data-label="Jenis"><span className={`direction-chip ${row.direction}`}>{directionLabel(row.direction)}</span></td><td data-label="Jumlah" className={`number ${row.direction === 'income' ? 'positive' : 'negative'}`}>{row.direction === 'income' ? '+' : '−'}{IDR.format(row.amount)}</td>{!compact && actions && <td data-label="Aksi"><div className="row-actions">{onEdit && <button aria-label={`Ubah transaksi ${row.notes}`} onClick={() => onEdit(row)}><Pencil size={15} /></button>}{onDelete && <button className="danger" aria-label={`Hapus transaksi ${row.notes}`} onClick={() => onDelete(row)}><Trash2 size={15} /></button>}{onCorrect && row.canonical_transaction_id && row.transaction_version && <button disabled={lifecycleBusyId === row.id} aria-label={`Koreksi transaksi ${row.notes}`} onClick={() => onCorrect(row)} {...actionProps(row.scope === 'project' ? 'projects.transaction-correct' : 'office.transaction-correct')}><Pencil size={15} /></button>}{onReverse && row.canonical_transaction_id && row.transaction_version && <button disabled={lifecycleBusyId === row.id} className="danger" aria-label={`Balik transaksi ${row.notes}`} onClick={() => onReverse(row)} {...actionProps(row.scope === 'project' ? 'projects.transaction-reverse' : 'office.transaction-reverse')}><RotateCcw size={15} /></button>}</div></td>}</tr>)}</tbody></table></div>
 }
 
 
-export function OfficeWorkspace({ workspace, onAdd, onEdit, onDelete, readOnly = false, canCreateTransactions = false }: { workspace: FinanceWorkspace; onAdd: () => void; onEdit: (row: FinanceTransaction) => void; onDelete: (row: FinanceTransaction) => void; readOnly?: boolean; canCreateTransactions?: boolean }) {
+export function OfficeWorkspace({ workspace, onAdd, onEdit, onDelete, onCorrect, onReverse, lifecycleBusyId, readOnly = false, canCreateTransactions = false }: { workspace: FinanceWorkspace; onAdd: () => void; onEdit: (row: FinanceTransaction) => void; onDelete: (row: FinanceTransaction) => void; onCorrect?: (row: FinanceTransaction) => void; onReverse?: (row: FinanceTransaction) => void; lifecycleBusyId?: string | null; readOnly?: boolean; canCreateTransactions?: boolean }) {
   const rows = workspace.transactions.filter((row) => row.scope === 'office').sort((a, b) => b.date.localeCompare(a.date))
   const total = sumMoney(rows.map((row) => row.amount), 'biaya kantor')
   const byWallet = walletBalances({ ...workspace, transactions: rows })
-  return <section className="finance-page-stack"><header className="command-head"><div><p className="eyebrow">OPERASIONAL KANTOR{workspace.mode === 'demo' ? ' · DATA DEMO' : ''}</p><h2>Kebutuhan kantor</h2><p>Biaya kantor terpisah dari proyek dan dapat memakai salah satu dompet.</p></div>{(!readOnly || canCreateTransactions) && <button className="primary-button" onClick={onAdd}><Plus size={16} /> Catat biaya</button>}</header><section className="office-summary"><article><CircleDollarSign /><span><small>Total biaya kantor</small><strong>{IDR.format(total)}</strong></span></article>{byWallet.map((item) => <article key={item.wallet}><WalletCards /><span><small>{item.wallet}</small><strong>{IDR.format(item.expense)}</strong></span></article>)}</section><TransactionRows rows={rows} projects={workspace.projects} onEdit={readOnly ? undefined : onEdit} onDelete={readOnly ? undefined : onDelete} /></section>
+  return <section className="finance-page-stack"><header className="command-head"><div><p className="eyebrow">OPERASIONAL KANTOR{workspace.mode === 'demo' ? ' · DATA DEMO' : ''}</p><h2>Kebutuhan kantor</h2><p>Biaya kantor terpisah dari proyek dan dapat memakai salah satu dompet.</p></div>{(!readOnly || canCreateTransactions) && <button className="primary-button" onClick={onAdd}><Plus size={16} /> Catat biaya</button>}</header><section className="office-summary"><article><CircleDollarSign /><span><small>Total biaya kantor</small><strong>{IDR.format(total)}</strong></span></article>{byWallet.map((item) => <article key={item.wallet}><WalletCards /><span><small>{item.wallet}</small><strong>{IDR.format(item.expense)}</strong></span></article>)}</section><TransactionRows rows={rows} projects={workspace.projects} onEdit={readOnly ? undefined : onEdit} onDelete={readOnly ? undefined : onDelete} onCorrect={onCorrect} onReverse={onReverse} lifecycleBusyId={lifecycleBusyId} /></section>
 }
 
 export function DebtWorkspace({ workspace, onAdd, onEdit, onDelete }: { workspace: FinanceWorkspace; onAdd: () => void; onEdit: (row: FinanceDebt) => void; onDelete: (row: FinanceDebt) => void }) {

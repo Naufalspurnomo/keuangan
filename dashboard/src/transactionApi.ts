@@ -19,6 +19,24 @@ export interface TransactionWritePayload {
 export interface TransactionWriteSession {
   csrfToken: string
   writesEnabled: boolean
+  canonicalWritesEnabled?: boolean
+}
+
+export interface CanonicalTransactionMutationInput {
+  action: 'correction' | 'reversal'
+  transactionId: string
+  expectedVersion: number
+  reason: string
+  amount?: number
+  description?: string
+  category?: string
+}
+
+export interface CanonicalTransactionMutationResult {
+  transactionId: string
+  version: number
+  status: 'correction' | 'reversal'
+  duplicate: boolean
 }
 
 export interface RecordedTransaction {
@@ -140,12 +158,15 @@ export async function loadTransactionWriteSession(options: ApiOptions = {}): Pro
   if (body.api_version !== 'dashboard.v1'
       || typeof data?.csrf_token !== 'string'
       || data.csrf_token.length < 16
-      || typeof capabilities?.writes_enabled !== 'boolean') {
+      || typeof capabilities?.writes_enabled !== 'boolean'
+      || (capabilities?.canonical_finance_writes_enabled !== undefined
+        && typeof capabilities.canonical_finance_writes_enabled !== 'boolean')) {
     throw new TransactionWriteError('Kontrak sesi pencatatan tidak cocok.', { code: 'invalid_write_session' })
   }
   return {
     csrfToken: data.csrf_token,
     writesEnabled: capabilities.writes_enabled,
+    canonicalWritesEnabled: capabilities.canonical_finance_writes_enabled === true,
   }
 }
 
@@ -244,6 +265,97 @@ export function createTransactionWriteAttempt(
       const responseBody = await jsonResponse(response, 'pencatatan')
       if (!response.ok) throw apiError(responseBody, response.status)
       return recordedTransaction(responseBody, response)
+    },
+  })
+}
+
+export function createCanonicalTransactionMutation(
+  input: CanonicalTransactionMutationInput,
+  options: WriteAttemptOptions = {},
+) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.transactionId)) {
+    throw new TransactionWriteError('ID transaksi kanonis tidak valid.', { code: 'invalid_transaction_id' })
+  }
+  if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1) {
+    throw new TransactionWriteError('Versi transaksi tidak valid.', { code: 'invalid_transaction_version' })
+  }
+  const reason = input.reason.trim()
+  if (!reason) throw new TransactionWriteError('Alasan wajib diisi.', { code: 'reason_required' })
+  if (input.action === 'correction'
+      && input.amount === undefined
+      && input.description === undefined
+      && input.category === undefined) {
+    throw new TransactionWriteError('Koreksi harus mengubah nominal, deskripsi, atau kategori.', { code: 'empty_correction' })
+  }
+  const params = new URLSearchParams({ action: input.action, transaction_id: input.transactionId })
+  const endpoint = sameOriginPath(`${options.endpoint ?? TRANSACTIONS_ENDPOINT}?${params.toString()}`)
+  const request = options.request ?? fetch
+  const idempotencyKey = (options.keyFactory ?? generateIdempotencyKey)()
+  if (!/^\S{16,128}$/.test(idempotencyKey)) {
+    throw new TransactionWriteError('Idempotency key tidak valid.', { code: 'invalid_idempotency_key' })
+  }
+  const body = JSON.stringify({
+    idempotency_key: idempotencyKey,
+    expected_version: input.expectedVersion,
+    reason,
+    ...(input.amount === undefined ? {} : { amount: input.amount }),
+    ...(input.description === undefined ? {} : { description: input.description }),
+    ...(input.category === undefined ? {} : { category: input.category }),
+  })
+
+  return Object.freeze({
+    idempotencyKey,
+    async submit(session: TransactionWriteSession): Promise<CanonicalTransactionMutationResult> {
+      if (!session.canonicalWritesEnabled) {
+        throw new TransactionWriteError('Koreksi dan pembalikan belum diaktifkan.', {
+          code: 'canonical_finance_writes_disabled',
+        })
+      }
+      if (typeof session.csrfToken !== 'string' || session.csrfToken.length < 16) {
+        throw new TransactionWriteError('Sesi pencatatan tidak valid.', { code: 'invalid_write_session' })
+      }
+      let response: Response
+      try {
+        response = await request(endpoint, {
+          method: 'POST',
+          credentials: 'same-origin',
+          cache: 'no-store',
+          redirect: 'error',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': session.csrfToken,
+            'Idempotency-Key': idempotencyKey,
+          },
+          body,
+        })
+      } catch {
+        throw new TransactionWriteError('Koneksi terputus. Status perubahan belum pasti.', {
+          code: 'transaction_outcome_unknown',
+          uncertain: true,
+          retryable: true,
+        })
+      }
+      const responseBody = await jsonResponse(response, 'perubahan transaksi')
+      if (!response.ok) throw apiError(responseBody, response.status)
+      const data = record(responseBody.data)
+      const transaction = record(data?.transaction)
+      const status = transaction?.status
+      if (responseBody.api_version !== 'finance.v1'
+          || typeof transaction?.id !== 'string'
+          || !Number.isSafeInteger(transaction.version)
+          || (status !== 'correction' && status !== 'reversal')
+          || typeof data?.duplicate !== 'boolean') {
+        throw new TransactionWriteError('Server belum memberikan bukti perubahan yang lengkap.', {
+          code: 'unverified_mutation', uncertain: true, retryable: true, status: response.status,
+        })
+      }
+      return {
+        transactionId: transaction.id,
+        version: transaction.version as number,
+        status,
+        duplicate: data.duplicate,
+      }
     },
   })
 }

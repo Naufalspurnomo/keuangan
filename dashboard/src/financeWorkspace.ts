@@ -59,6 +59,8 @@ export interface FinanceTransaction {
   wallet: WalletId
   company: CompanyId | null
   project_id: string | null
+  canonical_transaction_id?: string | null
+  transaction_version?: number | null
   office_category: OfficeCategory | null
   category?: string | null
   recorded_by?: string | null

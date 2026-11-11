@@ -17,6 +17,9 @@ class DashboardLiveSnapshotTests(unittest.TestCase):
                 "sheet_name": "CV HB(101)",
                 "sheet_row": 9,
                 "source_block": "pemasukan",
+                "project_id": "00000000-0000-4000-8000-000000000001",
+                "canonical_transaction_id": "00000000-0000-4000-8000-000000000010",
+                "transaction_version": 3,
                 "kategori": "Income",
                 "oleh": "Admin",
                 "source": "WhatsApp",
@@ -87,6 +90,17 @@ class DashboardLiveSnapshotTests(unittest.TestCase):
             ["Operasional Kantor:operasional:2", "CV HB(101):pengeluaran:11", "CV HB(101):pemasukan:9"],
         )
         self.assertTrue(snapshot["transactions"][1]["internal_movement"])
+        self.assertEqual(
+            {
+                "project_id": "00000000-0000-4000-8000-000000000001",
+                "canonical_transaction_id": "00000000-0000-4000-8000-000000000010",
+                "transaction_version": 3,
+            },
+            {
+                key: snapshot["transactions"][2][key]
+                for key in ("project_id", "canonical_transaction_id", "transaction_version")
+            },
+        )
         self.assertEqual(
             {
                 key: snapshot["transactions"][2][key]
@@ -181,6 +195,26 @@ class DashboardLiveSnapshotTests(unittest.TestCase):
         ]
         self.assertTrue(all(is_internal_transfer_transaction(row) for row in fixtures))
         self.assertFalse(is_internal_transfer_transaction({"message_id": "evt", "keterangan": "Bayar listrik kantor", "nama_projek": "Operasional"}))
+
+    def test_invalid_canonical_lifecycle_identity_is_never_exposed(self):
+        snapshot = build_live_snapshot(
+            [{
+                "tanggal": "2026-10-20",
+                "jumlah": "100000",
+                "tipe": "Pemasukan",
+                "sheet_name": "CV HB(101)",
+                "sheet_row": 9,
+                "source_block": "pemasukan",
+                "canonical_transaction_id": "sheet-row-9",
+                "transaction_version": True,
+            }],
+            {"CV HB(101)": {"saldo": 100_000}},
+            [],
+            now=datetime(2026, 10, 21, tzinfo=timezone.utc),
+        )
+        row = snapshot["transactions"][0]
+        self.assertIsNone(row["canonical_transaction_id"])
+        self.assertIsNone(row["transaction_version"])
 
     def test_amount_without_original_digit_is_invalid(self):
         snapshot = build_live_snapshot(

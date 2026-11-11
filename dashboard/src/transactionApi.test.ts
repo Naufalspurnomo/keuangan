@@ -1,17 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  createCanonicalTransactionMutation,
   createTransactionWriteAttempt,
   jakartaToday,
   loadTransactionWriteSession,
   type TransactionWritePayload,
 } from './transactionApi'
 
-const sessionEnvelope = (writesEnabled = true) => new Response(JSON.stringify({
+const sessionEnvelope = (writesEnabled = true, canonicalWritesEnabled = false) => new Response(JSON.stringify({
   api_version: 'dashboard.v1',
   data: {
     csrf_token: 'csrf-owner-session-token-0001',
-    capabilities: { writes_enabled: writesEnabled },
+    capabilities: {
+      writes_enabled: writesEnabled,
+      canonical_finance_writes_enabled: canonicalWritesEnabled,
+    },
   },
 }), { status: 200, headers: { 'content-type': 'application/json' } })
 
@@ -50,6 +54,7 @@ describe('authenticated transaction API', () => {
     await expect(loadTransactionWriteSession({ request })).resolves.toEqual({
       csrfToken: 'csrf-owner-session-token-0001',
       writesEnabled: true,
+      canonicalWritesEnabled: false,
     })
     expect(request).toHaveBeenCalledWith('/admin/api/write-session.php', {
       credentials: 'same-origin',
@@ -123,11 +128,72 @@ describe('authenticated transaction API', () => {
 
   it('fails closed when writes are disabled or the session contract is malformed', async () => {
     await expect(loadTransactionWriteSession({ request: vi.fn(async () => sessionEnvelope(false)) }))
-      .resolves.toEqual({ csrfToken: 'csrf-owner-session-token-0001', writesEnabled: false })
+      .resolves.toEqual({ csrfToken: 'csrf-owner-session-token-0001', writesEnabled: false, canonicalWritesEnabled: false })
     await expect(loadTransactionWriteSession({ request: vi.fn(async () => new Response(JSON.stringify({ data: {} }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     })) })).rejects.toThrow('Kontrak sesi pencatatan tidak cocok')
+  })
+
+  it.each(['correction', 'reversal'] as const)('submits canonical %s with immutable retry identity', async (action) => {
+    const request = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      api_version: 'finance.v1',
+      data: {
+        transaction: {
+          id: '00000000-0000-4000-8000-000000000011',
+          version: 2,
+          status: action,
+        },
+        duplicate: false,
+      },
+    }), { status: 201, headers: { 'content-type': 'application/json' } }))
+    const mutation = createCanonicalTransactionMutation({
+      action,
+      transactionId: '00000000-0000-4000-8000-000000000010',
+      expectedVersion: 1,
+      reason: 'Bukti transaksi dikonfirmasi ulang',
+      ...(action === 'correction' ? { amount: 150_000 } : {}),
+    }, { request, keyFactory: () => 'canonical-mutation-key-0001' })
+    const session = {
+      csrfToken: 'csrf-owner-session-token-0001',
+      writesEnabled: true,
+      canonicalWritesEnabled: true,
+    }
+
+    await expect(mutation.submit(session)).resolves.toEqual({
+      transactionId: '00000000-0000-4000-8000-000000000011',
+      version: 2,
+      status: action,
+      duplicate: false,
+    })
+
+    const [endpoint, options] = request.mock.calls[0]
+    expect(endpoint).toBe(`/admin/api/transactions.php?action=${action}&transaction_id=00000000-0000-4000-8000-000000000010`)
+    expect(options?.headers).toEqual(expect.objectContaining({
+      'X-CSRF-Token': session.csrfToken,
+      'Idempotency-Key': 'canonical-mutation-key-0001',
+    }))
+    expect(JSON.parse(String(options?.body))).toEqual({
+      idempotency_key: 'canonical-mutation-key-0001',
+      expected_version: 1,
+      reason: 'Bukti transaksi dikonfirmasi ulang',
+      ...(action === 'correction' ? { amount: 150_000 } : {}),
+    })
+  })
+
+  it('blocks canonical lifecycle mutations when the server capability is false', async () => {
+    const mutation = createCanonicalTransactionMutation({
+      action: 'reversal',
+      transactionId: '00000000-0000-4000-8000-000000000010',
+      expectedVersion: 1,
+      reason: 'Transaksi duplikat',
+    })
+
+    await expect(mutation.submit({
+      csrfToken: 'csrf-owner-session-token-0001',
+      writesEnabled: true,
+      canonicalWritesEnabled: false,
+    })).rejects.toMatchObject({ code: 'canonical_finance_writes_disabled' })
   })
 })
 

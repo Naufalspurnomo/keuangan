@@ -97,6 +97,13 @@ export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWo
       wallet: row.wallet as WalletId,
       company: office ? null : uiCompany(row.company),
       project_id: project?.id ?? null,
+      canonical_transaction_id: typeof row.canonical_transaction_id === 'string'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(row.canonical_transaction_id)
+        ? row.canonical_transaction_id
+        : null,
+      transaction_version: Number.isSafeInteger(row.transaction_version) && Number(row.transaction_version) > 0
+        ? Number(row.transaction_version)
+        : null,
       office_category: office ? (row.office_category || 'Lainnya') as OfficeCategory : null,
       category: row.category ?? null,
       recorded_by: row.recorded_by ?? null,
