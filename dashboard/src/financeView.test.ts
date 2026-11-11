@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildReportModel, cashTrend, chartProjects, chartTransactions, chartWallets, defaultReportFilters, walletBalances } from './financeView'
+import { buildReportModel, cashTrend, chartProjects, chartTransactions, chartWallets, dateLabel, defaultReportFilters, walletBalances } from './financeView'
 import { seedFinanceWorkspace, workspaceTotals } from './financeWorkspace'
 
 describe('finance report model', () => {
+  it('renders an empty optional report date without a false validation error', () => {
+    expect(dateLabel('')).toBe('Belum dipilih')
+    expect(dateLabel('2026-11-11')).not.toBe('Tanggal tidak valid')
+    expect(dateLabel('not-a-date')).toBe('Tanggal tidak valid')
+  })
+
   it('uses one filtered model for preview and PDF with complete scope metadata', () => {
     const workspace = seedFinanceWorkspace()
     const filters = { ...defaultReportFilters(workspace), scope: 'office' as const, wallet: 'TX Bali' as const, direction: 'expense' as const }
