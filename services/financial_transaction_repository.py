@@ -170,6 +170,14 @@ class PostgresFinancialTransactionRepository:
         "status",
         "created_at",
     )
+    _RECORD_SELECT_SQL = """
+        SELECT id, scope, project_id, transaction_type, flow_class, amount,
+               currency, category, description, occurred_at, source,
+               source_reference, evidence, actor, revision_of_id,
+               reversal_of_id, version, status, created_at
+        FROM financial_transactions
+        WHERE id = %s
+    """
 
     def __init__(
         self,
@@ -326,10 +334,7 @@ class PostgresFinancialTransactionRepository:
             )
 
     def _read_record(self, cursor: Any, transaction_id: str) -> dict[str, Any]:
-        cursor.execute(
-            f"SELECT {', '.join(self._RECORD_COLUMNS)} FROM financial_transactions WHERE id = %s",
-            (transaction_id,),
-        )
+        cursor.execute(self._RECORD_SELECT_SQL, (transaction_id,))
         row = cursor.fetchone()
         if row is None:
             raise FinancialRepositoryNotFound("financial transaction not found")
