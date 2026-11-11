@@ -3,6 +3,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from tests.release_test_support import build_release
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / "artifacts" / "rumahweb-admin-release" / "admin"
@@ -11,7 +13,7 @@ RELEASE = ROOT / "artifacts" / "rumahweb-admin-release" / "admin"
 class RumahwebAdminReleaseTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        subprocess.run(["python3", "scripts/build_rumahweb_admin_release.py"], cwd=ROOT, check=True)
+        build_release(ROOT, "build_rumahweb_admin_release.py")
 
     def test_release_is_path_isolated(self) -> None:
         shell = (RELEASE / "app-shell.php").read_text(encoding="utf-8")

@@ -10,6 +10,8 @@ import time
 import unittest
 from pathlib import Path
 
+from tests.release_test_support import build_release
+
 import requests
 
 
@@ -21,7 +23,7 @@ SESSION_LIFETIME = 2_592_000
 class RumahwebAdminSessionIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        subprocess.run(["python3", "scripts/build_rumahweb_admin_release.py"], cwd=ROOT, check=True)
+        build_release(ROOT, "build_rumahweb_admin_release.py")
         cls.username = "session-proof"
         cls.password = "synthetic-proof-only"
         cls.password_hash = subprocess.check_output(
