@@ -13,6 +13,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -25,7 +26,16 @@ from urllib.parse import unquote, urlsplit
 
 
 ARCHIVE_KEY_CHILD_ENV = "HOLLAWALL_ARCHIVE_KEY"
-SCHEMA_VERSION = "hollawall.backup.v1"
+SCHEMA_VERSION = "hollawall.backup.v2"
+ROOT = Path(__file__).resolve().parents[1]
+MIGRATIONS_DIR = ROOT / "dashboard_api" / "migrations"
+POSTGRES_APPLICATION_TABLES = (
+    "financial_ledger",
+    "transaction_inbox",
+    "transaction_inbox_review_audit",
+    "projects",
+)
+LSN_PATTERN = re.compile(r"^[0-9A-F]+/[0-9A-F]+$")
 
 
 class BackupError(RuntimeError):
@@ -33,7 +43,7 @@ class BackupError(RuntimeError):
 
 
 class CommandRunner(Protocol):
-    def __call__(self, command: list[str], *, env: dict[str, str] | None = None) -> None: ...
+    def __call__(self, command: list[str], *, env: dict[str, str] | None = None) -> str | None: ...
 
 
 @dataclass(frozen=True)
@@ -47,6 +57,7 @@ class BackupConfig:
     rclone_config: Path | None = None
     rclone_destination: str | None = None
     pg_dump_command: str = "pg_dump"
+    psql_command: str = "psql"
     openssl_command: str = "openssl"
     rclone_command: str = "rclone"
 
@@ -84,7 +95,7 @@ def database_fingerprint(dsn: str) -> str:
     return fingerprint(database_identity(dsn))
 
 
-def _default_runner(command: list[str], *, env: dict[str, str] | None = None) -> None:
+def _default_runner(command: list[str], *, env: dict[str, str] | None = None) -> str:
     child_env = {
         key: os.environ[key]
         for key in ("PATH", "HOME", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR")
@@ -93,15 +104,16 @@ def _default_runner(command: list[str], *, env: dict[str, str] | None = None) ->
     if env:
         child_env.update(env)
     try:
-        subprocess.run(
+        completed = subprocess.run(
             command,
             check=True,
             env=child_env,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
+        return completed.stdout if completed is not None else ""
     except FileNotFoundError as error:
         raise BackupError(f"required command unavailable: {Path(command[0]).name}") from error
     except subprocess.CalledProcessError as error:
@@ -180,6 +192,119 @@ def refresh_component_manifest(manifest: MutableMapping[str, object], component:
     }
 
 
+def _rows_sha256(rows: list[str]) -> str:
+    digest = hashlib.sha256()
+    for row in rows:
+        digest.update(row.encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _query_rows(
+    runner: CommandRunner,
+    config: BackupConfig,
+    dsn: str,
+    marker: str,
+    sql: str,
+) -> list[str]:
+    output = runner(
+        [
+            config.psql_command,
+            "--no-psqlrc",
+            "--quiet",
+            "--tuples-only",
+            "--no-align",
+            "--set=ON_ERROR_STOP=1",
+            "--command",
+            f"/* hollawall-contract:{marker} */\n{sql}",
+        ],
+        env={"PGDATABASE": dsn},
+    )
+    if not isinstance(output, str):
+        raise BackupError("psql contract query returned no output")
+    return [line for line in output.splitlines() if line]
+
+
+def _migration_version() -> str:
+    migrations = sorted(MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql"))
+    if not migrations:
+        raise BackupError("database migration version is unavailable")
+    return migrations[-1].stem
+
+
+def _postgres_contract(
+    runner: CommandRunner,
+    config: BackupConfig,
+    dsn: str,
+) -> dict[str, object]:
+    metadata_rows = _query_rows(
+        runner,
+        config,
+        dsn,
+        "metadata",
+        """
+        SELECT jsonb_build_object(
+            'lsn', pg_current_wal_lsn()::text,
+            'cutoff', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+            'schema', current_schema()
+        )::text
+        """,
+    )
+    if len(metadata_rows) != 1:
+        raise BackupError("PostgreSQL cutoff metadata is invalid")
+    try:
+        metadata = json.loads(metadata_rows[0])
+    except json.JSONDecodeError as error:
+        raise BackupError("PostgreSQL cutoff metadata is invalid") from error
+    if (
+        not isinstance(metadata, dict)
+        or not isinstance(metadata.get("lsn"), str)
+        or not LSN_PATTERN.fullmatch(metadata["lsn"])
+        or not isinstance(metadata.get("cutoff"), str)
+        or not metadata["cutoff"].endswith("Z")
+        or metadata.get("schema") != "public"
+    ):
+        raise BackupError("PostgreSQL cutoff metadata is invalid")
+
+    schema_rows = _query_rows(
+        runner,
+        config,
+        dsn,
+        "schema",
+        """
+        SELECT jsonb_build_object(
+            'table_name', table_name,
+            'column_name', column_name,
+            'data_type', data_type
+        )::text
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+        ORDER BY table_name, ordinal_position
+        """,
+    )
+    if not schema_rows:
+        raise BackupError("PostgreSQL public schema inventory is empty")
+
+    application: dict[str, dict[str, object]] = {}
+    for table in POSTGRES_APPLICATION_TABLES:
+        rows = _query_rows(
+            runner,
+            config,
+            dsn,
+            table,
+            f"SELECT to_jsonb(row_data)::text FROM public.{table} AS row_data "
+            "ORDER BY to_jsonb(row_data)::text",
+        )
+        application[table] = {"total": len(rows), "sha256": _rows_sha256(rows)}
+    return {
+        "lsn": metadata["lsn"],
+        "cutoff": metadata["cutoff"],
+        "schema": {"name": "public", "sha256": _rows_sha256(schema_rows)},
+        "migration_version": _migration_version(),
+        "application": application,
+    }
+
+
 def _source_record(kind: str, source_identity: str) -> dict[str, str]:
     return {
         "kind": kind,
@@ -188,7 +313,13 @@ def _source_record(kind: str, source_identity: str) -> dict[str, str]:
     }
 
 
-def _build_manifest(staging: Path, config: BackupConfig, dsn: str, created_at: str) -> dict[str, object]:
+def _build_manifest(
+    staging: Path,
+    config: BackupConfig,
+    dsn: str,
+    created_at: str,
+    postgres_contract: Mapping[str, object],
+) -> dict[str, object]:
     manifest: dict[str, object] = {
         "schema": SCHEMA_VERSION,
         "created_at": created_at,
@@ -203,6 +334,7 @@ def _build_manifest(staging: Path, config: BackupConfig, dsn: str, created_at: s
             "presensi": _source_record("presensi-private-tree", str(config.presensi_source.expanduser().resolve())),
         },
         "components": {},
+        "postgresql": dict(postgres_contract),
     }
     for component in ("postgres", "sheets", "presensi"):
         refresh_component_manifest(manifest, component, staging / component)
@@ -371,12 +503,14 @@ def run_backup(
         staging = work / "payload"
         (staging / "postgres").mkdir(parents=True)
         dump_path = staging / "postgres" / "database.dump"
+        postgres_contract = _postgres_contract(selected_runner, config, dsn)
         selected_runner(
             [
                 config.pg_dump_command,
                 "--format=custom",
                 "--no-owner",
                 "--no-privileges",
+                "--serializable-deferrable",
                 "--file",
                 str(dump_path),
             ],
@@ -387,7 +521,7 @@ def run_backup(
 
         _copy_tree(sheets, staging / "sheets", "Sheets")
         _copy_presensi_locked(presensi, staging / "presensi")
-        manifest = _build_manifest(staging, config, dsn, created_at)
+        manifest = _build_manifest(staging, config, dsn, created_at, postgres_contract)
         (staging / "manifest.json").write_text(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
             encoding="utf-8",
@@ -469,6 +603,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rclone-config", type=Path)
     parser.add_argument("--rclone-destination")
     parser.add_argument("--pg-dump-command", default="pg_dump")
+    parser.add_argument("--psql-command", default="psql")
     parser.add_argument("--openssl-command", default="openssl")
     parser.add_argument("--rclone-command", default="rclone")
     parser.add_argument("--apply", action="store_true", help="execute backup mutations")
@@ -487,6 +622,7 @@ def main() -> None:
         rclone_config=args.rclone_config,
         rclone_destination=args.rclone_destination,
         pg_dump_command=args.pg_dump_command,
+        psql_command=args.psql_command,
         openssl_command=args.openssl_command,
         rclone_command=args.rclone_command,
     )

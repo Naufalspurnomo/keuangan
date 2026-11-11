@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import shutil
 import sys
 import tarfile
@@ -16,6 +17,25 @@ FIXED_NOW = datetime(2026, 11, 9, 1, 15, 30, tzinfo=UTC)
 SOURCE_DSN = "postgresql://owner:database-secret@db.internal:5432/hollawall?sslmode=require"
 DISPOSABLE_DSN = "postgresql://tester:other-secret@127.0.0.1:55432/hollawall_restore"
 ARCHIVE_SECRET = "owner-scoped-archive-secret"
+
+
+CONTRACT_ROWS = {
+    "financial_ledger": [
+        '{"amount":"1000.00","id":1}',
+        '{"amount":"2500.00","id":2}',
+    ],
+    "transaction_inbox": ['{"event_key":"evt-1","status":"processed"}'],
+    "transaction_inbox_review_audit": ['{"action":"approve","id":1}'],
+    "projects": ['{"id":"project-1","name":"Alpha"}'],
+}
+
+
+def rows_sha256(rows: list[str]) -> str:
+    digest = hashlib.sha256()
+    for row in rows:
+        digest.update(row.encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
 
 
 def jpeg_bytes() -> bytes:
@@ -45,6 +65,23 @@ class FakeTools:
             output = Path(command[command.index("--file") + 1])
             output.write_bytes(b"PGDMP\x01fake-custom-format")
             return
+        if tool == "psql":
+            sql = command[command.index("--command") + 1]
+            if "hollawall-contract:metadata" in sql:
+                return json.dumps({
+                    "lsn": "0/16B6C50",
+                    "cutoff": "2026-11-09T01:15:29Z",
+                    "schema": "public",
+                }) + "\n"
+            if "hollawall-contract:schema" in sql:
+                return "\n".join([
+                    '{"column_name":"id","data_type":"bigint","table_name":"financial_ledger"}',
+                    '{"column_name":"event_key","data_type":"text","table_name":"transaction_inbox"}',
+                ]) + "\n"
+            for table, rows in CONTRACT_ROWS.items():
+                if f"hollawall-contract:{table} */" in sql:
+                    return "\n".join(rows) + "\n"
+            raise AssertionError(f"unexpected contract query: {sql}")
         if tool == "openssl":
             source = Path(command[command.index("-in") + 1])
             destination = Path(command[command.index("-out") + 1])
@@ -183,6 +220,37 @@ def test_apply_builds_custom_dump_redacted_manifest_and_verified_archive(tmp_pat
     assert all(ARCHIVE_SECRET not in " ".join(command) for command, _env in tools.calls)
 
 
+def test_backup_manifest_records_cutoff_schema_migration_and_application_hashes(tmp_path: Path) -> None:
+    sheets, presensi = source_tree(tmp_path)
+    tools = FakeTools()
+
+    result = hollawall_backup.run_backup(
+        backup_config(tmp_path, sheets, presensi),
+        apply=True,
+        runner=tools,
+        environ=backup_env(),
+        now=lambda: FIXED_NOW,
+    )
+
+    contract = archive_manifest(Path(result["archive"]))["postgresql"]
+    assert contract["lsn"] == "0/16B6C50"
+    assert contract["cutoff"] == "2026-11-09T01:15:29Z"
+    assert contract["schema"] == {
+        "name": "public",
+        "sha256": rows_sha256([
+            '{"column_name":"id","data_type":"bigint","table_name":"financial_ledger"}',
+            '{"column_name":"event_key","data_type":"text","table_name":"transaction_inbox"}',
+        ]),
+    }
+    assert contract["migration_version"] == "008_project_quotation_handoffs"
+    assert contract["application"] == {
+        table: {"total": len(rows), "sha256": rows_sha256(rows)}
+        for table, rows in CONTRACT_ROWS.items()
+    }
+    dump_call = next(command for command, _env in tools.calls if Path(command[0]).name == "pg_dump")
+    assert "--serializable-deferrable" in dump_call
+
+
 def test_optional_rclone_upload_uses_explicit_config_and_downloaded_byte_readback(tmp_path: Path) -> None:
     sheets, presensi = source_tree(tmp_path)
     rclone_config = tmp_path / "rclone.conf"
@@ -308,6 +376,9 @@ def test_restore_verifies_manifest_sheets_presensi_and_disposable_pg_restore(tmp
     assert result["sheets_files_verified"] == 2
     assert result["presensi_events_verified"] == 1
     assert result["presensi_photos_verified"] == 1
+    assert result["backup_cutoff_verified"] is True
+    assert result["application_totals_verified"] == sum(len(rows) for rows in CONTRACT_ROWS.values())
+    assert result["application_hashes_verified"] == len(CONTRACT_ROWS)
     restore_calls = [(command, child_env) for command, child_env in tools.calls if Path(command[0]).name == "pg_restore"]
     assert len(restore_calls) == 2
     assert "--list" in restore_calls[0][0]
@@ -316,6 +387,62 @@ def test_restore_verifies_manifest_sheets_presensi_and_disposable_pg_restore(tmp
     assert "--dbname=" in restore_calls[1][0]
     assert restore_calls[1][1]["PGDATABASE"] == DISPOSABLE_DSN
     assert DISPOSABLE_DSN not in " ".join(restore_calls[1][0])
+
+
+def rewrite_archive_manifest(archive: Path, tmp_path: Path, mutate) -> None:
+    unpacked = tmp_path / "manifest-rewrite"
+    unpacked.mkdir()
+    with tarfile.open(archive, "r:") as source:
+        source.extractall(unpacked, filter="data")
+    manifest_path = unpacked / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    mutate(manifest)
+    manifest_path.write_text(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    with tarfile.open(archive, "w") as destination:
+        for path in sorted(unpacked.rglob("*")):
+            if path.is_file():
+                destination.add(path, arcname=path.relative_to(unpacked).as_posix())
+
+
+def test_restore_rejects_missing_postgresql_cutoff_before_pg_restore(tmp_path: Path) -> None:
+    tools = FakeTools()
+    archive = make_archive(tmp_path, tools)
+    tools.calls.clear()
+    rewrite_archive_manifest(archive, tmp_path, lambda manifest: manifest["postgresql"].pop("cutoff"))
+
+    with pytest.raises(hollawall_restore_verify.RestoreVerificationError, match="cutoff"):
+        hollawall_restore_verify.run_restore_verification(
+            restore_config(archive),
+            verify=True,
+            runner=tools,
+            environ={"TEST_ARCHIVE_KEY": ARCHIVE_SECRET, "TEST_DISPOSABLE_DSN": DISPOSABLE_DSN},
+        )
+
+    assert not any(Path(command[0]).name == "pg_restore" for command, _env in tools.calls)
+
+
+def test_restore_rejects_application_hash_mismatch_after_restore(tmp_path: Path) -> None:
+    tools = FakeTools()
+    archive = make_archive(tmp_path, tools)
+    tools.calls.clear()
+
+    def corrupt_hash(manifest) -> None:
+        manifest["postgresql"]["application"]["financial_ledger"]["sha256"] = "0" * 64
+
+    rewrite_archive_manifest(archive, tmp_path, corrupt_hash)
+
+    with pytest.raises(hollawall_restore_verify.RestoreVerificationError, match="application totals/hashes"):
+        hollawall_restore_verify.run_restore_verification(
+            restore_config(archive),
+            verify=True,
+            runner=tools,
+            environ={"TEST_ARCHIVE_KEY": ARCHIVE_SECRET, "TEST_DISPOSABLE_DSN": DISPOSABLE_DSN},
+        )
+
+    assert any(Path(command[0]).name == "pg_restore" for command, _env in tools.calls)
 
 
 def test_restore_rejects_presensi_photo_event_non_bijection_before_pg_restore(tmp_path: Path) -> None:
