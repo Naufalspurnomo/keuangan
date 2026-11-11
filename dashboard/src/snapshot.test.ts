@@ -62,6 +62,18 @@ describe('snapshotFinanceWorkspace', () => {
     })
   })
 
+  it('keeps office spending outside every project business unit', () => {
+    const source = snapshot('HOLLA')
+    source.transactions[0] = {
+      ...source.transactions[0],
+      scope: 'office', project: 'Operasional', company: 'HOLLA', office_category: 'ListrikAir',
+    }
+    source.project_summaries = []
+
+    const transaction = snapshotFinanceWorkspace(source).transactions[0]
+    expect(transaction).toMatchObject({ scope: 'office', company: null, project_id: null, wallet: 'CV HB(101)' })
+  })
+
   it('keeps the canonical project UUID for project routes and transaction relations after reload', () => {
     const source = snapshot('HOLLA')
     const projectId = '00000000-0000-4000-8000-000000000001'
@@ -72,5 +84,13 @@ describe('snapshotFinanceWorkspace', () => {
 
     expect(workspace.projects[0].id).toBe(projectId)
     expect(workspace.transactions[0].project_id).toBe(projectId)
+  })
+
+  it('normalizes unambiguous historical wallet labels without creating duplicate units', () => {
+    const source = snapshot('TX SBY')
+    source.transactions[0].wallet = 'TX SBY'
+    const project = snapshotFinanceWorkspace(source).projects[0]
+
+    expect(project.write_mapping).toEqual({ wallet: 'TX SBY(216)', company: 'TEXTURIN-Surabaya', project: 'Surabaya Office' })
   })
 })

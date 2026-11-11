@@ -10,6 +10,7 @@ from dashboard_api.write_contracts import (
     TransactionValidationError,
     validate_transaction_request,
 )
+from config.wallets import normalize_wallet_company_pair
 
 TODAY = date(2026, 10, 2)
 
@@ -187,14 +188,19 @@ def test_office_scope_only_allows_expenses_and_omits_project():
         ("CV HB(101)", "HOJJA"),
         ("TX SBY(216)", "TEXTURIN-Surabaya"),
         ("TX BALI(087)", "TEXTURIN-Bali"),
-        ("CV HB(101)", "CV HB"),
-        ("TX SBY(216)", "TX SBY"),
-        ("TX BALI(087)", "TX BALI"),
     ],
 )
-def test_accepts_existing_runtime_wallet_company_pairs(wallet, company):
+def test_accepts_only_canonical_business_unit_wallet_pairs(wallet, company):
     result = validate(valid_payload(wallet=wallet, company=company))
     assert (result.wallet, result.company) == (wallet, company)
+
+
+def test_normalizes_only_unambiguous_historical_bindings_for_read_compatibility():
+    assert normalize_wallet_company_pair("TX SBY", "TX SBY") == (
+        "TX SBY(216)", "TEXTURIN-Surabaya"
+    )
+    assert normalize_wallet_company_pair("CV HB", "Holla") == ("CV HB(101)", "HOLLA")
+    assert normalize_wallet_company_pair("CV HB", "CV HB") is None
 
 
 @pytest.mark.parametrize(
@@ -204,6 +210,9 @@ def test_accepts_existing_runtime_wallet_company_pairs(wallet, company):
         ("CV HB(101)", "TEXTURIN-Bali"),
         ("BCA", "GEP"),
         ("CV HB", "HOLLA"),
+        ("CV HB(101)", "CV HB"),
+        ("TX SBY(216)", "TX SBY"),
+        ("TX BALI(087)", "TX BALI"),
     ],
 )
 def test_rejects_unknown_or_mismatched_wallet_company_pairs(wallet, company):

@@ -117,6 +117,9 @@ describe('Hollawall demo finance workspace', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Tambah proyek' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(screen.getAllByText('Proyek Integrasi').length).toBeGreaterThan(0)
+    expect(window.location.hash).toMatch(/^#projects\?project=prj-/)
+    expect(screen.getAllByRole('button', { name: 'Tambah transaksi' })).toHaveLength(1)
+    expect(JSON.parse(localStorage.getItem('hollawall-finance-demo-v3')!).projects.at(-1).status).toBe('active')
 
     first.unmount()
     renderApp()

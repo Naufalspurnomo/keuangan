@@ -21,6 +21,12 @@ export const COMPANY_WALLET: Record<CompanyId, WalletId> = {
   'Texturin Bali': 'TX Bali',
 }
 
+export const WALLET_COMPANIES: Record<WalletId, readonly CompanyId[]> = {
+  'CV HB': ['Holla', 'Hojja'],
+  'TX SBY': ['Texturin Surabaya'],
+  'TX Bali': ['Texturin Bali'],
+}
+
 export interface FinanceProject {
   id: string
   name: string

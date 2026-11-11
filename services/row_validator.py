@@ -22,7 +22,7 @@ from datetime import datetime
 import re
 from typing import Any, Dict, List, Optional
 
-from config.wallets import DOMPET_COMPANIES, DOMPET_SHEETS
+from config.wallets import DOMPET_COMPANIES, DOMPET_SHEETS, LEGACY_COMPANY_ALIASES
 
 VALID_TIPE = {"Pemasukan", "Pengeluaran"}
 
@@ -34,6 +34,7 @@ _KNOWN_COMPANY_NAMES = {
     for names in DOMPET_COMPANIES.values()
     for name in names
 }
+_KNOWN_COMPANY_NAMES.update(LEGACY_COMPANY_ALIASES)
 _KNOWN_SHEET_NAMES = {s.strip().lower() for s in DOMPET_SHEETS}
 _OPERATIONAL_LABELS = {"operasional kantor", "operasional", "operational"}
 

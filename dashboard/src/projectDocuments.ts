@@ -1,3 +1,5 @@
+import { isCanonicalWalletCompanyPair } from './transactionMappings'
+
 export const PROJECT_STATUSES = ['planned', 'active', 'completed', 'cancelled'] as const
 export const DOCUMENT_TYPES = ['sales_order', 'invoice', 'receipt'] as const
 export const DOCUMENT_STATUSES = ['draft', 'issued', 'void', 'superseded'] as const
@@ -193,7 +195,7 @@ export function createEmptyProjectDraft(today: string): ProjectDraft {
     issuer_key: '',
     wallet: '',
     company: '',
-    status: 'planned',
+    status: 'active',
     started_on: today,
     completed_on: null,
     contract_notes: '',
@@ -265,6 +267,7 @@ export function validateProjectDraft(input: ProjectDraft): ProjectDraft {
   if (!issuerKey) throw new ProjectDocumentValidationError('Profil penerbit wajib dipilih.')
   if (!wallet) throw new ProjectDocumentValidationError('Dompet transaksi wajib dipilih.')
   if (!company) throw new ProjectDocumentValidationError('Perusahaan transaksi wajib dipilih.')
+  if (!isCanonicalWalletCompanyPair(wallet, company)) throw new ProjectDocumentValidationError('Unit usaha tidak sesuai dengan dompet pencatatan.')
   if (!PROJECT_STATUSES.includes(input.status)) throw new ProjectDocumentValidationError('Status proyek tidak valid.')
   const startedOn = validDate(input.started_on, 'Tanggal mulai')!
   const completedOn = validDate(input.completed_on ?? '', 'Tanggal selesai', true)

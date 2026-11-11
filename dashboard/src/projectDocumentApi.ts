@@ -12,6 +12,7 @@ import {
   type ReceiptAllocation,
   type ReceiptOptions,
 } from './projectDocuments'
+import { normalizeCanonicalPair } from './transactionMappings'
 
 export const PROJECTS_ENDPOINT = '/admin/api/projects.php'
 export const DOCUMENTS_ENDPOINT = '/admin/api/documents.php'
@@ -185,6 +186,7 @@ function normalizeProject(value: unknown): ProjectRecord {
       || typeof item.lock_version !== 'number') {
     throw new ProjectDocumentApiError('Data proyek dari server tidak lengkap.', { code: 'invalid_project' })
   }
+  const binding = normalizeCanonicalPair(text(item.wallet), text(item.company))
   return {
     id: item.id,
     name: item.name,
@@ -197,8 +199,8 @@ function normalizeProject(value: unknown): ProjectRecord {
     started_on: text(item.start_date || item.started_on),
     completed_on: nullableText(item.completion_date ?? item.completed_on),
     contract_notes: text(item.contract_notes),
-    wallet: text(item.wallet),
-    company: text(item.company),
+    wallet: binding?.wallet ?? text(item.wallet),
+    company: binding?.company ?? text(item.company),
     lock_version: item.lock_version,
     archived_at: nullableText(item.archived_at),
     created_at: text(item.created_at),

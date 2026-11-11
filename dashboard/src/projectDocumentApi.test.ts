@@ -30,7 +30,7 @@ const project = {
   client_address: '',
   client_contact: '',
   issuer_key: 'cv-holla-berkreasi',
-  status: 'planned' as const,
+  status: 'active' as const,
   started_on: '2026-11-03',
   completed_on: null,
   contract_notes: '',
@@ -216,11 +216,11 @@ describe('project/document API', () => {
     })
     const api = createProjectDocumentApi({ request, keyFactory: () => 'idem-key-1234567890' })
     await api.createProject({
-      id: null, name: 'Lobby Marvell', wallet: 'CV HB(101)', company: 'HOLLA', client_name: 'PT Marvell', client_company: '', client_address: '', client_contact: '', issuer_key: 'cv-holla-berkreasi', status: 'planned', started_on: '2026-11-03', completed_on: null, contract_notes: '',
+      id: null, name: 'Lobby Marvell', wallet: 'CV HB(101)', company: 'HOLLA', client_name: 'PT Marvell', client_company: '', client_address: '', client_contact: '', issuer_key: 'cv-holla-berkreasi', status: 'active', started_on: '2026-11-03', completed_on: null, contract_notes: '',
     }).submit(session)
     expect(request.mock.calls[0][0]).toBe('/admin/api/projects.php')
     expect(JSON.parse(String(request.mock.calls[0][1]?.body))).toEqual({
-      action: 'create', idempotency_key: 'idem-key-1234567890', values: expect.objectContaining({ name: 'Lobby Marvell', wallet: 'CV HB(101)', company: 'HOLLA', start_date: '2026-11-03' }),
+      action: 'create', idempotency_key: 'idem-key-1234567890', values: expect.objectContaining({ name: 'Lobby Marvell', wallet: 'CV HB(101)', company: 'HOLLA', status: 'active', start_date: '2026-11-03' }),
     })
     expect(request.mock.calls[0][1]?.headers).toMatchObject({ 'If-Match': '*', 'Idempotency-Key': 'idem-key-1234567890' })
 

@@ -1,6 +1,6 @@
 import type { DashboardMeta, Overview, QualityRow, Transaction } from './types'
 import type { CompanyId, FinanceWorkspace, OfficeCategory, WalletId } from './financeWorkspace'
-import { isCanonicalWalletCompanyPair } from './transactionMappings'
+import { normalizeCanonicalPair } from './transactionMappings'
 
 export interface WalletSnapshot { source_key: string; name: string; balance: number }
 export interface DebtSnapshot { source_key: string; date: string | null; amount: number; notes: string; borrower: string; lender: string; status: string }
@@ -56,8 +56,9 @@ export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWo
     const first = matching[0]
     const mappings = new Map(
       matching
-        .filter((row) => isCanonicalWalletCompanyPair(row.wallet, row.company))
-        .map((row) => [`${row.wallet}\u0000${row.company}`, { wallet: row.wallet, company: row.company, project: project.name }]),
+        .map((row) => normalizeCanonicalPair(row.wallet, row.company))
+        .filter((pair) => pair !== undefined)
+        .map((pair) => [`${pair.wallet}\u0000${pair.company}`, { wallet: pair.wallet, company: pair.company, project: project.name }]),
     )
     const writeMapping = mappings.size === 1 ? [...mappings.values()][0] : undefined
     const startedOn = project.started_on || project.first_activity_on || matching.map((row) => row.transaction_date).sort()[0]
@@ -89,7 +90,7 @@ export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWo
       amount: row.amount,
       scope: office ? 'office' as const : 'project' as const,
       wallet: row.wallet as WalletId,
-      company: uiCompany(row.company),
+      company: office ? null : uiCompany(row.company),
       project_id: project?.id ?? null,
       office_category: office ? (row.office_category || 'Lainnya') as OfficeCategory : null,
       category: row.category ?? null,

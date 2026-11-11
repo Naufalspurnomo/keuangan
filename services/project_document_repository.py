@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from config.wallets import is_canonical_wallet_company_pair
+from config.wallets import is_canonical_wallet_company_pair, normalize_wallet_company_pair
 from services.project_document_models import (
     MAX_DOCUMENT_LINES,
     MAX_RECEIPT_ALLOCATIONS,
@@ -1024,7 +1024,7 @@ class ProjectDocumentRepository:
             )
         if not is_canonical_wallet_company_pair(wallet, company):
             raise ValueError("wallet and company pair is unsupported")
-        status = str(command.get("status") or "planned")
+        status = str(command.get("status") or "active")
         if status not in PROJECT_STATUSES:
             raise ValueError("unsupported project status")
         actor_json, _ = _actor(actor)
@@ -1949,7 +1949,11 @@ class ProjectDocumentRepository:
                         raise ProjectDocumentNotFound("project not found")
                     next_wallet = str(supplied.get("wallet", current_project[1]))
                     next_company = str(supplied.get("company", current_project[2]))
-                    if not is_canonical_wallet_company_pair(next_wallet, next_company):
+                    binding_changed = "wallet" in supplied or "company" in supplied
+                    binding_valid = is_canonical_wallet_company_pair(next_wallet, next_company) if binding_changed else bool(
+                        normalize_wallet_company_pair(next_wallet, next_company)
+                    )
+                    if not binding_valid:
                         raise ValueError("wallet and company pair is unsupported")
                     if (
                         "issuer_key" in supplied

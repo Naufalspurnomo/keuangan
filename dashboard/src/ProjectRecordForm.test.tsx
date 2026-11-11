@@ -14,8 +14,9 @@ describe('ProjectRecordForm', () => {
     expect(screen.getByLabelText('Profil penerbit')).toHaveValue('hollawall')
     expect(screen.getByLabelText('Dompet pencatatan')).toHaveValue('CV HB(101)')
     expect(screen.getByLabelText('Unit usaha')).toHaveValue('HOLLA')
-    expect(screen.getByText('Sheet/dompet tempat transaksi proyek dicatat.')).toBeTruthy()
-    expect(screen.getByText('Perusahaan atau brand pemilik transaksi di dompet tersebut.')).toBeTruthy()
+    expect(screen.getByLabelText('Status proyek')).toHaveValue('Aktif setelah dibuat')
+    expect(screen.getByText('Dompet sumber seluruh transaksi proyek ini.')).toBeTruthy()
+    expect(screen.getByText('Hanya unit usaha yang berada di dompet terpilih.')).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('Nama proyek'), { target: { value: 'Proyek produksi' } })
     fireEvent.change(screen.getByLabelText('Nama klien'), { target: { value: 'Klien produksi' } })
@@ -25,6 +26,7 @@ describe('ProjectRecordForm', () => {
       issuer_key: 'hollawall',
       wallet: 'CV HB(101)',
       company: 'HOLLA',
+      status: 'active',
     })))
   })
 
@@ -50,5 +52,14 @@ describe('ProjectRecordForm', () => {
     expect(screen.getByLabelText('Unit usaha')).toHaveValue('TEXTURIN-Surabaya')
     expect(screen.getByRole('option', { name: 'TEXTURIN-Surabaya' })).toBeTruthy()
     expect(screen.queryByRole('option', { name: 'HOLLA' })).toBeNull()
+    expect(screen.queryByRole('option', { name: 'TX SBY' })).toBeNull()
+    expect(screen.getByLabelText('Unit usaha').querySelectorAll('option')).toHaveLength(1)
+  })
+
+  it('offers exactly HOLLA and HOJJA for wallet 101', () => {
+    render(<ProjectRecordForm onSave={vi.fn()} onClose={vi.fn()} />)
+    const units = screen.getByLabelText('Unit usaha')
+    expect([...units.querySelectorAll('option')].map((option) => option.textContent)).toEqual(['HOLLA', 'HOJJA'])
+    expect(screen.queryByRole('option', { name: 'CV HB' })).toBeNull()
   })
 })

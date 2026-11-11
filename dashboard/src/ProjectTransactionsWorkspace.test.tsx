@@ -41,7 +41,7 @@ describe('ProjectTransactionsWorkspace', () => {
 
   it('searches within the project and forwards project and row actions', () => {
     const workspace = seedFinanceWorkspace()
-    const project = workspace.projects.find((item) => workspace.transactions.filter((row) => row.project_id === item.id).length > 1)!
+    const project = workspace.projects.find((item) => item.status === 'active' && workspace.transactions.filter((row) => row.project_id === item.id).length > 1)!
     const rows = workspace.transactions.filter((row) => row.project_id === project.id)
     const onAdd = vi.fn()
     const onEdit = vi.fn()
@@ -86,6 +86,7 @@ describe('ProjectTransactionsWorkspace', () => {
     render(<ProjectTransactionsWorkspace workspace={workspace} project={project} onBack={vi.fn()} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onComplete={vi.fn()} onReactivate={onReactivate} />)
 
     expect(within(screen.getByRole('region', { name: 'Status proyek' })).getByText('Selesai')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Tambah transaksi' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Aktifkan kembali' }))
     expect(onReactivate).toHaveBeenCalledWith(project)
     expect(screen.queryByRole('button', { name: 'Selesaikan proyek' })).toBeNull()

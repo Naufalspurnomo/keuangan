@@ -121,6 +121,7 @@ def normalize_row(row: Dict[str, Any]) -> Dict[str, Any]:
     source_block = _clean(row.get("source_block"), 40).lower() or "ledger"
     amount = _parse_amount(row.get("jumlah", row.get("amount", 0)))
     transaction_type = _clean(row.get("tipe"), 24) or "Pengeluaran"
+    office = source_block == "operasional"
     payload = _canonical_payload(row)
     normalized = {
         "source_key": build_source_key(row),
@@ -131,7 +132,7 @@ def normalize_row(row: Dict[str, Any]) -> Dict[str, Any]:
         "transaction_date": _parse_date(row.get("tanggal")),
         "amount": amount if amount > 0 else None,
         "transaction_type": transaction_type,
-        "company": _clean(row.get("company") or row.get("company_sheet"), 160) or None,
+        "company": _clean(row.get("company_sheet") if office else row.get("company") or row.get("company_sheet"), 160) or None,
         "wallet": _clean(row.get("dompet_sheet") or source_sheet, 160) or None,
         "project": _clean(row.get("nama_projek"), 160) or None,
         "project_id": _project_id(row.get("project_id")),

@@ -68,6 +68,11 @@ class RowValidatorTests(unittest.TestCase):
         row = _good_row(company_sheet="", dompet="", sheet_name="CV HB(101)")
         self.assertEqual(validate_row(row), [])
 
+    def test_historical_wallet_labels_remain_readable_as_company_aliases(self):
+        for alias in ("CV HB", "TX SBY", "TX BALI"):
+            with self.subTest(alias=alias):
+                self.assertEqual(validate_row(_good_row(company_sheet=alias)), [])
+
     def test_non_dict_row_flagged(self):
         issues = validate_row(["not", "a", "dict"], index=3)
         self.assertEqual(len(issues), 1)

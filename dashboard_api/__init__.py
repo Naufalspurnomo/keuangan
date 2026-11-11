@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 from flask import Flask
 
+from config.wallets import normalize_wallet_company_pair
 from dashboard_api.repository import DashboardRepository
 
 
@@ -78,13 +79,21 @@ def register_dashboard(
             receipt_authority_reader=GoogleSheetsTransactionAdapter.read_receipt_authority,
         )
 
-    def project_uuid_exists(project_id: str, _wallet: str, _company: str) -> bool:
+    def project_uuid_exists(project_id: str, wallet: str, company: str) -> bool:
         if selected_project_documents is None:
             raise ProjectDocumentUnavailable(
                 "authoritative project repository is not configured"
             )
         project = selected_project_documents.get_project(project_id)
-        return isinstance(project, dict) and project.get("status") == "active"
+        binding = normalize_wallet_company_pair(
+            project.get("wallet", "") if isinstance(project, dict) else "",
+            project.get("company", "") if isinstance(project, dict) else "",
+        )
+        return (
+            isinstance(project, dict)
+            and project.get("status") == "active"
+            and binding == (wallet, company)
+        )
 
     def project_uuid_name(project_id: str) -> str | None:
         if selected_project_documents is None:

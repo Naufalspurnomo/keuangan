@@ -308,9 +308,13 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
   const closeMenu = () => { setMenuOpen(false); if (mobile) window.requestAnimationFrame(() => menuButtonRef.current?.focus()) }
   const commit = (action: () => void, success: string) => { if (readOnly) throw new Error('Data ini hanya dapat dilihat.'); action(); setNotice(success) }
   const safe = (action: () => void, success: string) => { try { commit(action, success) } catch (error) { setNotice(error instanceof Error ? error.message : 'Tindakan belum dapat diproses.') } }
-  const saveProject = (input: ProjectInput) => modal?.kind === 'project' && modal.value
-    ? commit(() => finance.editProject(modal.value!.id, input), 'Proyek diperbarui.')
-    : commit(() => finance.addProject(input), 'Proyek ditambahkan.')
+  const saveProject = (input: ProjectInput) => {
+    if (modal?.kind === 'project' && modal.value) return commit(() => finance.editProject(modal.value!.id, input), 'Proyek diperbarui.')
+    if (readOnly) throw new Error('Data ini hanya dapat dilihat.')
+    const created = finance.addProject(input)
+    setNotice('Proyek aktif dibuat. Lanjutkan dengan mencatat transaksi proyek.')
+    pushRoute('projects', created.id)
+  }
   const completeProject = (input: ProjectInput) => modal?.kind === 'complete-project'
     && commit(() => finance.editProject(modal.value.id, input), 'Proyek diselesaikan.')
   const completeProjectNow = (project: FinanceProject) => {
@@ -345,7 +349,8 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
     if (!projectApi) return
     setProjectBusy(true)
     try {
-      const command = projectModal === 'create'
+      const creating = projectModal === 'create'
+      const command = creating
         ? projectApi.createProject(draft)
         : projectApi.updateProject(projectModal!.id, draft, projectModal!.lock_version)
       const saved = await command.submit(projectSession)
@@ -354,7 +359,8 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
         ? projects.map((project) => project.id === current.id ? current : project)
         : [current, ...projects])
       setProjectModal(null)
-      setNotice('Proyek disimpan dan ditampilkan kembali.')
+      if (creating) setProjectDetailRoute({ projectId: current.id, tab: 'transactions' })
+      setNotice(creating ? 'Proyek aktif dibuat. Lanjutkan dengan mencatat transaksi proyek.' : 'Proyek diperbarui.')
     } finally { setProjectBusy(false) }
   }
   const changeProductionProjectStatus = async (status: ProductionProjectStatus) => {
@@ -378,14 +384,16 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
     } finally { setProjectBusy(false) }
   }
   const addAction = active === 'projects'
-    ? selectedProject
-      ? { label: 'Tambah transaksi', run: () => setModal({ kind: 'transaction', projectId: selectedProject.id } as Modal) }
-      : { label: 'Tambah proyek', run: () => setModal({ kind: 'project' } as Modal) }
+    ? { label: 'Tambah proyek', run: () => setModal({ kind: 'project' } as Modal) }
     : active === 'office'
       ? { label: 'Biaya kantor', run: () => setModal({ kind: 'transaction', scope: 'office' } as Modal) }
       : active === 'debts'
         ? { label: 'Tambah hutang', run: () => setModal({ kind: 'debt' } as Modal) }
-        : { label: 'Tambah transaksi', run: () => setModal({ kind: 'transaction' } as Modal) }
+        : null
+  const inProjectDetail = active === 'projects' && Boolean(selectedProject || productionProject)
+  const showTopbarAdd = Boolean(addAction) && !inProjectDetail
+    && ((!readOnly && ['projects', 'office', 'debts'].includes(active))
+      || (canCreateTransactions && active === 'office'))
 
   const productionTransactions = productionProject && projectApi
     ? <ProjectProfitabilityWorkspace
@@ -397,7 +405,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
       />
     : null
   const content = active === 'overview'
-    ? <OverviewWorkspace workspace={finance.workspace} readOnly={readOnly} canCreateTransactions={canCreateTransactions} onAddTransaction={() => setModal({ kind: 'transaction' })} onAddProject={() => setModal({ kind: 'project' })} onAddOffice={() => setModal({ kind: 'transaction', scope: 'office' })} />
+    ? <OverviewWorkspace workspace={finance.workspace} readOnly={readOnly} onOpenProjects={() => navigate('projects')} onAddProject={() => setModal({ kind: 'project' })} onOpenOffice={() => navigate('office')} />
     : active === 'cashflow' ? <CashflowWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
       : active === 'wallets' ? <WalletWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
         : active === 'projects' && productionProject && projectApi ? <ProjectDetailWorkspace
@@ -410,6 +418,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
             documents={<ProjectDocumentsWorkspace project={productionProject} api={projectApi} session={projectSession} route={{ projectId: productionProject.id, tab: route.tab ?? 'documents', document: route.document, type: route.type }} onRouteChange={setProjectDetailRoute} />}
             capabilities={projectCapabilities}
             onEdit={setProjectModal}
+            onAddTransaction={productionProject.status === 'active' && canCreateTransactions ? (project) => setModal({ kind: 'transaction', projectId: project.id }) : undefined}
             onStatusChange={changeProductionProjectStatus}
             onArchive={archiveProductionProject}
           />
@@ -431,7 +440,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
           <div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{mobile ? meta.title : productionProject?.name ?? selectedProject?.name ?? meta.title}</strong></div>
           <div className="topbar-actions">
             {active === 'projects' && <ExportButton workspace={finance.workspace} />}
-            {((!readOnly && active !== 'reports' && active !== 'inbox-reviews') || (canCreateTransactions && active !== 'reports' && active !== 'debts' && active !== 'inbox-reviews' && !(active === 'projects' && !selectedProject))) && <button className="topbar-add" onClick={addAction.run}><Plus size={16} /><span>{addAction.label}</span></button>}
+            {showTopbarAdd && addAction && <button className="topbar-add" onClick={addAction.run}><Plus size={16} /><span>{addAction.label}</span></button>}
             <ThemeToggle theme={theme} setTheme={setTheme} />
           </div>
         </header>

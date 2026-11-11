@@ -53,12 +53,13 @@ export function useFinanceWorkspace(externalWorkspace?: Readonly<FinanceWorkspac
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
     workspaceRef.current = next
     setWorkspaceState(next)
+    return next
   }, [readOnly])
 
   return {
     workspace,
     readOnly,
-    addProject: (input: ProjectInput) => setWorkspace((current) => createProject(current, input)),
+    addProject: (input: ProjectInput) => setWorkspace((current) => createProject(current, input)).projects.at(-1)!,
     editProject: (id: string, input: ProjectInput) => setWorkspace((current) => updateProject(current, id, input)),
     removeProject: (id: string) => setWorkspace((current) => deleteProject(current, id)),
     addTransaction: (input: TransactionInput) => setWorkspace((current) => createTransaction(current, input)),
