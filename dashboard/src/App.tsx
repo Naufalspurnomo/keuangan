@@ -47,7 +47,6 @@ import { useFinanceWorkspace } from './useFinanceWorkspace'
 import hollawallLogo from './assets/hollawall-logo.png'
 import { createProjectDocumentApi, type ProjectDocumentApi, type ProjectDocumentSession } from './projectDocumentApi'
 import { createInboxReviewApi, type InboxReviewApi } from './inboxReviewApi'
-import './style.css'
 import {
   NO_PROJECT_DOCUMENT_WRITES,
   projectDocumentRoute,
@@ -137,7 +136,8 @@ function Sidebar({ active, open, mobile, live, close, navigate }: { active: Page
 }
 
 function ThemeToggle({ theme, setTheme }: { theme: string; setTheme: (theme: string) => void }) {
-  return <button type="button" className="theme-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label={`Gunakan tema ${theme === 'dark' ? 'terang' : 'gelap'}`}><Sun size={16} /><span className={theme} /><Moon size={16} /></button>
+  const dark = theme === 'dark'
+  return <button type="button" className="theme-toggle" onClick={() => setTheme(dark ? 'light' : 'dark')} aria-label={`Gunakan tema ${dark ? 'terang' : 'gelap'}`} aria-pressed={dark} title={`Tema ${dark ? 'gelap' : 'terang'}`}><Sun size={16} aria-hidden="true" /><span className={theme} aria-hidden="true" /><Moon size={16} aria-hidden="true" /></button>
 }
 
 function projectStatusInput(project: FinanceProject, status: 'active' | 'completed', completedOn: string | null): ProjectInput {
@@ -192,7 +192,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
   const [projectApiAvailable, setProjectApiAvailable] = useState(false)
   const [projectBusy, setProjectBusy] = useState(false)
   const [notice, setNotice] = useState('')
-  const [theme, setTheme] = useState(() => localStorage.getItem('hollawall-theme') || 'light')
+  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light')
   const mobile = useMobileNavigation()
   const previousMobile = useRef(mobile)
   const pendingScroll = useRef<number | null>(null)
@@ -424,7 +424,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
   return (
     <div className={`app-shell finance-workspace-shell${readOnly ? ' is-readonly' : ''}`}>
       <Sidebar active={active} open={menuOpen} mobile={mobile} live={readOnly} close={closeMenu} navigate={navigate} />
-      <main ref={mainRef} className="main-canvas" aria-hidden={mobile && menuOpen ? true : undefined}>
+      <main id="main-content" ref={mainRef} className="main-canvas" aria-hidden={mobile && menuOpen ? true : undefined} tabIndex={-1}>
         <header className="topbar">
           <button ref={menuButtonRef} className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi" aria-controls="app-navigation" aria-expanded={mobile ? menuOpen : undefined}><Menu size={21} /></button>
           <img className="mobile-header-logo" src={hollawallLogo} alt="Hollawall" />
@@ -520,7 +520,7 @@ function LiveDashboardApp() {
     }
   }
 
-  if (state.status === 'loading') return <main role="status">Memuat data keuangan</main>
-  if (state.status === 'error') return <main role="alert"><h1>Data belum tersedia</h1><p>Data demo tidak ditampilkan sebagai pengganti.</p><button onClick={() => void state.reload()}>Coba lagi</button></main>
+  if (state.status === 'loading') return <main className="application-state" role="status"><span className="application-state-mark" aria-hidden="true" /><div><p className="eyebrow">RUANG FINANSIAL</p><h1>Memuat data keuangan</h1><p>Menyiapkan posisi kas, proyek, dan laporan terbaru.</p></div></main>
+  if (state.status === 'error') return <main className="application-state application-state-error" role="alert"><div><p className="eyebrow">DATA PRODUKSI</p><h1>Data belum tersedia</h1><p>Data demo tidak ditampilkan sebagai pengganti. Periksa koneksi, lalu coba lagi.</p><button className="primary-button" onClick={() => void state.reload()}>Coba lagi</button></div></main>
   return workspace ? <DemoApp suppliedWorkspace={workspace} liveWriteSession={writeSession} liveWriteStatus={writeStatus} onCreateLiveTransaction={createLiveTransaction} projectApi={projectApi} inboxReviewApi={inboxReviewApi} /> : null
 }
