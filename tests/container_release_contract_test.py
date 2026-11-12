@@ -46,6 +46,9 @@ def test_container_gate_provides_postgres_to_canonical_activation():
     assert "DATABASE_URL=postgresql://hollawall_test:ci_test_only@127.0.0.1:5432/hollawall_test" in container
     assert "http://127.0.0.1:8000/health" in container
     assert "STATE_STORE_BACKEND=local" in container
+    assert "PROJECT_DOCUMENT_WRITES_ENABLED=0" not in container
+    assert "seed_project_document_issuer.py" in container
+    assert "APPLY_ISSUER_PROFILE" in container
 
 
 def test_production_container_without_database_fails_closed_even_in_local_mode():
