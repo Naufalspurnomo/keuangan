@@ -89,17 +89,18 @@ export function adaptLiveSnapshot(snapshot: DashboardSnapshot): LiveSnapshotView
 export function useLiveSnapshot({ endpoint, loader = loadLiveSnapshot, pollIntervalMs = 5_000 }: UseLiveSnapshotOptions = {}) {
   const [state, setState] = useState<LiveSnapshotState>({ status: 'loading', data: null, error: null, refreshing: false })
   const activeController = useRef<AbortController | null>(null)
+  const activeRequest = useRef<Promise<DashboardSnapshot> | null>(null)
   const requestSequence = useRef(0)
 
   const reload = useCallback(() => {
-    activeController.current?.abort()
+    if (activeRequest.current) return activeRequest.current
     const controller = new AbortController()
     const sequence = ++requestSequence.current
     activeController.current = controller
     setState((current) => current.data
       ? { status: 'ready', data: current.data, error: null, refreshing: true }
       : { status: 'loading', data: null, error: null, refreshing: false })
-    return loader({ endpoint, signal: controller.signal })
+    const request = loader({ endpoint, signal: controller.signal })
       .then((data) => {
         if (!controller.signal.aborted && sequence === requestSequence.current) {
           setState({ status: 'ready', data, error: null, refreshing: false })
@@ -115,6 +116,14 @@ export function useLiveSnapshot({ endpoint, loader = loadLiveSnapshot, pollInter
         }
         throw error
       })
+      .finally(() => {
+        if (sequence === requestSequence.current) {
+          activeRequest.current = null
+          activeController.current = null
+        }
+      })
+    activeRequest.current = request
+    return request
   }, [endpoint, loader])
 
   useEffect(() => {

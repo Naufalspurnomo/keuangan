@@ -120,6 +120,30 @@ describe('LiveSnapshotBanner', () => {
     await screen.findByText((text) => text.replace(/\s/g, '') === 'Rp22.000.000')
   })
 
+  it('does not abort and restart a slow snapshot on each poll tick', async () => {
+    vi.useFakeTimers()
+    let resolveSnapshot!: (value: DashboardSnapshot) => void
+    let observedSignal: AbortSignal | undefined
+    const loader = vi.fn((options) => {
+      observedSignal = options?.signal
+      return new Promise<DashboardSnapshot>((resolve) => { resolveSnapshot = resolve })
+    })
+    render(<LiveSnapshotBanner loader={loader} />)
+    await act(async () => { await Promise.resolve() })
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+
+    expect(loader).toHaveBeenCalledTimes(1)
+    expect(observedSignal?.aborted).toBe(false)
+
+    await act(async () => {
+      resolveSnapshot(snapshot())
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByText('Ringkasan keuangan')).toBeTruthy()
+  })
+
   it('polls every five seconds only while visible and refreshes on focus or restored visibility', async () => {
     vi.useFakeTimers()
     let visibility: DocumentVisibilityState = 'visible'
