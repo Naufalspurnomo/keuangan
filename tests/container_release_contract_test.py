@@ -47,8 +47,10 @@ def test_container_gate_provides_postgres_to_canonical_activation():
     assert "http://127.0.0.1:8000/health" in container
     assert "STATE_STORE_BACKEND=local" in container
     assert "PROJECT_DOCUMENT_WRITES_ENABLED=0" not in container
+    assert "ensure_project_document_schema" in container
     assert "seed_project_document_issuer.py" in container
     assert "APPLY_ISSUER_PROFILE" in container
+    assert container.index("ensure_project_document_schema") < container.index("seed_project_document_issuer.py")
 
 
 def test_production_container_without_database_fails_closed_even_in_local_mode():

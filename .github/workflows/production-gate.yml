@@ -266,6 +266,7 @@ jobs:
             hollawall-ci:${GITHUB_SHA}
       - name: Verify health and non-root runtime
         run: |
+          docker exec hollawall-ci python -c 'from services.project_document_repository import ensure_project_document_schema; print(ensure_project_document_schema())'
           docker exec hollawall-ci sh -c 'printf "%s" "{\"issuer_key\":\"hollawall\",\"legal_name\":\"CV Holla Berkreasi\",\"display_name\":\"Hollawall CI\",\"number_code\":\"HW\",\"address\":\"CI fixture\",\"expected_version\":0}" > /tmp/issuer.json'
           docker exec hollawall-ci python scripts/seed_project_document_issuer.py \
             --file /tmp/issuer.json --apply --confirm APPLY_ISSUER_PROFILE
