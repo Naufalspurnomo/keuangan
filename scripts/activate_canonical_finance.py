@@ -46,8 +46,6 @@ def activate() -> None:
         return
     dsn = _dsn()
     if not dsn:
-        if str(os.getenv("STATE_STORE_BACKEND") or "").strip().casefold() == "local":
-            return
         raise RuntimeError("canonical finance activation requires a database DSN")
 
     apply_financial_migrations(

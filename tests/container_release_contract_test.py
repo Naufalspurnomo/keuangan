@@ -36,7 +36,19 @@ def test_production_image_activates_fresh_zero_postgres_before_gunicorn():
     assert "canonical finance activation requires fresh-zero business tables" in activation
 
 
-def test_local_container_without_database_skips_production_activation():
+def test_container_gate_provides_postgres_to_canonical_activation():
+    workflow = (ROOT / ".github" / "workflows" / "production-gate.yml").read_text(
+        encoding="utf-8"
+    )
+    container = workflow.split("\n  container:\n", 1)[1].split("\n  performance:\n", 1)[0]
+    assert "image: postgres:16-alpine" in container
+    assert "--network host" in container
+    assert "DATABASE_URL=postgresql://hollawall_test:ci_test_only@127.0.0.1:5432/hollawall_test" in container
+    assert "http://127.0.0.1:8000/health" in container
+    assert "STATE_STORE_BACKEND=local" in container
+
+
+def test_production_container_without_database_fails_closed_even_in_local_mode():
     with (
         patch.dict(
             "os.environ",
@@ -48,7 +60,12 @@ def test_local_container_without_database_skips_production_activation():
         ),
         patch.object(activate_canonical_finance, "apply_financial_migrations") as migrate,
     ):
-        activate_canonical_finance.activate()
+        try:
+            activate_canonical_finance.activate()
+        except RuntimeError as error:
+            assert str(error) == "canonical finance activation requires a database DSN"
+        else:
+            raise AssertionError("production activation must fail closed without a database DSN")
 
     migrate.assert_not_called()
 
