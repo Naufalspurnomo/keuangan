@@ -69,6 +69,12 @@ def register_dashboard(
         str(os.getenv("CANONICAL_FINANCE_API_ENABLED") or "").strip().casefold()
         in {"1", "true", "yes", "on"},
     )
+    from services.finance_write_authority import canonical_finance_writes_enabled
+
+    app.config.setdefault(
+        "CANONICAL_FINANCE_WRITES_ENABLED",
+        canonical_finance_writes_enabled(),
+    )
     # Health must only advertise project/document reads when this process has
     # actually registered the authoritative repository-backed routes.
     app.config.setdefault("PROJECT_DOCUMENT_READS_ENABLED", False)
@@ -120,6 +126,66 @@ def register_dashboard(
         name = project.get("name") if isinstance(project, dict) else None
         return str(name).strip() if name else None
 
+    canonical_runtime_required = bool(
+        app.config["CANONICAL_FINANCE_WRITES_ENABLED"]
+        or app.config["CANONICAL_FINANCE_API_ENABLED"]
+    )
+    if canonical_runtime_required:
+        writes_enabled = bool(app.config["CANONICAL_FINANCE_WRITES_ENABLED"])
+        missing_service = (
+            canonical_transaction_service is None or canonical_debt_service is None
+        )
+        if writes_enabled and not dsn:
+            raise RuntimeError("canonical finance authority requires a database DSN")
+        if missing_service:
+            if not dsn:
+                raise RuntimeError("canonical finance runtime requires a database DSN")
+            from services.canonical_finance import CanonicalFinanceService
+            from services.financial_debt_repository import (
+                PostgresInterwalletDebtRepository,
+            )
+            from services.financial_transaction_repository import (
+                PostgresFinancialTransactionRepository,
+            )
+            from services.interwallet_debt_service import InterwalletDebtService
+
+            canonical_transaction_service = canonical_transaction_service or CanonicalFinanceService(
+                PostgresFinancialTransactionRepository(dsn)
+            )
+            canonical_debt_service = canonical_debt_service or InterwalletDebtService(
+                PostgresInterwalletDebtRepository(dsn)
+            )
+        if writes_enabled or missing_service:
+            from services.financial_schema import verify_financial_schema
+
+            verify_financial_schema(dsn)
+        assert canonical_transaction_service is not None
+        assert canonical_debt_service is not None
+        if writes_enabled:
+            from services.finance_write_authority import (
+                FinanceWriteAuthorityGateway,
+                PostgresAuthorityResolver,
+            )
+            if transaction_service is not None:
+                raise RuntimeError(
+                    "canonical finance authority cannot use an injected legacy transaction service"
+                )
+            from services.dashboard_transaction_service import (
+                PostgresDashboardTransactionService,
+            )
+
+            gateway = FinanceWriteAuthorityGateway(
+                enabled=True,
+                resolver=PostgresAuthorityResolver(dsn),
+                finance_service=canonical_transaction_service,
+                debt_service=canonical_debt_service,
+            )
+            transaction_service = PostgresDashboardTransactionService(
+                gateway=gateway,
+                project_exists=lambda _project, _wallet, _company: False,
+                project_uuid_exists=project_uuid_exists,
+            )
+
     app.register_blueprint(
         create_dashboard_blueprint(
             selected_repository,
@@ -145,27 +211,8 @@ def register_dashboard(
 
     if app.config["CANONICAL_FINANCE_API_ENABLED"]:
         # Never expose canonical mutation routes with an in-memory fallback.
-        if canonical_transaction_service is None or canonical_debt_service is None:
-            if not dsn:
-                raise RuntimeError("canonical finance API requires a database DSN")
-            from services.canonical_finance import CanonicalFinanceService
-            from services.financial_debt_repository import (
-                PostgresInterwalletDebtRepository,
-            )
-            from services.financial_schema import verify_financial_schema
-            from services.financial_transaction_repository import (
-                PostgresFinancialTransactionRepository,
-            )
-            from services.interwallet_debt_service import InterwalletDebtService
-
-            verify_financial_schema(dsn)
-            canonical_transaction_service = canonical_transaction_service or CanonicalFinanceService(
-                PostgresFinancialTransactionRepository(dsn)
-            )
-            canonical_debt_service = canonical_debt_service or InterwalletDebtService(
-                PostgresInterwalletDebtRepository(dsn)
-            )
-
+        assert canonical_transaction_service is not None
+        assert canonical_debt_service is not None
         from dashboard_api.canonical_finance_routes import (
             create_canonical_finance_blueprint,
         )

@@ -13,6 +13,7 @@ from services.dashboard_transaction_service import (
     DashboardTransactionConflict,
     DashboardTransactionService,
     GoogleSheetsTransactionAdapter,
+    PostgresDashboardTransactionService,
 )
 from services.dashboard_write_requests import (
     DashboardWriteClaim,
@@ -116,6 +117,33 @@ class FakeSheets:
         if self.override_row is not None:
             return self.override_row
         return self.rows.get(message_id)
+
+
+class FakeCanonicalGateway:
+    def __init__(self, *, duplicate=False, quarantine_reason=None):
+        self.duplicate = duplicate
+        self.quarantine_reason = quarantine_reason
+        self.calls = []
+
+    def dispatch(self, command, *, legacy_write):
+        self.calls.append((dict(command), legacy_write))
+        if self.quarantine_reason:
+            return {
+                "authority": "postgresql",
+                "status": "quarantined",
+                "reason_code": self.quarantine_reason,
+            }
+        return {
+            "authority": "postgresql",
+            "status": "committed",
+            "result": {
+                "transaction": {
+                    "id": "00000000-0000-4000-8000-000000000601",
+                    "version": 1,
+                },
+                "duplicate": self.duplicate,
+            },
+        }
 
 
 class FakeProjection:
@@ -694,3 +722,95 @@ def test_google_sheets_adapter_forwards_validated_transaction_date(monkeypatch):
     )
 
     assert captured["transaction_date"] == TODAY
+
+
+def make_postgres_service(gateway=None):
+    gateway = gateway or FakeCanonicalGateway()
+    project_id = "00000000-0000-4000-8000-000000000501"
+    service = PostgresDashboardTransactionService(
+        gateway=gateway,
+        project_exists=lambda _project, _wallet, _company: False,
+        project_uuid_exists=lambda value, wallet, company: (
+            value == project_id
+            and wallet == "CV HB(101)"
+            and company == "HOLLA"
+        ),
+        today=lambda: TODAY,
+    )
+    return service, gateway, project_id
+
+
+def test_postgres_dashboard_path_uses_canonical_id_and_never_sheets_shape():
+    service, gateway, project_id = make_postgres_service()
+
+    result = service.record(
+        valid_payload(project=project_id),
+        actor={"email": "Boss@Example.com", "role": "boss"},
+        message_id="dashboard-api:canonical",
+    )
+
+    command, legacy_write = gateway.calls[0]
+    assert command["project_id"] == project_id
+    assert command["wallet_label"] == "CV HB(101)"
+    assert "business_unit_id" not in command
+    assert command["occurred_at"] == "2026-10-02T00:00:00+07:00"
+    assert command["evidence"] == {
+        "company": "HOLLA",
+        "occurred_at_precision": "date",
+    }
+    assert command["actor"] == {
+        "id": "boss@example.com",
+        "email": "boss@example.com",
+        "role": "boss",
+        "channel": "dashboard",
+    }
+    with pytest.raises(Exception, match="Sheets fallback is forbidden"):
+        legacy_write()
+    assert result == {
+        "recorded": True,
+        "authority": "postgresql",
+        "transaction_id": "00000000-0000-4000-8000-000000000601",
+        "transaction_version": 1,
+        "duplicate": False,
+    }
+    assert "sheet_row" not in result
+
+
+def test_postgres_dashboard_rejects_project_label_and_quarantine():
+    service, gateway, _project_id = make_postgres_service(
+        FakeCanonicalGateway(quarantine_reason="unmapped_project")
+    )
+
+    with pytest.raises(TransactionValidationError, match="project:"):
+        service.record(
+            valid_payload(project="PROJECT-001"),
+            actor={"email": "boss@example.com", "role": "boss"},
+            message_id="dashboard-api:label",
+        )
+    assert gateway.calls == []
+
+
+def test_postgres_dashboard_rejects_unauthenticated_actor_before_dispatch():
+    service, gateway, project_id = make_postgres_service()
+
+    with pytest.raises(Exception, match="actor is not authenticated"):
+        service.record(
+            valid_payload(project=project_id),
+            actor={"role": "boss"},
+            message_id="dashboard-api:no-actor",
+        )
+    assert gateway.calls == []
+
+
+def test_postgres_dashboard_propagates_duplicate_readback():
+    service, _gateway, project_id = make_postgres_service(
+        FakeCanonicalGateway(duplicate=True)
+    )
+
+    result = service.record(
+        valid_payload(project=project_id),
+        actor={"email": "boss@example.com", "role": "admin"},
+        message_id="dashboard-api:duplicate",
+    )
+
+    assert result["duplicate"] is True

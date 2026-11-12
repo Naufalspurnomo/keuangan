@@ -33,6 +33,18 @@ const recordedEnvelope = () => new Response(JSON.stringify({
   },
 }), { status: 201, headers: { 'content-type': 'application/json' } })
 
+const canonicalRecordedEnvelope = (extra: Record<string, unknown> = {}) => new Response(JSON.stringify({
+  api_version: 'dashboard.v1',
+  data: {
+    recorded: true,
+    authority: 'postgresql',
+    transaction_id: '00000000-0000-4000-8000-000000000601',
+    transaction_version: 1,
+    duplicate: false,
+    ...extra,
+  },
+}), { status: 201, headers: { 'content-type': 'application/json' } })
+
 const payload: TransactionWritePayload = {
   date: '2026-11-02',
   scope: 'project',
@@ -91,6 +103,37 @@ describe('authenticated transaction API', () => {
       idempotency_key: 'dashboard-test-key-00000001',
       ...payload,
     })
+  })
+
+  it('accepts exact PostgreSQL authority evidence without Sheet locators', async () => {
+    const request = vi.fn(async () => canonicalRecordedEnvelope())
+    const attempt = createTransactionWriteAttempt(payload, {
+      request,
+      keyFactory: () => 'dashboard-postgres-key-0001',
+    })
+
+    await expect(attempt.submit({ csrfToken: 'csrf-owner-session-token-0001', writesEnabled: true }))
+      .resolves.toEqual({
+        recorded: true,
+        authority: 'postgresql',
+        transactionId: '00000000-0000-4000-8000-000000000601',
+        transactionVersion: 1,
+        duplicate: false,
+      })
+  })
+
+  it('rejects mixed PostgreSQL and Sheet authority evidence', async () => {
+    const request = vi.fn(async () => canonicalRecordedEnvelope({
+      sheet_name: 'legacy-primary',
+      sheet_row: 9,
+    }))
+    const attempt = createTransactionWriteAttempt(payload, {
+      request,
+      keyFactory: () => 'dashboard-mixed-key-000001',
+    })
+
+    await expect(attempt.submit({ csrfToken: 'csrf-owner-session-token-0001', writesEnabled: true }))
+      .rejects.toMatchObject({ code: 'unverified_recording', uncertain: true })
   })
 
   it('preserves one key and body when an uncertain request is retried', async () => {

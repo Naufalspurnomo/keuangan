@@ -200,6 +200,7 @@ def test_create_rolls_back_every_record_when_one_write_fails():
 
 def test_canonical_blueprints_are_dormant_without_explicit_flag(monkeypatch):
     monkeypatch.delenv("CANONICAL_FINANCE_API_ENABLED", raising=False)
+    monkeypatch.delenv("CANONICAL_FINANCE_WRITES_ENABLED", raising=False)
     app = Flask(__name__)
     register_dashboard(app, repository=object(), canonical_transaction_service=object(), canonical_debt_service=object())
     rules = {rule.rule for rule in app.url_map.iter_rules()}
@@ -249,3 +250,82 @@ def test_canonical_flag_builds_postgres_services_after_schema_verification(monke
     assert verified == ["postgresql://isolated-test"]
     assert "/api/dashboard/v1/canonical-transactions" in rules
     assert "/api/dashboard/v1/debts" in rules
+
+
+def test_canonical_write_authority_fails_closed_without_dsn_even_with_services(monkeypatch):
+    monkeypatch.setenv("CANONICAL_FINANCE_WRITES_ENABLED", "true")
+    monkeypatch.delenv("STATE_DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    try:
+        register_dashboard(
+            Flask(__name__),
+            repository=object(),
+            canonical_transaction_service=object(),
+            canonical_debt_service=object(),
+        )
+    except RuntimeError as error:
+        assert "authority requires a database DSN" in str(error)
+    else:
+        raise AssertionError("canonical write authority without DSN must fail closed")
+
+
+def test_canonical_write_authority_refuses_injected_legacy_transaction_service(monkeypatch):
+    from services import financial_schema
+
+    monkeypatch.setenv("CANONICAL_FINANCE_WRITES_ENABLED", "true")
+    monkeypatch.setenv("STATE_DATABASE_URL", "postgresql://isolated-test")
+    monkeypatch.setattr(
+        financial_schema,
+        "verify_financial_schema",
+        lambda _dsn: {"ready": True},
+    )
+
+    try:
+        register_dashboard(
+            Flask(__name__),
+            repository=object(),
+            transaction_service=object(),
+            canonical_transaction_service=object(),
+            canonical_debt_service=object(),
+        )
+    except RuntimeError as error:
+        assert "cannot use an injected legacy transaction service" in str(error)
+    else:
+        raise AssertionError("canonical authority must reject a legacy writer")
+
+
+def test_canonical_write_authority_selects_postgres_dashboard_service(monkeypatch):
+    from services import dashboard_transaction_service, finance_write_authority, financial_schema
+
+    monkeypatch.setenv("CANONICAL_FINANCE_WRITES_ENABLED", "true")
+    monkeypatch.setenv("STATE_DATABASE_URL", "postgresql://isolated-test")
+    verified = []
+    selected = []
+    monkeypatch.setattr(
+        financial_schema,
+        "verify_financial_schema",
+        lambda dsn: verified.append(dsn) or {"ready": True},
+    )
+    monkeypatch.setattr(
+        finance_write_authority,
+        "PostgresAuthorityResolver",
+        lambda dsn: ("resolver", dsn),
+    )
+    monkeypatch.setattr(
+        dashboard_transaction_service,
+        "PostgresDashboardTransactionService",
+        lambda **kwargs: selected.append(kwargs) or object(),
+    )
+
+    app = Flask(__name__)
+    register_dashboard(
+        app,
+        repository=object(),
+        canonical_transaction_service=object(),
+        canonical_debt_service=object(),
+    )
+
+    assert verified == ["postgresql://isolated-test"]
+    assert len(selected) == 1
+    assert app.config["CANONICAL_FINANCE_WRITES_ENABLED"] is True

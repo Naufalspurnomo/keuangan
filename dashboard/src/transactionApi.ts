@@ -39,14 +39,27 @@ export interface CanonicalTransactionMutationResult {
   duplicate: boolean
 }
 
-export interface RecordedTransaction {
+export type RecordedTransaction = {
   recorded: true
+  authority: 'google_sheets'
   transactionId: string
   sheetName: string
   sheetRow: number
   sourceBlock: string
   sheetMessageId: string
   projectionStatus: string
+  transactionVersion?: never
+  duplicate: boolean
+} | {
+  recorded: true
+  authority: 'postgresql'
+  transactionId: string
+  transactionVersion: number
+  sheetName?: never
+  sheetRow?: never
+  sourceBlock?: never
+  sheetMessageId?: never
+  projectionStatus?: never
   duplicate: boolean
 }
 
@@ -179,12 +192,15 @@ function generateIdempotencyKey() {
 
 function recordedTransaction(body: Record<string, unknown>, response: Response): RecordedTransaction {
   const data = record(body.data)
-  const valid = (response.status === 200 || response.status === 201)
+  const envelopeValid = (response.status === 200 || response.status === 201)
     && body.api_version === 'dashboard.v1'
     && data?.recorded === true
     && typeof data.transaction_id === 'string'
     && data.transaction_id.length > 0
-    && typeof data.sheet_name === 'string'
+    && typeof data.duplicate === 'boolean'
+  const sheetValid = envelopeValid
+    && (data?.authority === undefined || data.authority === 'google_sheets')
+    && typeof data?.sheet_name === 'string'
     && data.sheet_name.length > 0
     && Number.isSafeInteger(data.sheet_row)
     && Number(data.sheet_row) > 0
@@ -194,8 +210,18 @@ function recordedTransaction(body: Record<string, unknown>, response: Response):
     && data.sheet_message_id.length > 0
     && typeof data.projection_status === 'string'
     && data.projection_status.length > 0
-    && typeof data.duplicate === 'boolean'
-  if (!valid || !data) {
+    && data.transaction_version === undefined
+  const postgresValid = envelopeValid
+    && data?.authority === 'postgresql'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(data.transaction_id))
+    && Number.isSafeInteger(data.transaction_version)
+    && Number(data.transaction_version) > 0
+    && data.sheet_name === undefined
+    && data.sheet_row === undefined
+    && data.source_block === undefined
+    && data.sheet_message_id === undefined
+    && data.projection_status === undefined
+  if (!data || (!sheetValid && !postgresValid)) {
     throw new TransactionWriteError('Server belum memberikan bukti pencatatan yang lengkap.', {
       code: 'unverified_recording',
       uncertain: true,
@@ -203,8 +229,18 @@ function recordedTransaction(body: Record<string, unknown>, response: Response):
       status: response.status,
     })
   }
+  if (postgresValid) {
+    return {
+      recorded: true,
+      authority: 'postgresql',
+      transactionId: data.transaction_id as string,
+      transactionVersion: data.transaction_version as number,
+      duplicate: data.duplicate as boolean,
+    }
+  }
   return {
     recorded: true,
+    authority: 'google_sheets',
     transactionId: data.transaction_id as string,
     sheetName: data.sheet_name as string,
     sheetRow: data.sheet_row as number,

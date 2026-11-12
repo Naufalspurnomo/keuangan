@@ -339,7 +339,9 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
     if (readOnly) {
       if (!canCreateTransactions || !onCreateLiveTransaction) throw new Error('Pencatatan transaksi belum tersedia.')
       return onCreateLiveTransaction(input).then((result) => {
-        setNotice(`Transaksi tercatat di ${result.sheetName}, baris ${result.sheetRow}. Tampilan sedang diperbarui.`)
+        setNotice(result.authority === 'postgresql'
+          ? `Transaksi tercatat dengan ID ${result.transactionId}. Tampilan sedang diperbarui.`
+          : `Transaksi tercatat di ${result.sheetName}, baris ${result.sheetRow}. Tampilan sedang diperbarui.`)
       })
     }
     const { category: _category, ...demoInput } = input
