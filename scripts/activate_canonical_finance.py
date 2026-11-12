@@ -13,7 +13,7 @@ from services.financial_schema import (
 )
 
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
-_BUSINESS_TABLES = (
+_PROJECT_TABLES = (
     "projects",
     "project_scopes",
     "project_documents",
@@ -21,6 +21,8 @@ _BUSINESS_TABLES = (
     "project_document_allocations",
     "project_transaction_evidence",
     "project_quotation_handoffs",
+)
+_FINANCE_TABLES = (
     "financial_transactions",
     "financial_postings",
     "wallet_opening_balances",
@@ -31,6 +33,7 @@ _BUSINESS_TABLES = (
     "financial_export_outbox",
     "financial_command_quarantine",
 )
+_LOCK_TABLES = _PROJECT_TABLES + _FINANCE_TABLES
 
 
 def _enabled(name: str) -> bool:
@@ -60,7 +63,7 @@ def activate() -> None:
     evidence = hashlib.sha256(
         f"hollawall:finance-authority:postgresql:fresh-zero:v1:{release}".encode()
     ).hexdigest()
-    lock_targets = sql.SQL(", ").join(sql.Identifier(table) for table in _BUSINESS_TABLES)
+    lock_targets = sql.SQL(", ").join(sql.Identifier(table) for table in _LOCK_TABLES)
 
     with psycopg.connect(dsn) as connection, connection.cursor() as cursor:
         cursor.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATION_LOCK_ID,))
@@ -68,7 +71,7 @@ def activate() -> None:
             sql.SQL("LOCK TABLE {} IN ACCESS EXCLUSIVE MODE").format(lock_targets)
         )
         counts: dict[str, int] = {}
-        for table in _BUSINESS_TABLES:
+        for table in _FINANCE_TABLES:
             cursor.execute(
                 sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table))
             )

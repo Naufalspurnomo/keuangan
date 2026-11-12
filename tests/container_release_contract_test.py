@@ -34,6 +34,8 @@ def test_production_image_activates_fresh_zero_postgres_before_gunicorn():
     assert "LOCK TABLE" in activation
     assert "historical_import" in activation
     assert "canonical finance activation requires fresh-zero business tables" in activation
+    assert "_PROJECT_TABLES + _FINANCE_TABLES" in activation
+    assert "for table in _FINANCE_TABLES" in activation
 
 
 def test_container_gate_provides_postgres_to_canonical_activation():
