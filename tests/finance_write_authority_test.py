@@ -6,8 +6,11 @@ import pytest
 
 from services.finance_write_authority import (
     CanonicalWriteUnavailable,
+    FinanceAuthorityLatchError,
     FinanceWriteAuthorityGateway,
+    assert_finance_authority_configuration,
     canonical_finance_writes_enabled,
+    legacy_sheets_finance_writes_fenced,
 )
 
 
@@ -64,6 +67,37 @@ class FakeDebtService:
         return {"debt_id": "00000000-0000-4000-8000-000000000701", "duplicate": False}
 
 
+class FakeAuthorityCursor:
+    def __init__(self, authority):
+        self.authority = authority
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def execute(self, query):
+        assert "finance_authority_state" in query
+
+    def fetchone(self):
+        return None if self.authority is None else (self.authority,)
+
+
+class FakeAuthorityConnection:
+    def __init__(self, authority):
+        self.authority = authority
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def cursor(self):
+        return FakeAuthorityCursor(self.authority)
+
+
 def transaction_command(**overrides):
     value = {
         "kind": "transaction",
@@ -111,6 +145,61 @@ def test_flag_is_strict_and_defaults_false():
     assert canonical_finance_writes_enabled({"CANONICAL_FINANCE_WRITES_ENABLED": "true"}) is True
     assert canonical_finance_writes_enabled({"CANONICAL_FINANCE_WRITES_ENABLED": "1"}) is True
     assert canonical_finance_writes_enabled({"CANONICAL_FINANCE_WRITES_ENABLED": "yes"}) is False
+
+
+def test_durable_authority_must_match_runtime_configuration():
+    factory = lambda _dsn: FakeAuthorityConnection("postgresql")
+
+    assert (
+        assert_finance_authority_configuration(
+            "postgresql://isolated-test",
+            writes_enabled=True,
+            connection_factory=factory,
+        )
+        == "postgresql"
+    )
+    with pytest.raises(FinanceAuthorityLatchError, match="mismatch"):
+        assert_finance_authority_configuration(
+            "postgresql://isolated-test",
+            writes_enabled=False,
+            connection_factory=factory,
+        )
+
+
+@pytest.mark.parametrize(
+    ("environ", "authority", "unavailable", "expected"),
+    [
+        ({}, None, False, False),
+        ({"CANONICAL_FINANCE_LATCH_ENFORCED": "true"}, None, False, True),
+        ({"DATABASE_URL": "postgresql://isolated-test"}, "google_sheets", False, False),
+        ({"DATABASE_URL": "postgresql://isolated-test"}, "postgresql", False, True),
+        ({"DATABASE_URL": "postgresql://isolated-test"}, None, True, False),
+        (
+            {
+                "DATABASE_URL": "postgresql://isolated-test",
+                "CANONICAL_FINANCE_LATCH_ENFORCED": "true",
+            },
+            None,
+            True,
+            True,
+        ),
+    ],
+)
+def test_legacy_sheets_fence_fails_closed_when_enforcement_is_enabled(
+    environ, authority, unavailable, expected
+):
+    def factory(_dsn):
+        if unavailable:
+            raise RuntimeError("database unavailable")
+        return FakeAuthorityConnection(authority)
+
+    assert (
+        legacy_sheets_finance_writes_fenced(
+            environ,
+            connection_factory=factory,
+        )
+        is expected
+    )
 
 
 def test_disabled_executes_legacy_once_without_touching_canonical():

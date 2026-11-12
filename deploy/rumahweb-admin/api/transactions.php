@@ -290,8 +290,34 @@ if ($canonical
 } elseif (!$canonical
     && in_array($status, [200, 201], true)
     && is_array($decoded)
+    && array_keys($decoded) === ['api_version', 'data']
     && ($decoded['api_version'] ?? null) === 'dashboard.v1'
     && is_array($decoded['data'] ?? null)
+    && array_keys($decoded['data']) === ['recorded', 'authority', 'transaction_id', 'transaction_version', 'duplicate']
+    && ($decoded['data']['recorded'] ?? null) === true
+    && ($decoded['data']['authority'] ?? null) === 'postgresql'
+    && is_string($decoded['data']['transaction_id'] ?? null)
+    && preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iD', $decoded['data']['transaction_id'])
+    && is_int($decoded['data']['transaction_version'] ?? null)
+    && ($decoded['data']['transaction_version'] ?? 0) > 0
+    && is_bool($decoded['data']['duplicate'] ?? null)) {
+    $sanitized = [
+        'api_version' => 'dashboard.v1',
+        'data' => [
+            'recorded' => true,
+            'authority' => 'postgresql',
+            'transaction_id' => $decoded['data']['transaction_id'],
+            'transaction_version' => $decoded['data']['transaction_version'],
+            'duplicate' => $decoded['data']['duplicate'],
+        ],
+    ];
+} elseif (!$canonical
+    && in_array($status, [200, 201], true)
+    && is_array($decoded)
+    && ($decoded['api_version'] ?? null) === 'dashboard.v1'
+    && is_array($decoded['data'] ?? null)
+    && !array_key_exists('authority', $decoded['data'])
+    && !array_key_exists('transaction_version', $decoded['data'])
     && ($decoded['data']['recorded'] ?? null) === true
     && is_string($decoded['data']['transaction_id'] ?? null)
     && is_string($decoded['data']['sheet_name'] ?? null)

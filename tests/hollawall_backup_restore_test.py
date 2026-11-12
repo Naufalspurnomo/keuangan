@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import hashlib
 import shutil
@@ -17,6 +18,7 @@ FIXED_NOW = datetime(2026, 11, 9, 1, 15, 30, tzinfo=UTC)
 SOURCE_DSN = "postgresql://owner:database-secret@db.internal:5432/hollawall?sslmode=require"
 DISPOSABLE_DSN = "postgresql://tester:other-secret@127.0.0.1:55432/hollawall_restore"
 ARCHIVE_SECRET = "owner-scoped-archive-secret"
+FIXTURE_SNAPSHOT = "00000003-0000001B-1"
 
 
 CONTRACT_ROWS = {
@@ -55,6 +57,10 @@ class FakeTools:
         self.calls: list[tuple[list[str], dict[str, str]]] = []
         self.remote: dict[str, bytes] = {}
         self.corrupt_download = False
+
+    @contextlib.contextmanager
+    def postgres_snapshot(self, _dsn: str):
+        yield FIXTURE_SNAPSHOT
 
     def __call__(self, command: list[str], *, env: dict[str, str] | None = None) -> str | None:
         selected_env = dict(env or {})
@@ -245,13 +251,20 @@ def test_backup_manifest_records_cutoff_schema_migration_and_application_hashes(
             '{"column_name":"id","data_type":"uuid","table_name":"projects"}',
         ]),
     }
-    assert contract["migration_version"] == "017_finance_write_authority"
+    assert contract["migration_version"] == "018_finance_authority_latch"
     assert contract["application"] == {
         table: {"total": len(rows), "sha256": rows_sha256(rows)}
         for table, rows in CONTRACT_ROWS.items()
     }
     dump_call = next(command for command, _env in tools.calls if Path(command[0]).name == "pg_dump")
-    assert "--serializable-deferrable" in dump_call
+    assert dump_call[dump_call.index("--snapshot") + 1] == FIXTURE_SNAPSHOT
+    contract_queries = [
+        command[command.index("--command") + 1]
+        for command, _env in tools.calls
+        if Path(command[0]).name == "psql"
+    ]
+    assert contract_queries
+    assert all(f"SET TRANSACTION SNAPSHOT '{FIXTURE_SNAPSHOT}'" in sql for sql in contract_queries)
 
 
 def test_optional_rclone_upload_uses_explicit_config_and_downloaded_byte_readback(tmp_path: Path) -> None:

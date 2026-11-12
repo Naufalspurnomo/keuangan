@@ -283,3 +283,15 @@ class PostgresInterwalletDebtRepository:
                 return debt, events
         finally:
             connection.close()
+
+    def list_all(self) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
+        connection = self._connect()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id FROM interwallet_debts ORDER BY occurred_at DESC, id DESC"
+                )
+                debt_ids = [str(row[0]) for row in cursor.fetchall()]
+        finally:
+            connection.close()
+        return [self.get(debt_id) for debt_id in debt_ids]

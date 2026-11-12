@@ -10,6 +10,11 @@ from pathlib import Path
 
 import pytest
 
+from services.finance_write_authority import (
+    FinanceAuthorityLatchError,
+    assert_finance_authority_configuration,
+    legacy_sheets_finance_writes_fenced,
+)
 from services.financial_export_worker import PostgresExportOutbox
 from services.financial_schema import apply_financial_migrations, load_financial_migrations
 
@@ -99,3 +104,46 @@ def test_two_workers_claim_disjoint_rows_and_stale_tokens_cannot_ack():
     assert status == "exported"
     assert claim_token is None
     assert locator == "canonical-export!A2:J2"
+
+
+def test_finance_authority_latch_is_one_way_and_fences_legacy_writers():
+    evidence = hashlib.sha256(b"owner-approved-activation-evidence").hexdigest()
+    with _connection() as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT authority FROM finance_authority_state WHERE singleton = TRUE")
+        authority = cursor.fetchone()[0]
+        if authority == "google_sheets":
+            cursor.execute(
+                """
+                UPDATE finance_authority_state
+                   SET authority = 'postgresql',
+                       activated_at = now(),
+                       activated_by = 'ci:authority-latch',
+                       activation_evidence_sha256 = %s
+                 WHERE singleton = TRUE
+                """,
+                (evidence,),
+            )
+
+    assert assert_finance_authority_configuration(DSN, writes_enabled=True) == "postgresql"
+    with pytest.raises(FinanceAuthorityLatchError, match="mismatch"):
+        assert_finance_authority_configuration(DSN, writes_enabled=False)
+    assert legacy_sheets_finance_writes_fenced(
+        {"DATABASE_URL": DSN},
+    ) is True
+
+    with pytest.raises(Exception, match="cannot return to google_sheets"):
+        with _connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE finance_authority_state SET authority = 'google_sheets' WHERE singleton = TRUE"
+            )
+
+    with pytest.raises(Exception, match="activation evidence is immutable"):
+        with _connection() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE finance_authority_state
+                   SET activation_evidence_sha256 = %s
+                 WHERE singleton = TRUE
+                """,
+                ("0" * 64,),
+            )

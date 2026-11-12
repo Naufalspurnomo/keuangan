@@ -679,7 +679,7 @@ class PostgresDashboardTransactionService:
         request = self.validate(payload)
         email = actor.get("email")
         role = actor.get("role")
-        if not isinstance(email, str) or not email.strip() or role not in {"boss", "admin"}:
+        if not isinstance(email, str) or not email.strip() or role not in {"owner", "boss", "admin"}:
             raise DashboardTransactionUnavailable(
                 "canonical dashboard actor is not authenticated"
             )

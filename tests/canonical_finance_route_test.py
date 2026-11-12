@@ -83,7 +83,9 @@ def make_app(finance=None, debt=None):
         DASHBOARD_ACTOR_ASSERTION_AUDIENCE=AUDIENCE,
         DASHBOARD_ACTOR_ASSERTION_TTL_SECONDS=60,
         DASHBOARD_ACTOR_ASSERTION_REQUIRED=True,
+        CANONICAL_FINANCE_WRITES_ENABLED=True,
     )
+    app.extensions["canonical_finance_write_authority"] = lambda: "postgresql"
     app.register_blueprint(create_canonical_finance_blueprint(finance or FinanceProbe()))
     app.register_blueprint(create_debt_blueprint(debt or DebtProbe()))
     return app
@@ -221,9 +223,61 @@ def test_boss_can_reverse_transaction_and_debt_event():
     assert debt.calls[0][2]["actor"]["role"] == "boss"
 
 
-def test_transaction_read_routes_return_effective_view():
-    service = FinanceProbe()
-    app = make_app(finance=service)
+def test_all_canonical_mutations_fail_closed_before_service_when_runtime_writes_disabled():
+    finance = FinanceProbe()
+    debt = DebtProbe()
+    app = make_app(finance=finance, debt=debt)
+    app.config["CANONICAL_FINANCE_WRITES_ENABLED"] = False
+    app.extensions["canonical_finance_write_authority"] = lambda: "postgresql"
+    client = app.test_client()
+    cases = (
+        ("/api/dashboard/v1/canonical-transactions", "gate-transaction-create"),
+        (f"/api/dashboard/v1/canonical-transactions/{TRANSACTION_ID}/corrections", "gate-transaction-correct"),
+        (f"/api/dashboard/v1/canonical-transactions/{TRANSACTION_ID}/reversals", "gate-transaction-reverse"),
+        ("/api/dashboard/v1/debts", "gate-debt-create-00001"),
+        (f"/api/dashboard/v1/debts/{DEBT_ID}/repayments", "gate-debt-repay-00001"),
+        (f"/api/dashboard/v1/debts/{DEBT_ID}/events/{EVENT_ID}/corrections", "gate-debt-correct-0001"),
+        (f"/api/dashboard/v1/debts/{DEBT_ID}/events/{EVENT_ID}/reversals", "gate-debt-reverse-0001"),
+    )
+
+    for path, key in cases:
+        response = post(client, path, {"idempotency_key": key, "expected_version": 1}, role="boss")
+        assert response.status_code == 503, path
+
+    assert finance.calls == []
+    assert debt.calls == []
+
+
+def test_all_canonical_mutations_fail_closed_before_service_when_durable_authority_is_not_postgresql():
+    finance = FinanceProbe()
+    debt = DebtProbe()
+    app = make_app(finance=finance, debt=debt)
+    app.extensions["canonical_finance_write_authority"] = lambda: "google_sheets"
+    client = app.test_client()
+    cases = (
+        ("/api/dashboard/v1/canonical-transactions", "latch-transaction-create"),
+        (f"/api/dashboard/v1/canonical-transactions/{TRANSACTION_ID}/corrections", "latch-transaction-correct"),
+        (f"/api/dashboard/v1/canonical-transactions/{TRANSACTION_ID}/reversals", "latch-transaction-reverse"),
+        ("/api/dashboard/v1/debts", "latch-debt-create-00001"),
+        (f"/api/dashboard/v1/debts/{DEBT_ID}/repayments", "latch-debt-repay-00001"),
+        (f"/api/dashboard/v1/debts/{DEBT_ID}/events/{EVENT_ID}/corrections", "latch-debt-correct-0001"),
+        (f"/api/dashboard/v1/debts/{DEBT_ID}/events/{EVENT_ID}/reversals", "latch-debt-reverse-0001"),
+    )
+
+    for path, key in cases:
+        response = post(client, path, {"idempotency_key": key, "expected_version": 1}, role="boss")
+        assert response.status_code == 503, path
+
+    assert finance.calls == []
+    assert debt.calls == []
+
+
+def test_transaction_and_debt_reads_remain_available_when_write_gate_is_closed():
+    finance = FinanceProbe()
+    debt = DebtProbe()
+    app = make_app(finance=finance, debt=debt)
+    app.config["CANONICAL_FINANCE_WRITES_ENABLED"] = False
+    app.extensions["canonical_finance_write_authority"] = lambda: "google_sheets"
     app.config["DASHBOARD_ACTOR_ASSERTION_REQUIRED"] = False
     client = app.test_client()
     with client.session_transaction() as session:
@@ -232,10 +286,13 @@ def test_transaction_read_routes_return_effective_view():
 
     listed = client.get("/api/dashboard/v1/canonical-transactions")
     detail = client.get(f"/api/dashboard/v1/canonical-transactions/{TRANSACTION_ID}")
+    debt_detail = client.get(f"/api/dashboard/v1/debts/{DEBT_ID}")
 
     assert listed.status_code == 200
     assert detail.status_code == 200
-    assert [call[0] for call in service.calls] == ["list", "get"]
+    assert debt_detail.status_code == 200
+    assert [call[0] for call in finance.calls] == ["list", "get"]
+    assert [call[0] for call in debt.calls] == ["get"]
 
 
 def test_domain_errors_are_sanitized_and_mapped():

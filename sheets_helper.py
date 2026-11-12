@@ -46,9 +46,9 @@ def _serialized_ledger_write(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         if func.__name__ in _LEGACY_FINANCE_WRITERS:
-            from services.finance_write_authority import canonical_finance_writes_enabled
+            from services.finance_write_authority import legacy_sheets_finance_writes_fenced
 
-            if canonical_finance_writes_enabled():
+            if legacy_sheets_finance_writes_fenced():
                 raise LegacyFinanceWriteFenced(
                     f"legacy Sheets writer {func.__name__} is fenced after PostgreSQL activation"
                 )

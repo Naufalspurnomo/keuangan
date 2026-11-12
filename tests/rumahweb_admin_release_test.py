@@ -42,6 +42,16 @@ class RumahwebAdminReleaseTests(unittest.TestCase):
         self.assertIn("transaction_writes_disabled", proxy)
         self.assertIn("X-CSRF-Token", proxy)
         self.assertIn("Idempotency-Key", proxy)
+
+    def test_release_has_fail_closed_canonical_debt_proxy(self) -> None:
+        proxy = (RELEASE / "api" / "debts.php").read_text(encoding="utf-8")
+        self.assertIn("canonical_debt_writes_enabled", proxy)
+        self.assertIn("upstream_debts_url", proxy)
+        self.assertIn("Idempotency-Key", proxy)
+        self.assertIn("X-Hollawall-Actor-Assertion", proxy)
+        self.assertIn("csrf_validation_failed", proxy)
+        self.assertIn("/repayments", proxy)
+        self.assertNotIn("CURLOPT_FOLLOWLOCATION => true", proxy)
         self.assertIn("X-Hollawall-Proxy-Token", proxy)
         self.assertIn("CURLOPT_FOLLOWLOCATION => false", proxy)
         self.assertIn("CURLOPT_SSL_VERIFYPEER => true", proxy)

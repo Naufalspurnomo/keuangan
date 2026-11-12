@@ -89,11 +89,24 @@ export interface FinanceDebt {
   lender: WalletId
   amount: number
   repaid: number
+  version?: number
+  due_at?: string | null
+  events?: FinanceDebtEvent[]
   /** Canonical project identity. Absent means the debt is not project-linked. */
   project_id?: string | null
   notes: string
   created_at: string
   updated_at: string
+}
+
+export interface FinanceDebtEvent {
+  id: string
+  event_type: 'disbursement' | 'repayment' | 'correction' | 'reversal'
+  amount: number
+  occurred_at: string
+  corrected_event_type?: 'disbursement' | 'repayment' | null
+  corrects_event_id?: string | null
+  reverses_event_id?: string | null
 }
 
 export interface FinanceWorkspace {
@@ -106,6 +119,8 @@ export interface FinanceWorkspace {
   updated_at: string
   live_wallets?: Array<{ source_key: string; name: string; balance: number }>
   live_cash_trend?: Array<{ month: string; balance: number; net_movement: number }>
+  live_source?: string
+  live_data_through?: string | null
 }
 
 export type ProjectInput = Omit<FinanceProject, 'id' | 'wallet' | 'created_at' | 'updated_at'>

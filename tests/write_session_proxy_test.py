@@ -136,6 +136,7 @@ class WriteSessionProxyTests(unittest.TestCase):
                 {
                     "writes_enabled": False,
                     "canonical_finance_writes_enabled": False,
+                    "canonical_debt_writes_enabled": False,
                 },
             )
             self.assertIn("no-store", response.headers["Cache-Control"])
@@ -201,6 +202,7 @@ class WriteSessionProxyTests(unittest.TestCase):
                 {
                     "writes_enabled": True,
                     "canonical_finance_writes_enabled": False,
+                    "canonical_debt_writes_enabled": False,
                 },
             )
 

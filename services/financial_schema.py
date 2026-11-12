@@ -9,10 +9,61 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 
-APPLICATION_SCHEMA_MIN = 17
-APPLICATION_SCHEMA_MAX = 17
+APPLICATION_SCHEMA_MIN = 18
+APPLICATION_SCHEMA_MAX = 18
 MIGRATION_LOCK_ID = 0x484F4C4C415741  # stable "HOLLAWA" advisory lock namespace
 _MIGRATION_PATTERN = re.compile(r"^(?P<version>\d{3})_.*\.sql$")
+
+_FRESH_DATABASE_PREREQUISITES = """
+CREATE TABLE IF NOT EXISTS financial_ledger (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    source_key TEXT NOT NULL UNIQUE,
+    source_sheet TEXT NOT NULL,
+    source_row INTEGER,
+    source_block TEXT NOT NULL,
+    message_id TEXT,
+    transaction_date DATE,
+    amount BIGINT,
+    transaction_type TEXT NOT NULL,
+    company TEXT,
+    wallet TEXT,
+    project TEXT,
+    project_id UUID,
+    category TEXT,
+    description TEXT,
+    recorded_by TEXT,
+    input_source TEXT,
+    source_wallet TEXT,
+    is_valid BOOLEAN NOT NULL DEFAULT TRUE,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS transaction_inbox (
+    event_key TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    chat_id TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    sender_name TEXT,
+    sender_jid TEXT,
+    event_type TEXT NOT NULL,
+    body_text TEXT,
+    media_data TEXT,
+    media_path TEXT,
+    quoted_message_id TEXT,
+    is_group BOOLEAN NOT NULL DEFAULT FALSE,
+    finance_signal BOOLEAN NOT NULL DEFAULT FALSE,
+    payload_score INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'received',
+    result_status TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+"""
 
 
 class FinancialSchemaError(RuntimeError):
@@ -44,6 +95,29 @@ def load_financial_migrations(root: Path | None = None) -> list[Migration]:
     versions = [migration.version for migration in migrations]
     if versions != list(range(9, APPLICATION_SCHEMA_MAX + 1)):
         raise FinancialSchemaError(f"canonical migration set is incomplete: {versions}")
+    return migrations
+
+
+def load_production_bootstrap_migrations(root: Path | None = None) -> list[Migration]:
+    """Load the complete empty-database schema path without importing business data."""
+    migration_root = root or Path(__file__).parents[1] / "dashboard_api" / "migrations"
+    migrations: list[Migration] = []
+    for path in sorted(migration_root.glob("*.sql")):
+        match = _MIGRATION_PATTERN.match(path.name)
+        if match is None:
+            continue
+        version = int(match.group("version"))
+        if not 1 <= version <= APPLICATION_SCHEMA_MAX:
+            continue
+        sql = path.read_text(encoding="utf-8")
+        if version == 1:
+            sql = _FRESH_DATABASE_PREREQUISITES + "\n" + sql
+        migrations.append(
+            Migration(version, path.name, sql, hashlib.sha256(sql.encode("utf-8")).hexdigest())
+        )
+    versions = [migration.version for migration in migrations]
+    if versions != list(range(1, APPLICATION_SCHEMA_MAX + 1)):
+        raise FinancialSchemaError(f"production bootstrap migration set is incomplete: {versions}")
     return migrations
 
 

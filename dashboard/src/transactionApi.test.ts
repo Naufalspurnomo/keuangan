@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createCanonicalTransactionMutation,
   createTransactionWriteAttempt,
+  sameTransactionPayload,
   jakartaToday,
   loadTransactionWriteSession,
   type TransactionWritePayload,
@@ -60,6 +61,12 @@ const payload: TransactionWritePayload = {
 afterEach(() => vi.restoreAllMocks())
 
 describe('authenticated transaction API', () => {
+  it('compares unresolved attempts against the exact canonical payload', () => {
+    expect(sameTransactionPayload(payload, { ...payload })).toBe(true)
+    expect(sameTransactionPayload(payload, { ...payload, amount: payload.amount + 1 })).toBe(false)
+    expect(sameTransactionPayload(payload, { ...payload, project: undefined })).toBe(false)
+  })
+
   it('loads the owner CSRF token and write capability same-origin without caching', async () => {
     const request = vi.fn(async () => sessionEnvelope())
 
@@ -67,6 +74,7 @@ describe('authenticated transaction API', () => {
       csrfToken: 'csrf-owner-session-token-0001',
       writesEnabled: true,
       canonicalWritesEnabled: false,
+      debtWritesEnabled: false,
     })
     expect(request).toHaveBeenCalledWith('/admin/api/write-session.php', {
       credentials: 'same-origin',
@@ -77,14 +85,14 @@ describe('authenticated transaction API', () => {
   })
 
   it('posts the exact contract with matching CSRF and idempotency keys', async () => {
-    const request = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => recordedEnvelope())
+    const request = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => canonicalRecordedEnvelope())
     const attempt = createTransactionWriteAttempt(payload, {
       request,
       keyFactory: () => 'dashboard-test-key-00000001',
     })
 
-    await expect(attempt.submit({ csrfToken: 'csrf-owner-session-token-0001', writesEnabled: true }))
-      .resolves.toMatchObject({ recorded: true, sheetRow: 77, duplicate: false, projectionStatus: 'updated' })
+    await expect(attempt.submit({ csrfToken: 'csrf-owner-session-token-0001', writesEnabled: true, canonicalWritesEnabled: true }))
+      .resolves.toMatchObject({ recorded: true, authority: 'postgresql', duplicate: false })
 
     const [, options] = request.mock.calls[0]
     expect(request).toHaveBeenCalledWith('/admin/api/transactions.php', expect.objectContaining({
@@ -105,6 +113,50 @@ describe('authenticated transaction API', () => {
     })
   })
 
+  it('requires canonical writes for creation even when legacy writes are enabled', async () => {
+    const request = vi.fn(async () => canonicalRecordedEnvelope())
+    const attempt = createTransactionWriteAttempt(payload, {
+      request,
+      keyFactory: () => 'canonical-create-gate-0001',
+    })
+
+    await expect(attempt.submit({
+      csrfToken: 'csrf-owner-session-token-0001',
+      writesEnabled: true,
+      canonicalWritesEnabled: false,
+    })).rejects.toMatchObject({ code: 'canonical_finance_writes_disabled' })
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('creates with canonical writes without consulting the legacy write flag', async () => {
+    const request = vi.fn(async () => canonicalRecordedEnvelope())
+    const attempt = createTransactionWriteAttempt(payload, {
+      request,
+      keyFactory: () => 'canonical-create-only-0001',
+    })
+
+    await expect(attempt.submit({
+      csrfToken: 'csrf-owner-session-token-0001',
+      writesEnabled: false,
+      canonicalWritesEnabled: true,
+    })).resolves.toMatchObject({ authority: 'postgresql' })
+    expect(request).toHaveBeenCalledOnce()
+  })
+
+  it('rejects Sheet-shaped success in canonical production creation', async () => {
+    const request = vi.fn(async () => recordedEnvelope())
+    const attempt = createTransactionWriteAttempt(payload, {
+      request,
+      keyFactory: () => 'canonical-no-sheet-00001',
+    })
+
+    await expect(attempt.submit({
+      csrfToken: 'csrf-owner-session-token-0001',
+      writesEnabled: true,
+      canonicalWritesEnabled: true,
+    })).rejects.toMatchObject({ code: 'unverified_recording', uncertain: true })
+  })
+
   it('accepts exact PostgreSQL authority evidence without Sheet locators', async () => {
     const request = vi.fn(async () => canonicalRecordedEnvelope())
     const attempt = createTransactionWriteAttempt(payload, {
@@ -112,7 +164,7 @@ describe('authenticated transaction API', () => {
       keyFactory: () => 'dashboard-postgres-key-0001',
     })
 
-    await expect(attempt.submit({ csrfToken: 'csrf-owner-session-token-0001', writesEnabled: true }))
+    await expect(attempt.submit({ csrfToken: 'csrf-owner-session-token-0001', writesEnabled: true, canonicalWritesEnabled: true }))
       .resolves.toEqual({
         recorded: true,
         authority: 'postgresql',
@@ -132,19 +184,19 @@ describe('authenticated transaction API', () => {
       keyFactory: () => 'dashboard-mixed-key-000001',
     })
 
-    await expect(attempt.submit({ csrfToken: 'csrf-owner-session-token-0001', writesEnabled: true }))
+    await expect(attempt.submit({ csrfToken: 'csrf-owner-session-token-0001', writesEnabled: true, canonicalWritesEnabled: true }))
       .rejects.toMatchObject({ code: 'unverified_recording', uncertain: true })
   })
 
   it('preserves one key and body when an uncertain request is retried', async () => {
     const request = vi.fn()
       .mockRejectedValueOnce(new TypeError('network interrupted'))
-      .mockResolvedValueOnce(recordedEnvelope())
+      .mockResolvedValueOnce(canonicalRecordedEnvelope())
     const attempt = createTransactionWriteAttempt(payload, {
       request,
       keyFactory: () => 'dashboard-retry-key-000001',
     })
-    const session = { csrfToken: 'csrf-owner-session-token-0001', writesEnabled: true }
+    const session = { csrfToken: 'csrf-owner-session-token-0001', writesEnabled: true, canonicalWritesEnabled: true }
 
     await expect(attempt.submit(session)).rejects.toMatchObject({ uncertain: true })
     await expect(attempt.submit(session)).resolves.toMatchObject({ recorded: true })
@@ -165,13 +217,13 @@ describe('authenticated transaction API', () => {
       keyFactory: () => 'dashboard-invalid-key-0001',
     })
 
-    await expect(attempt.submit({ csrfToken: 'csrf-owner-session-token-0001', writesEnabled: true }))
+    await expect(attempt.submit({ csrfToken: 'csrf-owner-session-token-0001', writesEnabled: true, canonicalWritesEnabled: true }))
       .rejects.toMatchObject({ uncertain: true })
   })
 
   it('fails closed when writes are disabled or the session contract is malformed', async () => {
     await expect(loadTransactionWriteSession({ request: vi.fn(async () => sessionEnvelope(false)) }))
-      .resolves.toEqual({ csrfToken: 'csrf-owner-session-token-0001', writesEnabled: false, canonicalWritesEnabled: false })
+      .resolves.toEqual({ csrfToken: 'csrf-owner-session-token-0001', writesEnabled: false, canonicalWritesEnabled: false, debtWritesEnabled: false })
     await expect(loadTransactionWriteSession({ request: vi.fn(async () => new Response(JSON.stringify({ data: {} }), {
       status: 200,
       headers: { 'content-type': 'application/json' },

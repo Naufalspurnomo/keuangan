@@ -143,6 +143,7 @@ def create_dashboard_blueprint(
     project_uuid_exists: Any,
     project_uuid_name: Any | None = None,
     transaction_service: Any | None = None,
+    snapshot_loader: Any | None = None,
 ) -> Blueprint:
     blueprint = Blueprint("dashboard_api", __name__, url_prefix="/api/dashboard/v1")
 
@@ -290,7 +291,11 @@ def create_dashboard_blueprint(
     @owner_required
     def snapshot():
         try:
-            payload = live_source.load_live_snapshot()
+            payload = (
+                snapshot_loader()
+                if snapshot_loader is not None
+                else live_source.load_live_snapshot()
+            )
         except Exception:
             return jsonify(
                 {"error": {"code": "source_unavailable", "message": "Dashboard source temporarily unavailable"}}

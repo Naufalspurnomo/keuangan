@@ -9,6 +9,7 @@ they are never command-line arguments or result fields.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -39,6 +40,7 @@ POSTGRES_APPLICATION_TABLES = (
 )
 CANONICAL_REQUIRED_TABLES = frozenset({
     "business_units",
+    "finance_authority_state",
     "financial_export_outbox",
     "financial_postings",
     "financial_schema_migrations",
@@ -51,6 +53,7 @@ CANONICAL_REQUIRED_TABLES = frozenset({
 })
 TABLE_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*$")
 LSN_PATTERN = re.compile(r"^[0-9A-F]+/[0-9A-F]+$")
+SNAPSHOT_PATTERN = re.compile(r"^[0-9A-Fa-f]+-[0-9A-Fa-f]+-[0-9A-Fa-f]+$")
 
 
 class BackupError(RuntimeError):
@@ -59,6 +62,23 @@ class BackupError(RuntimeError):
 
 class CommandRunner(Protocol):
     def __call__(self, command: list[str], *, env: dict[str, str] | None = None) -> str | None: ...
+
+
+@contextlib.contextmanager
+def _export_postgres_snapshot(dsn: str):
+    """Keep one read-only transaction open while all backup reads share its snapshot."""
+    import psycopg
+
+    with psycopg.connect(dsn) as connection:
+        connection.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        row = connection.execute("SELECT pg_export_snapshot()").fetchone()
+        snapshot = str(row[0]) if row else ''
+        if not SNAPSHOT_PATTERN.fullmatch(snapshot):
+            raise BackupError("PostgreSQL exported snapshot is invalid")
+        try:
+            yield snapshot
+        finally:
+            connection.rollback()
 
 
 @dataclass(frozen=True)
@@ -235,9 +255,12 @@ def _query_rows(
     runner: CommandRunner,
     config: BackupConfig,
     dsn: str,
+    snapshot: str,
     marker: str,
     sql: str,
 ) -> list[str]:
+    if not SNAPSHOT_PATTERN.fullmatch(snapshot):
+        raise BackupError("PostgreSQL exported snapshot is invalid")
     output = runner(
         [
             config.psql_command,
@@ -247,7 +270,9 @@ def _query_rows(
             "--no-align",
             "--set=ON_ERROR_STOP=1",
             "--command",
-            f"/* hollawall-contract:{marker} */\n{sql}",
+            "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\n"
+            f"SET TRANSACTION SNAPSHOT '{snapshot}';\n"
+            f"/* hollawall-contract:{marker} */\n{sql};\nCOMMIT",
         ],
         env=libpq_env(dsn),
     )
@@ -267,11 +292,13 @@ def _postgres_contract(
     runner: CommandRunner,
     config: BackupConfig,
     dsn: str,
+    snapshot: str,
 ) -> dict[str, object]:
     metadata_rows = _query_rows(
         runner,
         config,
         dsn,
+        snapshot,
         "metadata",
         """
         SELECT jsonb_build_object(
@@ -301,6 +328,7 @@ def _postgres_contract(
         runner,
         config,
         dsn,
+        snapshot,
         "schema",
         """
         SELECT jsonb_build_object(
@@ -320,6 +348,7 @@ def _postgres_contract(
         runner,
         config,
         dsn,
+        snapshot,
         "public-tables",
         """
         SELECT table_name
@@ -342,6 +371,7 @@ def _postgres_contract(
             runner,
             config,
             dsn,
+            snapshot,
             table,
             f"SELECT to_jsonb(row_data)::text FROM public.{table} AS row_data "
             "ORDER BY to_jsonb(row_data)::text",
@@ -554,19 +584,24 @@ def run_backup(
         staging = work / "payload"
         (staging / "postgres").mkdir(parents=True)
         dump_path = staging / "postgres" / "database.dump"
-        postgres_contract = _postgres_contract(selected_runner, config, dsn)
-        selected_runner(
-            [
-                config.pg_dump_command,
-                "--format=custom",
-                "--no-owner",
-                "--no-privileges",
-                "--serializable-deferrable",
-                "--file",
-                str(dump_path),
-            ],
-            env=libpq_env(dsn),
-        )
+        snapshot_factory = getattr(selected_runner, "postgres_snapshot", _export_postgres_snapshot)
+        with snapshot_factory(dsn) as snapshot:
+            if not SNAPSHOT_PATTERN.fullmatch(snapshot):
+                raise BackupError("PostgreSQL exported snapshot is invalid")
+            postgres_contract = _postgres_contract(selected_runner, config, dsn, snapshot)
+            selected_runner(
+                [
+                    config.pg_dump_command,
+                    "--format=custom",
+                    "--no-owner",
+                    "--no-privileges",
+                    "--snapshot",
+                    snapshot,
+                    "--file",
+                    str(dump_path),
+                ],
+                env=libpq_env(dsn),
+            )
         if not dump_path.is_file() or dump_path.stat().st_size == 0:
             raise BackupError("pg_dump did not create a non-empty custom dump")
 

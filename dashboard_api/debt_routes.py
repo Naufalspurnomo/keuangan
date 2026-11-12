@@ -6,7 +6,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from flask import Blueprint, Response, jsonify, request
+from flask import Blueprint, Response, current_app, jsonify, request
 
 from dashboard_api.auth import actor_identity, owner_required
 from services.interwallet_debt_service import DebtConflict, DebtNotFound, DebtValidationError
@@ -51,6 +51,19 @@ def _context(body: dict[str, Any], roles: frozenset[str]):
     return identity, None
 
 
+def _write_gate():
+    if not bool(current_app.config.get("CANONICAL_FINANCE_WRITES_ENABLED")):
+        return _error("canonical_writes_disabled", "Canonical finance writes are disabled", 503)
+    authority = current_app.extensions.get("canonical_finance_write_authority")
+    try:
+        selected = authority() if callable(authority) else None
+    except Exception:
+        selected = None
+    if selected != "postgresql":
+        return _error("canonical_authority_unavailable", "Canonical finance authority is unavailable", 503)
+    return None
+
+
 def _run(operation: Callable[[], Any], *, created: bool = True):
     try:
         result = operation()
@@ -73,6 +86,9 @@ def create_debt_blueprint(service: Any) -> Blueprint:
 
     @blueprint.post("")
     def create_debt():
+        gate = _write_gate()
+        if gate is not None:
+            return gate
         body = _body()
         if isinstance(body, Response):
             return body
@@ -83,6 +99,9 @@ def create_debt_blueprint(service: Any) -> Blueprint:
 
     @blueprint.post("/<debt_id>/repayments")
     def repay_debt(debt_id: str):
+        gate = _write_gate()
+        if gate is not None:
+            return gate
         body = _body()
         if isinstance(body, Response):
             return body
@@ -93,6 +112,9 @@ def create_debt_blueprint(service: Any) -> Blueprint:
 
     @blueprint.post("/<debt_id>/events/<event_id>/corrections")
     def correct_event(debt_id: str, event_id: str):
+        gate = _write_gate()
+        if gate is not None:
+            return gate
         body = _body()
         if isinstance(body, Response):
             return body
@@ -103,6 +125,9 @@ def create_debt_blueprint(service: Any) -> Blueprint:
 
     @blueprint.post("/<debt_id>/events/<event_id>/reversals")
     def reverse_event(debt_id: str, event_id: str):
+        gate = _write_gate()
+        if gate is not None:
+            return gate
         body = _body()
         if isinstance(body, Response):
             return body
@@ -115,5 +140,10 @@ def create_debt_blueprint(service: Any) -> Blueprint:
     @owner_required
     def get_debt(debt_id: str):
         return _run(lambda: service.get_debt(debt_id), created=False)
+
+    @blueprint.get("")
+    @owner_required
+    def list_debts():
+        return _run(lambda: {"items": service.list_debts()}, created=False)
 
     return blueprint

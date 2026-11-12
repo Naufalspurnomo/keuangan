@@ -309,6 +309,11 @@ def test_canonical_write_authority_selects_postgres_dashboard_service(monkeypatc
     )
     monkeypatch.setattr(
         finance_write_authority,
+        "assert_finance_authority_configuration",
+        lambda dsn, *, writes_enabled: (dsn, writes_enabled),
+    )
+    monkeypatch.setattr(
+        finance_write_authority,
         "PostgresAuthorityResolver",
         lambda dsn: ("resolver", dsn),
     )

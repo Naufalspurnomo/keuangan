@@ -300,7 +300,7 @@ describe('Hollawall demo finance workspace', () => {
   it('filters report preview using the same seven visible scope labels and complete row set', () => {
     renderApp()
     nav('Laporan')
-    expect(screen.getByRole('heading', { name: 'Pratinjau dan ekspor PDF' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Pusat laporan kanonis' })).toBeTruthy()
     const preview = screen.getByRole('region', { name: 'Pratinjau laporan' })
     expect(within(preview).getByLabelText('Filter aktif').children).toHaveLength(7)
     expect(within(preview).getAllByRole('row')).toHaveLength(95)

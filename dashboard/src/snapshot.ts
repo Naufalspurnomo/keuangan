@@ -1,9 +1,9 @@
 import type { DashboardMeta, Overview, QualityRow, Transaction } from './types'
-import type { CompanyId, FinanceWorkspace, OfficeCategory, WalletId } from './financeWorkspace'
+import type { CompanyId, FinanceDebtEvent, FinanceWorkspace, OfficeCategory, WalletId } from './financeWorkspace'
 import { normalizeCanonicalPair } from './transactionMappings'
 
 export interface WalletSnapshot { source_key: string; name: string; balance: number }
-export interface DebtSnapshot { source_key: string; date: string | null; amount: number; notes: string; borrower: string; lender: string; status: string; project_id?: string | null }
+export interface DebtSnapshot { source_key: string; debt_id?: string; date: string | null; due_at?: string | null; amount: number; repaid?: number; outstanding?: number; notes: string; borrower: string; lender: string; status: string; version?: number; events?: FinanceDebtEvent[]; project_id?: string | null }
 export interface CashTrendPoint { month: string; balance: number; net_movement: number }
 export type ProjectHealth = 'healthy' | 'watch' | 'overdue' | 'completed' | 'unmarked'
 export interface ProjectSummary {
@@ -22,6 +22,8 @@ export interface ProjectSummary {
   health?: ProjectHealth
   source_key_first?: string
   source_key_latest?: string
+  wallet?: string
+  company?: string
 }
 export interface DashboardSnapshot {
   version: string
@@ -72,8 +74,8 @@ export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWo
     return {
       id: project.project_id,
       name: project.name,
-      company: uiCompany(first?.company || ''),
-      wallet: (first?.wallet || '') as WalletId,
+      company: uiCompany(project.company || first?.company || ''),
+      wallet: (project.wallet || first?.wallet || '') as WalletId,
       status,
       started_on: startedOn,
       completed_on: terminal ? (project.completed_on || project.last_activity_on || null) : null,
@@ -115,15 +117,22 @@ export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWo
     }]
   })
   const debts = snapshot.debts.flatMap((row, index) => row.date ? [{
-    id: row.source_key || `live-debt-${index + 1}`, date: row.date.slice(0, 10),
+    id: row.debt_id || row.source_key || `live-debt-${index + 1}`, date: row.date.slice(0, 10),
     borrower: row.borrower as WalletId, lender: row.lender as WalletId, amount: row.amount,
-    repaid: row.status.toLocaleLowerCase('id-ID') === 'open' ? 0 : row.amount,
+    repaid: Number.isSafeInteger(row.repaid) && Number(row.repaid) >= 0
+      ? Number(row.repaid)
+      : row.status.toLocaleLowerCase('id-ID') === 'open' ? 0 : row.amount,
     project_id: row.project_id ?? null,
+    version: Number.isSafeInteger(row.version) ? Number(row.version) : undefined,
+    events: Array.isArray(row.events) ? row.events : [],
+    due_at: row.due_at?.slice(0, 10) ?? null,
     notes: row.notes, created_at: updatedAt, updated_at: updatedAt,
   }] : [])
   return {
     version: 3, mode: 'live', projects, transactions, debts, audit: [], updated_at: updatedAt,
     live_wallets: snapshot.wallets, live_cash_trend: snapshot.cash_trend,
+    live_source: snapshot.meta.source,
+    live_data_through: snapshot.meta.data_through ?? null,
   }
 }
 

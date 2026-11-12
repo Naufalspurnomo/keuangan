@@ -78,7 +78,10 @@ function liveResponse(snapshot = liveSnapshot()) {
   return new Response(JSON.stringify(snapshot), { status: 200, headers: { 'content-type': 'application/json' } })
 }
 
-function productionProjectsResponse(transactionLifecycle = false) {
+function productionProjectsResponse(transactionLifecycle = false, wallet = 'CV HB(101)') {
+  const company = wallet === 'TX SBY(216)' ? 'TEXTURIN-Surabaya'
+    : wallet === 'TX BALI(087)' ? 'TEXTURIN-Bali'
+      : 'HOLLA'
   return new Response(JSON.stringify({
     api_version: 'dashboard.v1',
     data: {
@@ -94,8 +97,8 @@ function productionProjectsResponse(transactionLifecycle = false) {
         start_date: '2026-11-01',
         completion_date: null,
         contract_notes: '',
-        wallet: 'CV HB(101)',
-        company: 'HOLLA',
+        wallet,
+        company,
         lock_version: 1,
         archived_at: null,
         created_at: '2026-11-01T00:00:00Z',
@@ -114,14 +117,15 @@ function writableProductionProjectsResponse() {
   }), { status: 200, headers: { 'content-type': 'application/json' } }))
 }
 
-function writeSessionResponse(canonicalFinanceWrites = false) {
+function writeSessionResponse(canonicalFinanceWrites = true, writesEnabled = true, debtWritesEnabled = false) {
   return new Response(JSON.stringify({
     api_version: 'dashboard.v1',
     data: {
       csrf_token: 'csrf-token-1234567890',
       capabilities: {
-        writes_enabled: true,
+        writes_enabled: writesEnabled,
         canonical_finance_writes_enabled: canonicalFinanceWrites,
+        canonical_debt_writes_enabled: debtWritesEnabled,
       },
     },
   }), { status: 200, headers: { 'content-type': 'application/json' } })
@@ -149,12 +153,9 @@ function recordedTransactionResponse() {
     api_version: 'dashboard.v1',
     data: {
       recorded: true,
-      transaction_id: 'tx-new-1',
-      sheet_name: 'Operasional',
-      sheet_row: 42,
-      source_block: 'office',
-      sheet_message_id: 'message-1',
-      projection_status: 'pending',
+      authority: 'postgresql',
+      transaction_id: '00000000-0000-4000-8000-000000000601',
+      transaction_version: 1,
       duplicate: false,
     },
   }), { status: 201, headers: { 'content-type': 'application/json' } })
@@ -189,6 +190,71 @@ afterEach(() => {
 })
 
 describe('production live source mode', () => {
+  it('opens the single canonical production project form from the live project add control', async () => {
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/admin/api/write-session.php') return writeSessionResponse(false, false)
+      if (url.startsWith('/admin/api/projects.php?action=list')) return writableProductionProjectsResponse()
+      return liveResponse()
+    })
+    vi.stubGlobal('fetch', request)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Tambah proyek' }))
+
+    expect(screen.getByRole('dialog', { name: 'Buat proyek' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Dompet pencatatan')).toHaveValue('CV HB(101)')
+  })
+
+  it('does not expose transaction creation for a legacy-only write session', async () => {
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/admin/api/write-session.php') return writeSessionResponse(false, true)
+      if (url.startsWith('/admin/api/projects.php?action=list')) return productionProjectsResponse()
+      return liveResponse()
+    })
+    vi.stubGlobal('fetch', request)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
+
+    fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Buka proyek Kontrak Panggung Utama' }))
+
+    expect(screen.queryByRole('button', { name: 'Tambah transaksi' })).toBeNull()
+  })
+
+  it.each(['CV HB(101)', 'TX SBY(216)', 'TX BALI(087)'])('preserves canonical project wallet %s in the Hutang shortcut', async (wallet) => {
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/admin/api/write-session.php') return writeSessionResponse(true, false, true)
+      if (url.startsWith('/admin/api/projects.php?action=list')) return productionProjectsResponse(false, wallet)
+      return liveResponse()
+    })
+    vi.stubGlobal('fetch', request)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
+
+    fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Buka proyek Kontrak Panggung Utama' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Pinjaman' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Buka Hutang' }))
+
+    expect(screen.getByLabelText('Dompet peminjam')).toHaveValue(wallet)
+  })
+
+  it('opens the review queue from the dashboard', async () => {
+    const request = vi.fn(async (input: RequestInfo | URL) => String(input).includes('write-session')
+      ? writeSessionResponse(false)
+      : String(input).includes('/projects') ? productionProjectsResponse() : liveResponse())
+    vi.stubGlobal('fetch', request)
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Perlu ditinjau' }))
+
+    expect(window.location.hash).toBe('#inbox-reviews')
+    expect(await screen.findByRole('heading', { name: 'Perlu Ditinjau' })).toBeInTheDocument()
+  })
   it('renders PostgreSQL projects and routes the live detail workspace by UUID', async () => {
     const request = vi.fn(async (input: RequestInfo | URL) => String(input).startsWith('/admin/api/projects.php?action=list')
       ? productionProjectsResponse()
@@ -373,7 +439,7 @@ describe('production live source mode', () => {
 
     fireEvent.click(navigation().getByRole('button', { name: 'Laporan' }))
     expect(window.location.hash).toBe('#reports')
-    expect(screen.getByRole('heading', { name: 'Pratinjau dan ekspor PDF' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Pusat laporan kanonis' })).toBeTruthy()
     expect(screen.getByText('Texturin Regional Baru')).toBeTruthy()
     expect(screen.queryByText('Unit Operasional Baru')).toBeNull()
     expect(screen.queryByText(/DATA LIVE/i)).toBeNull()
@@ -433,20 +499,26 @@ describe('production live source mode', () => {
   it('queries presensi only with an explicit canonical project mapping', async () => {
     const snapshot = liveSnapshot()
     snapshot.project_summaries[0] = { ...snapshot.project_summaries[0], project_id: PROJECT_ALFA_ID }
-    const request = vi.fn(async (input: RequestInfo | URL) => String(input).startsWith('/admin/api/presensi.php')
-      ? new Response(JSON.stringify({ version: 'presensi.admin.v1', records: [] }), { status: 200, headers: { 'content-type': 'application/json' } })
-      : liveResponse(snapshot))
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith('/admin/api/presensi.php')) {
+        return new Response(JSON.stringify({ version: 'presensi.admin.v1', records: [] }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.startsWith('/admin/api/projects.php?action=list')) return productionProjectsResponse()
+      if (url === '/admin/api/write-session.php') return writeSessionResponse()
+      return liveResponse(snapshot)
+    })
     vi.stubGlobal('fetch', request)
 
     render(<App />)
     await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
     fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Buka proyek Proyek Produksi Alfa' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Buka proyek Kontrak Panggung Utama' }))
     fireEvent.click(screen.getByRole('tab', { name: 'Presensi' }))
 
-    await screen.findByText('Belum ada presensi untuk Proyek Produksi Alfa')
+    await screen.findByText('Belum ada presensi untuk Kontrak Panggung Utama')
     expect(request).toHaveBeenCalledWith(
-      `/admin/api/presensi.php?project_id=${PROJECT_ALFA_ID}`,
+      '/admin/api/presensi.php?project_id=123e4567-e89b-42d3-a456-426614174000',
       expect.objectContaining({ credentials: 'same-origin' }),
     )
     expect(request.mock.calls.some(([input]) => String(input).includes('project_id=proyek-produksi-alfa'))).toBe(false)

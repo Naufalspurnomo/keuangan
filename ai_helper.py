@@ -1606,9 +1606,6 @@ class RotatingGroqClient:
     """
 
     def __init__(self, api_keys: List[str]):
-        if not api_keys:
-            raise ValueError("GROQ API key is missing. Set GROQ_API_KEY in environment.")
-
         self._api_keys = api_keys
         self._clients = [Groq(api_key=key) for key in api_keys]
         self._active_index = 0
@@ -1617,7 +1614,13 @@ class RotatingGroqClient:
         self.chat = _GroqChatProxy(self)
         self.audio = _GroqAudioProxy(self)
 
-        secure_log("INFO", f"Groq initialized with {len(self._clients)} API key(s)")
+        if self._clients:
+            secure_log("INFO", f"Groq initialized with {len(self._clients)} API key(s)")
+        else:
+            secure_log(
+                "WARNING",
+                "Groq is not configured; AI requests will fail closed while non-AI routes remain available",
+            )
 
     def _get_active_index(self) -> int:
         with self._lock:
@@ -1628,6 +1631,8 @@ class RotatingGroqClient:
             self._active_index = idx
 
     def _rotation_order(self) -> List[int]:
+        if not self._clients:
+            raise RuntimeError("GROQ API key is missing. Set GROQ_API_KEY in environment.")
         start = self._get_active_index()
         return [(start + offset) % len(self._clients) for offset in range(len(self._clients))]
 
@@ -1665,6 +1670,8 @@ class RotatingGroqClient:
 
     def __getattr__(self, attr: str):
         """Fallback passthrough for APIs not explicitly wrapped."""
+        if not self._clients:
+            raise RuntimeError("GROQ API key is missing. Set GROQ_API_KEY in environment.")
         return getattr(self._clients[self._get_active_index()], attr)
 
 

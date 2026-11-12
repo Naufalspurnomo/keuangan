@@ -49,6 +49,52 @@ PROJECT_IDS = {
     "Texturin Sisipan": "00000000-0000-4000-8000-000000000004",
     "Proyek Selesai": "00000000-0000-4000-8000-000000000005",
 }
+PROJECT_RECORDS = [
+    {
+        "id": project_id,
+        "name": name,
+        "client_name": f"Klien {name}",
+        "client_company": "",
+        "client_address": "",
+        "client_contact": "",
+        "issuer_key": "hollawall",
+        "wallet": "TX SBY(216)" if name != "Texturin Sisipan" else "TX BALI(087)",
+        "company": "TEXTURIN-Surabaya" if name != "Texturin Sisipan" else "TEXTURIN-Bali",
+        "status": "completed" if name == "Proyek Selesai" else "active",
+        "start_date": "2024-01-01" if name == "Proyek Selesai" else "2026-01-01",
+        "completion_date": "2026-05-02" if name == "Proyek Selesai" else None,
+        "contract_notes": "",
+        "lock_version": 1,
+        "archived_at": None,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-10-21T12:00:00Z",
+    }
+    for name, project_id in PROJECT_IDS.items()
+]
+
+
+def route_projects(route):
+    capabilities = {
+        "reads_enabled": True,
+        "project_document_writes_enabled": False,
+        "transaction_correction_reversal": False,
+        "hard_delete": False,
+    }
+    url = route.request.url
+    if "action=get" in url:
+        project_id = url.split("project_id=", 1)[1].split("&", 1)[0]
+        item = next((project for project in PROJECT_RECORDS if project["id"] == project_id), None)
+        if item is None:
+            route.fulfill(status=404, content_type="application/json", body=json.dumps({"api_version": "dashboard.v1", "error": {"code": "not_found"}}))
+            return
+        data = item
+    else:
+        data = {"items": PROJECT_RECORDS}
+    route.fulfill(status=200, content_type="application/json", body=json.dumps({
+        "api_version": "dashboard.v1",
+        "data": data,
+        "meta": {"capabilities": capabilities},
+    }))
 
 TRANSACTIONS = [
     {"id": 1, "transaction_date": "2026-10-21", "transaction_type": "Pemasukan", "amount": 125_000_000, "wallet": "TX SBY(216)", "company": "Hollawall", "project": "Surabaya Office", "notes": "Termin pekerjaan utama"},
@@ -177,23 +223,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             route.fulfill(status=200, content_type="application/json", body=json.dumps(SNAPSHOT))
 
         context.route("**/admin/api/snapshot.php", route_api)
-        context.route(
-            "**/admin/api/projects.php**",
-            lambda route: route.fulfill(
-                status=200,
-                content_type="application/json",
-                body=json.dumps({
-                    "api_version": "dashboard.v1",
-                    "data": {"items": []},
-                    "meta": {"capabilities": {
-                        "reads_enabled": True,
-                        "project_document_writes_enabled": False,
-                        "transaction_correction_reversal": False,
-                        "hard_delete": False,
-                    }},
-                }),
-            ),
-        )
+        context.route("**/admin/api/projects.php**", route_projects)
         context.route(
             "**/admin/api/write-session.php",
             lambda route: route.fulfill(
@@ -259,23 +289,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             route.fulfill(status=200, content_type="application/json", body=json.dumps(SNAPSHOT if state["calls"] == 1 else UPDATED_SNAPSHOT))
 
         context.route("**/admin/api/snapshot.php", route_api)
-        context.route(
-            "**/admin/api/projects.php**",
-            lambda route: route.fulfill(
-                status=200,
-                content_type="application/json",
-                body=json.dumps({
-                    "api_version": "dashboard.v1",
-                    "data": {"items": []},
-                    "meta": {"capabilities": {
-                        "reads_enabled": True,
-                        "project_document_writes_enabled": False,
-                        "transaction_correction_reversal": False,
-                        "hard_delete": False,
-                    }},
-                }),
-            ),
-        )
+        context.route("**/admin/api/projects.php**", route_projects)
         context.route(
             "**/admin/api/write-session.php",
             lambda route: route.fulfill(

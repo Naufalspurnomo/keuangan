@@ -20,6 +20,7 @@ export interface TransactionWriteSession {
   csrfToken: string
   writesEnabled: boolean
   canonicalWritesEnabled?: boolean
+  debtWritesEnabled?: boolean
 }
 
 export interface CanonicalTransactionMutationInput {
@@ -50,6 +51,7 @@ export type RecordedTransaction = {
   projectionStatus: string
   transactionVersion?: never
   duplicate: boolean
+  readbackFailed?: boolean
 } | {
   recorded: true
   authority: 'postgresql'
@@ -61,12 +63,23 @@ export type RecordedTransaction = {
   sheetMessageId?: never
   projectionStatus?: never
   duplicate: boolean
+  readbackFailed?: boolean
 }
 
 export interface TransactionWriteAttempt {
   readonly idempotencyKey: string
   readonly payload: Readonly<TransactionWritePayload>
   submit: (session: TransactionWriteSession) => Promise<RecordedTransaction>
+}
+
+export function sameTransactionPayload(
+  left: Readonly<TransactionWritePayload>,
+  right: Readonly<TransactionWritePayload>,
+) {
+  const fields: ReadonlyArray<keyof TransactionWritePayload> = [
+    'date', 'scope', 'direction', 'amount', 'description', 'wallet', 'company', 'category', 'project',
+  ]
+  return fields.every((field) => left[field] === right[field])
 }
 
 export class TransactionWriteError extends Error {
@@ -173,13 +186,16 @@ export async function loadTransactionWriteSession(options: ApiOptions = {}): Pro
       || data.csrf_token.length < 16
       || typeof capabilities?.writes_enabled !== 'boolean'
       || (capabilities?.canonical_finance_writes_enabled !== undefined
-        && typeof capabilities.canonical_finance_writes_enabled !== 'boolean')) {
+        && typeof capabilities.canonical_finance_writes_enabled !== 'boolean')
+      || (capabilities?.canonical_debt_writes_enabled !== undefined
+        && typeof capabilities.canonical_debt_writes_enabled !== 'boolean')) {
     throw new TransactionWriteError('Kontrak sesi pencatatan tidak cocok.', { code: 'invalid_write_session' })
   }
   return {
     csrfToken: data.csrf_token,
     writesEnabled: capabilities.writes_enabled,
     canonicalWritesEnabled: capabilities.canonical_finance_writes_enabled === true,
+    debtWritesEnabled: capabilities.canonical_debt_writes_enabled === true,
   }
 }
 
@@ -268,9 +284,9 @@ export function createTransactionWriteAttempt(
     idempotencyKey,
     payload: immutablePayload,
     async submit(session: TransactionWriteSession) {
-      if (!session.writesEnabled) {
-        throw new TransactionWriteError('Pencatatan transaksi belum diaktifkan.', {
-          code: 'transaction_writes_disabled',
+      if (!session.canonicalWritesEnabled) {
+        throw new TransactionWriteError('Pencatatan transaksi kanonis belum diaktifkan.', {
+          code: 'canonical_finance_writes_disabled',
         })
       }
       if (typeof session.csrfToken !== 'string' || session.csrfToken.length < 16) {
@@ -300,7 +316,13 @@ export function createTransactionWriteAttempt(
       }
       const responseBody = await jsonResponse(response, 'pencatatan')
       if (!response.ok) throw apiError(responseBody, response.status)
-      return recordedTransaction(responseBody, response)
+      const recorded = recordedTransaction(responseBody, response)
+      if (recorded.authority !== 'postgresql') {
+        throw new TransactionWriteError('Server belum memberikan bukti pencatatan PostgreSQL.', {
+          code: 'unverified_recording', uncertain: true, retryable: true, status: response.status,
+        })
+      }
+      return recorded
     },
   })
 }

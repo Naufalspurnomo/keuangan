@@ -158,4 +158,38 @@ describe('snapshotFinanceWorkspace', () => {
     expect(project.status).toBe('cancelled')
     expect(project.completed_on).toBe('2026-10-22')
   })
+
+  it('keeps a fresh PostgreSQL project routable before its first transaction', () => {
+    const source = snapshot('HOLLA')
+    source.transactions = []
+    source.project_summaries[0] = {
+      ...source.project_summaries[0],
+      wallet: 'TX SBY(216)',
+      company: 'TEXTURIN-Surabaya',
+      net_cashflow: 0,
+      transaction_count: 0,
+    }
+
+    const workspace = snapshotFinanceWorkspace(source)
+
+    expect(workspace.projects[0]).toMatchObject({
+      id: PROJECT_ID,
+      wallet: 'TX SBY(216)',
+      company: 'Texturin Surabaya',
+    })
+  })
+
+  it('preserves partial debt repayment from canonical PostgreSQL projection', () => {
+    const source = snapshot('HOLLA')
+    source.debts = [{
+      source_key: 'postgresql:debt:1', date: '2026-10-21', amount: 500_000,
+      repaid: 200_000, outstanding: 300_000, notes: 'Dana talangan',
+      borrower: 'TX SBY(216)', lender: 'CV HB(101)', status: 'OPEN',
+      project_id: PROJECT_ID,
+    }]
+
+    expect(snapshotFinanceWorkspace(source).debts[0]).toMatchObject({
+      amount: 500_000, repaid: 200_000, project_id: PROJECT_ID,
+    })
+  })
 })

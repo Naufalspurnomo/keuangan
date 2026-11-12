@@ -84,6 +84,8 @@ class DebtRepository(Protocol):
 
     def get(self, debt_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]: ...
 
+    def list_all(self) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]: ...
+
 
 def _fail(field: str, reason: str) -> NoReturn:
     raise DebtValidationError(f"{field}: {reason}")
@@ -322,6 +324,20 @@ class InMemoryInterwalletDebtRepository:
             if debt_id not in self._debts:
                 raise DebtNotFound("interwallet debt not found")
             return _clone(self._debts[debt_id]), _clone(self._events[debt_id])
+
+    def list_all(self) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
+        with self._lock:
+            debt_ids = sorted(
+                self._debts,
+                key=lambda debt_id: (
+                    str(self._debts[debt_id]["occurred_at"]), debt_id
+                ),
+                reverse=True,
+            )
+            return [
+                (_clone(self._debts[debt_id]), _clone(self._events[debt_id]))
+                for debt_id in debt_ids
+            ]
 
 
 class InterwalletDebtService:
@@ -627,6 +643,18 @@ class InterwalletDebtService:
             "version": len(events),
             "events": events,
         }
+
+    def list_debts(self) -> list[dict[str, Any]]:
+        return [
+            {
+                **debt,
+                "original_principal": debt["principal"],
+                **self._project(debt, events),
+                "version": len(events),
+                "events": events,
+            }
+            for debt, events in self._repository.list_all()
+        ]
 
     @staticmethod
     def _outbox(

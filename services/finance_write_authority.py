@@ -15,6 +15,84 @@ class CanonicalWriteUnavailable(RuntimeError):
     """Canonical authority was selected but could not commit the command."""
 
 
+class FinanceAuthorityLatchError(CanonicalWriteUnavailable):
+    """Durable authority state and runtime configuration disagree."""
+
+
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+
+
+def _enabled(source: Mapping[str, str], name: str) -> bool:
+    return str(source.get(name, "")).strip().casefold() in _TRUE_VALUES
+
+
+def _connect(dsn: str, connection_factory: Callable[..., Any] | None = None):
+    if connection_factory is not None:
+        return connection_factory(dsn)
+    import psycopg
+
+    return psycopg.connect(dsn)
+
+
+def read_finance_authority(
+    dsn: str,
+    *,
+    connection_factory: Callable[..., Any] | None = None,
+) -> str:
+    selected_dsn = str(dsn or "").strip()
+    if not selected_dsn:
+        raise FinanceAuthorityLatchError("finance authority latch requires a database DSN")
+    try:
+        with _connect(selected_dsn, connection_factory) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT authority FROM finance_authority_state WHERE singleton = TRUE"
+            )
+            row = cursor.fetchone()
+    except FinanceAuthorityLatchError:
+        raise
+    except Exception as exc:
+        raise FinanceAuthorityLatchError("finance authority latch is unavailable") from exc
+    if row is None or str(row[0]) not in {"google_sheets", "postgresql"}:
+        raise FinanceAuthorityLatchError("finance authority latch readback is invalid")
+    return str(row[0])
+
+
+def assert_finance_authority_configuration(
+    dsn: str,
+    *,
+    writes_enabled: bool,
+    connection_factory: Callable[..., Any] | None = None,
+) -> str:
+    authority = read_finance_authority(dsn, connection_factory=connection_factory)
+    expected = "postgresql" if writes_enabled else "google_sheets"
+    if authority != expected:
+        raise FinanceAuthorityLatchError(
+            f"finance authority mismatch: database={authority}, runtime={expected}"
+        )
+    return authority
+
+
+def legacy_sheets_finance_writes_fenced(
+    environ: Mapping[str, str] | None = None,
+    *,
+    connection_factory: Callable[..., Any] | None = None,
+) -> bool:
+    source = os.environ if environ is None else environ
+    if canonical_finance_writes_enabled(source):
+        return True
+    dsn = str(source.get("STATE_DATABASE_URL") or source.get("DATABASE_URL") or "").strip()
+    enforced = _enabled(source, "CANONICAL_FINANCE_LATCH_ENFORCED")
+    if not dsn:
+        return enforced
+    try:
+        return read_finance_authority(
+            dsn,
+            connection_factory=connection_factory,
+        ) == "postgresql"
+    except FinanceAuthorityLatchError:
+        return enforced
+
+
 class AuthorityResolver(Protocol):
     def resolve_wallet(self, label: str) -> tuple[str, str] | None: ...
 

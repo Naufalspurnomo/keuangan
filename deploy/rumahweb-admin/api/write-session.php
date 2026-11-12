@@ -106,6 +106,7 @@ echo json_encode([
         'capabilities' => [
             'writes_enabled' => ($config['transaction_writes_enabled'] ?? false) === true,
             'canonical_finance_writes_enabled' => ($config['canonical_finance_writes_enabled'] ?? false) === true,
+            'canonical_debt_writes_enabled' => ($config['canonical_debt_writes_enabled'] ?? false) === true,
         ],
     ],
 ], JSON_UNESCAPED_SLASHES);

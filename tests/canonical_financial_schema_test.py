@@ -12,6 +12,7 @@ from services.financial_schema import (
     Migration,
     apply_financial_migrations,
     load_financial_migrations,
+    load_production_bootstrap_migrations,
     verify_financial_schema,
 )
 
@@ -22,7 +23,7 @@ ROOT = Path(__file__).parents[1]
 def test_canonical_migrations_are_versioned_additive_and_checksums_are_stable():
     migrations = load_financial_migrations(ROOT / "dashboard_api" / "migrations")
 
-    assert [migration.version for migration in migrations] == [9, 10, 11, 12, 13, 14, 15, 16, 17]
+    assert [migration.version for migration in migrations] == [9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
     assert all(migration.sha256 == hashlib.sha256(migration.sql.encode()).hexdigest() for migration in migrations)
     combined = "\n".join(migration.sql for migration in migrations).lower()
     assert "opening_balances" in combined
@@ -63,6 +64,28 @@ def test_canonical_migrations_are_versioned_additive_and_checksums_are_stable():
     assert "financial_command_quarantine" in compact_sql
     assert "owner_approved" in compact_sql
     assert "command_sha256" in compact_sql
+    assert "finance_authority_state" in compact_sql
+    assert "finance authority cannot return to google_sheets" in compact_sql
+    assert "finance authority activation evidence is immutable" in compact_sql
+    assert "historical_import boolean not null default false check (not historical_import)" in compact_sql
+
+
+def test_production_bootstrap_orders_prerequisite_project_schema_before_finance_through_018():
+    migrations = load_production_bootstrap_migrations(ROOT / "dashboard_api" / "migrations")
+
+    assert [migration.version for migration in migrations] == list(range(1, 19))
+    combined = "\n".join(migration.sql for migration in migrations).lower()
+    assert combined.index("create table if not exists financial_ledger") < combined.index(
+        "create index if not exists idx_financial_ledger_dashboard_scope"
+    )
+    assert combined.index("create table if not exists projects") < combined.index(
+        "create table if not exists financial_transactions"
+    )
+    assert "insert into project_issuer_profiles" not in combined
+    assert "insert into projects" not in combined
+    assert "historical_import boolean not null default false check (not historical_import)" in " ".join(
+        combined.split()
+    )
 
 
 class _Cursor:

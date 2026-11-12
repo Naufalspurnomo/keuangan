@@ -66,6 +66,22 @@ blocker_saat_ini:
 selesai_terverifikasi: false
 ```
 
+### Amendment operator 2026-11-12 — Fresh-zero production ledger
+
+Keputusan eksplisit operator ini menggantikan seluruh requirement historical backfill,
+shadow import, mapping 1.139 row, dan disposition 76 review item sebagai syarat go-live:
+
+- Dashboard production dimulai dari ledger PostgreSQL kosong.
+- Data historis Google Sheets tidak diimpor ke PostgreSQL dan tidak ditampilkan di Dashboard.
+- Google Sheets lama dipertahankan sebagai arsip read-only terpisah, bukan business input.
+- Setelah activation, Google Sheets baru hanya menerima derived one-way export dari PostgreSQL.
+- Go-live wajib membuktikan canonical transaction/debt/project count dan balance mulai nol,
+  lalu hanya berubah melalui mutation terotorisasi dari Dashboard atau WhatsApp.
+- Tool ekstraksi/backfill yang sudah dibuat dipertahankan sebagai recovery/audit tooling,
+  tetapi tidak boleh dijalankan terhadap production tanpa keputusan operator baru.
+
+Jika bagian lain dokumen ini mewajibkan import atau rekonsiliasi histori lama, amendment ini menang.
+
 ### Invariant misi
 
 1. **Satu fakta finansial mempunyai satu otoritas kanonis.**
@@ -281,9 +297,9 @@ PostgreSQL [CANONICAL AUTHORITY]
 Aturan cutover:
 
 - Tidak boleh menyalakan dua primary writer.
-- Data Sheets historis dibackfill ke PostgreSQL menggunakan deterministic source key.
-- Rekonsiliasi count, amount, wallet, project, dan hash harus nol drift.
-- Selama shadow phase, read comparison dijalankan tetapi UI tetap membaca authority lama.
+- Ledger PostgreSQL production diinisialisasi fresh-zero; data Sheets historis tidak diimpor.
+- Rekonsiliasi awal membuktikan canonical count, amount, balance, debt, dan project finance sama dengan nol.
+- Sheets historis dibekukan sebagai arsip read-only dan dikeluarkan dari business reads.
 - Cutover dilakukan dengan feature flag terkontrol.
 - Setelah cutover, Sheets hanya menerima export dari canonical ledger; tidak menerima write bisnis langsung.
 - Export Sheets yang gagal tidak membatalkan commit PostgreSQL; kegagalan masuk outbox/alert dan dapat di-retry.
@@ -754,7 +770,7 @@ Acceptance:
 - Menjalankan banyak Gunicorn worker tidak pernah mengeksekusi DDL.
 - Existing project/document/evidence/allocation references tetap kompatibel.
 
-#### PG-102 — Historical migration manifest, backfill, dan reconciliation
+#### PG-102 — Historical archive isolation dan fresh-zero bootstrap
 
 Files:
 
@@ -764,37 +780,21 @@ Files:
 - Create: versioned migration manifest schema.
 - Tests: `tests/financial_authority_migration_test.py`
 
-Manifest row-level wajib menyimpan:
-
-- source spreadsheet ID dan immutable export/snapshot hash;
-- tab, row coordinate, legacy source key;
-- canonical transaction/debt/project UUID;
-- wallet dan business-unit mapping decision;
-- opening-balance/adjustment mapping;
-- debt principal, repayment, dan status mapping;
-- project lifecycle/status-transition mapping;
-- document allocation, receipt, evidence, dan quotation reference mapping;
-- review disposition, actor, reason, dan timestamp.
-
 Tasks:
 
-- [ ] Derive deterministic UUID/source key seluruh row historis dan referensi terkait.
-- [ ] Migrate opening balance, absolute-balance history, transaksi, legacy Hutang/repayment, project lifecycle, financial-ledger projection, documents, allocations, receipts, evidence, dan audit continuity.
-- [ ] Map wallet/business-unit/project secara eksplisit; nama saja tidak cukup.
-- [ ] Row tidak terpetakan masuk quarantine/review; tidak masuk office atau canonical totals.
-- [ ] Generate count, amount, ending-balance, and hash reconciliation per wallet/date/type/project.
-- [ ] Detect dangling document/evidence/allocation references.
-- [ ] Support dry-run, resumable checkpoint, deterministic rerun, dan immutable source snapshot.
+- [ ] Bekukan snapshot/hash Sheets historis sebagai arsip owner-scoped read-only.
+- [ ] Pastikan tidak ada importer/backfill production yang terjadwal atau aktif.
+- [ ] Inisialisasi canonical transaction, posting, debt, project-finance, dan opening balance dengan count/amount nol.
+- [ ] Simpan activation evidence yang menyatakan `historical_import=false` dan cutoff fresh-zero.
+- [ ] Tambahkan regression test yang melarang archive source menjadi business read/input production.
 - [ ] Export backup idempotent ke Sheets dengan canonical UUID + revision/reversal sequence.
-- [ ] Disposisikan seluruh **76 current review items** satu per satu: resolved, owner-approved exclusion, atau quarantined outside canonical totals.
 
 Acceptance:
 
-- Dry-run tidak menulis.
-- Rerun dari checkpoint mana pun menghasilkan mapping UUID sama dan tidak menduplikasi side effect.
-- Cutover memerlukan **zero unexplained rows, zero unexplained amount drift, zero ending-balance drift, dan zero dangling references**.
-- Tidak ada review item yang diam-diam dianggap valid; setiap item memiliki row-level evidence dan disposition.
-- Backfill menjaga document allocation, receipt, evidence, debt, dan project audit continuity.
+- Arsip historis tetap utuh dan dapat dipulihkan tanpa masuk ke canonical production totals.
+- Fresh bootstrap menghasilkan zero transaction/debt/project-finance rows dan zero wallet balances.
+- Dashboard/WhatsApp readback awal nol; mutation canary pertama muncul tepat sekali.
+- Tidak ada direct Sheets business read/write setelah activation.
 
 #### PG-103 — Protected one-way Sheets backup/export
 
@@ -1542,7 +1542,7 @@ Acceptance:
 - [ ] Deploy exact immutable backend image.
 - [ ] Deploy exact Rumahweb artifact ke isolated staging path/origin.
 - [ ] Run one-shot versioned migrations dengan lock.
-- [ ] Run full backfill/shadow reconciliation dan migration-reference checks.
+- [ ] Verify fresh-zero bootstrap, archive isolation, dan no-import guard.
 - [ ] Run full authenticated E2E seluruh write/read path.
 - [ ] Run security/performance/accessibility.
 - [ ] Run backup/restore/PITR drill.
@@ -1571,8 +1571,8 @@ Acceptance:
 - [ ] Production backup/PITR checkpoint + offsite readback.
 - [ ] Maintenance/cutover window defined.
 - [ ] Rollback owner and exact commands verified.
-- [ ] Seluruh 76 review items mempunyai row-level disposition.
-- [ ] Shadow reconciliation: zero unexplained row/amount/ending-balance/reference drift.
+- [ ] Historical Sheets archive dibekukan dan terbukti tidak menjadi production input.
+- [ ] Fresh-zero readback: zero canonical transaction/debt/project-finance rows dan zero balances.
 - [ ] Current feature/authority manifest captured.
 - [ ] New release manifest signed/hashed.
 - [ ] Numeric RPO/RTO dan SLO disetujui.
@@ -1583,8 +1583,8 @@ Acceptance:
 Urutan wajib:
 
 - [ ] Stop/fence seluruh legacy Sheets primary writers di Dashboard, WhatsApp, worker, cron, dan manual integration.
-- [ ] Freeze immutable final Sheets source snapshot/hash.
-- [ ] Run final incremental import dan zero-drift reconciliation.
+- [ ] Freeze immutable Sheets archive snapshot/hash dan tandai `historical_import=false`.
+- [ ] Verify PostgreSQL fresh-zero bootstrap; jangan jalankan historical import.
 - [ ] Atomically switch canonical reads/writes ke PostgreSQL pada canonical-aware release yang sudah deployed.
 - [ ] Enable protected one-way Sheets export outbox.
 - [ ] Enable transaction/debt/office/project capabilities hanya setelah authority readback hijau.
@@ -1743,8 +1743,8 @@ Acceptance:
 - [ ] Correction/reversal immutable, no cycle/double reversal.
 - [ ] No hard delete.
 - [ ] Idempotency/concurrency/crash-window proven.
-- [ ] Zero unexplained row/amount/ending-balance/reference drift at cutover.
-- [ ] Seluruh 76 pre-cutover review items mempunyai row-level disposition.
+- [ ] Fresh-zero canonical count, amount, debt, project-finance, dan balance terbukti nol sebelum canary.
+- [ ] Historical Sheets archive tidak berkontribusi ke canonical totals atau Dashboard.
 - [ ] Tidak ada forbidden Sheets business read/write.
 
 ### Quality
