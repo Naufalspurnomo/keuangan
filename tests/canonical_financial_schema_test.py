@@ -22,7 +22,7 @@ ROOT = Path(__file__).parents[1]
 def test_canonical_migrations_are_versioned_additive_and_checksums_are_stable():
     migrations = load_financial_migrations(ROOT / "dashboard_api" / "migrations")
 
-    assert [migration.version for migration in migrations] == [9, 10, 11, 12, 13, 14, 15]
+    assert [migration.version for migration in migrations] == [9, 10, 11, 12, 13, 14, 15, 16]
     assert all(migration.sha256 == hashlib.sha256(migration.sql.encode()).hexdigest() for migration in migrations)
     combined = "\n".join(migration.sql for migration in migrations).lower()
     assert "opening_balances" in combined
@@ -56,6 +56,9 @@ def test_canonical_migrations_are_versioned_additive_and_checksums_are_stable():
         "source_tab, source_block, source_row, legacy_source_key"
         in compact_sql
     )
+    assert "add column if not exists export_ordinal" in compact_sql
+    assert "idx_financial_export_outbox_stale_claim" in compact_sql
+    assert "protect_financial_export_identity" in compact_sql
 
 
 class _Cursor:
