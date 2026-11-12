@@ -193,6 +193,7 @@ jobs:
     env:
       PROJECT_DOCUMENT_TEST_DATABASE_URL: postgresql://hollawall_test:ci_test_only@127.0.0.1:5432/hollawall_test
       INBOX_REVIEW_TEST_DATABASE_URL: postgresql://hollawall_test:ci_test_only@127.0.0.1:5432/hollawall_test
+      FINANCIAL_EXPORT_TEST_DATABASE_URL: postgresql://hollawall_test:ci_test_only@127.0.0.1:5432/hollawall_test
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -211,6 +212,7 @@ jobs:
             tests/project_document_service_postgres_test.py \
             tests/inbox_review_postgres_test.py \
             tests/canonical_financial_schema_test.py \
+            tests/financial_export_postgres_race_test.py \
             -o addopts=''
 
   php:
