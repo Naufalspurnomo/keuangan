@@ -67,7 +67,7 @@ class FakeRemote:
         self.rows[ordinal] = deepcopy(dict(document))
 
 
-def row() -> ClaimedExport:
+def row(*, export_ordinal: int = 1) -> ClaimedExport:
     payload = {
         "schema_version": "canonical.finance.transaction.v1",
         "id": "00000000-0000-4000-8000-000000000101",
@@ -76,7 +76,7 @@ def row() -> ClaimedExport:
     }
     return ClaimedExport(
         id="00000000-0000-4000-8000-000000000201",
-        export_ordinal=1,
+        export_ordinal=export_ordinal,
         export_key="transaction:00000000-0000-4000-8000-000000000101:v1",
         aggregate_type="transaction",
         aggregate_id="00000000-0000-4000-8000-000000000101",
@@ -136,6 +136,108 @@ def test_postgres_store_uses_qualified_returning_and_token_guarded_ack() -> None
 
     assert "outbox.id" in PostgresExportOutbox._RETURNING
     assert "outbox.claim_token" in PostgresExportOutbox._RETURNING
+
+
+class FakeSpreadsheet:
+    id = "dedicated-export-workbook"
+
+
+class FakeWorksheet:
+    def __init__(self) -> None:
+        self.title = "canonical_financial_export_v1"
+        self.spreadsheet = FakeSpreadsheet()
+        self.rows = {}
+        self.updates = []
+
+    def row_values(self, row_number: int):
+        return list(self.rows.get(row_number, []))
+
+    def update(self, range_name: str, values, *, value_input_option: str):
+        row_number = int(range_name.split(":", 1)[0][1:])
+        self.rows[row_number] = list(values[0])
+        self.updates.append((range_name, deepcopy(values), value_input_option))
+
+
+def test_google_sheet_adapter_uses_frozen_header_deterministic_row_and_raw_write() -> None:
+    from services.financial_export_worker import GoogleSheetsRemoteExport
+
+    worksheet = FakeWorksheet()
+    remote = GoogleSheetsRemoteExport(
+        worksheet,
+        expected_workbook_id="dedicated-export-workbook",
+        expected_title="canonical_financial_export_v1",
+        ensure_header=True,
+    )
+    expected = row(export_ordinal=3).document
+
+    remote.write(3, expected)
+
+    assert worksheet.updates[0][0] == "A1:J1"
+    assert worksheet.updates[1][0] == "A4:J4"
+    assert all(update[2] == "RAW" for update in worksheet.updates)
+    assert remote.read(3) == expected
+
+
+def test_google_sheet_adapter_rejects_wrong_tab_and_header_drift() -> None:
+    from services.financial_export_worker import GoogleSheetsRemoteExport
+
+    wrong = FakeWorksheet()
+    wrong.title = "legacy-primary"
+    with pytest.raises(RemoteExportDrift, match="tab"):
+        GoogleSheetsRemoteExport(
+            wrong,
+            expected_workbook_id="dedicated-export-workbook",
+            expected_title="canonical_financial_export_v1",
+        )
+
+    drifted = FakeWorksheet()
+    drifted.rows[1] = ["wrong"]
+    with pytest.raises(RemoteExportDrift, match="header"):
+        GoogleSheetsRemoteExport(
+            drifted,
+            expected_workbook_id="dedicated-export-workbook",
+            expected_title="canonical_financial_export_v1",
+            ensure_header=True,
+        )
+
+
+def test_drift_audit_detects_missing_duplicate_reordered_and_unexpected_rows() -> None:
+    from services.financial_export_worker import audit_remote_export
+
+    first = row(export_ordinal=1)
+    second_payload = {
+        "schema_version": "canonical.finance.transaction.v1",
+        "id": "00000000-0000-4000-8000-000000000102",
+        "version": 1,
+        "amount": 250_000,
+    }
+    second = ClaimedExport(
+        id="00000000-0000-4000-8000-000000000202",
+        export_ordinal=2,
+        export_key="transaction:00000000-0000-4000-8000-000000000102:v1",
+        aggregate_type="transaction",
+        aggregate_id="00000000-0000-4000-8000-000000000102",
+        aggregate_version=1,
+        payload=second_payload,
+        payload_sha256=hashlib.sha256(_canonical(second_payload).encode()).hexdigest(),
+        created_at="2026-11-12T00:00:00Z",
+        claim_token="00000000-0000-4000-8000-000000000302",
+    )
+    remote = FakeRemote()
+    remote.rows[1] = second.document
+    remote.rows[2] = second.document
+    remote.rows[3] = {**second.document, "export_key": "unexpected"}
+
+    result = audit_remote_export(
+        [first, second], remote=remote, remote_max_ordinal=3
+    )
+
+    assert result["ready"] is False
+    assert result["missing_ordinals"] == [1]
+    assert result["reordered_ordinals"] == [1]
+    assert result["unexpected_ordinals"] == [3]
+    assert result["duplicate_keys"] == {second.export_key: [1, 2]}
+    assert result["lag_rows"] == 1
 
 
 def test_worker_rejects_unprotected_destination_before_claim() -> None:

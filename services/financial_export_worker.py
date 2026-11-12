@@ -88,6 +88,161 @@ class RemoteExport(Protocol):
     def write(self, ordinal: int, document: Mapping[str, Any]) -> None: ...
 
 
+class GoogleSheetsRemoteExport:
+    """Exact-row adapter for one dedicated, protected derived-export tab."""
+
+    HEADER = (
+        "export_ordinal",
+        "export_schema_version",
+        "export_key",
+        "aggregate_type",
+        "aggregate_id",
+        "aggregate_version",
+        "outbox_created_at_utc",
+        "payload_sha256",
+        "payload_json",
+        "row_sha256",
+    )
+    MAX_CELL_CHARACTERS = 50_000
+
+    def __init__(
+        self,
+        worksheet: Any,
+        *,
+        expected_workbook_id: str,
+        expected_title: str,
+        ensure_header: bool = False,
+    ) -> None:
+        workbook_id = str(
+            getattr(getattr(worksheet, "spreadsheet", None), "id", "") or ""
+        ).strip()
+        if not expected_workbook_id or workbook_id != expected_workbook_id:
+            raise RemoteExportDrift("canonical export workbook identity mismatch")
+        if str(getattr(worksheet, "title", "")) != expected_title:
+            raise RemoteExportDrift("canonical export tab identity mismatch")
+        self._worksheet = worksheet
+        if ensure_header:
+            observed = list(worksheet.row_values(1))
+            if not observed:
+                worksheet.update(
+                    "A1:J1", [list(self.HEADER)], value_input_option="RAW"
+                )
+            elif observed != list(self.HEADER):
+                raise RemoteExportDrift("canonical export header drift")
+
+    @staticmethod
+    def _row_number(ordinal: int) -> int:
+        if isinstance(ordinal, bool) or not isinstance(ordinal, int) or ordinal < 1:
+            raise ValueError("export ordinal must be a positive integer")
+        return ordinal + 1
+
+    @classmethod
+    def _values(cls, document: Mapping[str, Any]) -> list[Any]:
+        if set(document) != set(cls.HEADER):
+            raise RemoteExportDrift("canonical export document schema mismatch")
+        body = {key: document[key] for key in cls.HEADER if key != "row_sha256"}
+        if document["row_sha256"] != _sha256(_canonical_json(body)):
+            raise RemoteExportDrift("canonical export row hash mismatch")
+        values = [document[column] for column in cls.HEADER]
+        if any(len(str(value)) > cls.MAX_CELL_CHARACTERS for value in values):
+            raise RemoteExportDrift("canonical export cell exceeds Sheets limit")
+        return values
+
+    def read(self, ordinal: int) -> Mapping[str, Any] | None:
+        values = list(self._worksheet.row_values(self._row_number(ordinal)))
+        if not values or not any(value not in (None, "") for value in values):
+            return None
+        if len(values) != len(self.HEADER):
+            raise RemoteExportDrift(f"canonical export row {ordinal} has schema drift")
+        result: dict[str, Any] = dict(zip(self.HEADER, values, strict=True))
+        try:
+            result["export_ordinal"] = int(result["export_ordinal"])
+            result["aggregate_version"] = int(result["aggregate_version"])
+        except (TypeError, ValueError) as exc:
+            raise RemoteExportDrift(
+                f"canonical export row {ordinal} has invalid numeric fields"
+            ) from exc
+        return result
+
+    def write(self, ordinal: int, document: Mapping[str, Any]) -> None:
+        expected = dict(document)
+        if expected.get("export_ordinal") != ordinal:
+            raise RemoteExportDrift("canonical export ordinal/document mismatch")
+        current = self.read(ordinal)
+        if current is not None:
+            if _canonical_json(dict(current)) != _canonical_json(expected):
+                raise RemoteExportDrift(
+                    f"canonical export row {ordinal} is already occupied"
+                )
+            return
+        row_number = self._row_number(ordinal)
+        self._worksheet.update(
+            f"A{row_number}:J{row_number}",
+            [self._values(expected)],
+            value_input_option="RAW",
+        )
+
+
+def audit_remote_export(
+    expected_rows: list[ClaimedExport],
+    *,
+    remote: RemoteExport,
+    remote_max_ordinal: int | None = None,
+) -> dict[str, Any]:
+    expected_by_ordinal = {row.export_ordinal: row.document for row in expected_rows}
+    if len(expected_by_ordinal) != len(expected_rows):
+        raise ValueError("expected export ordinals must be unique")
+    expected_key_positions = {
+        document["export_key"]: ordinal
+        for ordinal, document in expected_by_ordinal.items()
+    }
+    if len(expected_key_positions) != len(expected_rows):
+        raise ValueError("expected export keys must be unique")
+    ceiling = max(
+        [*expected_by_ordinal, remote_max_ordinal or 0],
+        default=0,
+    )
+    missing: list[int] = []
+    edited: list[int] = []
+    reordered: list[int] = []
+    unexpected: list[int] = []
+    observed_keys: dict[str, list[int]] = {}
+    for ordinal in range(1, ceiling + 1):
+        observed = remote.read(ordinal)
+        expected = expected_by_ordinal.get(ordinal)
+        if observed is None:
+            if expected is not None:
+                missing.append(ordinal)
+            continue
+        observed_document = dict(observed)
+        key = str(observed_document.get("export_key") or "")
+        observed_keys.setdefault(key, []).append(ordinal)
+        expected_position = expected_key_positions.get(key)
+        if expected is not None and key != expected["export_key"]:
+            missing.append(ordinal)
+        if expected_position is None:
+            unexpected.append(ordinal)
+            continue
+        if expected_position != ordinal:
+            reordered.append(ordinal)
+        elif expected is not None and _canonical_json(observed_document) != _canonical_json(expected):
+            edited.append(ordinal)
+    duplicates = {
+        key: ordinals for key, ordinals in observed_keys.items() if key and len(ordinals) > 1
+    }
+    return {
+        "ready": not missing and not edited and not reordered and not unexpected and not duplicates,
+        "expected": len(expected_rows),
+        "observed": sum(len(value) for value in observed_keys.values()),
+        "missing_ordinals": missing,
+        "edited_ordinals": edited,
+        "reordered_ordinals": reordered,
+        "unexpected_ordinals": unexpected,
+        "duplicate_keys": duplicates,
+        "lag_rows": len(missing),
+    }
+
+
 class ExportWorker:
     def __init__(
         self,
