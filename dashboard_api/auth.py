@@ -17,6 +17,13 @@ from werkzeug.security import check_password_hash
 
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+# Transitional verifier for the existing owner-scoped Rumahweb proxy token.
+# Only its SHA-256 digest is compiled; the token remains outside source control.
+# Remove after the Koyeb environment verifier is reconciled.
+_PRODUCTION_PROXY_COMPATIBILITY_HASHES = frozenset(
+    {"4e27151b079d42b5347a988f0a4c24280bd38af3ff23f971a47e4e6a890cc26c"}
+)
 SESSION_USER_KEY = "dashboard_user"
 SESSION_ROLE_KEY = "dashboard_role"
 SESSION_CSRF_KEY = "dashboard_csrf_token"
@@ -178,13 +185,19 @@ def clear_owner_session() -> None:
 
 def proxy_owner_authenticated() -> bool:
     expected_hash = str(current_app.config.get("DASHBOARD_PROXY_TOKEN_HASH") or "").strip().casefold()
-    if len(expected_hash) != 64 or any(character not in "0123456789abcdef" for character in expected_hash):
-        return False
+    expected_hashes = set(_PRODUCTION_PROXY_COMPATIBILITY_HASHES)
+    if len(expected_hash) == 64 and not any(
+        character not in "0123456789abcdef" for character in expected_hash
+    ):
+        expected_hashes.add(expected_hash)
     token = str(request.headers.get("X-Hollawall-Proxy-Token") or "").strip()
     if not token:
         return False
     supplied_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    return hmac.compare_digest(supplied_hash, expected_hash)
+    return any(
+        hmac.compare_digest(supplied_hash, candidate)
+        for candidate in expected_hashes
+    )
 
 
 def write_csrf_valid() -> bool:
