@@ -45,13 +45,6 @@ def _serialized_ledger_write(func):
     """Serialize read-before-append idempotency checks within one process."""
     @wraps(func)
     def wrapper(*args, **kwargs):
-        if func.__name__ in _LEGACY_FINANCE_WRITERS:
-            from services.finance_write_authority import legacy_sheets_finance_writes_fenced
-
-            if legacy_sheets_finance_writes_fenced():
-                raise LegacyFinanceWriteFenced(
-                    f"legacy Sheets writer {func.__name__} is fenced after PostgreSQL activation"
-                )
         from services.ledger_lock import ledger_write_guard
         started_at = time.perf_counter()
 
@@ -62,6 +55,15 @@ def _serialized_ledger_write(func):
             message_id = transaction.get("message_id", "") if isinstance(transaction, dict) else ""
         try:
             with _ledger_write_lock, ledger_write_guard(message_id, func.__name__):
+                if func.__name__ in _LEGACY_FINANCE_WRITERS:
+                    from services.finance_write_authority import (
+                        legacy_sheets_finance_writes_fenced,
+                    )
+
+                    if legacy_sheets_finance_writes_fenced():
+                        raise LegacyFinanceWriteFenced(
+                            f"legacy Sheets writer {func.__name__} is fenced after PostgreSQL activation"
+                        )
                 return func(*args, **kwargs)
         finally:
             log_timing("sheets.write." + func.__name__, started_at)

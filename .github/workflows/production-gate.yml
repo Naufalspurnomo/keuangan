@@ -233,6 +233,20 @@ jobs:
     name: container
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: hollawall_test
+          POSTGRES_PASSWORD: ci_test_only
+          POSTGRES_DB: hollawall_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hollawall_test -d hollawall_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build production image
@@ -240,8 +254,9 @@ jobs:
       - name: Start production image
         run: |
           docker run --detach --rm --name hollawall-ci \
-            --publish 127.0.0.1:18000:8000 \
+            --network host \
             --env GROQ_API_KEY=verification-placeholder \
+            --env DATABASE_URL=postgresql://hollawall_test:ci_test_only@127.0.0.1:5432/hollawall_test \
             --env PYTHON_DOTENV_DISABLED=1 \
             --env STATE_STORE_BACKEND=local \
             --env STATE_STORE_REQUIRED=0 \
@@ -252,7 +267,18 @@ jobs:
       - name: Verify health and non-root runtime
         run: |
           for attempt in {1..30}; do
-            if curl --fail --silent --show-error http://127.0.0.1:18000/health >/tmp/health.json; then
+            if curl --silent --show-error --output /tmp/health-before-issuer.json http://127.0.0.1:8000/health \
+              && python -c 'import json; p=json.load(open("/tmp/health-before-issuer.json")); s=p.get("project_document_schema", {}); raise SystemExit(0 if all(s.get(k) for k in ("tables", "constraints", "indexes", "triggers")) else 1)'; then
+              break
+            fi
+            sleep 2
+          done
+          python -c 'import json; p=json.load(open("/tmp/health-before-issuer.json")); s=p.get("project_document_schema", {}); assert all(s.get(k) for k in ("tables", "constraints", "indexes", "triggers")), p'
+          docker exec hollawall-ci sh -c 'printf "%s" "{\"issuer_key\":\"hollawall\",\"legal_name\":\"CV Holla Berkreasi\",\"display_name\":\"Hollawall CI\",\"number_code\":\"HW\",\"address\":\"CI fixture\",\"expected_version\":0}" > /tmp/issuer.json'
+          docker exec hollawall-ci python scripts/seed_project_document_issuer.py \
+            --file /tmp/issuer.json --apply --confirm APPLY_ISSUER_PROFILE
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1:8000/health >/tmp/health.json; then
               python - <<'PY'
           import json
           from pathlib import Path
