@@ -1,0 +1,61 @@
+{
+  "schema": "hollawall.monitoring/v1",
+  "signals": {
+    "inbox": {
+      "metric": "transaction_inbox_oldest_pending_age_seconds",
+      "unit": "seconds",
+      "window_seconds": 300,
+      "warning": 300,
+      "critical": 900
+    },
+    "export": {
+      "metric": "dashboard_export_failures_total",
+      "unit": "count",
+      "window_seconds": 900,
+      "warning": 1,
+      "critical": 3
+    },
+    "error": {
+      "metric": "unhandled_errors_total",
+      "unit": "count",
+      "window_seconds": 300,
+      "warning": 2,
+      "critical": 5
+    },
+    "api": {
+      "metric": "api_p95_latency_milliseconds",
+      "unit": "milliseconds",
+      "window_seconds": 300,
+      "warning": 750,
+      "critical": 1500
+    },
+    "backup": {
+      "metric": "backup_age_seconds",
+      "unit": "seconds",
+      "window_seconds": 3600,
+      "warning": 86400,
+      "critical": 129600
+    },
+    "review": {
+      "metric": "inbox_review_oldest_pending_age_seconds",
+      "unit": "seconds",
+      "window_seconds": 300,
+      "warning": 3600,
+      "critical": 14400
+    },
+    "wuzapi": {
+      "metric": "wuzapi_delivery_failure_ratio",
+      "unit": "ratio",
+      "window_seconds": 300,
+      "warning": 0.05,
+      "critical": 0.15
+    },
+    "presensi": {
+      "metric": "presensi_outbox_oldest_unacked_age_seconds",
+      "unit": "seconds",
+      "window_seconds": 300,
+      "warning": 600,
+      "critical": 1800
+    }
+  }
+}

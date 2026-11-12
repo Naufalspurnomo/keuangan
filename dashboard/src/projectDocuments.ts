@@ -9,7 +9,7 @@ export type ProductionProjectStatus = typeof PROJECT_STATUSES[number]
 export type ProjectDocumentType = typeof DOCUMENT_TYPES[number]
 export type ProjectDocumentStatus = typeof DOCUMENT_STATUSES[number]
 export type InvoiceKind = typeof INVOICE_KINDS[number]
-export type ProjectDetailTab = 'transactions' | 'presensi' | 'documents'
+export type ProjectDetailTab = 'overview' | 'transactions' | 'debts' | 'profitability' | 'presensi' | 'documents' | 'audit'
 export type DocumentDiscountMode = 'none' | 'fixed' | 'percent'
 
 export interface ProjectDocumentCapabilities {

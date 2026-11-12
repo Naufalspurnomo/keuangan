@@ -14,7 +14,7 @@ import re
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Any, Protocol
 
 from config.constants import (
@@ -25,7 +25,11 @@ from config.constants import (
     SPLIT_PENGELUARAN,
 )
 from config.wallets import DOMPET_COMPANIES, get_dompet_short_name
-from dashboard_api.write_contracts import TransactionRequest, validate_transaction_request
+from dashboard_api.write_contracts import (
+    DASHBOARD_TIMEZONE,
+    TransactionRequest,
+    validate_transaction_request,
+)
 from security import secure_log
 from services.dashboard_write_requests import DashboardWriteClaim, DashboardWriteRequestStore
 from services.project_document_repository import (
@@ -628,3 +632,122 @@ class DashboardTransactionService:
                 f"Dashboard transaction projection repair failed: {type(exc).__name__}: {exc}",
             )
             return False
+
+
+class PostgresDashboardTransactionService:
+    """Dashboard command boundary after PostgreSQL becomes cash authority."""
+
+    def __init__(
+        self,
+        *,
+        gateway: Any,
+        project_exists: ProjectExists,
+        project_uuid_exists: ProjectUuidExists,
+        today: Today | None = None,
+    ) -> None:
+        self._gateway = gateway
+        self._project_exists = project_exists
+        self._project_uuid_exists = project_uuid_exists
+        self._today = today
+
+    def validate(self, payload: Mapping[str, Any]) -> TransactionRequest:
+        def project_exists(project: str) -> bool:
+            wallet = payload.get("wallet")
+            company = payload.get("company")
+            if not isinstance(wallet, str) or not isinstance(company, str):
+                return False
+            try:
+                canonical_id = str(uuid.UUID(project))
+            except (TypeError, ValueError):
+                return False
+            return canonical_id == project and self._project_uuid_exists(
+                canonical_id, wallet, company
+            )
+
+        kwargs: dict[str, Any] = {"project_exists": project_exists}
+        if self._today is not None:
+            kwargs["today"] = self._today
+        return validate_transaction_request(payload, **kwargs)
+
+    def record(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        actor: Mapping[str, Any],
+        message_id: str,
+    ) -> dict[str, Any]:
+        request = self.validate(payload)
+        email = actor.get("email")
+        role = actor.get("role")
+        if not isinstance(email, str) or not email.strip() or role not in {"owner", "boss", "admin"}:
+            raise DashboardTransactionUnavailable(
+                "canonical dashboard actor is not authenticated"
+            )
+        occurred_at = datetime.combine(
+            request.date,
+            time.min,
+            tzinfo=DASHBOARD_TIMEZONE,
+        ).isoformat()
+        command = {
+            "kind": "transaction",
+            "idempotency_key": request.idempotency_key,
+            "scope": request.scope,
+            "project_id": request.project if request.scope == "project" else None,
+            "project_label": None,
+            "wallet_label": request.wallet,
+            "transaction_type": (
+                "inflow" if request.direction == "Pemasukan" else "outflow"
+            ),
+            "amount": request.amount,
+            "currency": "IDR",
+            "category": request.category,
+            "description": request.description,
+            "occurred_at": occurred_at,
+            "source": "dashboard",
+            "source_reference": message_id,
+            "evidence": {
+                "company": request.company,
+                "occurred_at_precision": "date",
+            },
+            "actor": {
+                "id": email.strip().casefold(),
+                "email": email.strip().casefold(),
+                "role": role,
+                "channel": "dashboard",
+            },
+        }
+        result = self._gateway.dispatch(
+            command,
+            legacy_write=lambda: (_ for _ in ()).throw(
+                DashboardTransactionUnavailable(
+                    "Sheets fallback is forbidden after PostgreSQL activation"
+                )
+            ),
+        )
+        if result.get("status") == "quarantined":
+            raise DashboardTransactionConflict(
+                f"canonical dashboard command quarantined: {result.get('reason_code')}"
+            )
+        stored = result.get("result")
+        if not isinstance(stored, Mapping):
+            raise DashboardTransactionUnavailable(
+                "canonical dashboard write has no readback"
+            )
+        transaction = stored.get("transaction")
+        if not isinstance(transaction, Mapping):
+            raise DashboardTransactionUnavailable(
+                "canonical dashboard transaction readback is missing"
+            )
+        transaction_id = transaction.get("id")
+        version = transaction.get("version")
+        if not isinstance(transaction_id, str) or not isinstance(version, int):
+            raise DashboardTransactionUnavailable(
+                "canonical dashboard transaction identity is invalid"
+            )
+        return {
+            "recorded": True,
+            "authority": "postgresql",
+            "transaction_id": transaction_id,
+            "transaction_version": version,
+            "duplicate": stored.get("duplicate") is True,
+        }

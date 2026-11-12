@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
+import json
 import secrets
+import threading
+import time
 from functools import wraps
-from typing import Any, Callable, TypeVar, cast
+from typing import Any, Callable, Mapping, TypeVar, cast
 
-from flask import current_app, jsonify, request, session
+from flask import current_app, g, jsonify, request, session
 from werkzeug.security import check_password_hash
 
 
@@ -16,6 +20,136 @@ F = TypeVar("F", bound=Callable[..., Any])
 SESSION_USER_KEY = "dashboard_user"
 SESSION_ROLE_KEY = "dashboard_role"
 SESSION_CSRF_KEY = "dashboard_csrf_token"
+ACTOR_ASSERTION_HEADER = "X-Hollawall-Actor-Assertion"
+ACTOR_ROLES = frozenset({"boss", "admin"})
+_NONCE_LOCK = threading.Lock()
+_SEEN_NONCES: dict[str, int] = {}
+
+
+def _b64encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _b64decode(value: str) -> bytes:
+    if not value or any(character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" for character in value):
+        raise ValueError("invalid base64url alphabet")
+    if len(value) % 4 == 1:
+        raise ValueError("invalid base64url length")
+    decoded = base64.urlsafe_b64decode(value + ("=" * (-len(value) % 4)))
+    if _b64encode(decoded) != value:
+        raise ValueError("non-canonical base64url encoding")
+    return decoded
+
+
+def build_upstream_actor_assertion(claims: Mapping[str, Any], secret: str) -> str:
+    """Sign a deterministic short-lived upstream actor assertion.
+
+    This helper is shared with the trusted reverse proxy integration tests. The
+    signing secret is never defaulted or compiled into application code.
+    """
+
+    if not isinstance(secret, str) or len(secret.encode("utf-8")) < 32:
+        raise ValueError("actor assertion secret must contain at least 32 bytes")
+    payload = json.dumps(
+        dict(claims), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    encoded = _b64encode(payload)
+    signature = hmac.new(secret.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256).digest()
+    return f"{encoded}.{_b64encode(signature)}"
+
+
+def _consume_nonce(nonce: str, expires_at: int, now: int) -> bool:
+    with _NONCE_LOCK:
+        expired = [value for value, expiry in _SEEN_NONCES.items() if expiry < now]
+        for value in expired:
+            _SEEN_NONCES.pop(value, None)
+        if nonce in _SEEN_NONCES:
+            return False
+        _SEEN_NONCES[nonce] = expires_at
+        return True
+
+
+def verify_upstream_actor_assertion(*, consume_nonce: bool = False) -> dict[str, str] | None:
+    """Verify actor, audience, lifetime, request binding, and optional replay nonce."""
+
+    secret = str(current_app.config.get("DASHBOARD_ACTOR_ASSERTION_SECRET") or "")
+    audience = str(current_app.config.get("DASHBOARD_ACTOR_ASSERTION_AUDIENCE") or "")
+    if len(secret.encode("utf-8")) < 32 or not audience:
+        return None
+    raw = str(request.headers.get(ACTOR_ASSERTION_HEADER) or "").strip()
+    try:
+        encoded, signature = raw.split(".", 1)
+        expected = hmac.new(
+            secret.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256
+        ).digest()
+        if not hmac.compare_digest(_b64decode(signature), expected):
+            return None
+        claims = json.loads(_b64decode(encoded).decode("utf-8"))
+    except (ValueError, UnicodeError, json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(claims, dict):
+        return None
+
+    now = int(time.time())
+    ttl = int(current_app.config.get("DASHBOARD_ACTOR_ASSERTION_TTL_SECONDS") or 60)
+    try:
+        issued_at = int(claims["iat"])
+        expires_at = int(claims["exp"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if ttl < 1 or issued_at > now + 5 or expires_at < now or expires_at - issued_at > ttl:
+        return None
+    if claims.get("aud") != audience:
+        return None
+    if claims.get("method") != request.method:
+        return None
+    if claims.get("path") != request.path:
+        return None
+    body_hash = hashlib.sha256(request.get_data(cache=True)).hexdigest()
+    if claims.get("body_sha256") != body_hash:
+        return None
+
+    actor_id = claims.get("actor_id")
+    email = claims.get("email")
+    role = claims.get("role")
+    nonce = claims.get("nonce")
+    if (
+        not isinstance(actor_id, str)
+        or not actor_id.strip()
+        or not isinstance(email, str)
+        or not email.strip()
+        or role not in ACTOR_ROLES
+        or not isinstance(nonce, str)
+        or len(nonce) < 16
+    ):
+        return None
+    if consume_nonce and not _consume_nonce(nonce, expires_at, now):
+        return None
+    return {
+        "id": actor_id.strip(),
+        "email": email.strip().casefold(),
+        "role": role,
+        "channel": "dashboard-proxy",
+    }
+
+
+def actor_identity() -> dict[str, str] | None:
+    """Return the authenticated real mutation actor; never synthesize one."""
+
+    cached = getattr(g, "dashboard_actor_identity", None)
+    if isinstance(cached, dict):
+        return dict(cached)
+    identity = verify_upstream_actor_assertion(consume_nonce=True)
+    if identity is not None:
+        g.dashboard_actor_identity = identity
+        return dict(identity)
+    if current_app.config.get("DASHBOARD_ACTOR_ASSERTION_REQUIRED", False):
+        return None
+    session_identity = owner_identity()
+    if session_identity is None:
+        return None
+    email, role = session_identity
+    return {"id": email, "email": email, "role": role, "channel": "direct-session"}
 
 
 def authenticate_owner(email: str, password: str) -> bool:

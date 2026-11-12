@@ -13,6 +13,13 @@ return [
     // Fail closed. Enable each write surface only after its backend schema and routes are verified.
     'transaction_writes_enabled' => false,
     'upstream_transactions_url' => 'https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app/api/dashboard/v1/transactions',
+    'canonical_finance_writes_enabled' => false,
+    'upstream_canonical_transactions_url' => 'https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app/api/dashboard/v1/canonical-transactions',
+    'canonical_debt_writes_enabled' => false,
+    'upstream_debts_url' => 'https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app/api/dashboard/v1/debts',
+    'dashboard_actor_assertion_audience' => 'hollawall-finance-api',
+    'dashboard_actor_assertion_secret' => 'SET_IN_OWNER_SCOPED_SECRET_CONFIG',
+    'owner_email' => 'OWNER_EMAIL',
     'project_document_writes_enabled' => false,
     'upstream_projects_url' => 'https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app/api/dashboard/v1/projects',
     'upstream_documents_url' => 'https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app/api/dashboard/v1/documents',

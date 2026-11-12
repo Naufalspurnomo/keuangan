@@ -87,6 +87,7 @@ from services.project_service import (
 )
 from config.allowlist import ALLOWED_SENDER_IDS, allowlist_required
 from services.finance_decision import decide_project_resolution
+from services.whatsapp_finance_commands import dispatch_if_canonical_enabled
 from services.group_reply_hints import should_send_group_reply_hint
 from services.hutang_flow import (
     build_saldo_message as _build_saldo_message,
@@ -1292,6 +1293,51 @@ Balas 1 atau 2"""
                     category = context.get('category') or _detect_operational_category(
                         txs[0].get('keterangan', '') if txs else ''
                     )
+                    canonical_transactions = []
+                    for tx in txs:
+                        canonical_tx = dict(tx)
+                        canonical_tx['tipe'] = canonical_tx.get('tipe') or 'Pengeluaran'
+                        canonical_tx['category'] = category or _detect_operational_category(
+                            canonical_tx.get('keterangan', '')
+                        )
+                        canonical_transactions.append(canonical_tx)
+                    canonical_result = dispatch_if_canonical_enabled(
+                        app,
+                        sender_id=sender_number,
+                        event_id=event_id,
+                        transactions=canonical_transactions,
+                        wallet_label=source_wallet,
+                        project_id=None,
+                        project_label=None,
+                        source=pending.get('source', 'WhatsApp'),
+                        debt_source_wallet_label=debt_source_hint,
+                        scope='office',
+                    )
+                    if canonical_result is not None:
+                        if canonical_result.get('status') != 'committed':
+                            quarantine_id = canonical_result.get('quarantine_id')
+                            reference = f' Ref: {quarantine_id}' if quarantine_id else ''
+                            send_reply(
+                                '⚠️ Transaksi belum diposting karena identitas kanonis '
+                                f'perlu ditinjau.{reference}'
+                            )
+                            return jsonify({'status': 'canonical_quarantined'}), 200
+                        invalidate_dashboard_cache()
+                        _pending_transactions.pop(pkey, None)
+                        response = format_success_reply_operational(
+                            txs,
+                            source_wallet,
+                            category,
+                            "",
+                        )
+                        if debt_source_hint and source_wallet and debt_source_hint != source_wallet:
+                            total_amount = sum(int(t.get('jumlah', 0) or 0) for t in txs)
+                            response += (
+                                f'\n💳 Hutang dicatat: {source_wallet} pinjam dari '
+                                f'{debt_source_hint} (Rp {total_amount:,})'
+                            ).replace(',', '.')
+                        _send_and_track(response, event_id)
+                        return jsonify({'status': 'saved_operational_canonical'}), 200
                     for tx in txs:
                         kategori = category or _detect_operational_category(tx.get('keterangan', ''))
                         save_result = append_operational_transaction(
@@ -1846,6 +1892,40 @@ Balas 1 atau 2"""
                 if FAST_MODE:
                     event_id = pending.get('event_id') or pending.get('message_id')
                     _assign_tx_ids(txs, event_id)
+                    canonical_result = dispatch_if_canonical_enabled(
+                        app,
+                        sender_id=sender_number,
+                        event_id=event_id,
+                        transactions=txs,
+                        wallet_label=dompet,
+                        project_id=pending.get('project_id'),
+                        project_label=None,
+                        source=pending.get('source', 'WhatsApp'),
+                        debt_source_wallet_label=debt_source,
+                        scope='auto',
+                    )
+                    if canonical_result is not None:
+                        if canonical_result.get('status') != 'committed':
+                            quarantine_id = canonical_result.get('quarantine_id')
+                            reference = f' Ref: {quarantine_id}' if quarantine_id else ''
+                            send_reply(
+                                '⚠️ Transaksi belum diposting karena identitas kanonis '
+                                f'perlu ditinjau.{reference}'
+                            )
+                            return jsonify({'status': 'canonical_quarantined'}), 200
+                        invalidate_dashboard_cache()
+                        _pending_transactions.pop(pkey, None)
+                        response = format_success_reply_new(
+                            txs, dompet, detected_company, ""
+                        )
+                        if debt_source and debt_source != dompet:
+                            total_amount = sum(int(t.get('jumlah', 0) or 0) for t in txs)
+                            response += (
+                                f'\n💳 Utang dicatat: {debt_source} → {dompet} '
+                                f'(Rp {total_amount:,})'
+                            ).replace(',', '.')
+                        _send_and_track(response, event_id)
+                        return jsonify({'status': 'saved_project_canonical'}), 200
                     is_new_project_batch = bool(pending.get('is_new_project', False))
                     start_marker_indexes = (
                         select_start_marker_indexes(txs) if is_new_project_batch else set()

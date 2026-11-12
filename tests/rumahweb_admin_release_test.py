@@ -3,6 +3,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from tests.release_test_support import build_release
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / "artifacts" / "rumahweb-admin-release" / "admin"
@@ -11,7 +13,7 @@ RELEASE = ROOT / "artifacts" / "rumahweb-admin-release" / "admin"
 class RumahwebAdminReleaseTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        subprocess.run(["python3", "scripts/build_rumahweb_admin_release.py"], cwd=ROOT, check=True)
+        build_release(ROOT, "build_rumahweb_admin_release.py")
 
     def test_release_is_path_isolated(self) -> None:
         shell = (RELEASE / "app-shell.php").read_text(encoding="utf-8")
@@ -40,6 +42,16 @@ class RumahwebAdminReleaseTests(unittest.TestCase):
         self.assertIn("transaction_writes_disabled", proxy)
         self.assertIn("X-CSRF-Token", proxy)
         self.assertIn("Idempotency-Key", proxy)
+
+    def test_release_has_fail_closed_canonical_debt_proxy(self) -> None:
+        proxy = (RELEASE / "api" / "debts.php").read_text(encoding="utf-8")
+        self.assertIn("canonical_debt_writes_enabled", proxy)
+        self.assertIn("upstream_debts_url", proxy)
+        self.assertIn("Idempotency-Key", proxy)
+        self.assertIn("X-Hollawall-Actor-Assertion", proxy)
+        self.assertIn("csrf_validation_failed", proxy)
+        self.assertIn("/repayments", proxy)
+        self.assertNotIn("CURLOPT_FOLLOWLOCATION => true", proxy)
         self.assertIn("X-Hollawall-Proxy-Token", proxy)
         self.assertIn("CURLOPT_FOLLOWLOCATION => false", proxy)
         self.assertIn("CURLOPT_SSL_VERIFYPEER => true", proxy)

@@ -1,9 +1,9 @@
 import type { DashboardMeta, Overview, QualityRow, Transaction } from './types'
-import type { CompanyId, FinanceWorkspace, OfficeCategory, WalletId } from './financeWorkspace'
+import type { CompanyId, FinanceDebtEvent, FinanceWorkspace, OfficeCategory, WalletId } from './financeWorkspace'
 import { normalizeCanonicalPair } from './transactionMappings'
 
 export interface WalletSnapshot { source_key: string; name: string; balance: number }
-export interface DebtSnapshot { source_key: string; date: string | null; amount: number; notes: string; borrower: string; lender: string; status: string }
+export interface DebtSnapshot { source_key: string; debt_id?: string; date: string | null; due_at?: string | null; amount: number; repaid?: number; outstanding?: number; notes: string; borrower: string; lender: string; status: string; version?: number; events?: FinanceDebtEvent[]; project_id?: string | null }
 export interface CashTrendPoint { month: string; balance: number; net_movement: number }
 export type ProjectHealth = 'healthy' | 'watch' | 'overdue' | 'completed' | 'unmarked'
 export interface ProjectSummary {
@@ -18,10 +18,12 @@ export interface ProjectSummary {
   started_on?: string | null
   completed_on?: string | null
   age_days?: number | null
-  lifecycle_status?: 'active' | 'completed' | 'unmarked'
+  lifecycle_status?: 'active' | 'completed' | 'cancelled' | 'unmarked'
   health?: ProjectHealth
   source_key_first?: string
   source_key_latest?: string
+  wallet?: string
+  company?: string
 }
 export interface DashboardSnapshot {
   version: string
@@ -33,10 +35,6 @@ export interface DashboardSnapshot {
   quality_rows?: QualityRow[]
   cash_trend: CashTrendPoint[]
   project_summaries: ProjectSummary[]
-}
-
-function liveProjectRouteId(project: ProjectSummary, index: number) {
-  return project.project_id || project.source_key_first || project.source_key_latest || `live-project-${index + 1}`
 }
 
 function uiCompany(company: string): CompanyId {
@@ -51,8 +49,10 @@ function uiCompany(company: string): CompanyId {
 /** Adapt authenticated snapshot data to the existing shell without making it writable. */
 export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWorkspace {
   const updatedAt = snapshot.meta.as_of
-  const projects = snapshot.project_summaries.map((project, index) => {
-    const matching = snapshot.transactions.filter((row) => project.project_id ? row.project_id === project.project_id : row.project === project.name)
+  const projects = snapshot.project_summaries
+    .filter((project): project is ProjectSummary & { project_id: string } => Boolean(project.project_id))
+    .map((project) => {
+    const matching = snapshot.transactions.filter((row) => row.project_id === project.project_id)
     const first = matching[0]
     const mappings = new Map(
       matching
@@ -63,26 +63,33 @@ export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWo
     const writeMapping = mappings.size === 1 ? [...mappings.values()][0] : undefined
     const startedOn = project.started_on || project.first_activity_on || matching.map((row) => row.transaction_date).sort()[0]
       || snapshot.meta.data_through || updatedAt.slice(0, 10)
-    const completed = project.lifecycle_status === 'completed'
+    const status = project.lifecycle_status === 'completed'
+      ? 'completed' as const
+      : project.lifecycle_status === 'cancelled'
+        ? 'cancelled' as const
+        : project.lifecycle_status === 'active'
+          ? 'active' as const
+          : 'planned' as const
+    const terminal = status === 'completed' || status === 'cancelled'
     return {
-      id: liveProjectRouteId(project, index),
+      id: project.project_id,
       name: project.name,
-      company: uiCompany(first?.company || ''),
-      wallet: (first?.wallet || '') as WalletId,
-      status: completed ? 'completed' as const : 'active' as const,
+      company: uiCompany(project.company || first?.company || ''),
+      wallet: (project.wallet || first?.wallet || '') as WalletId,
+      status,
       started_on: startedOn,
-      completed_on: completed ? (project.completed_on || project.last_activity_on || null) : null,
+      completed_on: terminal ? (project.completed_on || project.last_activity_on || null) : null,
       client: '', contract_value: null, notes: '', created_at: updatedAt, updated_at: updatedAt,
-      ...(project.project_id ? { presensi_project_id: project.project_id } : {}),
+      presensi_project_id: project.project_id,
       ...(writeMapping ? { write_mapping: writeMapping } : {}),
     }
   })
-  const projectsByName = new Map(projects.map((project) => [project.name, project]))
   const projectsById = new Map(projects.map((project) => [project.id, project]))
   const transactions = snapshot.transactions.flatMap((row) => {
     if (row.scope === 'internal_transfer' || row.internal_movement) return []
-    const project = (row.project_id ? projectsById.get(row.project_id) : undefined) || (row.project ? projectsByName.get(row.project) : undefined)
-    const office = row.scope === 'office' || !project
+    const office = row.scope === 'office'
+    const project = !office && row.project_id ? projectsById.get(row.project_id) : undefined
+    if (!office && !project) return []
     return [{
       id: row.source_key || `live-transaction-${row.id}`,
       date: row.transaction_date.slice(0, 10),
@@ -92,6 +99,13 @@ export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWo
       wallet: row.wallet as WalletId,
       company: office ? null : uiCompany(row.company),
       project_id: project?.id ?? null,
+      canonical_transaction_id: typeof row.canonical_transaction_id === 'string'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(row.canonical_transaction_id)
+        ? row.canonical_transaction_id
+        : null,
+      transaction_version: Number.isSafeInteger(row.transaction_version) && Number(row.transaction_version) > 0
+        ? Number(row.transaction_version)
+        : null,
       office_category: office ? (row.office_category || 'Lainnya') as OfficeCategory : null,
       category: row.category ?? null,
       recorded_by: row.recorded_by ?? null,
@@ -103,14 +117,22 @@ export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWo
     }]
   })
   const debts = snapshot.debts.flatMap((row, index) => row.date ? [{
-    id: row.source_key || `live-debt-${index + 1}`, date: row.date.slice(0, 10),
+    id: row.debt_id || row.source_key || `live-debt-${index + 1}`, date: row.date.slice(0, 10),
     borrower: row.borrower as WalletId, lender: row.lender as WalletId, amount: row.amount,
-    repaid: row.status.toLocaleLowerCase('id-ID') === 'open' ? 0 : row.amount,
+    repaid: Number.isSafeInteger(row.repaid) && Number(row.repaid) >= 0
+      ? Number(row.repaid)
+      : row.status.toLocaleLowerCase('id-ID') === 'open' ? 0 : row.amount,
+    project_id: row.project_id ?? null,
+    version: Number.isSafeInteger(row.version) ? Number(row.version) : undefined,
+    events: Array.isArray(row.events) ? row.events : [],
+    due_at: row.due_at?.slice(0, 10) ?? null,
     notes: row.notes, created_at: updatedAt, updated_at: updatedAt,
   }] : [])
   return {
     version: 3, mode: 'live', projects, transactions, debts, audit: [], updated_at: updatedAt,
     live_wallets: snapshot.wallets, live_cash_trend: snapshot.cash_trend,
+    live_source: snapshot.meta.source,
+    live_data_through: snapshot.meta.data_through ?? null,
   }
 }
 

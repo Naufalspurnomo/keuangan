@@ -131,7 +131,14 @@ class WriteSessionProxyTests(unittest.TestCase):
             self.assertEqual(payload["api_version"], "dashboard.v1")
             self.assertIsInstance(payload["data"]["csrf_token"], str)
             self.assertTrue(payload["data"]["csrf_token"])
-            self.assertEqual(payload["data"]["capabilities"], {"writes_enabled": False})
+            self.assertEqual(
+                payload["data"]["capabilities"],
+                {
+                    "writes_enabled": False,
+                    "canonical_finance_writes_enabled": False,
+                    "canonical_debt_writes_enabled": False,
+                },
+            )
             self.assertIn("no-store", response.headers["Cache-Control"])
 
     def test_csrf_token_is_stable_for_the_same_session(self) -> None:
@@ -192,7 +199,11 @@ class WriteSessionProxyTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(
                 response.json()["data"]["capabilities"],
-                {"writes_enabled": True},
+                {
+                    "writes_enabled": True,
+                    "canonical_finance_writes_enabled": False,
+                    "canonical_debt_writes_enabled": False,
+                },
             )
 
 

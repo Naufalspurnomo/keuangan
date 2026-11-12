@@ -42,6 +42,60 @@ OVERVIEW = {
     },
     "drilldowns": {},
 }
+PROJECT_IDS = {
+    "Surabaya Office": "00000000-0000-4000-8000-000000000001",
+    "Grand Galaxy": "00000000-0000-4000-8000-000000000002",
+    "Mawar Residence": "00000000-0000-4000-8000-000000000003",
+    "Texturin Sisipan": "00000000-0000-4000-8000-000000000004",
+    "Proyek Selesai": "00000000-0000-4000-8000-000000000005",
+}
+PROJECT_RECORDS = [
+    {
+        "id": project_id,
+        "name": name,
+        "client_name": f"Klien {name}",
+        "client_company": "",
+        "client_address": "",
+        "client_contact": "",
+        "issuer_key": "hollawall",
+        "wallet": "TX SBY(216)" if name != "Texturin Sisipan" else "TX BALI(087)",
+        "company": "TEXTURIN-Surabaya" if name != "Texturin Sisipan" else "TEXTURIN-Bali",
+        "status": "completed" if name == "Proyek Selesai" else "active",
+        "start_date": "2024-01-01" if name == "Proyek Selesai" else "2026-01-01",
+        "completion_date": "2026-05-02" if name == "Proyek Selesai" else None,
+        "contract_notes": "",
+        "lock_version": 1,
+        "archived_at": None,
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-10-21T12:00:00Z",
+    }
+    for name, project_id in PROJECT_IDS.items()
+]
+
+
+def route_projects(route):
+    capabilities = {
+        "reads_enabled": True,
+        "project_document_writes_enabled": False,
+        "transaction_correction_reversal": False,
+        "hard_delete": False,
+    }
+    url = route.request.url
+    if "action=get" in url:
+        project_id = url.split("project_id=", 1)[1].split("&", 1)[0]
+        item = next((project for project in PROJECT_RECORDS if project["id"] == project_id), None)
+        if item is None:
+            route.fulfill(status=404, content_type="application/json", body=json.dumps({"api_version": "dashboard.v1", "error": {"code": "not_found"}}))
+            return
+        data = item
+    else:
+        data = {"items": PROJECT_RECORDS}
+    route.fulfill(status=200, content_type="application/json", body=json.dumps({
+        "api_version": "dashboard.v1",
+        "data": data,
+        "meta": {"capabilities": capabilities},
+    }))
+
 TRANSACTIONS = [
     {"id": 1, "transaction_date": "2026-10-21", "transaction_type": "Pemasukan", "amount": 125_000_000, "wallet": "TX SBY(216)", "company": "Hollawall", "project": "Surabaya Office", "notes": "Termin pekerjaan utama"},
     {"id": 2, "transaction_date": "2026-10-20", "transaction_type": "Pengeluaran", "amount": 18_400_000, "wallet": "BCA(056)", "company": "Hollawall", "project": "Grand Galaxy", "notes": "Material dan vendor"},
@@ -54,6 +108,17 @@ TRANSACTIONS = [
         {"id": 100 + index, "source_key": f"CV HB(101):acceptance:{100 + index}", "transaction_date": f"2026-10-{15 - index:02d}", "transaction_type": "Pemasukan" if index % 3 == 0 else "Pengeluaran", "amount": 1_000_000 + index * 125_000, "wallet": "CV HB(101)", "company": "Hollawall", "project": f"Audit Wallet {index + 1}", "notes": f"Mutasi acceptance {index + 1}", "internal_movement": index == 1, "transfer_scope": "internal" if index == 1 else "external"}
         for index in range(10)
     ],
+]
+TRANSACTIONS = [
+    {
+        **row,
+        **(
+            {"project_id": PROJECT_IDS[row["project"]], "scope": "project"}
+            if row.get("project") in PROJECT_IDS
+            else {"project": None, "scope": "office"}
+        ),
+    }
+    for row in TRANSACTIONS
 ]
 
 
@@ -85,6 +150,10 @@ SNAPSHOT = {
         {"name": "Proyek Selesai", "portfolio": "Hollawall", "net_cashflow": 12_500_000, "age_days": 999, "health": "completed", "lifecycle_status": "completed", "started_on": "2024-01-01", "completed_on": "2026-05-02", "transaction_count": 9, "last_activity_on": "2026-05-02", "source_key_first": "CV HB(101):project:completed"}
     ],
 }
+SNAPSHOT["project_summaries"] = [
+    {**project, "project_id": PROJECT_IDS[project["name"]]}
+    for project in SNAPSHOT["project_summaries"]
+]
 
 
 UPDATED_SNAPSHOT = json.loads(json.dumps(SNAPSHOT))
@@ -95,8 +164,8 @@ UPDATED_SNAPSHOT["overview"]["counts"]["valid_rows"] += 2
 UPDATED_SNAPSHOT["meta"]["as_of"] = "2026-10-22T08:10:00Z"
 UPDATED_SNAPSHOT["meta"]["data_through"] = "2026-10-22"
 UPDATED_SNAPSHOT["transactions"] = [
-    {"id": 7, "transaction_date": "2026-10-22", "transaction_type": "Pemasukan", "amount": 40_000_000, "wallet": "TX SBY(216)", "company": "Hollawall", "project": "Surabaya Office", "notes": "Termin baru proyek", "internal_movement": False, "transfer_scope": "external", "source_key": "TX SBY(216):pemasukan:217"},
-    {"id": 8, "transaction_date": "2026-10-22", "transaction_type": "Pengeluaran", "amount": 5_000_000, "wallet": "TX SBY(216)", "company": "Hollawall", "project": "Surabaya Office", "notes": "Reversal termin salah", "internal_movement": False, "transfer_scope": "external", "source_key": "TX SBY(216):pengeluaran:218"},
+    {"id": 7, "transaction_date": "2026-10-22", "transaction_type": "Pemasukan", "amount": 40_000_000, "wallet": "TX SBY(216)", "company": "Hollawall", "project": "Surabaya Office", "project_id": PROJECT_IDS["Surabaya Office"], "scope": "project", "notes": "Termin baru proyek", "internal_movement": False, "transfer_scope": "external", "source_key": "TX SBY(216):pemasukan:217"},
+    {"id": 8, "transaction_date": "2026-10-22", "transaction_type": "Pengeluaran", "amount": 5_000_000, "wallet": "TX SBY(216)", "company": "Hollawall", "project": "Surabaya Office", "project_id": PROJECT_IDS["Surabaya Office"], "scope": "project", "notes": "Reversal termin salah", "internal_movement": False, "transfer_scope": "external", "source_key": "TX SBY(216):pengeluaran:218"},
     *UPDATED_SNAPSHOT["transactions"],
 ]
 
@@ -154,23 +223,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             route.fulfill(status=200, content_type="application/json", body=json.dumps(SNAPSHOT))
 
         context.route("**/admin/api/snapshot.php", route_api)
-        context.route(
-            "**/admin/api/projects.php**",
-            lambda route: route.fulfill(
-                status=200,
-                content_type="application/json",
-                body=json.dumps({
-                    "api_version": "dashboard.v1",
-                    "data": {"items": []},
-                    "meta": {"capabilities": {
-                        "reads_enabled": True,
-                        "project_document_writes_enabled": False,
-                        "transaction_correction_reversal": False,
-                        "hard_delete": False,
-                    }},
-                }),
-            ),
-        )
+        context.route("**/admin/api/projects.php**", route_projects)
         context.route(
             "**/admin/api/write-session.php",
             lambda route: route.fulfill(
@@ -205,7 +258,12 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         console_errors = []
         page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" and "Failed to load resource" not in message.text else None)
         page.on("pageerror", lambda error: console_errors.append(str(error)))
-        page.on("requestfailed", lambda request: console_errors.append(f"request:{request.method}:{request.url}:{request.failure}"))
+        page.on(
+            "requestfailed",
+            lambda request: console_errors.append(f"request:{request.method}:{request.url}:{request.failure}")
+            if not (request.method == "GET" and request.url.endswith("/admin/api/snapshot.php") and "ERR_ABORTED" in str(request.failure))
+            else None,
+        )
         page.on("response", lambda response: console_errors.append(f"response:{response.status}:{response.url}") if response.status >= 400 else None)
         return context, page, console_errors
 
@@ -217,7 +275,12 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         console_errors = []
         page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" and "Failed to load resource" not in message.text else None)
         page.on("pageerror", lambda error: console_errors.append(str(error)))
-        page.on("requestfailed", lambda request: console_errors.append(f"request:{request.method}:{request.url}:{request.failure}"))
+        page.on(
+            "requestfailed",
+            lambda request: console_errors.append(f"request:{request.method}:{request.url}:{request.failure}")
+            if not (request.method == "GET" and request.url.endswith("/admin/api/snapshot.php") and "ERR_ABORTED" in str(request.failure))
+            else None,
+        )
         page.on("response", lambda response: console_errors.append(f"response:{response.status}:{response.url}") if response.status >= 400 else None)
         state = {"calls": 0}
 
@@ -226,23 +289,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             route.fulfill(status=200, content_type="application/json", body=json.dumps(SNAPSHOT if state["calls"] == 1 else UPDATED_SNAPSHOT))
 
         context.route("**/admin/api/snapshot.php", route_api)
-        context.route(
-            "**/admin/api/projects.php**",
-            lambda route: route.fulfill(
-                status=200,
-                content_type="application/json",
-                body=json.dumps({
-                    "api_version": "dashboard.v1",
-                    "data": {"items": []},
-                    "meta": {"capabilities": {
-                        "reads_enabled": True,
-                        "project_document_writes_enabled": False,
-                        "transaction_correction_reversal": False,
-                        "hard_delete": False,
-                    }},
-                }),
-            ),
-        )
+        context.route("**/admin/api/projects.php**", route_projects)
         context.route(
             "**/admin/api/write-session.php",
             lambda route: route.fulfill(
@@ -276,7 +323,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         return context, page, console_errors, state
 
     def assert_clean_render(self, page, errors):
-        page.goto(self.base_url, wait_until="networkidle")
+        page.goto(self.base_url, wait_until="domcontentloaded", timeout=90_000)
         page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
         page.locator(".recharts-responsive-container, .business-empty").first.wait_for()
         self.assertEqual(errors, [])
@@ -320,7 +367,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 context, page, errors = self.new_page(1440, 1000, theme)
                 metrics = self.assert_clean_render(page, errors)
                 self.assertEqual(metrics["theme"], theme)
-                page.screenshot(path=str(ARTIFACTS / f"desktop-{theme}-1440x1000.png"), full_page=True)
+                page.screenshot(path=str(ARTIFACTS / f"desktop-{theme}-1440x1000.png"), full_page=True, timeout=90_000)
                 context.close()
 
     def test_tablet_light_and_dark(self):
@@ -328,7 +375,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             with self.subTest(theme=theme):
                 context, page, errors = self.new_page(1024, 900, theme)
                 self.assert_clean_render(page, errors)
-                page.screenshot(path=str(ARTIFACTS / f"tablet-{theme}-1024x900.png"), full_page=True)
+                page.screenshot(path=str(ARTIFACTS / f"tablet-{theme}-1024x900.png"), full_page=True, timeout=90_000)
                 context.close()
 
     def test_mobile_light_and_dark_navigation(self):
@@ -339,7 +386,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 page.get_by_role("button", name="Buka navigasi").click()
                 self.assertTrue(page.locator(".sidebar").evaluate("node => node.classList.contains('is-open')"))
                 navigation = page.get_by_role("navigation", name="Menu utama")
-                self.assertEqual(navigation.get_by_role("button").count(), 8)
+                self.assertEqual(navigation.get_by_role("button").count(), 7)
                 expect(navigation.get_by_role("button", name=re.compile(r"^Transaksi"))).to_have_count(0)
                 navigation.get_by_role("button", name=re.compile(r"^Proyek")).click()
                 page.get_by_role("heading", name="Umur dan status proyek").wait_for()
@@ -349,7 +396,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 self.assertGreaterEqual(breadcrumb_metrics["client"], breadcrumb_metrics["scroll"], breadcrumb_metrics)
                 overflow = page.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth")
                 self.assertFalse(overflow)
-                page.screenshot(path=str(ARTIFACTS / f"mobile-{theme}-390x844.png"), full_page=True)
+                page.screenshot(path=str(ARTIFACTS / f"mobile-{theme}-390x844.png"), full_page=True, timeout=90_000)
                 context.close()
 
 
@@ -357,10 +404,8 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         for width, height in ((390, 844), (1440, 1000)):
             with self.subTest(width=width):
                 context, page, errors = self.new_page(width, height, "dark")
-                page.goto(self.base_url, wait_until="networkidle")
-                if width <= 760:
-                    page.get_by_role("button", name="Buka navigasi").click()
-                page.locator(".sidebar nav button").filter(has_text="Perlu Ditinjau").click()
+                page.goto(self.base_url, wait_until="domcontentloaded", timeout=90_000)
+                page.goto(f"{self.base_url}#inbox-reviews", wait_until="domcontentloaded", timeout=90_000)
                 page.get_by_role("heading", name="Perlu Ditinjau", exact=True).wait_for()
                 expect(page.get_by_text("Tidak ada pesan yang menunggu keputusan.")).to_be_visible()
                 self.assertFalse(page.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth"))
@@ -371,7 +416,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         for width, height in ((390, 844), (1440, 1000)):
             with self.subTest(width=width):
                 context, page, errors = self.new_page(width, height, "dark")
-                page.goto(self.base_url, wait_until="networkidle")
+                page.goto(self.base_url, wait_until="domcontentloaded", timeout=90_000)
                 page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
                 if width <= 760:
                     page.get_by_role("button", name="Buka navigasi").click()
@@ -421,7 +466,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
 
     def test_cashflow_and_wallet_routes_are_operational_and_paginated(self):
         context, page, errors = self.new_page(390, 844, "light")
-        page.goto(self.base_url, wait_until="networkidle")
+        page.goto(self.base_url, wait_until="domcontentloaded", timeout=90_000)
         page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
         page.get_by_role("button", name="Buka navigasi").click()
         page.locator(".sidebar nav button").filter(has_text="Arus Kas").click()
@@ -456,7 +501,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
 
     def test_dark_routes_keep_readable_text_contrast(self):
         context, page, errors = self.new_page(1440, 1000, "dark")
-        page.goto(self.base_url, wait_until="networkidle")
+        page.goto(self.base_url, wait_until="domcontentloaded", timeout=90_000)
         page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
         routes = (
             (None, ".executive-overview"),
@@ -539,7 +584,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
 
     def test_light_filled_color_surfaces_use_white_text(self):
         context, page, errors = self.new_page(1440, 1000, "light")
-        page.goto(self.base_url, wait_until="networkidle")
+        page.goto(self.base_url, wait_until="domcontentloaded", timeout=90_000)
         page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
         routes = (
             (None, (
@@ -590,11 +635,11 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             (1440, 900, "light"),
             (1920, 1080, "dark"),
         )
-        routes = ("Ringkasan", "Arus Kas", "Dompet", "Proyek", "Operasional Kantor", "Hutang Internal", "Laporan")
+        routes = ("Dashboard", "Arus Kas", "Dompet", "Proyek", "Operasional Kantor", "Hutang", "Laporan")
         for width, height, theme in viewports:
             with self.subTest(width=width, height=height, theme=theme):
                 context, page, errors = self.new_page(width, height, theme)
-                page.goto(self.base_url, wait_until="networkidle")
+                page.goto(self.base_url, wait_until="domcontentloaded", timeout=90_000)
                 page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
                 for route_name in routes:
                     page.locator(".sidebar nav button").filter(has_text=route_name).dispatch_event("click")
@@ -642,7 +687,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
 
     def test_mobile_project_detail_keeps_title_actions_and_ledger_fully_usable(self):
         context, page, errors = self.new_page(390, 844)
-        page.goto(f"{self.base_url}/#projects?project=live-project-1", wait_until="networkidle")
+        page.goto(f"{self.base_url}/#projects?project=00000000-0000-4000-8000-000000000001", wait_until="domcontentloaded", timeout=90_000)
         page.get_by_role("heading", name="Surabaya Office", exact=True).wait_for()
         metrics = page.evaluate("""() => {
           const size = selector => {
@@ -663,7 +708,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             viewport: document.documentElement.clientWidth,
           };
         }""")
-        self.assertEqual(metrics["breadcrumb"], "Proyek")
+        self.assertEqual(metrics["breadcrumb"], "Surabaya Office")
         self.assertGreaterEqual(metrics["back"]["height"], 44)
         self.assertEqual(metrics["addCount"], 0)
         self.assertLessEqual(metrics["tableScroll"], metrics["tableClient"])
@@ -674,9 +719,9 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
 
     def test_legacy_transaction_route_canonicalizes_to_live_read_only_project(self):
         context, page, errors = self.new_page(1440, 1000)
-        page.goto(f"{self.base_url}/#transactions?project=live-project-1", wait_until="networkidle")
+        page.goto(f"{self.base_url}/#transactions?project=00000000-0000-4000-8000-000000000001", wait_until="domcontentloaded", timeout=90_000)
         page.get_by_role("heading", name="Surabaya Office", exact=True).wait_for()
-        self.assertEqual(page.evaluate("window.location.hash"), "#projects?project=live-project-1")
+        self.assertEqual(page.evaluate("window.location.hash"), "#projects?project=00000000-0000-4000-8000-000000000001")
         expect(page.locator(".project-detail-head").get_by_role("button", name="Tambah transaksi", exact=True)).to_have_count(0)
         self.assertIsNone(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
 

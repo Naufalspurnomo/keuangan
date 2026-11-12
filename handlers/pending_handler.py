@@ -1,10 +1,11 @@
 import re
 from typing import Optional
 from datetime import datetime
+
+from flask import current_app, has_app_context
 from services.state_manager import (
     set_pending_confirmation,
     clear_pending_confirmation,
-    get_pending_confirmation,
     clear_pending_transaction,
     clear_visual_buffer
 )
@@ -20,10 +21,10 @@ from services.project_service import (
     add_new_project_to_cache,
     normalize_project_input,
     infer_project_from_text_context,
-    resolve_project_name,
     resolve_project_name_for_context,
 )
 from services.finance_decision import decide_project_resolution
+from services.whatsapp_finance_commands import dispatch_if_canonical_enabled
 from services.state_manager import set_project_lock, remember_project_knowledge
 from config.constants import PROJECT_STOPWORDS, KNOWN_COMPANY_NAMES
 from config.constants import FAST_MODE
@@ -32,7 +33,6 @@ from sheets_helper import (
     append_project_transaction,
     move_finish_marker_to_latest,
     append_hutang_entry,
-    update_hutang_status_by_no,
     settle_hutang,
     invalidate_dashboard_cache,
     delete_transaction_row
@@ -380,6 +380,48 @@ def _detect_operational_category(keterangan: str) -> str:
     return 'Lain Lain'
 
 
+def _canonical_pending_batch(
+    *,
+    pending_data: dict,
+    transactions: list,
+    wallet_label: str,
+    sender_id: str,
+    event_id: str,
+    project_id: str | None = None,
+    project_label: str | None = None,
+    debt_source_wallet_label: str | None = None,
+    scope: str = "project",
+):
+    if not has_app_context():
+        return None
+    return dispatch_if_canonical_enabled(
+        current_app,
+        sender_id=sender_id,
+        event_id=event_id,
+        transactions=transactions,
+        wallet_label=wallet_label,
+        project_id=project_id,
+        project_label=project_label,
+        source=pending_data.get("source", "WhatsApp"),
+        debt_source_wallet_label=debt_source_wallet_label,
+        scope=scope,
+    )
+
+
+def _canonical_failure(result: dict | None) -> dict | None:
+    if result is None or result.get("status") == "committed":
+        return None
+    quarantine_id = result.get("quarantine_id")
+    reference = f" Ref: {quarantine_id}" if quarantine_id else ""
+    return {
+        "response": (
+            "⚠️ Transaksi belum diposting karena identitas kanonis perlu ditinjau."
+            f"{reference}"
+        ),
+        "completed": False,
+    }
+
+
 def _first_invalid_amount_tx(transactions: list) -> Optional[dict]:
     for tx in transactions or []:
         try:
@@ -411,6 +453,39 @@ def _commit_project_transactions(pending_data: dict, sender_name: str, user_id: 
         }
 
     _assign_tx_ids(transactions, event_id)
+
+    canonical_result = _canonical_pending_batch(
+        pending_data=pending_data,
+        transactions=transactions,
+        wallet_label=dompet_sheet,
+        sender_id=user_id,
+        event_id=event_id,
+        project_id=pending_data.get('project_id'),
+        project_label=None,
+        debt_source_wallet_label=debt_source,
+        scope="auto",
+    )
+    canonical_failure = _canonical_failure(canonical_result)
+    if canonical_failure is not None:
+        return canonical_failure
+    if canonical_result is not None:
+        invalidate_dashboard_cache()
+        clear_pending_confirmation(user_id, chat_id)
+        if pending_data.get('pending_key'):
+            clear_pending_transaction(pending_data.get('pending_key'))
+        response = format_success_reply_new(
+            transactions, dompet_sheet, company, ""
+        ).replace('*', '')
+        tx_ids = [t.get('tx_id') for t in transactions if t.get('tx_id')]
+        if tx_ids:
+            response += f"\n🆔 TX: {', '.join(tx_ids)}"
+        if debt_source and debt_source != dompet_sheet:
+            total_amount = sum(int(t.get('jumlah', 0) or 0) for t in transactions)
+            response += (
+                f"\n💳 Utang dicatat: {debt_source} → {dompet_sheet} "
+                f"(Rp {total_amount:,})"
+            ).replace(',', '.')
+        return {'response': response, 'completed': True, 'bot_ref_event_id': event_id}
 
     is_new_project_batch = bool(is_new_project)
     start_marker_indexes = (
@@ -1186,7 +1261,7 @@ Atau ketik /cancel untuk batal total"""
                 )
 
                 return {
-                    'response': f'📝 Nama projeknya apa? (atau ketik "OPERASIONAL" jika ini operasional)',
+                    'response': '📝 Nama projeknya apa? (atau ketik "OPERASIONAL" jika ini operasional)',
                     'completed': False
                 }
             else:
@@ -1797,6 +1872,43 @@ Atau ketik /cancel untuk batal total"""
                 }
 
             _assign_tx_ids(transactions, event_id)
+
+            canonical_transactions = []
+            for tx in transactions:
+                canonical_tx = dict(tx)
+                canonical_tx['tipe'] = canonical_tx.get('tipe') or 'Pengeluaran'
+                canonical_tx['category'] = category or _detect_operational_category(
+                    canonical_tx.get('keterangan', '')
+                )
+                canonical_transactions.append(canonical_tx)
+            canonical_result = _canonical_pending_batch(
+                pending_data=pending_data,
+                transactions=canonical_transactions,
+                wallet_label=dompet_sheet,
+                sender_id=user_id,
+                event_id=event_id,
+                debt_source_wallet_label=pending_data.get('debt_source_dompet'),
+                scope="office",
+            )
+            canonical_failure = _canonical_failure(canonical_result)
+            if canonical_failure is not None:
+                return canonical_failure
+            if canonical_result is not None:
+                invalidate_dashboard_cache()
+                clear_pending_confirmation(user_id, chat_id)
+                if pending_data.get('pending_key'):
+                    clear_pending_transaction(pending_data.get('pending_key'))
+                response = format_success_reply_operational(
+                    transactions,
+                    dompet_sheet,
+                    category,
+                    "",
+                ).replace('*', '')
+                return {
+                    'response': response,
+                    'completed': True,
+                    'bot_ref_event_id': event_id,
+                }
 
             for tx in transactions:
                 kategori = category or _detect_operational_category(tx.get('keterangan', ''))

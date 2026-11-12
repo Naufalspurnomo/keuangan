@@ -15,6 +15,8 @@ from pathlib import Path
 
 import requests
 
+from tests.release_test_support import build_release
+
 
 ROOT = Path(__file__).resolve().parents[1]
 ABSEN_RELEASE = ROOT / "artifacts" / "rumahweb-presensi-release" / "absen"
@@ -38,8 +40,8 @@ def proof_png(width: int = 640, height: int = 480, solid: tuple[int, int, int] |
 class PresensiIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        subprocess.run(["python3", "scripts/build_rumahweb_presensi_release.py"], cwd=ROOT, check=True)
-        subprocess.run(["python3", "scripts/build_rumahweb_admin_release.py"], cwd=ROOT, check=True)
+        build_release(ROOT, "build_rumahweb_presensi_release.py")
+        build_release(ROOT, "build_rumahweb_admin_release.py")
         cls.username = "presensi-admin"
         cls.password = "synthetic-presensi-proof"
         cls.password_hash = subprocess.check_output(["php", "-r", f"echo password_hash('{cls.password}', PASSWORD_DEFAULT);"], text=True)

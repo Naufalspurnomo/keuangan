@@ -34,7 +34,7 @@ class RestoreVerificationError(RuntimeError):
 
 
 class CommandRunner(Protocol):
-    def __call__(self, command: list[str], *, env: dict[str, str] | None = None) -> None: ...
+    def __call__(self, command: list[str], *, env: dict[str, str] | None = None) -> str | None: ...
 
 
 @dataclass(frozen=True)
@@ -45,6 +45,89 @@ class RestoreVerifyConfig:
     archive_key_path: Path | None = None
     openssl_command: str = "openssl"
     pg_restore_command: str = "pg_restore"
+    psql_command: str = "psql"
+
+
+def _postgres_contract(manifest: dict[str, object]) -> dict[str, object]:
+    contract = manifest.get("postgresql")
+    if not isinstance(contract, dict):
+        raise RestoreVerificationError("manifest PostgreSQL contract is invalid")
+    lsn = contract.get("lsn")
+    cutoff = contract.get("cutoff")
+    schema = contract.get("schema")
+    migration = contract.get("migration_version")
+    application = contract.get("application")
+    if not isinstance(lsn, str) or not backup.LSN_PATTERN.fullmatch(lsn):
+        raise RestoreVerificationError("manifest PostgreSQL LSN is invalid")
+    if not isinstance(cutoff, str) or not cutoff.endswith("Z"):
+        raise RestoreVerificationError("manifest PostgreSQL cutoff is invalid")
+    if (
+        not isinstance(schema, dict)
+        or schema.get("name") != "public"
+        or not isinstance(schema.get("sha256"), str)
+        or len(str(schema["sha256"])) != 64
+    ):
+        raise RestoreVerificationError("manifest PostgreSQL schema contract is invalid")
+    if not isinstance(migration, str) or not migration:
+        raise RestoreVerificationError("manifest PostgreSQL migration version is invalid")
+    schema_version = manifest.get("schema")
+    if not isinstance(application, dict):
+        raise RestoreVerificationError("manifest PostgreSQL application contract is invalid")
+    tables = set(application)
+    if schema_version == backup.LEGACY_SCHEMA_VERSION:
+        valid_tables = tables == set(backup.POSTGRES_APPLICATION_TABLES)
+    else:
+        valid_tables = (
+            bool(tables)
+            and backup.CANONICAL_REQUIRED_TABLES.issubset(tables)
+            and all(backup.TABLE_NAME_PATTERN.fullmatch(table) for table in tables)
+        )
+    if not valid_tables:
+        raise RestoreVerificationError("manifest PostgreSQL application contract is invalid")
+    for entry in application.values():
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("total"), int)
+            or entry["total"] < 0
+            or not isinstance(entry.get("sha256"), str)
+            or len(str(entry["sha256"])) != 64
+        ):
+            raise RestoreVerificationError("manifest PostgreSQL application contract is invalid")
+    return contract
+
+
+def _restored_application_contract(
+    runner: CommandRunner,
+    config: RestoreVerifyConfig,
+    dsn: str,
+    tables: list[str],
+) -> dict[str, dict[str, object]]:
+    if not tables or len(tables) != len(set(tables)) or any(
+        not backup.TABLE_NAME_PATTERN.fullmatch(table) for table in tables
+    ):
+        raise RestoreVerificationError("application table inventory is invalid")
+    observed: dict[str, dict[str, object]] = {}
+    for table in tables:
+        output = runner(
+            [
+                config.psql_command,
+                "--no-psqlrc",
+                "--quiet",
+                "--tuples-only",
+                "--no-align",
+                "--set=ON_ERROR_STOP=1",
+                "--command",
+                f"/* hollawall-contract:{table} */\n"
+                f"SELECT to_jsonb(row_data)::text FROM public.{table} AS row_data "
+                "ORDER BY to_jsonb(row_data)::text",
+            ],
+            env=backup.libpq_env(dsn),
+        )
+        if not isinstance(output, str):
+            raise RestoreVerificationError("application totals/hashes readback failed")
+        rows = [line for line in output.splitlines() if line]
+        observed[table] = {"total": len(rows), "sha256": backup._rows_sha256(rows)}
+    return observed
 
 
 def sha256_file(path: Path) -> str:
@@ -55,7 +138,7 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _default_runner(command: list[str], *, env: dict[str, str] | None = None) -> None:
+def _default_runner(command: list[str], *, env: dict[str, str] | None = None) -> str:
     child_env = {
         key: os.environ[key]
         for key in ("PATH", "HOME", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR")
@@ -64,15 +147,16 @@ def _default_runner(command: list[str], *, env: dict[str, str] | None = None) ->
     if env:
         child_env.update(env)
     try:
-        subprocess.run(
+        completed = subprocess.run(
             command,
             check=True,
             env=child_env,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
+        return completed.stdout
     except FileNotFoundError as error:
         raise RestoreVerificationError(f"required command unavailable: {Path(command[0]).name}") from error
     except subprocess.CalledProcessError as error:
@@ -134,7 +218,7 @@ def _load_manifest(root: Path) -> dict[str, object]:
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise RestoreVerificationError("manifest is missing or invalid") from error
-    if not isinstance(manifest, dict) or manifest.get("schema") != backup.SCHEMA_VERSION:
+    if not isinstance(manifest, dict) or manifest.get("schema") not in backup.SUPPORTED_SCHEMA_VERSIONS:
         raise RestoreVerificationError("manifest schema is unsupported")
     return manifest
 
@@ -301,6 +385,7 @@ def run_restore_verification(
         extracted.mkdir()
         members = _extract_verified_tar(decrypted, extracted)
         manifest = _load_manifest(extracted)
+        postgres_contract = _postgres_contract(manifest)
         source_fingerprint = _source_database_fingerprint(manifest)
         if target_fingerprint == source_fingerprint:
             raise RestoreVerificationError("disposable database matches backup source")
@@ -332,8 +417,18 @@ def run_restore_verification(
                 "--dbname=",
                 str(dump_path),
             ],
-            env={"PGDATABASE": dsn},
+            env=backup.libpq_env(dsn),
         )
+        expected_application = postgres_contract["application"]
+        assert isinstance(expected_application, dict)
+        restored_application = _restored_application_contract(
+            selected_runner,
+            config,
+            dsn,
+            sorted(expected_application),
+        )
+        if restored_application != expected_application:
+            raise RestoreVerificationError("application totals/hashes mismatch after restore")
         return {
             "action": "verify",
             "verified": True,
@@ -341,6 +436,11 @@ def run_restore_verification(
             "sheets_files_verified": len(sheets_rows),
             "presensi_events_verified": events,
             "presensi_photos_verified": photos,
+            "backup_cutoff_verified": True,
+            "application_totals_verified": sum(
+                int(entry["total"]) for entry in restored_application.values()
+            ),
+            "application_hashes_verified": len(restored_application),
         }
 
 
@@ -353,6 +453,7 @@ def build_parser() -> argparse.ArgumentParser:
     key.add_argument("--archive-key-file", type=Path)
     parser.add_argument("--openssl-command", default="openssl")
     parser.add_argument("--pg-restore-command", default="pg_restore")
+    parser.add_argument("--psql-command", default="psql")
     parser.add_argument("--verify", action="store_true", help="run the isolated restore drill")
     parser.add_argument(
         "--confirm-disposable-database",
@@ -373,6 +474,7 @@ def main() -> None:
         archive_key_path=args.archive_key_file,
         openssl_command=args.openssl_command,
         pg_restore_command=args.pg_restore_command,
+        psql_command=args.psql_command,
     )
     try:
         result = run_restore_verification(config, verify=args.verify)

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "recipe": {
+    "name": "Hollawall backend and browser acceptance",
+    "kind": "flask-react",
+    "bootstrap": [
+      ".venv/bin/python -m pip install -r requirements.txt",
+      "npm ci --prefix dashboard"
+    ],
+    "build": [
+      ".venv/bin/python -m compileall -q agent_core dashboard_api handlers layers services utils scripts main.py sheets_helper.py",
+      "npm run build --prefix dashboard"
+    ],
+    "test": [
+      ".venv/bin/python -m pytest -q tests --ignore=tests/browser -o addopts=''",
+      "CHROMIUM_PATH=$(command -v chromium || command -v chromium-browser || command -v google-chrome || command -v google-chrome-stable) .venv/bin/python -m pytest -q tests/browser -o addopts=''"
+    ],
+    "start": ".venv/bin/python -m flask --app main.py run --host 0.0.0.0 --port 5000",
+    "port": 5000,
+    "readinessPath": "/api/health/release",
+    "evidence": [
+      "Full non-browser backend regression",
+      "Full browser acceptance",
+      "Dashboard production build",
+      "Flask release-health readback"
+    ]
+  }
+}

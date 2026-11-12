@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""Build the path-isolated Hollawall /absen presensi release."""
+"""Build the path-isolated Hollawall /absen release with immutable provenance."""
 
 from __future__ import annotations
 
-import hashlib
+import argparse
 import shutil
+import sys
 from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts import release_manifest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,10 +19,10 @@ OUTPUT = ROOT / "artifacts" / "rumahweb-presensi-release"
 LOGO = ROOT / "dashboard" / "src" / "assets" / "hollawall-logo.png"
 
 
-def main() -> None:
-    if OUTPUT.exists():
-        shutil.rmtree(OUTPUT)
-    absen = OUTPUT / "absen"
+def build_release(*, output: Path, provenance_path: Path, artifact_revision: str) -> Path:
+    if output.exists():
+        shutil.rmtree(output)
+    absen = output / "absen"
     shutil.copytree(TEMPLATE, absen)
     brand = absen / "brand"
     brand.mkdir()
@@ -41,10 +46,24 @@ def main() -> None:
     for path in absen.rglob("*"):
         if path.name in forbidden:
             raise RuntimeError(f"runtime data leaked into release: {path}")
-    files = sorted(path for path in absen.rglob("*") if path.is_file())
-    manifest = "".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(absen).as_posix()}\n" for path in files)
-    (OUTPUT / "SHA256SUMS").write_text(manifest, encoding="utf-8")
-    print(OUTPUT)
+    manifest = release_manifest.build_manifest(
+        component="rumahweb-presensi",
+        payload_root=absen,
+        provenance=release_manifest.load_provenance(provenance_path),
+        artifact_revision=artifact_revision,
+    )
+    release_manifest.write_manifest(output / "release-manifest.json", manifest)
+    release_manifest.write_sha256sums(output / "SHA256SUMS", manifest)
+    return output
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, default=OUTPUT)
+    parser.add_argument("--provenance", type=Path, required=True)
+    parser.add_argument("--artifact-revision", required=True)
+    args = parser.parse_args()
+    print(build_release(output=args.output, provenance_path=args.provenance, artifact_revision=args.artifact_revision))
 
 
 if __name__ == "__main__":

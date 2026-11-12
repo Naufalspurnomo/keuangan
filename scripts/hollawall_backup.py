@@ -9,10 +9,12 @@ they are never command-line arguments or result fields.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fcntl
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -25,7 +27,33 @@ from urllib.parse import unquote, urlsplit
 
 
 ARCHIVE_KEY_CHILD_ENV = "HOLLAWALL_ARCHIVE_KEY"
-SCHEMA_VERSION = "hollawall.backup.v1"
+SCHEMA_VERSION = "hollawall.backup.v3"
+LEGACY_SCHEMA_VERSION = "hollawall.backup.v2"
+SUPPORTED_SCHEMA_VERSIONS = frozenset({LEGACY_SCHEMA_VERSION, SCHEMA_VERSION})
+ROOT = Path(__file__).resolve().parents[1]
+MIGRATIONS_DIR = ROOT / "dashboard_api" / "migrations"
+POSTGRES_APPLICATION_TABLES = (
+    "financial_ledger",
+    "transaction_inbox",
+    "transaction_inbox_review_audit",
+    "projects",
+)
+CANONICAL_REQUIRED_TABLES = frozenset({
+    "business_units",
+    "finance_authority_state",
+    "financial_export_outbox",
+    "financial_postings",
+    "financial_schema_migrations",
+    "financial_transactions",
+    "interwallet_debt_events",
+    "interwallet_debts",
+    "projects",
+    "wallet_business_units",
+    "wallets",
+})
+TABLE_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*$")
+LSN_PATTERN = re.compile(r"^[0-9A-F]+/[0-9A-F]+$")
+SNAPSHOT_PATTERN = re.compile(r"^[0-9A-Fa-f]+-[0-9A-Fa-f]+-[0-9A-Fa-f]+$")
 
 
 class BackupError(RuntimeError):
@@ -33,7 +61,24 @@ class BackupError(RuntimeError):
 
 
 class CommandRunner(Protocol):
-    def __call__(self, command: list[str], *, env: dict[str, str] | None = None) -> None: ...
+    def __call__(self, command: list[str], *, env: dict[str, str] | None = None) -> str | None: ...
+
+
+@contextlib.contextmanager
+def _export_postgres_snapshot(dsn: str):
+    """Keep one read-only transaction open while all backup reads share its snapshot."""
+    import psycopg
+
+    with psycopg.connect(dsn) as connection:
+        connection.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        row = connection.execute("SELECT pg_export_snapshot()").fetchone()
+        snapshot = str(row[0]) if row else ''
+        if not SNAPSHOT_PATTERN.fullmatch(snapshot):
+            raise BackupError("PostgreSQL exported snapshot is invalid")
+        try:
+            yield snapshot
+        finally:
+            connection.rollback()
 
 
 @dataclass(frozen=True)
@@ -47,6 +92,7 @@ class BackupConfig:
     rclone_config: Path | None = None
     rclone_destination: str | None = None
     pg_dump_command: str = "pg_dump"
+    psql_command: str = "psql"
     openssl_command: str = "openssl"
     rclone_command: str = "rclone"
 
@@ -84,7 +130,23 @@ def database_fingerprint(dsn: str) -> str:
     return fingerprint(database_identity(dsn))
 
 
-def _default_runner(command: list[str], *, env: dict[str, str] | None = None) -> None:
+def libpq_env(dsn: str) -> dict[str, str]:
+    parsed = urlsplit(dsn)
+    database_identity(dsn)
+    if parsed.username is None:
+        raise BackupError("PostgreSQL DSN must name a user")
+    values = {
+        "PGHOST": parsed.hostname or "",
+        "PGPORT": str(parsed.port or 5432),
+        "PGDATABASE": unquote(parsed.path.lstrip("/")),
+        "PGUSER": unquote(parsed.username),
+    }
+    if parsed.password is not None:
+        values["PGPASSWORD"] = unquote(parsed.password)
+    return values
+
+
+def _default_runner(command: list[str], *, env: dict[str, str] | None = None) -> str:
     child_env = {
         key: os.environ[key]
         for key in ("PATH", "HOME", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR")
@@ -93,15 +155,16 @@ def _default_runner(command: list[str], *, env: dict[str, str] | None = None) ->
     if env:
         child_env.update(env)
     try:
-        subprocess.run(
+        completed = subprocess.run(
             command,
             check=True,
             env=child_env,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
+        return completed.stdout if completed is not None else ""
     except FileNotFoundError as error:
         raise BackupError(f"required command unavailable: {Path(command[0]).name}") from error
     except subprocess.CalledProcessError as error:
@@ -180,6 +243,149 @@ def refresh_component_manifest(manifest: MutableMapping[str, object], component:
     }
 
 
+def _rows_sha256(rows: list[str]) -> str:
+    digest = hashlib.sha256()
+    for row in rows:
+        digest.update(row.encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _query_rows(
+    runner: CommandRunner,
+    config: BackupConfig,
+    dsn: str,
+    snapshot: str,
+    marker: str,
+    sql: str,
+) -> list[str]:
+    if not SNAPSHOT_PATTERN.fullmatch(snapshot):
+        raise BackupError("PostgreSQL exported snapshot is invalid")
+    output = runner(
+        [
+            config.psql_command,
+            "--no-psqlrc",
+            "--quiet",
+            "--tuples-only",
+            "--no-align",
+            "--set=ON_ERROR_STOP=1",
+            "--command",
+            "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\n"
+            f"SET TRANSACTION SNAPSHOT '{snapshot}';\n"
+            f"/* hollawall-contract:{marker} */\n{sql};\nCOMMIT",
+        ],
+        env=libpq_env(dsn),
+    )
+    if not isinstance(output, str):
+        raise BackupError("psql contract query returned no output")
+    return [line for line in output.splitlines() if line]
+
+
+def _migration_version() -> str:
+    migrations = sorted(MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql"))
+    if not migrations:
+        raise BackupError("database migration version is unavailable")
+    return migrations[-1].stem
+
+
+def _postgres_contract(
+    runner: CommandRunner,
+    config: BackupConfig,
+    dsn: str,
+    snapshot: str,
+) -> dict[str, object]:
+    metadata_rows = _query_rows(
+        runner,
+        config,
+        dsn,
+        snapshot,
+        "metadata",
+        """
+        SELECT jsonb_build_object(
+            'lsn', pg_current_wal_lsn()::text,
+            'cutoff', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+            'schema', current_schema()
+        )::text
+        """,
+    )
+    if len(metadata_rows) != 1:
+        raise BackupError("PostgreSQL cutoff metadata is invalid")
+    try:
+        metadata = json.loads(metadata_rows[0])
+    except json.JSONDecodeError as error:
+        raise BackupError("PostgreSQL cutoff metadata is invalid") from error
+    if (
+        not isinstance(metadata, dict)
+        or not isinstance(metadata.get("lsn"), str)
+        or not LSN_PATTERN.fullmatch(metadata["lsn"])
+        or not isinstance(metadata.get("cutoff"), str)
+        or not metadata["cutoff"].endswith("Z")
+        or metadata.get("schema") != "public"
+    ):
+        raise BackupError("PostgreSQL cutoff metadata is invalid")
+
+    schema_rows = _query_rows(
+        runner,
+        config,
+        dsn,
+        snapshot,
+        "schema",
+        """
+        SELECT jsonb_build_object(
+            'table_name', table_name,
+            'column_name', column_name,
+            'data_type', data_type
+        )::text
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+        ORDER BY table_name, ordinal_position
+        """,
+    )
+    if not schema_rows:
+        raise BackupError("PostgreSQL public schema inventory is empty")
+
+    table_names = _query_rows(
+        runner,
+        config,
+        dsn,
+        snapshot,
+        "public-tables",
+        """
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+        ORDER BY table_name
+        """,
+    )
+    if (
+        not table_names
+        or len(table_names) != len(set(table_names))
+        or any(not TABLE_NAME_PATTERN.fullmatch(table) for table in table_names)
+        or not CANONICAL_REQUIRED_TABLES.issubset(table_names)
+    ):
+        raise BackupError("PostgreSQL public table inventory is invalid")
+
+    application: dict[str, dict[str, object]] = {}
+    for table in table_names:
+        rows = _query_rows(
+            runner,
+            config,
+            dsn,
+            snapshot,
+            table,
+            f"SELECT to_jsonb(row_data)::text FROM public.{table} AS row_data "
+            "ORDER BY to_jsonb(row_data)::text",
+        )
+        application[table] = {"total": len(rows), "sha256": _rows_sha256(rows)}
+    return {
+        "lsn": metadata["lsn"],
+        "cutoff": metadata["cutoff"],
+        "schema": {"name": "public", "sha256": _rows_sha256(schema_rows)},
+        "migration_version": _migration_version(),
+        "application": application,
+    }
+
+
 def _source_record(kind: str, source_identity: str) -> dict[str, str]:
     return {
         "kind": kind,
@@ -188,7 +394,13 @@ def _source_record(kind: str, source_identity: str) -> dict[str, str]:
     }
 
 
-def _build_manifest(staging: Path, config: BackupConfig, dsn: str, created_at: str) -> dict[str, object]:
+def _build_manifest(
+    staging: Path,
+    config: BackupConfig,
+    dsn: str,
+    created_at: str,
+    postgres_contract: Mapping[str, object],
+) -> dict[str, object]:
     manifest: dict[str, object] = {
         "schema": SCHEMA_VERSION,
         "created_at": created_at,
@@ -203,6 +415,7 @@ def _build_manifest(staging: Path, config: BackupConfig, dsn: str, created_at: s
             "presensi": _source_record("presensi-private-tree", str(config.presensi_source.expanduser().resolve())),
         },
         "components": {},
+        "postgresql": dict(postgres_contract),
     }
     for component in ("postgres", "sheets", "presensi"):
         refresh_component_manifest(manifest, component, staging / component)
@@ -371,23 +584,30 @@ def run_backup(
         staging = work / "payload"
         (staging / "postgres").mkdir(parents=True)
         dump_path = staging / "postgres" / "database.dump"
-        selected_runner(
-            [
-                config.pg_dump_command,
-                "--format=custom",
-                "--no-owner",
-                "--no-privileges",
-                "--file",
-                str(dump_path),
-            ],
-            env={"PGDATABASE": dsn},
-        )
+        snapshot_factory = getattr(selected_runner, "postgres_snapshot", _export_postgres_snapshot)
+        with snapshot_factory(dsn) as snapshot:
+            if not SNAPSHOT_PATTERN.fullmatch(snapshot):
+                raise BackupError("PostgreSQL exported snapshot is invalid")
+            postgres_contract = _postgres_contract(selected_runner, config, dsn, snapshot)
+            selected_runner(
+                [
+                    config.pg_dump_command,
+                    "--format=custom",
+                    "--no-owner",
+                    "--no-privileges",
+                    "--snapshot",
+                    snapshot,
+                    "--file",
+                    str(dump_path),
+                ],
+                env=libpq_env(dsn),
+            )
         if not dump_path.is_file() or dump_path.stat().st_size == 0:
             raise BackupError("pg_dump did not create a non-empty custom dump")
 
         _copy_tree(sheets, staging / "sheets", "Sheets")
         _copy_presensi_locked(presensi, staging / "presensi")
-        manifest = _build_manifest(staging, config, dsn, created_at)
+        manifest = _build_manifest(staging, config, dsn, created_at, postgres_contract)
         (staging / "manifest.json").write_text(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
             encoding="utf-8",
@@ -469,6 +689,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rclone-config", type=Path)
     parser.add_argument("--rclone-destination")
     parser.add_argument("--pg-dump-command", default="pg_dump")
+    parser.add_argument("--psql-command", default="psql")
     parser.add_argument("--openssl-command", default="openssl")
     parser.add_argument("--rclone-command", default="rclone")
     parser.add_argument("--apply", action="store_true", help="execute backup mutations")
@@ -487,6 +708,7 @@ def main() -> None:
         rclone_config=args.rclone_config,
         rclone_destination=args.rclone_destination,
         pg_dump_command=args.pg_dump_command,
+        psql_command=args.psql_command,
         openssl_command=args.openssl_command,
         rclone_command=args.rclone_command,
     )

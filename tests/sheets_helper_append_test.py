@@ -1,6 +1,9 @@
+import os
 import unittest
 from datetime import date
 from unittest.mock import patch
+
+import pytest
 
 from config.constants import (
     OPERASIONAL_COLS,
@@ -9,13 +12,40 @@ from config.constants import (
     SPLIT_PENGELUARAN,
 )
 from sheets_helper import (
+    LegacyFinanceWriteFenced,
     _split_append_metadata,
+    append_hutang_entry,
     append_operational_transaction,
     append_project_transaction,
+    append_transaction,
 )
 
 
 class SheetsHelperAppendTests(unittest.TestCase):
+    def test_canonical_activation_fences_all_legacy_finance_writers_before_io(self):
+        transaction = {
+            "jumlah": 1000,
+            "keterangan": "fenced",
+            "tipe": "Pengeluaran",
+            "message_id": "fence-event-0001",
+        }
+        calls = [
+            lambda: append_hutang_entry(1000, "fenced", "CV HB(101)", "TX SBY(216)", "fence-debt"),
+            lambda: append_project_transaction(
+                transaction, "Admin", "WhatsApp", "CV HB(101)", "Project Alpha"
+            ),
+            lambda: append_operational_transaction(
+                transaction, "Admin", "WhatsApp", "CV HB(101)", "Gaji"
+            ),
+            lambda: append_transaction(
+                transaction, "Admin", "WhatsApp", "CV HB(101)", "Project Alpha"
+            ),
+        ]
+        with patch.dict(os.environ, {"CANONICAL_FINANCE_WRITES_ENABLED": "true"}):
+            for call in calls:
+                with pytest.raises(LegacyFinanceWriteFenced):
+                    call()
+
     def test_split_append_metadata_uses_first_empty_row_in_selected_block(self):
         rows = [
             ["1", "", "", "", "", "", "", "", "msg-in-1", "1", "", "", "", "", "", "", "", "msg-out-1"],

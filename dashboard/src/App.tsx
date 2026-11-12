@@ -5,7 +5,7 @@ import {
   Building2,
 
   FileBarChart,
-  Inbox,
+
   Landmark,
   LayoutDashboard,
   LockKeyhole,
@@ -18,35 +18,41 @@ import {
 } from 'lucide-react'
 
 import { DebtForm, ProjectForm, TransactionForm } from './FinanceForms'
+import { CanonicalDebtCreateForm, CanonicalDebtRepaymentForm, type CanonicalDebtCreateInput } from './CanonicalDebtForms'
+import { actionProps, type ActionId } from './actionRegistry'
 import {
   CashflowWorkspacePage,
   DebtWorkspace,
   DemoBanner,
-  ExportButton,
+
   OfficeWorkspace,
   OverviewWorkspace,
+  TransactionRows,
 
   WalletWorkspacePage,
 } from './FinancePages'
 import ProjectCommandCenter from './ProjectCommandCenter'
 import ProjectCompleteDialog from './ProjectCompleteDialog'
+import { ProjectAuditPanel, ProjectDebtPanel, ProjectOverviewPanel } from './ProjectContextPanels'
 import ProjectDetailWorkspace from './ProjectDetailWorkspace'
 import ProjectDocumentsWorkspace from './ProjectDocumentsWorkspace'
 import ProjectPresensiPanel from './ProjectPresensiPanel'
 import ProjectProfitabilityWorkspace from './ProjectProfitabilityWorkspace'
 import ProjectRecordForm from './ProjectRecordForm'
 import ProjectTransactionsWorkspace from './ProjectTransactionsWorkspace'
-import ProductionProjectsWorkspace from './ProductionProjectsWorkspace'
+
 import ReportsWorkspace from './ReportsWorkspace'
 import InboxReviewWorkspace from './InboxReviewWorkspace'
 import type { CompanyId, FinanceDebt, FinanceProject, FinanceTransaction, FinanceWorkspace, ProjectInput, TransactionInput, TransactionFormInput, DebtInput, WalletId } from './financeWorkspace'
 import { snapshotFinanceWorkspace } from './snapshot'
 import { useLiveSnapshot } from './liveSnapshotView'
-import { createTransactionWriteAttempt, jakartaToday, loadTransactionWriteSession, type RecordedTransaction, type TransactionWriteAttempt, type TransactionWriteSession } from './transactionApi'
+import { createCanonicalTransactionMutation, createTransactionWriteAttempt, jakartaToday, loadTransactionWriteSession, sameTransactionPayload, type RecordedTransaction, type TransactionWriteAttempt, type TransactionWritePayload, type TransactionWriteSession } from './transactionApi'
 import { useFinanceWorkspace } from './useFinanceWorkspace'
 import hollawallLogo from './assets/hollawall-logo.png'
 import { createProjectDocumentApi, type ProjectDocumentApi, type ProjectDocumentSession } from './projectDocumentApi'
 import { createInboxReviewApi, type InboxReviewApi } from './inboxReviewApi'
+import { canonicalDebtIdentity } from './debtRegistry'
+import { createDebtAttempt, createDebtCorrectionAttempt, createDebtRepaymentAttempt, createDebtReversalAttempt } from './debtApi'
 import {
   NO_PROJECT_DOCUMENT_WRITES,
   projectDocumentRoute,
@@ -64,7 +70,7 @@ type Modal =
   | { kind: 'project'; value?: FinanceProject }
   | { kind: 'complete-project'; value: FinanceProject }
   | { kind: 'transaction'; value?: FinanceTransaction; scope?: 'project' | 'office'; projectId?: string }
-  | { kind: 'debt'; value?: FinanceDebt }
+  | { kind: 'debt'; value?: FinanceDebt; projectId?: string; borrower?: WalletId }
   | null
 const MOBILE_NAVIGATION_QUERY = '(max-width: 900px)'
 const PAGES: Page[] = ['overview', 'cashflow', 'wallets', 'projects', 'office', 'debts', 'reports', 'inbox-reviews']
@@ -100,13 +106,13 @@ function currentRoute(): AppRoute {
 }
 
 const pageMeta: Record<Page, { eyebrow: string; title: string; copy: string }> = {
-  overview: { eyebrow: 'RINGKASAN', title: 'Ringkasan', copy: 'Posisi keuangan dari seluruh sumber data.' },
+  overview: { eyebrow: 'DASHBOARD', title: 'Dashboard', copy: 'Posisi keuangan dari seluruh sumber data.' },
   cashflow: { eyebrow: 'ARUS KAS', title: 'Arus Kas', copy: 'Pemasukan dan pengeluaran per bulan.' },
   wallets: { eyebrow: 'SUMBER DANA', title: 'Dompet', copy: 'Posisi CV HB, TX SBY, dan TX Bali.' },
 
   projects: { eyebrow: 'PORTOFOLIO', title: 'Proyek', copy: 'Kinerja proyek per tahun, perusahaan, dan status.' },
   office: { eyebrow: 'KEBUTUHAN KANTOR', title: 'Operasional Kantor', copy: 'Biaya kantor yang terpisah dari proyek.' },
-  debts: { eyebrow: 'PERGERAKAN INTERNAL', title: 'Hutang Internal', copy: 'Hutang antar-dompet tanpa mengubah kas konsolidasi.' },
+  debts: { eyebrow: 'PERGERAKAN INTERNAL', title: 'Hutang', copy: 'Hutang antar-dompet tanpa mengubah kas konsolidasi.' },
   reports: { eyebrow: 'PELAPORAN', title: 'Laporan', copy: 'Filter, pratinjau, dan ekspor PDF.' },
   'inbox-reviews': { eyebrow: 'KOTAK MASUK', title: 'Perlu Ditinjau', copy: 'Pesan tahan gagal yang memerlukan keputusan owner.' },
 }
@@ -126,18 +132,21 @@ function Sidebar({ active, open, mobile, live, close, navigate }: { active: Page
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   useEffect(() => { if (mobile && open) closeButtonRef.current?.focus() }, [mobile, open])
   const items: ReadonlyArray<readonly [Page, string, typeof LayoutDashboard]> = [
-    ['overview', 'Ringkasan', LayoutDashboard], ['cashflow', 'Arus Kas', BarChart3], ['wallets', 'Dompet', WalletCards],
+    ['overview', 'Dashboard', LayoutDashboard], ['cashflow', 'Arus Kas', BarChart3], ['wallets', 'Dompet', WalletCards],
     ['projects', 'Proyek', BriefcaseBusiness], ['office', 'Operasional Kantor', Building2],
-    ['debts', 'Hutang Internal', Landmark], ['reports', 'Laporan', FileBarChart],
-    ...(live ? [['inbox-reviews', 'Perlu Ditinjau', Inbox] as const] : []),
+    ['debts', 'Hutang', Landmark], ['reports', 'Laporan', FileBarChart],
   ]
+  const navAction: Record<Exclude<Page, 'inbox-reviews'>, ActionId> = {
+    overview: 'nav.dashboard', cashflow: 'nav.cashflow', wallets: 'nav.wallets', projects: 'nav.projects',
+    office: 'nav.office', debts: 'nav.debts', reports: 'nav.reports',
+  }
   const hidden = mobile && !open
-  return <>{mobile && open && <button type="button" className="mobile-overlay is-open" onClick={close} aria-label="Tutup navigasi" />}<aside id="app-navigation" className={`sidebar ${open ? 'is-open' : ''}`} aria-hidden={hidden || undefined}><div className="sidebar-head"><img src={hollawallLogo} alt="Hollawall" /><button ref={closeButtonRef} tabIndex={hidden ? -1 : 0} className="icon-button mobile-only" onClick={close} aria-label="Tutup navigasi"><X size={20} /></button></div><div className="workspace-switch"><Building2 size={18} /><span><small>Ruang kerja</small>Hollawall Group</span></div><nav aria-label="Menu utama">{items.map(([key, label, Icon]) => <button type="button" tabIndex={hidden ? -1 : 0} key={key} className={active === key ? 'active' : ''} aria-current={active === key ? 'page' : undefined} onClick={() => { navigate(key); close() }}><Icon size={18} /><span>{label}</span></button>)}</nav><div className="sidebar-bottom"><div className="profile workspace-profile"><span><LockKeyhole size={15} /></span><div><strong>{live ? 'Keuangan Hollawall' : 'Workspace demo'}</strong><small>{live ? 'Ringkasan dan laporan' : 'Data lokal · Teraudit'}</small></div></div></div></aside></>
+  return <>{mobile && open && <button type="button" className="mobile-overlay is-open" onClick={close} aria-label="Tutup navigasi" {...actionProps('shell.navigation-close')} />}<aside id="app-navigation" className={`sidebar ${open ? 'is-open' : ''}`} aria-hidden={hidden || undefined}><div className="sidebar-head"><img src={hollawallLogo} alt="Hollawall" /><button ref={closeButtonRef} tabIndex={hidden ? -1 : 0} className="icon-button mobile-only" onClick={close} aria-label="Tutup navigasi" {...actionProps('shell.navigation-close')}><X size={20} /></button></div><div className="workspace-switch"><Building2 size={18} /><span><small>Ruang kerja</small>Hollawall Group</span></div><nav aria-label="Menu utama">{items.map(([key, label, Icon]) => <button type="button" tabIndex={hidden ? -1 : 0} key={key} className={active === key ? 'active' : ''} aria-current={active === key ? 'page' : undefined} onClick={() => { navigate(key); close() }} {...actionProps(navAction[key as Exclude<Page, 'inbox-reviews'>])}><Icon size={18} /><span>{label}</span></button>)}</nav><div className="sidebar-bottom"><div className="profile workspace-profile"><span><LockKeyhole size={15} /></span><div><strong>{live ? 'Keuangan Hollawall' : 'Workspace demo'}</strong><small>{live ? 'Dashboard dan laporan' : 'Data lokal · Teraudit'}</small></div></div></div></aside></>
 }
 
 function ThemeToggle({ theme, setTheme }: { theme: string; setTheme: (theme: string) => void }) {
   const dark = theme === 'dark'
-  return <button type="button" className="theme-toggle" onClick={() => setTheme(dark ? 'light' : 'dark')} aria-label={`Gunakan tema ${dark ? 'terang' : 'gelap'}`} aria-pressed={dark} title={`Tema ${dark ? 'gelap' : 'terang'}`}><Sun size={16} aria-hidden="true" /><span className={theme} aria-hidden="true" /><Moon size={16} aria-hidden="true" /></button>
+  return <button type="button" className="theme-toggle" onClick={() => setTheme(dark ? 'light' : 'dark')} aria-label={`Gunakan tema ${dark ? 'terang' : 'gelap'}`} aria-pressed={dark} title={`Tema ${dark ? 'gelap' : 'terang'}`} {...actionProps('shell.theme-toggle')}><Sun size={16} aria-hidden="true" /><span className={theme} aria-hidden="true" /><Moon size={16} aria-hidden="true" /></button>
 }
 
 function projectStatusInput(project: FinanceProject, status: 'active' | 'completed', completedOn: string | null): ProjectInput {
@@ -163,7 +172,7 @@ function productionFinanceProject(project: ProjectRecord): FinanceProject {
     name: project.name,
     company,
     wallet,
-    status: project.status === 'cancelled' ? 'completed' : project.status,
+    status: project.status,
     started_on: project.started_on,
     completed_on: project.completed_on,
     client: project.client_company || project.client_name,
@@ -176,10 +185,10 @@ function productionFinanceProject(project: ProjectRecord): FinanceProject {
   }
 }
 
-export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, onCreateLiveTransaction, projectApi, inboxReviewApi }: { suppliedWorkspace?: Readonly<FinanceWorkspace>; liveWriteSession?: TransactionWriteSession; liveWriteStatus?: string; onCreateLiveTransaction?: (input: TransactionFormInput) => Promise<RecordedTransaction>; projectApi?: ProjectDocumentApi; inboxReviewApi?: InboxReviewApi } = {}) {
+export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, onCreateLiveTransaction, onMutateLiveTransaction, onCreateLiveDebt, onRepayLiveDebt, onMutateLiveDebt, projectApi, inboxReviewApi }: { suppliedWorkspace?: Readonly<FinanceWorkspace>; liveWriteSession?: TransactionWriteSession; liveWriteStatus?: string; onCreateLiveTransaction?: (input: TransactionFormInput) => Promise<RecordedTransaction>; onMutateLiveTransaction?: (row: FinanceTransaction, action: 'correction' | 'reversal', reason: string, amount?: number) => Promise<void>; onCreateLiveDebt?: (input: CanonicalDebtCreateInput) => Promise<void>; onRepayLiveDebt?: (debt: FinanceDebt, amount: number, occurredOn: string, description: string) => Promise<void>; onMutateLiveDebt?: (debt: FinanceDebt, action: 'correction' | 'reversal') => Promise<void>; projectApi?: ProjectDocumentApi; inboxReviewApi?: InboxReviewApi } = {}) {
   const finance = useFinanceWorkspace(suppliedWorkspace)
   const readOnly = finance.readOnly
-  const canCreateTransactions = readOnly && liveWriteSession?.writesEnabled === true && Boolean(onCreateLiveTransaction)
+  const canCreateTransactions = readOnly && liveWriteSession?.canonicalWritesEnabled === true && Boolean(onCreateLiveTransaction)
   const initialRoute = useRef(currentRoute()).current
   const [route, setRoute] = useState<AppRoute>(initialRoute)
   const { page: active, projectId: projectFilter } = route
@@ -188,9 +197,17 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
   const [projectModal, setProjectModal] = useState<ProjectRecord | 'create' | null>(null)
   const [productionProjects, setProductionProjects] = useState<ProjectRecord[]>([])
   const [projectCapabilities, setProjectCapabilities] = useState<ProjectDocumentCapabilities>(NO_PROJECT_DOCUMENT_WRITES)
+  const canMutateTransactions = readOnly
+    && liveWriteSession?.canonicalWritesEnabled === true
+    && projectCapabilities.transactionCorrections
+    && projectCapabilities.transactionReversals
+    && Boolean(onMutateLiveTransaction)
   const [projectDataLoading, setProjectDataLoading] = useState(Boolean(readOnly && projectApi))
   const [projectApiAvailable, setProjectApiAvailable] = useState(false)
+  const [projectApiError, setProjectApiError] = useState('')
   const [projectBusy, setProjectBusy] = useState(false)
+  const [transactionLifecycleBusyId, setTransactionLifecycleBusyId] = useState<string | null>(null)
+  const [debtBusy, setDebtBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const [theme, setTheme] = useState(() => document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light')
   const mobile = useMobileNavigation()
@@ -211,16 +228,18 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
   const loadProductionProjects = async () => {
     if (!readOnly || !projectApi) return
     setProjectDataLoading(true)
+    setProjectApiError('')
     try {
       const result = await projectApi.listProjects()
       const projects = result.projects.filter((project) => !project.archived_at)
       setProductionProjects(projects)
       setProjectCapabilities(result.capabilities)
-      setProjectApiAvailable(projects.length > 0 || result.capabilities.projectWrites)
-    } catch {
+      setProjectApiAvailable(true)
+    } catch (error) {
       setProductionProjects([])
       setProjectCapabilities(NO_PROJECT_DOCUMENT_WRITES)
       setProjectApiAvailable(false)
+      setProjectApiError(error instanceof Error ? error.message : 'Data proyek belum tersedia.')
     } finally { setProjectDataLoading(false) }
   }
 
@@ -327,7 +346,11 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
     if (readOnly) {
       if (!canCreateTransactions || !onCreateLiveTransaction) throw new Error('Pencatatan transaksi belum tersedia.')
       return onCreateLiveTransaction(input).then((result) => {
-        setNotice(`Transaksi tercatat di ${result.sheetName}, baris ${result.sheetRow}. Tampilan sedang diperbarui.`)
+        setNotice(result.authority === 'postgresql'
+          ? result.readbackFailed
+            ? `Transaksi tercatat dengan ID ${result.transactionId}, tetapi tampilan belum berhasil dimuat ulang. Gunakan Muat ulang; jangan catat ulang transaksi.`
+            : `Transaksi tercatat dengan ID ${result.transactionId}. Tampilan sudah diperbarui.`
+          : `Transaksi tercatat di ${result.sheetName}, baris ${result.sheetRow}. Tampilan sedang diperbarui.`)
       })
     }
     const { category: _category, ...demoInput } = input
@@ -335,9 +358,51 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
       ? commit(() => finance.editTransaction(modal.value!.id, demoInput as TransactionInput), 'Transaksi diperbarui.')
       : commit(() => finance.addTransaction(demoInput as TransactionInput), 'Transaksi ditambahkan.')
   }
+  const mutateLiveTransaction = async (row: FinanceTransaction, action: 'correction' | 'reversal') => {
+    if (!canMutateTransactions || !onMutateLiveTransaction || !row.canonical_transaction_id || !row.transaction_version) return
+    if (transactionLifecycleBusyId) return
+    let amount: number | undefined
+    if (action === 'correction') {
+      const rawAmount = window.prompt('Nominal koreksi (rupiah)', String(row.amount))
+      if (rawAmount === null) return
+      amount = Number(rawAmount)
+      if (!Number.isSafeInteger(amount) || amount <= 0 || amount === row.amount) {
+        setNotice('Nominal koreksi harus berupa rupiah bulat, lebih dari nol, dan berbeda.')
+        return
+      }
+    } else if (!window.confirm(`Balik transaksi ${row.notes}? Dampak efektif transaksi akan menjadi nol.`)) return
+    const reason = window.prompt(action === 'correction' ? 'Alasan koreksi' : 'Alasan pembalikan', '')
+    if (reason === null) return
+    const cleanReason = reason.trim()
+    if (!cleanReason) {
+      setNotice('Alasan wajib diisi.')
+      return
+    }
+    setTransactionLifecycleBusyId(row.id)
+    try {
+      await onMutateLiveTransaction(row, action, cleanReason, amount)
+      setNotice(action === 'correction' ? 'Koreksi tercatat dan data diperbarui.' : 'Pembalikan tercatat dan data diperbarui.')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Perubahan transaksi belum dapat diproses.')
+    } finally {
+      setTransactionLifecycleBusyId(null)
+    }
+  }
   const saveDebt = (input: DebtInput) => modal?.kind === 'debt' && modal.value
     ? commit(() => finance.editDebt(modal.value!.id, input), 'Hutang diperbarui.')
     : commit(() => finance.addDebt(input), 'Hutang ditambahkan.')
+  const saveLiveDebt = async (input: CanonicalDebtCreateInput) => {
+    if (!onCreateLiveDebt) throw new Error('Pencatatan hutang belum tersedia.')
+    setDebtBusy(true)
+    try { await onCreateLiveDebt(input); setModal(null); setNotice('Hutang tersimpan dan data sudah diperbarui.') }
+    finally { setDebtBusy(false) }
+  }
+  const repayLiveDebt = async (debt: FinanceDebt, amount: number, occurredOn: string, description: string) => {
+    if (!onRepayLiveDebt) throw new Error('Pembayaran hutang belum tersedia.')
+    setDebtBusy(true)
+    try { await onRepayLiveDebt(debt, amount, occurredOn, description); setModal(null); setNotice('Pembayaran hutang tersimpan dan data sudah diperbarui.') }
+    finally { setDebtBusy(false) }
+  }
   const confirmDelete = (label: string, action: () => void) => { if (window.confirm(`Hapus ${label} dari data demo?`)) safe(action, `${label} dihapus.`) }
   const reset = () => { if (window.confirm('Reset seluruh perubahan dan kembali ke data demo awal?')) { finance.reset(); setNotice('Data demo direset.') } }
   const openProject = (project: FinanceProject) => pushRoute('projects', project.id)
@@ -361,30 +426,46 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
       setProjectModal(null)
       if (creating) setProjectDetailRoute({ projectId: current.id, tab: 'transactions' })
       setNotice(creating ? 'Proyek aktif dibuat. Lanjutkan dengan mencatat transaksi proyek.' : 'Proyek diperbarui.')
+    } catch (error) {
+      throw error instanceof Error ? error : new Error('Proyek belum dapat disimpan.')
+    } finally { setProjectBusy(false) }
+  }
+  const changeProductionProjectStatusById = async (projectId: string, status: ProductionProjectStatus) => {
+    if (!projectApi) return
+    const project = productionProjects.find((item) => item.id === projectId)
+    if (!project) return
+    setProjectBusy(true)
+    try {
+      const saved = await projectApi.setProjectStatus(project.id, status, project.lock_version).submit(projectSession)
+      const current = await projectApi.getProject(saved.id)
+      setProductionProjects((projects) => projects.map((item) => item.id === current.id ? current : item))
+      setNotice('Status proyek diperbarui.')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Status proyek belum dapat diperbarui.')
     } finally { setProjectBusy(false) }
   }
   const changeProductionProjectStatus = async (status: ProductionProjectStatus) => {
-    if (!projectApi || !productionProject) return
-    setProjectBusy(true)
-    try {
-      const saved = await projectApi.setProjectStatus(productionProject.id, status, productionProject.lock_version).submit(projectSession)
-      const current = await projectApi.getProject(saved.id)
-      setProductionProjects((projects) => projects.map((project) => project.id === current.id ? current : project))
-      setNotice('Status proyek diperbarui.')
-    } finally { setProjectBusy(false) }
+    if (productionProject) await changeProductionProjectStatusById(productionProject.id, status)
   }
-  const archiveProductionProject = async () => {
-    if (!projectApi || !productionProject || !window.confirm(`Arsipkan proyek ${productionProject.name}?`)) return
+  const archiveProductionProjectById = async (projectId: string) => {
+    if (!projectApi) return
+    const project = productionProjects.find((item) => item.id === projectId)
+    if (!project || !window.confirm(`Arsipkan proyek ${project.name}?`)) return
     setProjectBusy(true)
     try {
-      await projectApi.archiveProject(productionProject.id, productionProject.lock_version).submit(projectSession)
+      await projectApi.archiveProject(project.id, project.lock_version).submit(projectSession)
       await loadProductionProjects()
       pushRoute('projects')
       setNotice('Proyek diarsipkan.')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Proyek belum dapat diarsipkan.')
     } finally { setProjectBusy(false) }
   }
+  const archiveProductionProject = async () => {
+    if (productionProject) await archiveProductionProjectById(productionProject.id)
+  }
   const addAction = active === 'projects'
-    ? { label: 'Tambah proyek', run: () => setModal({ kind: 'project' } as Modal) }
+    ? { label: 'Tambah proyek', run: () => readOnly ? setProjectModal('create') : setModal({ kind: 'project' } as Modal) }
     : active === 'office'
       ? { label: 'Biaya kantor', run: () => setModal({ kind: 'transaction', scope: 'office' } as Modal) }
       : active === 'debts'
@@ -395,17 +476,29 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
     && ((!readOnly && ['projects', 'office', 'debts'].includes(active))
       || (canCreateTransactions && active === 'office'))
 
-  const productionTransactions = productionProject && projectApi
-    ? <ProjectProfitabilityWorkspace
-        project={productionFinanceProject(productionProject)}
-        rows={finance.workspace.transactions.filter((row) => row.project_id === productionProject.id)}
+  const productionFinance = productionProject ? productionFinanceProject(productionProject) : null
+  const productionRows = productionProject
+    ? finance.workspace.transactions.filter((row) => row.project_id === productionProject.id)
+    : []
+  const productionTransactions = productionFinance
+    ? <section className="recent-command"><header><div><p className="eyebrow">TRANSAKSI PROYEK</p><h2>Aktivitas tercatat</h2></div></header><TransactionRows
+        rows={productionRows}
         projects={transactionProjects}
+        onCorrect={canMutateTransactions ? (row) => void mutateLiveTransaction(row, 'correction') : undefined}
+        onReverse={canMutateTransactions ? (row) => void mutateLiveTransaction(row, 'reversal') : undefined}
+        lifecycleBusyId={transactionLifecycleBusyId}
+      /></section>
+    : null
+  const productionProfitability = productionFinance && projectApi
+    ? <ProjectProfitabilityWorkspace
+        project={productionFinance}
+        rows={productionRows}
         api={projectApi}
         session={projectSession}
       />
     : null
   const content = active === 'overview'
-    ? <OverviewWorkspace workspace={finance.workspace} readOnly={readOnly} onOpenProjects={() => navigate('projects')} onAddProject={() => setModal({ kind: 'project' })} onOpenOffice={() => navigate('office')} />
+    ? <OverviewWorkspace workspace={finance.workspace} readOnly={readOnly} onOpenProjects={() => navigate('projects')} onAddProject={!readOnly ? () => setModal({ kind: 'project' }) : projectCapabilities.projectWrites ? () => setProjectModal('create') : undefined} onOpenOffice={() => navigate('office')} onOpenReviews={inboxReviewApi ? () => navigate('inbox-reviews') : undefined} />
     : active === 'cashflow' ? <CashflowWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
       : active === 'wallets' ? <WalletWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
         : active === 'projects' && productionProject && projectApi ? <ProjectDetailWorkspace
@@ -414,19 +507,40 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
             onRouteChange={({ tab }) => setProjectDetailRoute({ projectId: productionProject.id, tab })}
             onBack={backToProjects}
             transactions={productionTransactions}
+            overview={productionFinance ? <ProjectOverviewPanel project={productionFinance} workspace={finance.workspace} /> : null}
+            debts={productionFinance ? <ProjectDebtPanel project={productionFinance} workspace={finance.workspace} /> : null}
+            profitability={productionProfitability}
             presensi={<ProjectPresensiPanel project={productionProject} />}
             documents={<ProjectDocumentsWorkspace project={productionProject} api={projectApi} session={projectSession} route={{ projectId: productionProject.id, tab: route.tab ?? 'documents', document: route.document, type: route.type }} onRouteChange={setProjectDetailRoute} />}
+            audit={productionFinance ? <ProjectAuditPanel project={productionFinance} workspace={finance.workspace} /> : null}
             capabilities={projectCapabilities}
             onEdit={setProjectModal}
             onAddTransaction={productionProject.status === 'active' && canCreateTransactions ? (project) => setModal({ kind: 'transaction', projectId: project.id }) : undefined}
+            onOpenDebt={(project) => { navigate('debts'); setModal({ kind: 'debt', projectId: project.id, borrower: project.wallet as WalletId }) }}
             onStatusChange={changeProductionProjectStatus}
             onArchive={archiveProductionProject}
+            busy={projectBusy}
           />
-          : active === 'projects' && projectApiAvailable ? <ProductionProjectsWorkspace projects={productionProjects} capabilities={projectCapabilities} loading={projectDataLoading} onAdd={() => setProjectModal('create')} onEdit={setProjectModal} onOpen={(project) => setProjectDetailRoute({ projectId: project.id, tab: 'transactions' })} />
-            : active === 'projects' && selectedProject ? <ProjectTransactionsWorkspace workspace={finance.workspace} project={selectedProject} onBack={backToProjects} onAdd={(project) => setModal({ kind: 'transaction', projectId: project.id })} onEdit={readOnly ? () => undefined : (value) => setModal({ kind: 'transaction', value, projectId: selectedProject.id })} onDelete={readOnly ? () => undefined : (value) => confirmDelete('transaksi', () => finance.removeTransaction(value.id))} onComplete={readOnly ? () => undefined : completeProjectNow} onReactivate={readOnly ? () => undefined : reactivateProject} readOnly={readOnly} canCreateTransactions={canCreateTransactions} />
-              : active === 'projects' ? <ProjectCommandCenter workspace={finance.workspace} onAdd={() => setModal({ kind: 'project' })} onEdit={(value) => setModal({ kind: 'project', value })} onComplete={(value) => setModal({ kind: 'complete-project', value })} onQuickComplete={completeProjectNow} onDelete={(value) => confirmDelete(`proyek ${value.name}`, () => finance.removeProject(value.id))} onOpen={openProject} readOnly={readOnly} />
-            : active === 'office' ? <OfficeWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'transaction', scope: 'office' })} onEdit={(value) => setModal({ kind: 'transaction', value })} onDelete={(value) => confirmDelete('biaya kantor', () => finance.removeTransaction(value.id))} readOnly={readOnly} canCreateTransactions={canCreateTransactions} />
-              : active === 'debts' ? <DebtWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'debt' })} onEdit={(value) => setModal({ kind: 'debt', value })} onDelete={(value) => confirmDelete('hutang internal', () => finance.removeDebt(value.id))} />
+          : active === 'projects' && projectApiAvailable ? <ProjectCommandCenter
+              workspace={{ ...finance.workspace, projects: productionProjects.map(productionFinanceProject) }}
+              onAdd={() => setProjectModal('create')}
+              onEdit={(project) => {
+                const record = productionProjects.find((item) => item.id === project.id)
+                if (record) setProjectModal(record)
+              }}
+              onComplete={(project) => void changeProductionProjectStatusById(project.id, 'completed')}
+              onQuickComplete={(project) => void changeProductionProjectStatusById(project.id, 'completed')}
+              onDelete={(project) => void archiveProductionProjectById(project.id)}
+              onOpen={(project) => setProjectDetailRoute({ projectId: project.id, tab: 'transactions' })}
+              readOnly={!projectCapabilities.projectWrites}
+              canAdd={projectCapabilities.projectWrites}
+              destructiveActionLabel="Arsipkan"
+            />
+            : active === 'projects' && readOnly ? <section className="application-state application-state-error" role="alert"><div><p className="eyebrow">DATA PROYEK</p><h2>Data proyek belum tersedia</h2><p>{projectApiError || 'Layanan proyek belum siap. Data snapshot tidak dipakai sebagai pengganti.'}</p><button className="primary-button" onClick={() => void loadProductionProjects()}>Coba lagi</button></div></section>
+              : active === 'projects' && selectedProject ? <ProjectTransactionsWorkspace workspace={finance.workspace} project={selectedProject} onBack={backToProjects} onAdd={(project) => setModal({ kind: 'transaction', projectId: project.id })} onEdit={(value) => setModal({ kind: 'transaction', value, projectId: selectedProject.id })} onDelete={(value) => confirmDelete('transaksi', () => finance.removeTransaction(value.id))} onComplete={completeProjectNow} onReactivate={reactivateProject} readOnly={false} canCreateTransactions />
+                : active === 'projects' ? <ProjectCommandCenter workspace={finance.workspace} onAdd={() => setModal({ kind: 'project' })} onEdit={(value) => setModal({ kind: 'project', value })} onComplete={(value) => setModal({ kind: 'complete-project', value })} onQuickComplete={completeProjectNow} onDelete={(value) => confirmDelete(`proyek ${value.name}`, () => finance.removeProject(value.id))} onOpen={openProject} readOnly={false} />
+            : active === 'office' ? <OfficeWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'transaction', scope: 'office' })} onEdit={(value) => setModal({ kind: 'transaction', value })} onDelete={(value) => confirmDelete('biaya kantor', () => finance.removeTransaction(value.id))} onCorrect={canMutateTransactions ? (row) => void mutateLiveTransaction(row, 'correction') : undefined} onReverse={canMutateTransactions ? (row) => void mutateLiveTransaction(row, 'reversal') : undefined} lifecycleBusyId={transactionLifecycleBusyId} readOnly={readOnly} canCreateTransactions={canCreateTransactions} />
+              : active === 'debts' ? <DebtWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'debt' })} onEdit={readOnly ? undefined : (value) => setModal({ kind: 'debt', value })} onDelete={readOnly ? undefined : (value) => confirmDelete('hutang internal', () => finance.removeDebt(value.id))} onRepay={readOnly && liveWriteSession?.debtWritesEnabled && onRepayLiveDebt ? (value) => setModal({ kind: 'debt', value }) : undefined} onCorrect={readOnly && liveWriteSession?.debtWritesEnabled && onMutateLiveDebt ? (value) => void onMutateLiveDebt(value, 'correction').then(() => setNotice('Koreksi hutang tersimpan.')).catch((error: unknown) => setNotice(error instanceof Error ? error.message : 'Koreksi hutang gagal.')) : undefined} onReverse={readOnly && liveWriteSession?.debtWritesEnabled && onMutateLiveDebt ? (value) => void onMutateLiveDebt(value, 'reversal').then(() => setNotice('Reversal hutang tersimpan.')).catch((error: unknown) => setNotice(error instanceof Error ? error.message : 'Reversal hutang gagal.')) : undefined} canCreate={!readOnly || Boolean(liveWriteSession?.debtWritesEnabled && onCreateLiveDebt)} />
                 : active === 'inbox-reviews' && inboxReviewApi ? <InboxReviewWorkspace api={inboxReviewApi} csrfToken={liveWriteSession?.csrfToken ?? ''} />
                   : <ReportsWorkspace workspace={finance.workspace} />
 
@@ -435,11 +549,11 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
       <Sidebar active={active} open={menuOpen} mobile={mobile} live={readOnly} close={closeMenu} navigate={navigate} />
       <main id="main-content" ref={mainRef} className="main-canvas" aria-hidden={mobile && menuOpen ? true : undefined} tabIndex={-1}>
         <header className="topbar">
-          <button ref={menuButtonRef} className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi" aria-controls="app-navigation" aria-expanded={mobile ? menuOpen : undefined}><Menu size={21} /></button>
+          <button ref={menuButtonRef} className="icon-button mobile-only" onClick={() => setMenuOpen(true)} aria-label="Buka navigasi" aria-controls="app-navigation" aria-expanded={mobile ? menuOpen : undefined} {...actionProps('shell.navigation-open')}><Menu size={21} /></button>
           <img className="mobile-header-logo" src={hollawallLogo} alt="Hollawall" />
-          <div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{mobile ? meta.title : productionProject?.name ?? selectedProject?.name ?? meta.title}</strong></div>
+          <div className="breadcrumbs"><span>Hollawall Group</span><b>/</b><strong>{productionProject?.name ?? selectedProject?.name ?? meta.title}</strong></div>
           <div className="topbar-actions">
-            {active === 'projects' && <ExportButton workspace={finance.workspace} />}
+
             {showTopbarAdd && addAction && <button className="topbar-add" onClick={addAction.run}><Plus size={16} /><span>{addAction.label}</span></button>}
             <ThemeToggle theme={theme} setTheme={setTheme} />
           </div>
@@ -457,6 +571,8 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
       {!readOnly && modal?.kind === 'complete-project' && <ProjectCompleteDialog project={modal.value} onSave={completeProject} onClose={() => setModal(null)} />}
       {(!readOnly || canCreateTransactions) && modal?.kind === 'transaction' && <TransactionForm projects={transactionProjects} transaction={modal.value} initialScope={modal.scope} lockedProjectId={modal.projectId} onSave={saveTransaction} onClose={() => setModal(null)} liveWrite={readOnly} currentDate={readOnly ? jakartaToday() : undefined} />}
       {!readOnly && modal?.kind === 'debt' && <DebtForm debt={modal.value} onSave={saveDebt} onClose={() => setModal(null)} />}
+      {readOnly && modal?.kind === 'debt' && !modal.value && <CanonicalDebtCreateForm projects={transactionProjects} initialProjectId={modal.projectId} initialBorrower={modal.borrower} saving={debtBusy} onSave={saveLiveDebt} onClose={() => setModal(null)} />}
+      {readOnly && modal?.kind === 'debt' && modal.value && <CanonicalDebtRepaymentForm debt={modal.value} saving={debtBusy} onSave={(amount, occurredOn, description) => repayLiveDebt(modal.value!, amount, occurredOn, description)} onClose={() => setModal(null)} />}
       {projectModal && <ProjectRecordForm project={projectModal === 'create' ? undefined : projectModal} clients={productionProjects} saving={projectBusy} onSave={saveProductionProject} onClose={() => setProjectModal(null)} />}
     </div>
   )
@@ -480,7 +596,7 @@ function LiveDashboardApp() {
     loadTransactionWriteSession().then((session) => {
       if (controller.signal.aborted) return
       setWriteSession(session)
-      setWriteStatus(session.writesEnabled
+      setWriteStatus(session.canonicalWritesEnabled
         ? ''
         : 'Pencatatan transaksi belum tersedia sampai konfigurasi produksi diaktifkan.')
     }).catch((error: unknown) => {
@@ -492,7 +608,7 @@ function LiveDashboardApp() {
   }, [])
 
   const createLiveTransaction = async (input: TransactionFormInput) => {
-    if (!writeSession?.writesEnabled) throw new Error(writeStatus || 'Pencatatan transaksi belum tersedia.')
+    if (!writeSession?.canonicalWritesEnabled) throw new Error(writeStatus || 'Pencatatan transaksi belum tersedia.')
     if (!Number.isSafeInteger(input.amount) || input.amount <= 0) throw new Error('Jumlah harus berupa rupiah bulat lebih dari nol.')
     if (input.date !== jakartaToday()) throw new Error('Tanggal transaksi harus tanggal Jakarta hari ini.')
     if (!input.wallet || !input.company || !input.category) throw new Error('Pilihan transaksi belum lengkap.')
@@ -503,24 +619,32 @@ function LiveDashboardApp() {
     if (/^[=+\-@]/.test(description)) throw new Error('Keterangan tidak boleh diawali =, +, -, atau @.')
     const projectId = input.scope === 'project' ? input.project_id?.trim() : null
     if (input.scope === 'project' && !projectId) throw new Error('Proyek ini belum tersedia untuk pencatatan.')
+    const payload: TransactionWritePayload = {
+      date: input.date,
+      scope: input.scope,
+      direction: input.direction === 'income' ? 'Pemasukan' : 'Pengeluaran',
+      amount: input.amount,
+      description,
+      wallet: input.wallet,
+      company: input.company,
+      category: input.category,
+      ...(input.scope === 'project' ? { project: projectId! } : {}),
+    }
+    if (pendingAttempt.current && !sameTransactionPayload(pendingAttempt.current.payload, payload)) {
+      throw new Error('Ada transaksi sebelumnya dengan status belum pasti. Muat ulang data atau coba lagi transaksi yang sama; transaksi berbeda belum dikirim.')
+    }
     if (!pendingAttempt.current) {
-      pendingAttempt.current = createTransactionWriteAttempt({
-        date: input.date,
-        scope: input.scope,
-        direction: input.direction === 'income' ? 'Pemasukan' : 'Pengeluaran',
-        amount: input.amount,
-        description,
-        wallet: input.wallet,
-        company: input.company,
-        category: input.category,
-        ...(input.scope === 'project' ? { project: projectId! } : {}),
-      })
+      pendingAttempt.current = createTransactionWriteAttempt(payload)
     }
     try {
       const result = await pendingAttempt.current.submit(writeSession)
       pendingAttempt.current = null
-      state.reload()
-      return result
+      try {
+        await state.reload()
+        return result
+      } catch {
+        return { ...result, readbackFailed: true }
+      }
     } catch (error) {
       if (!(error && typeof error === 'object' && 'uncertain' in error && error.uncertain)) {
         pendingAttempt.current = null
@@ -529,7 +653,71 @@ function LiveDashboardApp() {
     }
   }
 
+  const mutateLiveTransaction = async (row: FinanceTransaction, action: 'correction' | 'reversal', reason: string, amount?: number) => {
+    if (!writeSession?.canonicalWritesEnabled || !row.canonical_transaction_id || !row.transaction_version) {
+      throw new Error('Lifecycle transaksi belum tersedia.')
+    }
+    const mutation = createCanonicalTransactionMutation({
+      action,
+      transactionId: row.canonical_transaction_id,
+      expectedVersion: row.transaction_version,
+      reason,
+      amount,
+    })
+    await mutation.submit(writeSession)
+    await state.reload()
+  }
+
+  const createLiveDebt = async (input: CanonicalDebtCreateInput) => {
+    if (!writeSession?.debtWritesEnabled) throw new Error('Pencatatan hutang belum tersedia.')
+    const lender = canonicalDebtIdentity(input.lender)
+    const borrower = canonicalDebtIdentity(input.borrower)
+    const attempt = createDebtAttempt({
+      lenderWalletId: lender.walletId,
+      borrowerWalletId: borrower.walletId,
+      lenderBusinessUnitId: lender.businessUnitId,
+      borrowerBusinessUnitId: borrower.businessUnitId,
+      projectId: input.projectId,
+      principal: input.principal,
+      occurredAt: `${input.occurredOn}T12:00:00+07:00`,
+      dueAt: input.dueOn ? `${input.dueOn}T12:00:00+07:00` : null,
+      description: input.description,
+    })
+    await attempt.submit(writeSession)
+    await state.reload()
+  }
+
+  const repayLiveDebt = async (debt: FinanceDebt, amount: number, occurredOn: string, description: string) => {
+    if (!writeSession?.debtWritesEnabled || !debt.version) throw new Error('Pembayaran hutang belum tersedia.')
+    const attempt = createDebtRepaymentAttempt({
+      debtId: debt.id,
+      expectedVersion: debt.version,
+      amount,
+      occurredAt: `${occurredOn}T12:00:00+07:00`,
+      description,
+    })
+    await attempt.submit(writeSession)
+    await state.reload()
+  }
+
+  const mutateLiveDebt = async (debt: FinanceDebt, action: 'correction' | 'reversal') => {
+    if (!writeSession?.debtWritesEnabled || !debt.version) throw new Error('Lifecycle hutang belum tersedia.')
+    const events = debt.events ?? []
+    const claimed = new Set(events.flatMap((event) => [event.corrects_event_id, event.reverses_event_id].filter(Boolean)))
+    const target = [...events].reverse().find((event) => event.event_type !== 'reversal' && !claimed.has(event.id))
+    if (!target) throw new Error('Kejadian hutang yang dapat diubah tidak ditemukan.')
+    const reason = window.prompt(action === 'correction' ? 'Alasan koreksi hutang:' : 'Alasan reversal hutang:')?.trim()
+    if (!reason) return
+    const occurredAt = `${jakartaToday()}T12:00:00+07:00`
+    const input = { debtId: debt.id, eventId: target.id, expectedVersion: debt.version, occurredAt, reason }
+    const attempt = action === 'correction'
+      ? createDebtCorrectionAttempt({ ...input, amount: Number(window.prompt('Nominal pengganti:', String(target.amount))) })
+      : createDebtReversalAttempt(input)
+    await attempt.submit(writeSession)
+    await state.reload()
+  }
+
   if (state.status === 'loading') return <main className="application-state" role="status"><span className="application-state-mark" aria-hidden="true" /><div><p className="eyebrow">RUANG FINANSIAL</p><h1>Memuat data keuangan</h1><p>Menyiapkan posisi kas, proyek, dan laporan terbaru.</p></div></main>
   if (state.status === 'error') return <main className="application-state application-state-error" role="alert"><div><p className="eyebrow">DATA PRODUKSI</p><h1>Data belum tersedia</h1><p>Data demo tidak ditampilkan sebagai pengganti. Periksa koneksi, lalu coba lagi.</p><button className="primary-button" onClick={() => void state.reload()}>Coba lagi</button></div></main>
-  return workspace ? <DemoApp suppliedWorkspace={workspace} liveWriteSession={writeSession} liveWriteStatus={writeStatus} onCreateLiveTransaction={createLiveTransaction} projectApi={projectApi} inboxReviewApi={inboxReviewApi} /> : null
+  return workspace ? <DemoApp suppliedWorkspace={workspace} liveWriteSession={writeSession} liveWriteStatus={writeStatus} onCreateLiveTransaction={createLiveTransaction} onMutateLiveTransaction={mutateLiveTransaction} onCreateLiveDebt={createLiveDebt} onRepayLiveDebt={repayLiveDebt} onMutateLiveDebt={mutateLiveDebt} projectApi={projectApi} inboxReviewApi={inboxReviewApi} /> : null
 }

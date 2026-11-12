@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import patch
 
+from flask import Flask
+
 from handlers.pending_handler import handle_pending_response
 
 
@@ -93,6 +95,87 @@ class PendingHandlerDebtTests(unittest.TestCase):
         self.assertIn("belum dikonfirmasi tersimpan", result["response"])
         clear_confirmation.assert_not_called()
         clear_pending.assert_not_called()
+
+    def test_project_confirmed_canonical_path_never_calls_sheet_helpers(self):
+        pending = {
+            "type": "confirm_commit_project",
+            "transactions": [{
+                "jumlah": 450000,
+                "keterangan": "material proyek",
+                "tipe": "Pengeluaran",
+                "tanggal": "2026-11-12",
+                "nama_projek": "Project Alpha",
+            }],
+            "dompet": "CV HB(101)",
+            "company": "HOLLA",
+            "source": "WhatsApp",
+            "event_id": "evt-canonical-project",
+            "pending_key": "chat:user",
+        }
+        app = Flask(__name__)
+        with app.app_context(), patch(
+            "handlers.pending_handler._canonical_pending_batch",
+            return_value={"authority": "postgresql", "status": "committed"},
+        ) as canonical, patch(
+            "handlers.pending_handler.append_project_transaction"
+        ) as append_project, patch(
+            "handlers.pending_handler.append_hutang_entry"
+        ) as append_debt:
+            result = handle_pending_response(
+                "6281212042709",
+                "chat@g.us",
+                "1",
+                pending,
+                "Naufal",
+            )
+
+        self.assertTrue(result["completed"])
+        canonical.assert_called_once()
+        append_project.assert_not_called()
+        append_debt.assert_not_called()
+
+    def test_canonical_quarantine_keeps_pending_and_never_falls_back(self):
+        pending = {
+            "type": "confirm_commit_project",
+            "transactions": [{
+                "jumlah": 450000,
+                "keterangan": "material proyek",
+                "tipe": "Pengeluaran",
+                "tanggal": "2026-11-12",
+                "nama_projek": "Unknown Project",
+            }],
+            "dompet": "CV HB(101)",
+            "company": "HOLLA",
+            "source": "WhatsApp",
+            "event_id": "evt-canonical-quarantine",
+            "pending_key": "chat:user",
+        }
+        app = Flask(__name__)
+        with app.app_context(), patch(
+            "handlers.pending_handler._canonical_pending_batch",
+            return_value={
+                "authority": "postgresql",
+                "status": "quarantined",
+                "reason_code": "unmapped_project",
+                "quarantine_id": "00000000-0000-4000-8000-000000000702",
+            },
+        ), patch(
+            "handlers.pending_handler.append_project_transaction"
+        ) as append_project, patch(
+            "handlers.pending_handler.clear_pending_confirmation"
+        ) as clear_confirmation:
+            result = handle_pending_response(
+                "6281212042709",
+                "chat@g.us",
+                "1",
+                pending,
+                "Naufal",
+            )
+
+        self.assertFalse(result["completed"])
+        self.assertIn("00000000-0000-4000-8000-000000000702", result["response"])
+        append_project.assert_not_called()
+        clear_confirmation.assert_not_called()
 
 
 if __name__ == "__main__":

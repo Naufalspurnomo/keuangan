@@ -71,6 +71,9 @@ function candleTone(project: FinanceProject, asOf: Date) {
   if (project.status === 'planned') {
     return { '--bar-color': 'var(--chart-neutral-2)' } as CSSProperties
   }
+  if (project.status === 'cancelled') {
+    return { '--bar-color': 'var(--negative)' } as CSSProperties
+  }
   return { '--bar-color': AGE_COLORS[ageBand(age(project, asOf))] } as CSSProperties
 }
 
@@ -312,11 +315,11 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
             const rows = transactions.filter((row) => row.project_id === project.id).sort((left, right) => left.date.localeCompare(right.date))
             const firstActivity = rows.at(0)?.date
             const lastActivity = rows.at(-1)?.date
-            const end = project.status === 'completed' ? (parseDate(project.completed_on) ?? asOf) : project.status === 'planned' ? (parseDate(project.started_on) ?? asOf) : asOf
+            const end = project.status === 'completed' ? (parseDate(project.completed_on) ?? asOf) : project.status === 'planned' || project.status === 'cancelled' ? (parseDate(project.started_on) ?? asOf) : asOf
             const startPosition = model.positionFor(project.started_on)
             const endPosition = model.positionFor(isoDate(end))
             const candleTop = Math.min(startPosition, endPosition)
-            const candleSpan = project.status === 'planned' ? 2.8 : Math.max(2.8, Math.abs(startPosition - endPosition))
+            const candleSpan = project.status === 'planned' || project.status === 'cancelled' ? 2.8 : Math.max(2.8, Math.abs(startPosition - endPosition))
             const activityStart = model.positionFor(firstActivity, parseDate(project.started_on) ?? asOf)
             const activityEnd = model.positionFor(lastActivity, end)
             const activityTop = Math.min(activityStart, activityEnd)
@@ -324,7 +327,7 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
             const days = age(project, asOf)
             const income = rows.filter((row) => row.direction === 'income').reduce((sum, row) => sum + row.amount, 0)
             const expense = rows.filter((row) => row.direction === 'expense').reduce((sum, row) => sum + row.amount, 0)
-            const accessible = `${company}, ${projectStatusLabel(project.status)}, mulai ${dateLabel(project.started_on)}, ${project.status === 'completed' ? `selesai ${dateLabel(project.completed_on!)}` : project.status === 'planned' ? 'belum berjalan' : `snapshot ${dateLabel(isoDate(asOf))}`}, umur ${days} hari, transaksi pertama ${firstActivity ? dateLabel(firstActivity) : 'belum ada'}, transaksi terakhir ${lastActivity ? dateLabel(lastActivity) : 'belum ada'}, ${rows.length} transaksi, arus kas ${IDR.format(income - expense)}`
+            const accessible = `${company}, ${projectStatusLabel(project.status)}, mulai ${dateLabel(project.started_on)}, ${project.status === 'completed' ? `selesai ${dateLabel(project.completed_on!)}` : project.status === 'planned' ? 'belum berjalan' : project.status === 'cancelled' ? 'dibatalkan' : `snapshot ${dateLabel(isoDate(asOf))}`}, umur ${days} hari, transaksi pertama ${firstActivity ? dateLabel(firstActivity) : 'belum ada'}, transaksi terakhir ${lastActivity ? dateLabel(lastActivity) : 'belum ada'}, ${rows.length} transaksi, arus kas ${IDR.format(income - expense)}`
             return <button
               type="button"
               key={project.id}
@@ -340,7 +343,7 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
               title={`${project.name} · ${accessible}`}
             >
               {firstActivity && lastActivity && <span className="project-market-wick" aria-hidden="true" />}
-              <span className="project-market-body"><small>{project.status === 'planned' ? 'Rencana' : `${days} hari`}</small><strong>{project.name}</strong></span>
+              <span className="project-market-body"><small>{project.status === 'planned' ? 'Rencana' : project.status === 'cancelled' ? 'Batal' : `${days} hari`}</small><strong>{project.name}</strong></span>
               {project.status === 'completed' && <span className="project-market-completed" aria-label="Proyek selesai"><Check size={12} /> Selesai</span>}
               <span className="project-market-start" aria-hidden="true"><i /><small>{dateLabel(project.started_on)}</small></span>
             </button>

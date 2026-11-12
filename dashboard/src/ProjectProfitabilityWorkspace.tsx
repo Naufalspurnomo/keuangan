@@ -2,7 +2,6 @@ import { Eye, RefreshCw, ScanLine, ShieldCheck, Upload } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
-import { TransactionRows } from './FinancePages'
 import type { FinanceProject, FinanceTransaction } from './financeWorkspace'
 import type { ProjectDocumentApi, ProjectDocumentSession } from './projectDocumentApi'
 import { createProjectEvidenceApi, type ProjectEvidenceApi, type ProjectTransactionEvidence } from './projectEvidenceApi'
@@ -27,10 +26,9 @@ function monthLabel(value: string) {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString('id-ID', { month: 'short', year: '2-digit', timeZone: 'UTC' })
 }
 
-export default function ProjectProfitabilityWorkspace({ project, rows, projects, api, session, evidenceApi: suppliedEvidenceApi }: {
+export default function ProjectProfitabilityWorkspace({ project, rows, api, session, evidenceApi: suppliedEvidenceApi }: {
   project: FinanceProject
   rows: FinanceTransaction[]
-  projects: FinanceProject[]
   api: ProjectDocumentApi
   session?: ProjectDocumentSession
   evidenceApi?: ProjectEvidenceApi
@@ -201,6 +199,5 @@ export default function ProjectProfitabilityWorkspace({ project, rows, projects,
         </article>
       })}
     </section>
-    <section className="recent-command"><header><div><p className="eyebrow">TRANSAKSI PROYEK</p><h2>Aktivitas tercatat</h2></div></header><TransactionRows rows={rows} projects={projects} /></section>
   </section>
 }

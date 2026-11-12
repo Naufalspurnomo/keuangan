@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import date, datetime, timezone
 import re
 from typing import Any, Mapping, Sequence
+import uuid
 
 
 from utils.amounts import parse_money_token
@@ -15,6 +16,19 @@ _DATE_FORMATS = ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y")
 _INCOME_TYPES = frozenset({"pemasukan", "income", "masuk", "credit"})
 _EXPENSE_TYPES = frozenset({"pengeluaran", "expense", "keluar", "debit"})
 _PROJECT_MARKER_RE = re.compile(r"\s*\((start|finish|selesai)\)\s*$", re.IGNORECASE)
+
+
+def _canonical_uuid(value: Any) -> str | None:
+    raw = str(value or "").strip().casefold()
+    try:
+        parsed = uuid.UUID(raw)
+    except (ValueError, AttributeError):
+        return None
+    return str(parsed) if str(parsed) == raw else None
+
+
+def _positive_version(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
 
 
 def _project_portfolio(wallet: Any) -> str:
@@ -202,7 +216,9 @@ def build_live_snapshot(
                 "wallet": str(raw.get("sheet_name") or "").strip(),
                 "company": str(raw.get("company_sheet") or "").strip(),
                 "project": project_name if scope == "project" else None,
-                "project_id": str(raw.get("project_id") or "").strip() or None if scope == "project" else None,
+                "project_id": _canonical_uuid(raw.get("project_id")) if scope == "project" else None,
+                "canonical_transaction_id": _canonical_uuid(raw.get("canonical_transaction_id")),
+                "transaction_version": _positive_version(raw.get("transaction_version")),
                 "project_raw": project_raw or None,
                 "scope": scope,
                 "office_category": (

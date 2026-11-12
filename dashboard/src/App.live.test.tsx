@@ -4,6 +4,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import App from './App'
 import { validLiveSnapshot } from './liveSnapshot.test'
 
+const PROJECT_ALFA_ID = '00000000-0000-4000-8000-000000000101'
+const PROJECT_BETA_ID = '00000000-0000-4000-8000-000000000102'
+
 const liveSnapshot = (): import('./snapshot').DashboardSnapshot => ({
   ...validLiveSnapshot(),
   meta: {
@@ -17,8 +20,8 @@ const liveSnapshot = (): import('./snapshot').DashboardSnapshot => ({
     { source_key: 'wallet-live-3', name: 'Dompet Tak Terpetakan', balance: 750_000 },
   ],
   project_summaries: [
-    { name: 'Proyek Produksi Alfa', portfolio: 'Hollawall' as const, net_cashflow: 9_000_000, transaction_count: 1, lifecycle_status: 'active' as const, started_on: '2026-10-01' },
-    { name: 'Proyek Produksi Beta', portfolio: 'Texturin' as const, net_cashflow: -1_500_000, transaction_count: 1, lifecycle_status: 'completed' as const, started_on: '2026-09-01', completed_on: '2026-10-31' },
+    { name: 'Proyek Produksi Alfa', project_id: PROJECT_ALFA_ID, portfolio: 'Hollawall' as const, net_cashflow: 9_000_000, transaction_count: 1, lifecycle_status: 'active' as const, started_on: '2026-10-01' },
+    { name: 'Proyek Produksi Beta', project_id: PROJECT_BETA_ID, portfolio: 'Texturin' as const, net_cashflow: -1_500_000, transaction_count: 1, lifecycle_status: 'completed' as const, started_on: '2026-09-01', completed_on: '2026-10-31' },
   ],
   transactions: [
     {
@@ -30,6 +33,8 @@ const liveSnapshot = (): import('./snapshot').DashboardSnapshot => ({
       wallet: 'Dompet Produksi Utama',
       company: 'Holla',
       project: 'Proyek Produksi Alfa',
+      project_id: PROJECT_ALFA_ID,
+      scope: 'project',
       notes: 'Pembayaran produksi aktual',
     },
     {
@@ -41,6 +46,8 @@ const liveSnapshot = (): import('./snapshot').DashboardSnapshot => ({
       wallet: 'Dompet Produksi Bali',
       company: 'Texturin Regional Baru',
       project: 'Proyek Produksi Beta',
+      project_id: PROJECT_BETA_ID,
+      scope: 'project',
       notes: 'Material produksi aktual',
     },
     {
@@ -52,6 +59,7 @@ const liveSnapshot = (): import('./snapshot').DashboardSnapshot => ({
       wallet: 'Dompet Tak Terpetakan',
       company: 'Unit Operasional Baru',
       project: 'Operasional',
+      scope: 'office',
       office_category: 'Kategori Produksi Khusus',
       notes: 'Biaya kategori aktual',
     },
@@ -70,7 +78,10 @@ function liveResponse(snapshot = liveSnapshot()) {
   return new Response(JSON.stringify(snapshot), { status: 200, headers: { 'content-type': 'application/json' } })
 }
 
-function productionProjectsResponse() {
+function productionProjectsResponse(transactionLifecycle = false, wallet = 'CV HB(101)') {
+  const company = wallet === 'TX SBY(216)' ? 'TEXTURIN-Surabaya'
+    : wallet === 'TX BALI(087)' ? 'TEXTURIN-Bali'
+      : 'HOLLA'
   return new Response(JSON.stringify({
     api_version: 'dashboard.v1',
     data: {
@@ -86,15 +97,15 @@ function productionProjectsResponse() {
         start_date: '2026-11-01',
         completion_date: null,
         contract_notes: '',
-        wallet: 'CV HB(101)',
-        company: 'HOLLA',
+        wallet,
+        company,
         lock_version: 1,
         archived_at: null,
         created_at: '2026-11-01T00:00:00Z',
         updated_at: '2026-11-01T00:00:00Z',
       }],
     },
-    meta: { capabilities: { project_document_writes_enabled: false, transaction_correction_reversal: false } },
+    meta: { capabilities: { project_document_writes_enabled: false, transaction_correction_reversal: transactionLifecycle } },
   }), { status: 200, headers: { 'content-type': 'application/json' } })
 }
 
@@ -106,11 +117,35 @@ function writableProductionProjectsResponse() {
   }), { status: 200, headers: { 'content-type': 'application/json' } }))
 }
 
-function writeSessionResponse() {
+function writeSessionResponse(canonicalFinanceWrites = true, writesEnabled = true, debtWritesEnabled = false) {
   return new Response(JSON.stringify({
     api_version: 'dashboard.v1',
-    data: { csrf_token: 'csrf-token-1234567890', capabilities: { writes_enabled: true } },
+    data: {
+      csrf_token: 'csrf-token-1234567890',
+      capabilities: {
+        writes_enabled: writesEnabled,
+        canonical_finance_writes_enabled: canonicalFinanceWrites,
+        canonical_debt_writes_enabled: debtWritesEnabled,
+      },
+    },
   }), { status: 200, headers: { 'content-type': 'application/json' } })
+}
+
+function canonicalMutationResponse(action: 'correction' | 'reversal') {
+  return new Response(JSON.stringify({
+    api_version: 'finance.v1',
+    data: {
+      transaction: {
+        id: action === 'correction'
+          ? '00000000-0000-4000-8000-000000000212'
+          : '00000000-0000-4000-8000-000000000213',
+        version: 2,
+        status: action,
+        amount: 300_000,
+      },
+      duplicate: false,
+    },
+  }), { status: 201, headers: { 'content-type': 'application/json' } })
 }
 
 function recordedTransactionResponse() {
@@ -118,12 +153,9 @@ function recordedTransactionResponse() {
     api_version: 'dashboard.v1',
     data: {
       recorded: true,
-      transaction_id: 'tx-new-1',
-      sheet_name: 'Operasional',
-      sheet_row: 42,
-      source_block: 'office',
-      sheet_message_id: 'message-1',
-      projection_status: 'pending',
+      authority: 'postgresql',
+      transaction_id: '00000000-0000-4000-8000-000000000601',
+      transaction_version: 1,
       duplicate: false,
     },
   }), { status: 201, headers: { 'content-type': 'application/json' } })
@@ -158,6 +190,71 @@ afterEach(() => {
 })
 
 describe('production live source mode', () => {
+  it('opens the single canonical production project form from the live project add control', async () => {
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/admin/api/write-session.php') return writeSessionResponse(false, false)
+      if (url.startsWith('/admin/api/projects.php?action=list')) return writableProductionProjectsResponse()
+      return liveResponse()
+    })
+    vi.stubGlobal('fetch', request)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Tambah proyek' }))
+
+    expect(screen.getByRole('dialog', { name: 'Buat proyek' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Dompet pencatatan')).toHaveValue('CV HB(101)')
+  })
+
+  it('does not expose transaction creation for a legacy-only write session', async () => {
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/admin/api/write-session.php') return writeSessionResponse(false, true)
+      if (url.startsWith('/admin/api/projects.php?action=list')) return productionProjectsResponse()
+      return liveResponse()
+    })
+    vi.stubGlobal('fetch', request)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
+
+    fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Buka proyek Kontrak Panggung Utama' }))
+
+    expect(screen.queryByRole('button', { name: 'Tambah transaksi' })).toBeNull()
+  })
+
+  it.each(['CV HB(101)', 'TX SBY(216)', 'TX BALI(087)'])('preserves canonical project wallet %s in the Hutang shortcut', async (wallet) => {
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/admin/api/write-session.php') return writeSessionResponse(true, false, true)
+      if (url.startsWith('/admin/api/projects.php?action=list')) return productionProjectsResponse(false, wallet)
+      return liveResponse()
+    })
+    vi.stubGlobal('fetch', request)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
+
+    fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Buka proyek Kontrak Panggung Utama' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Pinjaman' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Buka Hutang' }))
+
+    expect(screen.getByLabelText('Dompet peminjam')).toHaveValue(wallet)
+  })
+
+  it('opens the review queue from the dashboard', async () => {
+    const request = vi.fn(async (input: RequestInfo | URL) => String(input).includes('write-session')
+      ? writeSessionResponse(false)
+      : String(input).includes('/projects') ? productionProjectsResponse() : liveResponse())
+    vi.stubGlobal('fetch', request)
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Perlu ditinjau' }))
+
+    expect(window.location.hash).toBe('#inbox-reviews')
+    expect(await screen.findByRole('heading', { name: 'Perlu Ditinjau' })).toBeInTheDocument()
+  })
   it('renders PostgreSQL projects and routes the live detail workspace by UUID', async () => {
     const request = vi.fn(async (input: RequestInfo | URL) => String(input).startsWith('/admin/api/projects.php?action=list')
       ? productionProjectsResponse()
@@ -257,6 +354,60 @@ describe('production live source mode', () => {
     expect(createBody).toMatchObject({ action: 'create', values: { name: created.name, wallet: 'TX SBY(216)', company: 'TEXTURIN-Surabaya', status: 'active' } })
   }, 30_000)
 
+  it('gates and persists canonical correction and reversal before authoritative refresh', async () => {
+    const snapshot = liveSnapshot()
+    const canonicalId = '00000000-0000-4000-8000-000000000210'
+    snapshot.transactions[2] = {
+      ...snapshot.transactions[2],
+      canonical_transaction_id: canonicalId,
+      transaction_version: 1,
+    }
+    const mutations: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = []
+    let snapshotReads = 0
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/admin/api/write-session.php') return writeSessionResponse(true)
+      if (url.startsWith('/admin/api/transactions.php?action=')) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        mutations.push({ url, body, headers: new Headers(init?.headers) })
+        return canonicalMutationResponse(url.includes('action=correction') ? 'correction' : 'reversal')
+      }
+      if (url.startsWith('/admin/api/projects.php?action=list')) return productionProjectsResponse(true)
+      snapshotReads += 1
+      return liveResponse(snapshot)
+    })
+    vi.stubGlobal('fetch', request)
+    vi.spyOn(window, 'prompt')
+      .mockReturnValueOnce('300000')
+      .mockReturnValueOnce('Nominal vendor terkoreksi')
+      .mockReturnValueOnce('Transaksi dibatalkan vendor')
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
+    fireEvent.click(navigation().getByRole('button', { name: 'Operasional Kantor' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Koreksi transaksi Biaya kategori aktual' }))
+    await screen.findByText('Koreksi tercatat dan data diperbarui.')
+    fireEvent.click(screen.getByRole('button', { name: 'Balik transaksi Biaya kategori aktual' }))
+    await screen.findByText('Pembalikan tercatat dan data diperbarui.')
+
+    expect(mutations).toHaveLength(2)
+    expect(mutations[0].url).toBe(`/admin/api/transactions.php?action=correction&transaction_id=${canonicalId}`)
+    expect(mutations[0].body).toMatchObject({ expected_version: 1, amount: 300_000, reason: 'Nominal vendor terkoreksi' })
+    expect(mutations[1].url).toBe(`/admin/api/transactions.php?action=reversal&transaction_id=${canonicalId}`)
+    expect(mutations[1].body).toMatchObject({ expected_version: 1, reason: 'Transaksi dibatalkan vendor' })
+    expect(mutations[0].headers.get('X-CSRF-Token')).toBe('csrf-token-1234567890')
+    const correctionKey = mutations[0].headers.get('Idempotency-Key')
+    const reversalKey = mutations[1].headers.get('Idempotency-Key')
+    expect(correctionKey).toMatch(/^\S{16,128}$/)
+    expect(reversalKey).toMatch(/^\S{16,128}$/)
+    expect(correctionKey).toBe(mutations[0].body.idempotency_key)
+    expect(reversalKey).toBe(mutations[1].body.idempotency_key)
+    expect(correctionKey).not.toBe(reversalKey)
+    expect(snapshotReads).toBeGreaterThanOrEqual(3)
+  })
+
   it('keeps the complete dashboard shell, analytics, routes, reports, and source-grounded unknown values', async () => {
     const request = vi.fn(async (_input?: RequestInfo | URL) => liveResponse())
     vi.stubGlobal('fetch', request)
@@ -265,12 +416,12 @@ describe('production live source mode', () => {
 
     expect(await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })).toBeTruthy()
     expect(document.querySelector('.app-shell.finance-workspace-shell')).toBeTruthy()
-    expect(navigation().getByRole('button', { name: 'Ringkasan' })).toBeTruthy()
+    expect(navigation().getByRole('button', { name: 'Dashboard' })).toBeTruthy()
     expect(navigation().getByRole('button', { name: 'Arus Kas' })).toBeTruthy()
     expect(navigation().getByRole('button', { name: 'Dompet' })).toBeTruthy()
     expect(navigation().getByRole('button', { name: 'Proyek' })).toBeTruthy()
     expect(navigation().getByRole('button', { name: 'Operasional Kantor' })).toBeTruthy()
-    expect(navigation().getByRole('button', { name: 'Hutang Internal' })).toBeTruthy()
+    expect(navigation().getByRole('button', { name: 'Hutang' })).toBeTruthy()
     expect(navigation().getByRole('button', { name: 'Laporan' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Tren kas 12 bulan' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Sebaran saldo dompet' })).toBeTruthy()
@@ -288,7 +439,7 @@ describe('production live source mode', () => {
 
     fireEvent.click(navigation().getByRole('button', { name: 'Laporan' }))
     expect(window.location.hash).toBe('#reports')
-    expect(screen.getByRole('heading', { name: 'Pratinjau dan ekspor PDF' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Pusat laporan kanonis' })).toBeTruthy()
     expect(screen.getByText('Texturin Regional Baru')).toBeTruthy()
     expect(screen.queryByText('Unit Operasional Baru')).toBeNull()
     expect(screen.queryByText(/DATA LIVE/i)).toBeNull()
@@ -331,39 +482,43 @@ describe('production live source mode', () => {
     expect(localStorage.getItem('hollawall-finance-demo-v3')).toBeNull()
   })
 
-  it('marks presensi unavailable and never queries a generated route key as a canonical project ID', async () => {
-    const request = vi.fn(async (_input?: RequestInfo | URL) => liveResponse())
+  it('quarantines projects without canonical UUID and never queries presensi with generated identity', async () => {
+    const snapshot = liveSnapshot()
+    snapshot.project_summaries[0] = { ...snapshot.project_summaries[0], project_id: undefined }
+    const request = vi.fn(async (_input?: RequestInfo | URL) => liveResponse(snapshot))
     vi.stubGlobal('fetch', request)
 
     render(<App />)
     await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
     fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Buka proyek Proyek Produksi Alfa' }))
 
-    expect(window.location.hash).toMatch(/^#projects\?project=/)
-    fireEvent.click(screen.getByRole('tab', { name: 'Presensi' }))
-    expect(screen.getByRole('status')).toHaveTextContent('Presensi belum tersedia')
-    expect(screen.getByText(/Proyek ini belum terhubung ke presensi/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Buka proyek Proyek Produksi Alfa' })).toBeNull()
     expect(request.mock.calls.some(([input]) => String(input).includes('/admin/api/presensi.php'))).toBe(false)
   })
 
   it('queries presensi only with an explicit canonical project mapping', async () => {
     const snapshot = liveSnapshot()
-    snapshot.project_summaries[0] = { ...snapshot.project_summaries[0], project_id: 'p26-produksi-alfa' }
-    const request = vi.fn(async (input: RequestInfo | URL) => String(input).startsWith('/admin/api/presensi.php')
-      ? new Response(JSON.stringify({ version: 'presensi.admin.v1', records: [] }), { status: 200, headers: { 'content-type': 'application/json' } })
-      : liveResponse(snapshot))
+    snapshot.project_summaries[0] = { ...snapshot.project_summaries[0], project_id: PROJECT_ALFA_ID }
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith('/admin/api/presensi.php')) {
+        return new Response(JSON.stringify({ version: 'presensi.admin.v1', records: [] }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.startsWith('/admin/api/projects.php?action=list')) return productionProjectsResponse()
+      if (url === '/admin/api/write-session.php') return writeSessionResponse()
+      return liveResponse(snapshot)
+    })
     vi.stubGlobal('fetch', request)
 
     render(<App />)
     await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
     fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Buka proyek Proyek Produksi Alfa' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Buka proyek Kontrak Panggung Utama' }))
     fireEvent.click(screen.getByRole('tab', { name: 'Presensi' }))
 
-    await screen.findByText('Belum ada presensi untuk Proyek Produksi Alfa')
+    await screen.findByText('Belum ada presensi untuk Kontrak Panggung Utama')
     expect(request).toHaveBeenCalledWith(
-      '/admin/api/presensi.php?project_id=p26-produksi-alfa',
+      '/admin/api/presensi.php?project_id=123e4567-e89b-42d3-a456-426614174000',
       expect.objectContaining({ credentials: 'same-origin' }),
     )
     expect(request.mock.calls.some(([input]) => String(input).includes('project_id=proyek-produksi-alfa'))).toBe(false)
@@ -381,19 +536,25 @@ describe('production live source mode', () => {
 
     await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
     expectNoProductionChatter()
-    for (const page of ['Arus Kas', 'Dompet', 'Operasional Kantor', 'Hutang Internal', 'Laporan']) {
+    for (const page of ['Arus Kas', 'Dompet', 'Operasional Kantor', 'Hutang', 'Laporan']) {
       fireEvent.click(navigation().getByRole('button', { name: page }))
       expectNoProductionChatter()
     }
     fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
-    await screen.findByRole('heading', { name: 'Daftar proyek' })
+    await screen.findByRole('heading', { name: 'Portofolio proyek per tahun' })
     expectNoProductionChatter()
     fireEvent.click(screen.getByRole('button', { name: 'Buka proyek Kontrak Panggung Utama' }))
     expectNoProductionChatter()
+    fireEvent.click(screen.getByRole('tab', { name: 'Ringkasan' }))
+    expect(await screen.findByRole('heading', { name: 'Ringkasan proyek' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: 'Pinjaman' }))
+    expect(await screen.findByRole('heading', { name: 'Pinjaman terkait proyek' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: 'Audit' }))
+    expect(await screen.findByRole('heading', { name: 'Riwayat perubahan proyek' })).toBeTruthy()
 
-    fireEvent.click(navigation().getByRole('button', { name: 'Ringkasan' }))
+    fireEvent.click(navigation().getByRole('button', { name: 'Dashboard' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Transaksi proyek' }))
-    expect(await screen.findByRole('heading', { name: 'Daftar proyek' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Portofolio proyek per tahun' })).toBeTruthy()
     expect(screen.queryByRole('dialog')).toBeNull()
     expectNoProductionChatter()
   })

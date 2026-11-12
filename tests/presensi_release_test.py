@@ -2,6 +2,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from tests.release_test_support import build_release
+
 
 ROOT = Path(__file__).resolve().parents[1]
 ABSEN = ROOT / "artifacts" / "rumahweb-presensi-release" / "absen"
@@ -11,8 +13,8 @@ ADMIN = ROOT / "artifacts" / "rumahweb-admin-release" / "admin"
 class PresensiReleaseTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        subprocess.run(["python3", "scripts/build_rumahweb_presensi_release.py"], cwd=ROOT, check=True)
-        subprocess.run(["python3", "scripts/build_rumahweb_admin_release.py"], cwd=ROOT, check=True)
+        build_release(ROOT, "build_rumahweb_presensi_release.py")
+        build_release(ROOT, "build_rumahweb_admin_release.py")
 
     def test_employee_release_has_camera_location_and_no_gallery_fallback(self) -> None:
         page = (ABSEN / "presensi" / "index.php").read_text(encoding="utf-8")

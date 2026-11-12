@@ -15,6 +15,16 @@ from utils.amounts import parse_money_token
 from utils.parsers import parse_revision_amount
 
 _ledger_write_lock = threading.RLock()
+_LEGACY_FINANCE_WRITERS = frozenset({
+    "append_hutang_entry",
+    "append_project_transaction",
+    "append_operational_transaction",
+    "append_transaction",
+})
+
+
+class LegacyFinanceWriteFenced(RuntimeError):
+    pass
 
 
 def _mirror_financial_ledger(row: Dict) -> None:
@@ -35,6 +45,13 @@ def _serialized_ledger_write(func):
     """Serialize read-before-append idempotency checks within one process."""
     @wraps(func)
     def wrapper(*args, **kwargs):
+        if func.__name__ in _LEGACY_FINANCE_WRITERS:
+            from services.finance_write_authority import legacy_sheets_finance_writes_fenced
+
+            if legacy_sheets_finance_writes_fenced():
+                raise LegacyFinanceWriteFenced(
+                    f"legacy Sheets writer {func.__name__} is fenced after PostgreSQL activation"
+                )
         from services.ledger_lock import ledger_write_guard
         started_at = time.perf_counter()
 
