@@ -20,14 +20,13 @@ ARCHIVE_SECRET = "owner-scoped-archive-secret"
 
 
 CONTRACT_ROWS = {
-    "financial_ledger": [
-        '{"amount":"1000.00","id":1}',
-        '{"amount":"2500.00","id":2}',
-    ],
-    "transaction_inbox": ['{"event_key":"evt-1","status":"processed"}'],
-    "transaction_inbox_review_audit": ['{"action":"approve","id":1}'],
-    "projects": ['{"id":"project-1","name":"Alpha"}'],
+    table: [] for table in sorted(hollawall_backup.CANONICAL_REQUIRED_TABLES)
 }
+CONTRACT_ROWS["financial_transactions"] = [
+    '{"amount":1000,"id":"transaction-1"}',
+    '{"amount":2500,"id":"transaction-2"}',
+]
+CONTRACT_ROWS["projects"] = ['{"id":"project-1","name":"Alpha"}']
 
 
 def rows_sha256(rows: list[str]) -> str:
@@ -57,7 +56,7 @@ class FakeTools:
         self.remote: dict[str, bytes] = {}
         self.corrupt_download = False
 
-    def __call__(self, command: list[str], *, env: dict[str, str] | None = None) -> None:
+    def __call__(self, command: list[str], *, env: dict[str, str] | None = None) -> str | None:
         selected_env = dict(env or {})
         self.calls.append((list(command), selected_env))
         tool = Path(command[0]).name
@@ -75,9 +74,11 @@ class FakeTools:
                 }) + "\n"
             if "hollawall-contract:schema" in sql:
                 return "\n".join([
-                    '{"column_name":"id","data_type":"bigint","table_name":"financial_ledger"}',
-                    '{"column_name":"event_key","data_type":"text","table_name":"transaction_inbox"}',
+                    '{"column_name":"id","data_type":"uuid","table_name":"financial_transactions"}',
+                    '{"column_name":"id","data_type":"uuid","table_name":"projects"}',
                 ]) + "\n"
+            if "hollawall-contract:public-tables" in sql:
+                return "\n".join(sorted(CONTRACT_ROWS)) + "\n"
             for table, rows in CONTRACT_ROWS.items():
                 if f"hollawall-contract:{table} */" in sql:
                     return "\n".join(rows) + "\n"
@@ -200,7 +201,9 @@ def test_apply_builds_custom_dump_redacted_manifest_and_verified_archive(tmp_pat
     assert result["uploaded"] is False
     dump_call, dump_env = next(call for call in tools.calls if Path(call[0][0]).name == "pg_dump")
     assert "--format=custom" in dump_call
-    assert dump_env["PGDATABASE"] == SOURCE_DSN
+    assert dump_env["PGDATABASE"] == "hollawall"
+    assert dump_env["PGHOST"] == "db.internal"
+    assert dump_env["PGUSER"] == "owner"
     assert "TEST_ARCHIVE_KEY" not in dump_env
     assert SOURCE_DSN not in " ".join(dump_call)
 
@@ -238,8 +241,8 @@ def test_backup_manifest_records_cutoff_schema_migration_and_application_hashes(
     assert contract["schema"] == {
         "name": "public",
         "sha256": rows_sha256([
-            '{"column_name":"id","data_type":"bigint","table_name":"financial_ledger"}',
-            '{"column_name":"event_key","data_type":"text","table_name":"transaction_inbox"}',
+            '{"column_name":"id","data_type":"uuid","table_name":"financial_transactions"}',
+            '{"column_name":"id","data_type":"uuid","table_name":"projects"}',
         ]),
     }
     assert contract["migration_version"] == "017_finance_write_authority"
@@ -385,7 +388,9 @@ def test_restore_verifies_manifest_sheets_presensi_and_disposable_pg_restore(tmp
     assert "--exit-on-error" in restore_calls[1][0]
     assert "--clean" in restore_calls[1][0]
     assert "--dbname=" in restore_calls[1][0]
-    assert restore_calls[1][1]["PGDATABASE"] == DISPOSABLE_DSN
+    assert restore_calls[1][1]["PGDATABASE"] == "hollawall_restore"
+    assert restore_calls[1][1]["PGHOST"] == "127.0.0.1"
+    assert restore_calls[1][1]["PGUSER"] == "tester"
     assert DISPOSABLE_DSN not in " ".join(restore_calls[1][0])
 
 
@@ -430,7 +435,7 @@ def test_restore_rejects_application_hash_mismatch_after_restore(tmp_path: Path)
     tools.calls.clear()
 
     def corrupt_hash(manifest) -> None:
-        manifest["postgresql"]["application"]["financial_ledger"]["sha256"] = "0" * 64
+        manifest["postgresql"]["application"]["financial_transactions"]["sha256"] = "0" * 64
 
     rewrite_archive_manifest(archive, tmp_path, corrupt_hash)
 

@@ -70,12 +70,23 @@ def _postgres_contract(manifest: dict[str, object]) -> dict[str, object]:
         raise RestoreVerificationError("manifest PostgreSQL schema contract is invalid")
     if not isinstance(migration, str) or not migration:
         raise RestoreVerificationError("manifest PostgreSQL migration version is invalid")
-    if not isinstance(application, dict) or set(application) != set(backup.POSTGRES_APPLICATION_TABLES):
+    schema_version = manifest.get("schema")
+    if not isinstance(application, dict):
         raise RestoreVerificationError("manifest PostgreSQL application contract is invalid")
-    for table, entry in application.items():
+    tables = set(application)
+    if schema_version == backup.LEGACY_SCHEMA_VERSION:
+        valid_tables = tables == set(backup.POSTGRES_APPLICATION_TABLES)
+    else:
+        valid_tables = (
+            bool(tables)
+            and backup.CANONICAL_REQUIRED_TABLES.issubset(tables)
+            and all(backup.TABLE_NAME_PATTERN.fullmatch(table) for table in tables)
+        )
+    if not valid_tables:
+        raise RestoreVerificationError("manifest PostgreSQL application contract is invalid")
+    for entry in application.values():
         if (
-            table not in backup.POSTGRES_APPLICATION_TABLES
-            or not isinstance(entry, dict)
+            not isinstance(entry, dict)
             or not isinstance(entry.get("total"), int)
             or entry["total"] < 0
             or not isinstance(entry.get("sha256"), str)
@@ -89,9 +100,14 @@ def _restored_application_contract(
     runner: CommandRunner,
     config: RestoreVerifyConfig,
     dsn: str,
+    tables: list[str],
 ) -> dict[str, dict[str, object]]:
+    if not tables or len(tables) != len(set(tables)) or any(
+        not backup.TABLE_NAME_PATTERN.fullmatch(table) for table in tables
+    ):
+        raise RestoreVerificationError("application table inventory is invalid")
     observed: dict[str, dict[str, object]] = {}
-    for table in backup.POSTGRES_APPLICATION_TABLES:
+    for table in tables:
         output = runner(
             [
                 config.psql_command,
@@ -105,7 +121,7 @@ def _restored_application_contract(
                 f"SELECT to_jsonb(row_data)::text FROM public.{table} AS row_data "
                 "ORDER BY to_jsonb(row_data)::text",
             ],
-            env={"PGDATABASE": dsn},
+            env=backup.libpq_env(dsn),
         )
         if not isinstance(output, str):
             raise RestoreVerificationError("application totals/hashes readback failed")
@@ -122,7 +138,7 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _default_runner(command: list[str], *, env: dict[str, str] | None = None) -> None:
+def _default_runner(command: list[str], *, env: dict[str, str] | None = None) -> str:
     child_env = {
         key: os.environ[key]
         for key in ("PATH", "HOME", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR")
@@ -131,15 +147,16 @@ def _default_runner(command: list[str], *, env: dict[str, str] | None = None) ->
     if env:
         child_env.update(env)
     try:
-        subprocess.run(
+        completed = subprocess.run(
             command,
             check=True,
             env=child_env,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
+        return completed.stdout
     except FileNotFoundError as error:
         raise RestoreVerificationError(f"required command unavailable: {Path(command[0]).name}") from error
     except subprocess.CalledProcessError as error:
@@ -201,7 +218,7 @@ def _load_manifest(root: Path) -> dict[str, object]:
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise RestoreVerificationError("manifest is missing or invalid") from error
-    if not isinstance(manifest, dict) or manifest.get("schema") != backup.SCHEMA_VERSION:
+    if not isinstance(manifest, dict) or manifest.get("schema") not in backup.SUPPORTED_SCHEMA_VERSIONS:
         raise RestoreVerificationError("manifest schema is unsupported")
     return manifest
 
@@ -400,10 +417,16 @@ def run_restore_verification(
                 "--dbname=",
                 str(dump_path),
             ],
-            env={"PGDATABASE": dsn},
+            env=backup.libpq_env(dsn),
         )
-        restored_application = _restored_application_contract(selected_runner, config, dsn)
         expected_application = postgres_contract["application"]
+        assert isinstance(expected_application, dict)
+        restored_application = _restored_application_contract(
+            selected_runner,
+            config,
+            dsn,
+            sorted(expected_application),
+        )
         if restored_application != expected_application:
             raise RestoreVerificationError("application totals/hashes mismatch after restore")
         return {

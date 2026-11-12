@@ -26,7 +26,9 @@ from urllib.parse import unquote, urlsplit
 
 
 ARCHIVE_KEY_CHILD_ENV = "HOLLAWALL_ARCHIVE_KEY"
-SCHEMA_VERSION = "hollawall.backup.v2"
+SCHEMA_VERSION = "hollawall.backup.v3"
+LEGACY_SCHEMA_VERSION = "hollawall.backup.v2"
+SUPPORTED_SCHEMA_VERSIONS = frozenset({LEGACY_SCHEMA_VERSION, SCHEMA_VERSION})
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS_DIR = ROOT / "dashboard_api" / "migrations"
 POSTGRES_APPLICATION_TABLES = (
@@ -35,6 +37,19 @@ POSTGRES_APPLICATION_TABLES = (
     "transaction_inbox_review_audit",
     "projects",
 )
+CANONICAL_REQUIRED_TABLES = frozenset({
+    "business_units",
+    "financial_export_outbox",
+    "financial_postings",
+    "financial_schema_migrations",
+    "financial_transactions",
+    "interwallet_debt_events",
+    "interwallet_debts",
+    "projects",
+    "wallet_business_units",
+    "wallets",
+})
+TABLE_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*$")
 LSN_PATTERN = re.compile(r"^[0-9A-F]+/[0-9A-F]+$")
 
 
@@ -93,6 +108,22 @@ def database_identity(dsn: str) -> str:
 
 def database_fingerprint(dsn: str) -> str:
     return fingerprint(database_identity(dsn))
+
+
+def libpq_env(dsn: str) -> dict[str, str]:
+    parsed = urlsplit(dsn)
+    database_identity(dsn)
+    if parsed.username is None:
+        raise BackupError("PostgreSQL DSN must name a user")
+    values = {
+        "PGHOST": parsed.hostname or "",
+        "PGPORT": str(parsed.port or 5432),
+        "PGDATABASE": unquote(parsed.path.lstrip("/")),
+        "PGUSER": unquote(parsed.username),
+    }
+    if parsed.password is not None:
+        values["PGPASSWORD"] = unquote(parsed.password)
+    return values
 
 
 def _default_runner(command: list[str], *, env: dict[str, str] | None = None) -> str:
@@ -218,7 +249,7 @@ def _query_rows(
             "--command",
             f"/* hollawall-contract:{marker} */\n{sql}",
         ],
-        env={"PGDATABASE": dsn},
+        env=libpq_env(dsn),
     )
     if not isinstance(output, str):
         raise BackupError("psql contract query returned no output")
@@ -285,8 +316,28 @@ def _postgres_contract(
     if not schema_rows:
         raise BackupError("PostgreSQL public schema inventory is empty")
 
+    table_names = _query_rows(
+        runner,
+        config,
+        dsn,
+        "public-tables",
+        """
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+        ORDER BY table_name
+        """,
+    )
+    if (
+        not table_names
+        or len(table_names) != len(set(table_names))
+        or any(not TABLE_NAME_PATTERN.fullmatch(table) for table in table_names)
+        or not CANONICAL_REQUIRED_TABLES.issubset(table_names)
+    ):
+        raise BackupError("PostgreSQL public table inventory is invalid")
+
     application: dict[str, dict[str, object]] = {}
-    for table in POSTGRES_APPLICATION_TABLES:
+    for table in table_names:
         rows = _query_rows(
             runner,
             config,
@@ -514,7 +565,7 @@ def run_backup(
                 "--file",
                 str(dump_path),
             ],
-            env={"PGDATABASE": dsn},
+            env=libpq_env(dsn),
         )
         if not dump_path.is_file() or dump_path.stat().st_size == 0:
             raise BackupError("pg_dump did not create a non-empty custom dump")
