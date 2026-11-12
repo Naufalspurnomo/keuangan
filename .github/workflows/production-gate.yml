@@ -248,6 +248,7 @@ jobs:
             --env DURABLE_INBOX_REQUIRED=0 \
             --env LEDGER_STORE_BACKEND=off \
             --env LEDGER_READ_BACKEND=off \
+            --env PROJECT_DOCUMENT_WRITES_ENABLED=0 \
             hollawall-ci:${GITHUB_SHA}
       - name: Verify health and non-root runtime
         run: |

@@ -46,6 +46,8 @@ def activate() -> None:
         return
     dsn = _dsn()
     if not dsn:
+        if str(os.getenv("STATE_STORE_BACKEND") or "").strip().casefold() == "local":
+            return
         raise RuntimeError("canonical finance activation requires a database DSN")
 
     apply_financial_migrations(
@@ -54,19 +56,24 @@ def activate() -> None:
     )
 
     import psycopg
+    from psycopg import sql
 
     release = str(os.getenv("RELEASE_SHA") or os.getenv("KOYEB_GIT_SHA") or "unknown").strip()
     evidence = hashlib.sha256(
         f"hollawall:finance-authority:postgresql:fresh-zero:v1:{release}".encode()
     ).hexdigest()
-    lock_targets = ", ".join(_BUSINESS_TABLES)
+    lock_targets = sql.SQL(", ").join(sql.Identifier(table) for table in _BUSINESS_TABLES)
 
     with psycopg.connect(dsn) as connection, connection.cursor() as cursor:
         cursor.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATION_LOCK_ID,))
-        cursor.execute(f"LOCK TABLE {lock_targets} IN ACCESS EXCLUSIVE MODE")
+        cursor.execute(
+            sql.SQL("LOCK TABLE {} IN ACCESS EXCLUSIVE MODE").format(lock_targets)
+        )
         counts: dict[str, int] = {}
         for table in _BUSINESS_TABLES:
-            cursor.execute(f"SELECT count(*) FROM {table}")
+            cursor.execute(
+                sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table))
+            )
             count_row = cursor.fetchone()
             if count_row is None:
                 raise RuntimeError(f"canonical finance row-count readback failed: {table}")

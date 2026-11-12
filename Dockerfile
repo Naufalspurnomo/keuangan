@@ -44,4 +44,4 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=5 \
     CMD python -c "import requests; response=requests.get('http://localhost:8000/health',timeout=10); response.raise_for_status(); payload=response.json(); assert payload.get('status') in {'healthy','degraded'}" || exit 1
 
 # Run with optimized gunicorn settings (Increased threads for IO-bound work)
-CMD ["sh", "-c", "python scripts/activate_canonical_finance.py && exec gunicorn main:app -c gunicorn.conf.py --bind 0.0.0.0:8000 --workers 1 --threads 4 --timeout 120 --access-logfile - --error-logfile - --log-level info"]
+CMD ["sh", "-c", "python -m scripts.activate_canonical_finance && exec gunicorn main:app -c gunicorn.conf.py --bind 0.0.0.0:8000 --workers 1 --threads 4 --timeout 120 --access-logfile - --error-logfile - --log-level info"]
