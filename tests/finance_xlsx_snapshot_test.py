@@ -152,4 +152,6 @@ def test_manifest_maps_by_wallet_column_not_aggregate_source_tab(tmp_path: Path)
     assert mapped["source_tab"] == "Data_Agregat"
     assert missing_wallet["disposition_reason"] == "wallet mapping missing for source wallet TX SBY(216)"
     assert office["disposition_reason"] == "wallet mapping missing for source wallet Ops Kantor Baru"
-    assert reconcile_manifest(snapshot, manifest)["cutover_ready"] is True
+    reconciliation = reconcile_manifest(snapshot, manifest)
+    assert reconciliation["coverage_complete"] is True
+    assert reconciliation["cutover_ready"] is False

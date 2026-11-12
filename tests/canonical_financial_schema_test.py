@@ -22,7 +22,7 @@ ROOT = Path(__file__).parents[1]
 def test_canonical_migrations_are_versioned_additive_and_checksums_are_stable():
     migrations = load_financial_migrations(ROOT / "dashboard_api" / "migrations")
 
-    assert [migration.version for migration in migrations] == [9, 10, 11, 12, 13]
+    assert [migration.version for migration in migrations] == [9, 10, 11, 12, 13, 14]
     assert all(migration.sha256 == hashlib.sha256(migration.sql.encode()).hexdigest() for migration in migrations)
     combined = "\n".join(migration.sql for migration in migrations).lower()
     assert "opening_balances" in combined
@@ -39,6 +39,17 @@ def test_canonical_migrations_are_versioned_additive_and_checksums_are_stable():
     assert "create constraint trigger trg_financial_transaction_balanced" in combined
     assert "create constraint trigger trg_financial_postings_balanced" in combined
     assert "create extension" not in combined
+    for canonical_id in (
+        "34d6db17-e205-5dfa-a3b8-90f0e0a3ec6b",
+        "c23a1506-50d2-55a9-9469-8744b18fd85b",
+        "07743a6c-1ad0-5c00-9d96-0beaee4b8e01",
+        "d3261754-6ee5-5d37-b0e2-79614da60abb",
+        "9f91cd70-58b6-52c8-aeaa-55ebf3006d13",
+        "0e21a9d9-4bda-5cb2-965b-bc2202e981ce",
+        "253cd0fa-9f33-5051-821a-e1e4fd650472",
+    ):
+        assert canonical_id in combined
+    assert "on conflict (id) do update" in combined
 
 
 class _Cursor:

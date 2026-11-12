@@ -144,7 +144,8 @@ def test_explicit_quarantine_is_excluded_from_canonical_amounts():
     assert result["quarantined_rows"] == 2
     assert result["unexplained_amount"] == 0
     assert result["ending_balance_drift"] == 0
-    assert result["cutover_ready"] is True
+    assert result["coverage_complete"] is True
+    assert result["cutover_ready"] is False
 
 
 def test_reconciliation_requires_complete_untampered_manifest():
@@ -161,7 +162,8 @@ def test_reconciliation_requires_complete_untampered_manifest():
         "unexplained_amount": 0,
         "ending_balance_drift": 0,
         "dangling_references": 0,
-        "cutover_ready": True,
+        "coverage_complete": True,
+        "cutover_ready": False,
     }
 
     missing = deepcopy(result)
@@ -183,6 +185,99 @@ def test_reconciliation_requires_complete_untampered_manifest():
     tampered["rows"][0]["source_row_sha256"] = "0" * 64
     with pytest.raises(ValueError, match="source row hash"):
         reconcile_manifest(snapshot(), tampered)
+
+
+def test_business_unit_mapping_is_explicit_and_independent_from_wallet():
+    source = snapshot()
+    source["tabs"]["CV HB(101)"][0]["company_sheet"] = "HOLLA"
+    source["tabs"]["CV HB(101)"][1].update(
+        {
+            "company_sheet": "HOJJA",
+            "tanggal": "2026-11-02",
+            "jumlah": "250000",
+        }
+    )
+    explicit = {
+        "wallets": {"CV HB(101)": {"wallet_id": WALLET_ID}},
+        "business_units": {
+            "HOLLA": UNIT_ID,
+            "HOJJA": "44444444-4444-4444-8444-444444444444",
+        },
+        "projects": {PROJECT_ID: PROJECT_ID},
+    }
+
+    manifest = build_manifest(source, explicit)
+
+    assert [row["business_unit_id"] for row in manifest["rows"]] == [
+        UNIT_ID,
+        "44444444-4444-4444-8444-444444444444",
+    ]
+    assert {row["wallet_id"] for row in manifest["rows"]} == {WALLET_ID}
+
+
+def test_explicit_wallet_unit_fallback_maps_blank_company():
+    source = snapshot()
+    source["tabs"]["CV HB(101)"][0]["company_sheet"] = None
+    explicit = {
+        "wallets": {"CV HB(101)": {"wallet_id": WALLET_ID}},
+        "business_units": {},
+        "business_units_by_wallet": {"CV HB(101)": UNIT_ID},
+        "projects": {PROJECT_ID: PROJECT_ID},
+    }
+
+    manifest = build_manifest(source, explicit)
+
+    assert manifest["rows"][0]["disposition"] == "mapped"
+    assert manifest["rows"][0]["business_unit_id"] == UNIT_ID
+
+
+def test_explicit_non_project_label_does_not_require_project_uuid():
+    source = snapshot()
+    source["tabs"]["CV HB(101)"][0].update(
+        {"project_id": None, "nama_projek": "Saldo Umum"}
+    )
+    explicit = {
+        "wallets": {
+            "CV HB(101)": {
+                "wallet_id": WALLET_ID,
+                "business_unit_id": UNIT_ID,
+            }
+        },
+        "non_project_labels": ["Operasional", "Saldo Umum"],
+    }
+
+    manifest = build_manifest(source, explicit)
+
+    assert manifest["rows"][0]["disposition"] == "mapped"
+    assert manifest["rows"][0]["canonical_project_id"] is None
+
+
+def test_missing_business_unit_mapping_is_quarantined():
+    source = snapshot()
+    source["tabs"]["CV HB(101)"][0]["company_sheet"] = None
+    explicit = {
+        "wallets": {"CV HB(101)": {"wallet_id": WALLET_ID}},
+        "business_units": {},
+        "projects": {PROJECT_ID: PROJECT_ID},
+    }
+
+    manifest = build_manifest(source, explicit)
+
+    assert manifest["rows"][0]["disposition"] == "quarantined"
+    assert manifest["rows"][0]["disposition_reason"] == (
+        "business unit mapping missing for source company"
+    )
+
+
+def test_reconciliation_distinguishes_coverage_from_cutover_readiness():
+    source = snapshot()
+    manifest = build_manifest(source, mappings())
+
+    result = reconcile_manifest(source, manifest)
+
+    assert result["coverage_complete"] is True
+    assert result["quarantined_rows"] == 1
+    assert result["cutover_ready"] is False
 
 
 def test_dry_run_and_reconciliation_clis_are_side_effect_free(tmp_path):
@@ -231,8 +326,9 @@ def test_dry_run_and_reconciliation_clis_are_side_effect_free(tmp_path):
         check=False,
         env={},
     )
-    assert reconcile.returncode == 0, reconcile.stderr
-    assert json.loads(reconcile.stdout)["cutover_ready"] is True
+    assert reconcile.returncode == 2, reconcile.stderr
+    assert json.loads(reconcile.stdout)["coverage_complete"] is True
+    assert json.loads(reconcile.stdout)["cutover_ready"] is False
 
     incomplete = json.loads(manifest_path.read_text())
     incomplete["rows"].pop(0)

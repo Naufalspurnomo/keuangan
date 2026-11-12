@@ -78,6 +78,9 @@ def _canonical_payload(row: dict[str, Any]) -> dict[str, Any]:
 
 def build_source_key(row: dict[str, Any]) -> str:
     """Stable idempotency key for a Sheet row or a live bot event."""
+    preserved = _clean(row.get("source_key"), 500)
+    if row.get("preserve_source_key") is True and preserved:
+        return preserved
     sheet_name = _clean(row.get("sheet_name") or row.get("dompet_sheet"), 160)
     source_block = _clean(row.get("source_block"), 40).lower() or "ledger"
     message_id = _clean(row.get("message_id"), 240)
