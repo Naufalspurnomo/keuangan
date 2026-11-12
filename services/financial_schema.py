@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 
-APPLICATION_SCHEMA_MIN = 14
-APPLICATION_SCHEMA_MAX = 14
+APPLICATION_SCHEMA_MIN = 15
+APPLICATION_SCHEMA_MAX = 15
 MIGRATION_LOCK_ID = 0x484F4C4C415741  # stable "HOLLAWA" advisory lock namespace
 _MIGRATION_PATTERN = re.compile(r"^(?P<version>\d{3})_.*\.sql$")
 

@@ -22,7 +22,7 @@ ROOT = Path(__file__).parents[1]
 def test_canonical_migrations_are_versioned_additive_and_checksums_are_stable():
     migrations = load_financial_migrations(ROOT / "dashboard_api" / "migrations")
 
-    assert [migration.version for migration in migrations] == [9, 10, 11, 12, 13, 14]
+    assert [migration.version for migration in migrations] == [9, 10, 11, 12, 13, 14, 15]
     assert all(migration.sha256 == hashlib.sha256(migration.sql.encode()).hexdigest() for migration in migrations)
     combined = "\n".join(migration.sql for migration in migrations).lower()
     assert "opening_balances" in combined
@@ -50,6 +50,12 @@ def test_canonical_migrations_are_versioned_additive_and_checksums_are_stable():
     ):
         assert canonical_id in combined
     assert "on conflict (id) do update" in combined
+    compact_sql = " ".join(combined.split())
+    assert "add column if not exists source_block" in compact_sql
+    assert (
+        "source_tab, source_block, source_row, legacy_source_key"
+        in compact_sql
+    )
 
 
 class _Cursor:
