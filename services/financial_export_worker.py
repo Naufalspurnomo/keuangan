@@ -305,11 +305,34 @@ class ExportWorker:
 class PostgresExportOutbox:
     """Token-guarded claim/ack boundary for financial_export_outbox."""
 
-    _RETURNING = """
-        outbox.id, outbox.export_ordinal, outbox.export_key,
-        outbox.aggregate_type, outbox.aggregate_id, outbox.aggregate_version,
-        outbox.payload, outbox.payload_sha256, outbox.created_at,
-        outbox.claim_token
+    _CLAIM_SQL = """
+        WITH eligible AS (
+            SELECT id
+            FROM financial_export_outbox
+            WHERE (
+                status IN ('pending', 'failed') AND available_at <= now()
+            ) OR (
+                status = 'exporting'
+                AND claimed_at < now() - (%s * interval '1 second')
+            )
+            ORDER BY export_ordinal
+            FOR UPDATE SKIP LOCKED
+            LIMIT %s
+        )
+        UPDATE financial_export_outbox AS outbox
+        SET status = 'exporting',
+            attempts = outbox.attempts + 1,
+            claimed_at = now(),
+            claim_token = %s,
+            last_error = NULL,
+            updated_at = now()
+        FROM eligible
+        WHERE outbox.id = eligible.id
+        RETURNING
+            outbox.id, outbox.export_ordinal, outbox.export_key,
+            outbox.aggregate_type, outbox.aggregate_id, outbox.aggregate_version,
+            outbox.payload, outbox.payload_sha256, outbox.created_at,
+            outbox.claim_token
     """
 
     def __init__(
@@ -355,31 +378,7 @@ class PostgresExportOutbox:
         try:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    f"""
-                    WITH eligible AS (
-                        SELECT id
-                        FROM financial_export_outbox
-                        WHERE (
-                            status IN ('pending', 'failed') AND available_at <= now()
-                        ) OR (
-                            status = 'exporting'
-                            AND claimed_at < now() - (%s * interval '1 second')
-                        )
-                        ORDER BY export_ordinal
-                        FOR UPDATE SKIP LOCKED
-                        LIMIT %s
-                    )
-                    UPDATE financial_export_outbox AS outbox
-                    SET status = 'exporting',
-                        attempts = outbox.attempts + 1,
-                        claimed_at = now(),
-                        claim_token = %s,
-                        last_error = NULL,
-                        updated_at = now()
-                    FROM eligible
-                    WHERE outbox.id = eligible.id
-                    RETURNING {self._RETURNING}
-                    """,
+                    self._CLAIM_SQL,
                     (lease_seconds, limit, claim_token),
                 )
                 rows = [self._row(tuple(values)) for values in cursor.fetchall()]

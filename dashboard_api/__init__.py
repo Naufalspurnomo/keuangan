@@ -180,6 +180,7 @@ def register_dashboard(
                 finance_service=canonical_transaction_service,
                 debt_service=canonical_debt_service,
             )
+            app.extensions["finance_write_authority_gateway"] = gateway
             transaction_service = PostgresDashboardTransactionService(
                 gateway=gateway,
                 project_exists=lambda _project, _wallet, _company: False,

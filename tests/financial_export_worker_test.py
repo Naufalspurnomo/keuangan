@@ -134,8 +134,8 @@ def test_manual_remote_drift_is_marked_and_never_overwritten() -> None:
 def test_postgres_store_uses_qualified_returning_and_token_guarded_ack() -> None:
     from services.financial_export_worker import PostgresExportOutbox
 
-    assert "outbox.id" in PostgresExportOutbox._RETURNING
-    assert "outbox.claim_token" in PostgresExportOutbox._RETURNING
+    assert "outbox.id" in PostgresExportOutbox._CLAIM_SQL
+    assert "outbox.claim_token" in PostgresExportOutbox._CLAIM_SQL
 
 
 class FakeSpreadsheet:
