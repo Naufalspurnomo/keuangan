@@ -321,14 +321,14 @@ class CanonicalFinanceService:
         if not any(field in payload for field in ("amount", "description", "category")):
             _fail("request", "correction must change amount, description, or category")
 
-        target = self._get_record(transaction_id)
+        target = self._get_latest_record(transaction_id)
         expected_version = _version(payload.get("expected_version"))
         corrected = {key: value for key, value in target.items() if key not in {"postings", "created_at"}}
         corrected.update(
             {
                 "id": str(uuid.uuid4()),
                 "actor": _actor(actor),
-                "revision_of_id": transaction_id,
+                "revision_of_id": target["id"],
                 "reversal_of_id": None,
                 "version": expected_version + 1,
                 "status": "correction",
@@ -356,7 +356,7 @@ class CanonicalFinanceService:
             corrected,
             _idempotency(payload.get("idempotency_key")),
             payload,
-            target_id=transaction_id,
+            target_id=target["id"],
             expected_version=expected_version,
         )
 
@@ -376,7 +376,7 @@ class CanonicalFinanceService:
             raise FinanceValidationError(f"unknown field(s): {', '.join(unknown)}")
         if missing:
             raise FinanceValidationError(f"missing field(s): {', '.join(missing)}")
-        target = self._get_record(transaction_id)
+        target = self._get_latest_record(transaction_id)
         expected_version = _version(payload.get("expected_version"))
         reversal = {key: value for key, value in target.items() if key not in {"postings", "created_at"}}
         reversal.update(
@@ -384,7 +384,7 @@ class CanonicalFinanceService:
                 "id": str(uuid.uuid4()),
                 "actor": _actor(actor),
                 "revision_of_id": None,
-                "reversal_of_id": transaction_id,
+                "reversal_of_id": target["id"],
                 "version": expected_version + 1,
                 "status": "reversal",
                 "evidence": {
@@ -405,9 +405,15 @@ class CanonicalFinanceService:
             reversal,
             _idempotency(payload.get("idempotency_key")),
             payload,
-            target_id=transaction_id,
+            target_id=target["id"],
             expected_version=expected_version,
         )
+
+    def _get_latest_record(self, transaction_id: str) -> dict[str, Any]:
+        try:
+            return self._repository.chain(transaction_id)[-1]
+        except (FinancialRepositoryConflict, FinancialRepositoryNotFound) as exc:
+            self._translate_repository_error(exc)
 
     def _get_record(self, transaction_id: str) -> dict[str, Any]:
         try:

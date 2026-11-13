@@ -95,6 +95,37 @@ def test_correction_preserves_original_and_replaces_effective_state():
     assert [item["id"] for item in view["history"]] == [original["id"], corrected["id"]]
 
 
+def test_reversal_after_correction_closes_linear_revision_chain():
+    service, _ = make_service()
+    original = service.create_transaction(payload(), actor=ACTOR)["transaction"]
+    corrected = service.correct_transaction(
+        original["id"],
+        {
+            "idempotency_key": "txn-correct-then-reverse-0001",
+            "expected_version": 1,
+            "reason": "Nominal diperbaiki",
+            "amount": 1_250_000,
+        },
+        actor=ACTOR,
+    )["transaction"]
+
+    reversed_result = service.reverse_transaction(
+        original["id"],
+        {
+            "idempotency_key": "txn-correct-then-reverse-0002",
+            "expected_version": corrected["version"],
+            "reason": "Transaksi dibatalkan",
+        },
+        actor=ACTOR,
+    )["transaction"]
+    view = service.get_transaction(original["id"])
+
+    assert reversed_result["version"] == 3
+    assert [item["status"] for item in view["history"]] == ["posted", "correction", "reversal"]
+    assert view["effective"] is None
+    assert service.list_effective_transactions() == []
+
+
 def test_reversal_preserves_history_and_excludes_transaction_from_effective_list():
     service, _ = make_service()
     original = service.create_transaction(payload(), actor=ACTOR)["transaction"]
