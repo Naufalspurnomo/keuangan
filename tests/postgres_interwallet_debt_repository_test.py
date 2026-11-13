@@ -267,6 +267,32 @@ def test_canonical_blueprints_are_dormant_without_explicit_flag(monkeypatch):
     assert not any(rule.startswith("/api/dashboard/v1/debts") for rule in rules)
 
 
+def test_register_dashboard_hydrates_empty_actor_assertion_config_from_environment(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_ACTOR_ASSERTION_SECRET", "s" * 64)
+    monkeypatch.setenv("DASHBOARD_ACTOR_ASSERTION_AUDIENCE", "runtime-audience")
+    app = Flask(__name__)
+    app.config["DASHBOARD_ACTOR_ASSERTION_SECRET"] = ""
+    app.config["DASHBOARD_ACTOR_ASSERTION_AUDIENCE"] = ""
+
+    register_dashboard(app, repository=object())
+
+    assert app.config["DASHBOARD_ACTOR_ASSERTION_SECRET"] == "s" * 64
+    assert app.config["DASHBOARD_ACTOR_ASSERTION_AUDIENCE"] == "runtime-audience"
+
+
+def test_register_dashboard_preserves_explicit_actor_assertion_config(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_ACTOR_ASSERTION_SECRET", "e" * 64)
+    monkeypatch.setenv("DASHBOARD_ACTOR_ASSERTION_AUDIENCE", "env-audience")
+    app = Flask(__name__)
+    app.config["DASHBOARD_ACTOR_ASSERTION_SECRET"] = "x" * 64
+    app.config["DASHBOARD_ACTOR_ASSERTION_AUDIENCE"] = "explicit-audience"
+
+    register_dashboard(app, repository=object())
+
+    assert app.config["DASHBOARD_ACTOR_ASSERTION_SECRET"] == "x" * 64
+    assert app.config["DASHBOARD_ACTOR_ASSERTION_AUDIENCE"] == "explicit-audience"
+
+
 def test_canonical_blueprints_register_only_with_explicit_flag_and_durable_services(monkeypatch):
     monkeypatch.setenv("CANONICAL_FINANCE_API_ENABLED", "true")
     app = Flask(__name__)
