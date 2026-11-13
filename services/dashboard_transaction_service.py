@@ -683,6 +683,9 @@ class PostgresDashboardTransactionService:
             raise DashboardTransactionUnavailable(
                 "canonical dashboard actor is not authenticated"
             )
+        # Dashboard sessions use the UI-facing `owner` role, while canonical
+        # finance accepts the equivalent privileged role as `boss`.
+        canonical_role = "boss" if role == "owner" else role
         occurred_at = datetime.combine(
             request.date,
             time.min,
@@ -712,7 +715,7 @@ class PostgresDashboardTransactionService:
             "actor": {
                 "id": email.strip().casefold(),
                 "email": email.strip().casefold(),
-                "role": role,
+                "role": canonical_role,
                 "channel": "dashboard",
             },
         }
