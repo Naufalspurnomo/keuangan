@@ -32,6 +32,10 @@ const listEnvelope = {
     }],
     writes_enabled: true,
     allowed_actions: ['confirm_processed', 'ignore'],
+    total: 76,
+    offset: 25,
+    limit: 25,
+    has_more: true,
   },
 }
 
@@ -52,16 +56,17 @@ describe('inbox review API', () => {
       .mockResolvedValueOnce(json(detailEnvelope))
     const api = createInboxReviewApi({ request })
 
-    const list = await api.list()
+    const list = await api.list({ offset: 25, limit: 25 })
     const detail = await api.detail(EVENT_KEY)
 
-    expect(request).toHaveBeenNthCalledWith(1, '/admin/api/inbox-reviews.php?action=list', expect.objectContaining({
+    expect(request).toHaveBeenNthCalledWith(1, '/admin/api/inbox-reviews.php?action=list&offset=25&limit=25', expect.objectContaining({
       credentials: 'same-origin', cache: 'no-store', redirect: 'error',
     }))
     expect(request).toHaveBeenNthCalledWith(2, `/admin/api/inbox-reviews.php?action=detail&event_key=${EVENT_KEY}`, expect.any(Object))
     expect(list.writesEnabled).toBe(true)
     expect(list.allowedActions).toEqual(['confirm_processed', 'ignore'])
     expect(list.items[0].eventKey).toBe(EVENT_KEY)
+    expect(list).toMatchObject({ total: 76, offset: 25, limit: 25, hasMore: true })
     expect(detail.bodyText).toBe('<img src=x onerror=alert(1)> Transfer Rp100.000')
     expect(detail.mediaAvailable).toBe(true)
   })

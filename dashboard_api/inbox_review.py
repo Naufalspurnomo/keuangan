@@ -99,8 +99,20 @@ def create_inbox_review_blueprint(
     @blueprint.get("")
     @owner_required
     def list_reviews():
+        if set(request.args) - {"offset", "limit"}:
+            return error("invalid_pagination", "Review pagination is invalid", 422)
+        if any(len(request.args.getlist(field)) != 1 for field in request.args):
+            return error("invalid_pagination", "Review pagination is invalid", 422)
         try:
-            items = service.list_review_events(limit=50)
+            offset = int(request.args.get("offset", "0"))
+            limit = int(request.args.get("limit", "25"))
+        except (TypeError, ValueError):
+            return error("invalid_pagination", "Review pagination is invalid", 422)
+        if offset < 0 or not 1 <= limit <= 50:
+            return error("invalid_pagination", "Review pagination is invalid", 422)
+        try:
+            items = service.list_review_events(limit=limit, offset=offset)
+            total = service.count_review_events()
         except Exception:
             return error("review_service_unavailable", "Review service temporarily unavailable", 503)
         metadata = [{field: item.get(field) for field in _METADATA_FIELDS} for item in items]
@@ -110,6 +122,10 @@ def create_inbox_review_blueprint(
                 "items": _json_safe(metadata),
                 "writes_enabled": bool(writes_enabled()),
                 "allowed_actions": sorted(_ALLOWED_ACTIONS) if writes_enabled() else [],
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "has_more": offset + len(metadata) < total,
             },
         })
 

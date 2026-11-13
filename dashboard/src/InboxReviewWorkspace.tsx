@@ -78,11 +78,11 @@ export function InboxReviewWorkspace({ api, csrfToken }: Props) {
   const [pending, setPending] = useState<PendingDecision>()
   const uncertainCommand = useRef<InboxReviewCommand>()
 
-  const load = async () => {
+  const load = async (offset = list?.offset ?? 0) => {
     setLoading(true)
     setError('')
     try {
-      setList(await api.list())
+      setList(await api.list({ offset, limit: 25 }))
     } catch (failure) {
       setError(reviewErrorMessage(failure))
     } finally { setLoading(false) }
@@ -130,7 +130,7 @@ export function InboxReviewWorkspace({ api, csrfToken }: Props) {
       setDetail(undefined)
       setReason('')
       setNotice('Keputusan tersimpan.')
-      setList(await api.list())
+      setList(await api.list({ offset: list?.offset ?? 0, limit: 25 }))
     } catch (failure) {
       if (failure && typeof failure === 'object' && 'uncertain' in failure && failure.uncertain === true) {
         uncertainCommand.current = pending.command
@@ -150,15 +150,22 @@ export function InboxReviewWorkspace({ api, csrfToken }: Props) {
   return <section className="inbox-review-workspace" aria-labelledby="inbox-review-title">
     <header className="page-heading inbox-review-heading">
       <div><p className="eyebrow">KOTAK MASUK TAHAN GAGAL</p><h1 id="inbox-review-title">Perlu Ditinjau</h1><p>Periksa pesan yang belum mendapat hasil pasti. Hanya keputusan terminal yang tersedia; sistem tidak mengulang proses otomatis.</p></div>
-      <button type="button" className="secondary-button" onClick={() => void load()} disabled={loading}>Muat daftar kembali</button>
+      <button type="button" className="secondary-button" onClick={() => void load(list?.offset ?? 0)} disabled={loading}>Muat daftar kembali</button>
     </header>
 
     {notice && <p role="status" className="inbox-review-notice">{notice}</p>}
     {error && <p role="alert" className="form-error">{error}</p>}
     {loading ? <p role="status">Memuat pesan yang perlu ditinjau…</p> : <div className="inbox-review-grid">
       <section className="inbox-review-panel" aria-label="Daftar pesan perlu ditinjau">
-        <header><h2>Pesan tertunda</h2><span>{list?.items.length ?? 0}</span></header>
+        <header><h2>Pesan tertunda</h2><span>{list?.total ?? 0}</span></header>
         <ReviewList items={list?.items ?? []} selected={selected?.eventKey} select={(item) => void select(item)} />
+        {list && <nav className="inbox-review-pagination" aria-label="Halaman pesan perlu ditinjau">
+          <span>{list.items.length ? `${list.offset + 1}–${list.offset + list.items.length}` : '0'} dari {list.total}</span>
+          <div>
+            <button type="button" className="secondary-button" aria-label="Halaman sebelumnya" disabled={loading || list.offset === 0} onClick={() => void load(Math.max(0, list.offset - list.limit))}>Sebelumnya</button>
+            <button type="button" className="secondary-button" aria-label="Halaman berikutnya" disabled={loading || !list.hasMore} onClick={() => void load(list.offset + list.limit)}>Berikutnya</button>
+          </div>
+        </nav>}
       </section>
 
       <section className="inbox-review-panel inbox-review-detail" aria-label="Detail pesan">
