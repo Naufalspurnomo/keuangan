@@ -124,6 +124,8 @@ jobs:
           python scripts/deploy_rumahweb_presensi_atomic.py \
             --admin-release artifacts/rumahweb-admin-release/admin \
             --absen-release artifacts/rumahweb-presensi-release/absen \
+            --admin-remote admin \
+            --absen-remote absen \
             --tag "${RELEASE_SHA:0:12}" \
             --evidence /tmp/rumahweb-deploy.json
           python - <<'PY'
@@ -145,7 +147,7 @@ jobs:
             for attempt in {1..18}; do
               curl --fail --silent --show-error \
                 -H 'Cache-Control: no-cache' \
-                "https://hollawall.com/${path}/release.json?sha=${RELEASE_SHA}" \
+                "https://hollawall.com/${path}/release-manifest.json?sha=${RELEASE_SHA}" \
                 -o "/tmp/${path}-release.json" || true
               if python - "$RELEASE_SHA" "/tmp/${path}-release.json" <<'PY'
           import json, pathlib, sys
