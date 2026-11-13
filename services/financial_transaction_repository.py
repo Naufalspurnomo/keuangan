@@ -418,17 +418,108 @@ class PostgresFinancialTransactionRepository:
             connection.close()
 
     def list_chains(self) -> list[list[dict[str, Any]]]:
+        """Read every immutable transaction chain in two bounded queries.
+
+        The previous implementation selected roots, then opened a new connection
+        and issued multiple record/posting queries for every chain. Reversed
+        readiness history therefore made the dashboard snapshot slower as the
+        ledger grew. Batch the immutable rows and postings, then reconstruct the
+        same linear chains in memory while preserving fail-closed invariants.
+        """
+
         connection = self._connect()
         try:
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT id FROM financial_transactions
-                    WHERE revision_of_id IS NULL AND reversal_of_id IS NULL
+                    SELECT id, scope, project_id, transaction_type, flow_class, amount,
+                           currency, category, description, occurred_at, source,
+                           source_reference, evidence, actor, revision_of_id,
+                           reversal_of_id, version, status, created_at
+                    FROM financial_transactions
                     ORDER BY occurred_at DESC, id DESC
                     """
                 )
-                root_ids = [str(row[0]) for row in cursor.fetchall()]
+                records: list[dict[str, Any]] = [
+                    dict(zip(self._RECORD_COLUMNS, row))
+                    for row in cursor.fetchall()
+                ]
+                cursor.execute(
+                    """
+                    SELECT id, transaction_id, wallet_id, business_unit_id,
+                           account_class, signed_amount, currency
+                    FROM financial_postings
+                    ORDER BY transaction_id, id
+                    """
+                )
+                posting_rows = cursor.fetchall()
         finally:
             connection.close()
-        return [self.chain(root_id) for root_id in root_ids]
+
+        records_by_id = {str(record["id"]): record for record in records}
+        if len(records_by_id) != len(records):
+            raise FinancialRepositoryConflict("financial transaction ids are not unique")
+
+        postings_by_transaction: dict[str, list[dict[str, Any]]] = {}
+        posting_columns = (
+            "id",
+            "wallet_id",
+            "business_unit_id",
+            "account_class",
+            "signed_amount",
+            "currency",
+        )
+        for row in posting_rows:
+            transaction_id = str(row[1])
+            postings_by_transaction.setdefault(transaction_id, []).append(
+                dict(zip(posting_columns, (row[0], *row[2:])))
+            )
+
+        children_by_parent: dict[str, list[str]] = {}
+        roots: list[dict[str, Any]] = []
+        for record_id, record in records_by_id.items():
+            record["postings"] = postings_by_transaction.get(record_id, [])
+            if record["postings"]:
+                authority_posting = next(
+                    (
+                        posting
+                        for posting in record["postings"]
+                        if posting.get("wallet_id") is not None
+                        and posting.get("business_unit_id") is not None
+                    ),
+                    None,
+                )
+                if authority_posting is not None:
+                    record["wallet_id"] = authority_posting["wallet_id"]
+                    record["business_unit_id"] = authority_posting["business_unit_id"]
+
+            parent = record.get("revision_of_id") or record.get("reversal_of_id")
+            if parent is None:
+                roots.append(record)
+                continue
+            parent_id = str(parent)
+            if parent_id not in records_by_id:
+                raise FinancialRepositoryConflict("financial transaction chain has an orphan successor")
+            children_by_parent.setdefault(parent_id, []).append(record_id)
+
+        if any(len(children) != 1 for children in children_by_parent.values()):
+            raise FinancialRepositoryConflict("financial transaction chain has multiple successors")
+
+        roots.sort(key=lambda record: (record["occurred_at"], str(record["id"])), reverse=True)
+        chains: list[list[dict[str, Any]]] = []
+        visited: set[str] = set()
+        for root in roots:
+            chain: list[dict[str, Any]] = []
+            current_id = str(root["id"])
+            while current_id:
+                if current_id in visited:
+                    raise FinancialRepositoryConflict("financial transaction chain contains a cycle")
+                visited.add(current_id)
+                chain.append(records_by_id[current_id])
+                children = children_by_parent.get(current_id, [])
+                current_id = children[0] if children else ""
+            chains.append(chain)
+
+        if len(visited) != len(records_by_id):
+            raise FinancialRepositoryConflict("financial transaction chain is disconnected")
+        return chains
