@@ -202,7 +202,12 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
         viewport.scrollLeft += deltaX || deltaY
         return
       }
-      if (!event.ctrlKey && !event.metaKey) return
+      if (!event.ctrlKey && !event.metaKey) {
+        event.preventDefault()
+        event.stopPropagation()
+        window.scrollBy({ top: deltaY, left: 0, behavior: 'auto' })
+        return
+      }
       event.preventDefault()
       event.stopPropagation()
       setBoundedZoom(zoomRef.current * Math.exp(-deltaY * .0014), event.clientX, event.clientY)
