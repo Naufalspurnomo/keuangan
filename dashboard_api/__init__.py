@@ -40,14 +40,14 @@ def register_dashboard(
         "DASHBOARD_PROXY_TOKEN_HASH",
         os.getenv("DASHBOARD_PROXY_TOKEN_HASH", ""),
     )
-    app.config.setdefault(
-        "DASHBOARD_ACTOR_ASSERTION_SECRET",
-        os.getenv("DASHBOARD_ACTOR_ASSERTION_SECRET", ""),
-    )
-    app.config.setdefault(
-        "DASHBOARD_ACTOR_ASSERTION_AUDIENCE",
-        os.getenv("DASHBOARD_ACTOR_ASSERTION_AUDIENCE", "hollawall-finance-api"),
-    )
+    if not str(app.config.get("DASHBOARD_ACTOR_ASSERTION_SECRET") or "").strip():
+        app.config["DASHBOARD_ACTOR_ASSERTION_SECRET"] = os.getenv(
+            "DASHBOARD_ACTOR_ASSERTION_SECRET", ""
+        )
+    if not str(app.config.get("DASHBOARD_ACTOR_ASSERTION_AUDIENCE") or "").strip():
+        app.config["DASHBOARD_ACTOR_ASSERTION_AUDIENCE"] = os.getenv(
+            "DASHBOARD_ACTOR_ASSERTION_AUDIENCE", "hollawall-finance-api"
+        )
     app.config.setdefault("DASHBOARD_ACTOR_ASSERTION_TTL_SECONDS", 60)
     app.config.setdefault(
         "DASHBOARD_ACTOR_ASSERTION_REQUIRED",
