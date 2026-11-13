@@ -138,6 +138,26 @@ jobs:
               assert item['final_readback']['ok'] is True, item
           PY
 
+      - name: Synchronize private finance routing
+        env:
+          RW_FTP_HOST: ${{ secrets.RUMAHWEB_FTP_HOST }}
+          RW_FTP_USER: ${{ secrets.RUMAHWEB_FTP_USER }}
+          RW_FTP_PASSWORD: ${{ secrets.RUMAHWEB_FTP_PASSWORD }}
+          DASHBOARD_ACTOR_ASSERTION_SECRET: ${{ secrets.HOLLAWALL_DASHBOARD_ACTOR_ASSERTION_SECRET }}
+        run: |
+          set -euo pipefail
+          python scripts/configure_rumahweb_admin_finance.py \
+            --evidence /tmp/rumahweb-finance-config.json
+          python - <<'PY'
+          import json
+          evidence = json.load(open('/tmp/rumahweb-finance-config.json'))
+          assert evidence['success'] is True, evidence
+          assert evidence['staged_readback'] is True, evidence
+          assert evidence['final_readback'] is True, evidence
+          assert evidence['secret_present'] is True, evidence
+          assert evidence['secret_exposed'] is False, evidence
+          PY
+
       - name: Verify public release identity
         env:
           RELEASE_SHA: ${{ steps.revision.outputs.sha }}
@@ -180,6 +200,7 @@ jobs:
           path: |
             /tmp/provenance.json
             /tmp/rumahweb-deploy.json
+            /tmp/rumahweb-finance-config.json
             /tmp/admin-release.json
             /tmp/absen-release.json
           if-no-files-found: warn
