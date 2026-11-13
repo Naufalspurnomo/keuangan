@@ -8,7 +8,18 @@ from config.constants import (
     OPERASIONAL_COLS, OPERASIONAL_SHEET_NAME, SPLIT_LAYOUT_DATA_START,
     SPLIT_PEMASUKAN, SPLIT_PENGELUARAN,
 )
-from sheets_helper import LedgerScanIncomplete, find_all_transactions_by_message_id_strict
+from sheets_helper import (
+    LedgerScanIncomplete,
+    _reset_strict_ledger_column_cache,
+    find_all_transactions_by_message_id_strict,
+)
+
+
+@pytest.fixture(autouse=True)
+def reset_strict_cache():
+    _reset_strict_ledger_column_cache()
+    yield
+    _reset_strict_ledger_column_cache()
 
 
 class FakeWalletSheet:
@@ -83,3 +94,20 @@ def test_strict_lookup_never_creates_a_missing_operational_sheet():
     creator.assert_not_called()
     assert captured.value.proof["status"] == "partial"
     assert captured.value.proof["failed_sources"] == [OPERASIONAL_SHEET_NAME]
+
+
+def test_strict_lookup_reuses_message_id_columns_for_a_review_batch():
+    wallet = FakeWalletSheet("msg-1")
+    operational = FakeOperationalSheet()
+    with patch("sheets_helper.DOMPET_SHEETS", ["WALLET-A"]), \
+         patch.object(wallet, "col_values", wraps=wallet.col_values) as wallet_columns, \
+         patch.object(operational, "col_values", wraps=operational.col_values) as operational_columns, \
+         patch("sheets_helper.get_dompet_sheet", return_value=wallet), \
+         patch("sheets_helper.get_operational_sheet_read_only", return_value=operational):
+        first = find_all_transactions_by_message_id_strict("msg-1")
+        second = find_all_transactions_by_message_id_strict("msg-missing")
+
+    assert first["matches"]
+    assert second["matches"] == []
+    assert wallet_columns.call_count == 2
+    assert operational_columns.call_count == 1

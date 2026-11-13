@@ -2956,6 +2956,32 @@ class LedgerScanIncomplete(RuntimeError):
         self.proof = proof
 
 
+_strict_ledger_column_cache_lock = threading.Lock()
+_strict_ledger_column_cache: Dict = {}
+_STRICT_LEDGER_COLUMN_CACHE_TTL_SECONDS = int(
+    os.getenv("STRICT_LEDGER_COLUMN_CACHE_TTL_SECONDS", "300")
+)
+
+
+def _reset_strict_ledger_column_cache() -> None:
+    with _strict_ledger_column_cache_lock:
+        _strict_ledger_column_cache.clear()
+
+
+def _strict_ledger_col_values(sheet, source: str, column: int) -> List:
+    """Cache frozen legacy MessageID columns for bounded review batches."""
+    key = (str(source), int(column))
+    now_ts = time.monotonic()
+    with _strict_ledger_column_cache_lock:
+        cached = _strict_ledger_column_cache.get(key)
+        if cached and now_ts - cached[0] <= _STRICT_LEDGER_COLUMN_CACHE_TTL_SECONDS:
+            return list(cached[1])
+    values = list(sheet.col_values(column))
+    with _strict_ledger_column_cache_lock:
+        _strict_ledger_column_cache[key] = (now_ts, list(values))
+    return values
+
+
 def _message_id_matches(cell_value: str, target: str) -> bool:
     cell = str(cell_value or "").strip()
     wanted = str(target or "").strip()
@@ -2993,8 +3019,12 @@ def find_all_transactions_by_message_id_strict(message_id: str) -> Dict:
             sheet = get_dompet_sheet(dompet)
             if sheet is None:
                 raise RuntimeError("worksheet unavailable")
-            in_ids = sheet.col_values(SPLIT_PEMASUKAN['MESSAGE_ID'])
-            out_ids = sheet.col_values(SPLIT_PENGELUARAN['MESSAGE_ID'])
+            in_ids = _strict_ledger_col_values(
+                sheet, dompet, SPLIT_PEMASUKAN['MESSAGE_ID']
+            )
+            out_ids = _strict_ledger_col_values(
+                sheet, dompet, SPLIT_PENGELUARAN['MESSAGE_ID']
+            )
             max_len = max(len(in_ids), len(out_ids))
             for row_idx in range(SPLIT_LAYOUT_DATA_START - 1, max_len):
                 row_number = row_idx + 1
@@ -3027,7 +3057,9 @@ def find_all_transactions_by_message_id_strict(message_id: str) -> Dict:
         message_id_column = OPERASIONAL_COLS['MESSAGE_ID']
         if len(header) < message_id_column or str(header[message_id_column - 1]).strip() != "MessageID":
             raise RuntimeError("operational worksheet schema mismatch")
-        ids = sheet.col_values(message_id_column)
+        ids = _strict_ledger_col_values(
+            sheet, OPERASIONAL_SHEET_NAME, message_id_column
+        )
         for row_idx, cell in enumerate(ids):
             if not _message_id_matches(cell, target):
                 continue
