@@ -34,6 +34,11 @@ return [
     )
     updated = module.replace_php_value(
         updated,
+        "upstream_snapshot_url",
+        module.DEFAULT_SNAPSHOT_URL,
+    )
+    updated = module.replace_php_value(
+        updated,
         "dashboard_actor_assertion_audience",
         module.DEFAULT_AUDIENCE,
     )
@@ -45,6 +50,7 @@ return [
     updated = module.replace_php_bool(updated, "canonical_finance_writes_enabled", True)
 
     assert module.DEFAULT_CANONICAL_URL in updated
+    assert module.DEFAULT_SNAPSHOT_URL in updated
     assert "'canonical_finance_writes_enabled' => true" in updated
     assert "'dashboard_actor_assertion_audience' => 'hollawall-finance-api'" in updated
     assert "'dashboard_actor_assertion_secret' => '" + ("x" * 48) + "'" in updated

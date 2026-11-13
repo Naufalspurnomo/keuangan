@@ -155,6 +155,7 @@ jobs:
           assert evidence['success'] is True, evidence
           assert evidence['staged_readback'] is True, evidence
           assert evidence['final_readback'] is True, evidence
+          assert evidence['snapshot_url_configured'] is True, evidence
           assert evidence['owner_email_configured'] is True, evidence
           assert evidence['secret_present'] is True, evidence
           assert evidence['secret_exposed'] is False, evidence

@@ -16,10 +16,9 @@ from pathlib import PurePosixPath
 from typing import cast
 
 DEFAULT_REMOTE = ".hollawall-admin.php"
-DEFAULT_CANONICAL_URL = (
-    "https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app"
-    "/api/dashboard/v1/canonical-transactions"
-)
+DEFAULT_BACKEND_ORIGIN = "https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app"
+DEFAULT_CANONICAL_URL = DEFAULT_BACKEND_ORIGIN + "/api/dashboard/v1/canonical-transactions"
+DEFAULT_SNAPSHOT_URL = DEFAULT_BACKEND_ORIGIN + "/api/dashboard/v1/snapshot"
 DEFAULT_AUDIENCE = "hollawall-finance-api"
 
 
@@ -94,6 +93,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--remote", default=DEFAULT_REMOTE)
     parser.add_argument("--canonical-url", default=DEFAULT_CANONICAL_URL)
+    parser.add_argument("--snapshot-url", default=DEFAULT_SNAPSHOT_URL)
     parser.add_argument("--audience", default=DEFAULT_AUDIENCE)
     parser.add_argument("--port", type=int, default=21)
     parser.add_argument("--evidence")
@@ -126,6 +126,7 @@ def main() -> int:
         original = download(ftp, remote)
         text = original.decode("utf-8")
         text = replace_php_value(text, "upstream_canonical_transactions_url", args.canonical_url)
+        text = replace_php_value(text, "upstream_snapshot_url", args.snapshot_url)
         text = replace_php_value(text, "dashboard_actor_assertion_audience", args.audience)
         text = replace_php_value(text, "dashboard_actor_assertion_secret", secret)
         text = replace_php_value(text, "owner_email", owner_email)
@@ -162,6 +163,8 @@ def main() -> int:
                 "staged_readback": True,
                 "final_readback": True,
                 "canonical_url_host": args.canonical_url.split("/", 3)[2],
+                "snapshot_url_host": args.snapshot_url.split("/", 3)[2],
+                "snapshot_url_configured": True,
                 "audience": args.audience,
                 "owner_email_configured": True,
                 "secret_present": True,

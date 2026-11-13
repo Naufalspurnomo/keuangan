@@ -1,0 +1,53 @@
+name: Rumahweb Private Finance Config Sync
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rumahweb-private-config
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Synchronize private finance routing only
+        env:
+          RW_FTP_HOST: ${{ secrets.RUMAHWEB_FTP_HOST }}
+          RW_FTP_USER: ${{ secrets.RUMAHWEB_FTP_USER }}
+          RW_FTP_PASSWORD: ${{ secrets.RUMAHWEB_FTP_PASSWORD }}
+          DASHBOARD_ACTOR_ASSERTION_SECRET: ${{ secrets.HOLLAWALL_DASHBOARD_ACTOR_ASSERTION_SECRET }}
+          HOLLAWALL_OWNER_EMAIL: ${{ vars.HOLLAWALL_OWNER_EMAIL }}
+        run: |
+          set -euo pipefail
+          python scripts/configure_rumahweb_admin_finance.py \
+            --evidence /tmp/rumahweb-finance-config.json
+          python - <<'PY'
+          import json
+          evidence = json.load(open('/tmp/rumahweb-finance-config.json'))
+          assert evidence['success'] is True, evidence
+          assert evidence['staged_readback'] is True, evidence
+          assert evidence['final_readback'] is True, evidence
+          assert evidence['snapshot_url_configured'] is True, evidence
+          assert evidence['owner_email_configured'] is True, evidence
+          assert evidence['secret_present'] is True, evidence
+          assert evidence['secret_exposed'] is False, evidence
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rumahweb-private-config-${{ github.run_id }}
+          path: /tmp/rumahweb-finance-config.json
+          if-no-files-found: warn
+          retention-days: 30
