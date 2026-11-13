@@ -72,6 +72,7 @@ $result = [
     'content_type' => (string) curl_getinfo($curl, CURLINFO_CONTENT_TYPE),
     'primary_ip_present' => ((string) curl_getinfo($curl, CURLINFO_PRIMARY_IP)) !== '',
     'total_time_ms' => (int) round(((float) curl_getinfo($curl, CURLINFO_TOTAL_TIME)) * 1000),
+    'proxy_token_sha256' => hash('sha256', $token),
 ];
 curl_close($curl);
 json_result(200, $result);
