@@ -740,6 +740,24 @@ def make_postgres_service(gateway=None):
     return service, gateway, project_id
 
 
+def test_postgres_dashboard_owner_session_maps_to_canonical_boss_actor():
+    service, gateway, project_id = make_postgres_service()
+
+    service.record(
+        valid_payload(project=project_id),
+        actor={"email": "Owner@Example.com", "role": "owner"},
+        message_id="dashboard-api:owner",
+    )
+
+    command, _legacy_write = gateway.calls[0]
+    assert command["actor"] == {
+        "id": "owner@example.com",
+        "email": "owner@example.com",
+        "role": "boss",
+        "channel": "dashboard",
+    }
+
+
 def test_postgres_dashboard_path_uses_canonical_id_and_never_sheets_shape():
     service, gateway, project_id = make_postgres_service()
 

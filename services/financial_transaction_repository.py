@@ -338,7 +338,7 @@ class PostgresFinancialTransactionRepository:
         row = cursor.fetchone()
         if row is None:
             raise FinancialRepositoryNotFound("financial transaction not found")
-        record = dict(zip(self._RECORD_COLUMNS, row))
+        record: dict[str, Any] = dict(zip(self._RECORD_COLUMNS, row))
         cursor.execute(
             """
             SELECT id, wallet_id, business_unit_id, account_class, signed_amount, currency
@@ -350,6 +350,22 @@ class PostgresFinancialTransactionRepository:
             dict(zip(("id", "wallet_id", "business_unit_id", "account_class", "signed_amount", "currency"), item))
             for item in cursor.fetchall()
         ]
+        if record["postings"]:
+            # ``wallet_id`` and ``business_unit_id`` are persisted on postings,
+            # not on financial_transactions. Restore them for corrections and
+            # reversals, which rebuild postings from the canonical readback.
+            authority_posting = next(
+                (
+                    posting
+                    for posting in record["postings"]
+                    if posting.get("wallet_id") is not None
+                    and posting.get("business_unit_id") is not None
+                ),
+                None,
+            )
+            if authority_posting is not None:
+                record["wallet_id"] = authority_posting["wallet_id"]
+                record["business_unit_id"] = authority_posting["business_unit_id"]
         return record
 
     def get(self, transaction_id: str) -> dict[str, Any]:

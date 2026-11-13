@@ -198,6 +198,65 @@ def test_create_rolls_back_every_record_when_one_write_fails():
     assert connection.closed == 1
 
 
+def test_postgres_transaction_readback_restores_authority_ids_from_postings():
+    from services.financial_transaction_repository import PostgresFinancialTransactionRepository
+
+    wallet_id = "00000000-0000-4000-8000-000000000701"
+    business_unit_id = "00000000-0000-4000-8000-000000000702"
+    record_row = tuple(
+        {
+            "id": "00000000-0000-4000-8000-000000000703",
+            "scope": "project",
+            "project_id": "00000000-0000-4000-8000-000000000704",
+            "transaction_type": "inflow",
+            "flow_class": "project_income",
+            "amount": 1000,
+            "currency": "IDR",
+            "category": "Lain-lain",
+            "description": "Readback",
+            "occurred_at": "2026-11-13T00:00:00+07:00",
+            "source": "dashboard",
+            "source_reference": "dashboard-api:test",
+            "evidence": {},
+            "actor": {"id": "boss@example.com", "email": "boss@example.com", "role": "boss"},
+            "revision_of_id": None,
+            "reversal_of_id": None,
+            "version": 1,
+            "status": "posted",
+            "created_at": "2026-11-13T00:00:00+00:00",
+        }[column]
+        for column in PostgresFinancialTransactionRepository._RECORD_COLUMNS
+    )
+
+    class Cursor:
+        def __init__(self):
+            self.calls = 0
+
+        def execute(self, _query, _params):
+            self.calls += 1
+
+        def fetchone(self):
+            return record_row
+
+        def fetchall(self):
+            return [
+                (
+                    "00000000-0000-4000-8000-000000000705",
+                    wallet_id,
+                    business_unit_id,
+                    "cash",
+                    1000,
+                    "IDR",
+                )
+            ]
+
+    repository = object.__new__(PostgresFinancialTransactionRepository)
+    record = repository._read_record(Cursor(), record_row[0])
+
+    assert record["wallet_id"] == wallet_id
+    assert record["business_unit_id"] == business_unit_id
+
+
 def test_canonical_blueprints_are_dormant_without_explicit_flag(monkeypatch):
     monkeypatch.delenv("CANONICAL_FINANCE_API_ENABLED", raising=False)
     monkeypatch.delenv("CANONICAL_FINANCE_WRITES_ENABLED", raising=False)
