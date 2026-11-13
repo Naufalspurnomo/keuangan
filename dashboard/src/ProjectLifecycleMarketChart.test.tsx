@@ -145,7 +145,7 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(screen.queryByRole('menuitem', { name: 'Selesaikan proyek' })).toBeNull()
   })
 
-  it('uses ordinary wheel for local zoom, Shift or dominant-X wheel for horizontal pan, and leaves outside wheel to the page', () => {
+  it('leaves ordinary vertical wheel to the page and requires Ctrl or Command for local zoom', () => {
     const { container } = render(<ProjectLifecycleMarketChart projects={projects} transactions={transactions} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={vi.fn()} />)
     const canvases = [...container.querySelectorAll<HTMLElement>('.project-market-canvas')]
     const canvas = canvases[0]
@@ -162,24 +162,30 @@ describe('ProjectLifecycleMarketChart', () => {
     }
     window.addEventListener('wheel', emulatePageScroll)
 
-    expect(readout(canvas)).toContain('Seret untuk geser · roda untuk zoom · zoom 100%')
+    expect(readout(canvas)).toContain('Seret untuk geser · Ctrl/⌘ + roda untuk zoom · zoom 100%')
     const outsideWheel = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true })
     act(() => { expect(container.querySelector('.project-market-report-head')?.dispatchEvent(outsideWheel)).toBe(true) })
     expect(outsideWheel.defaultPrevented).toBe(false)
     expect(window.scrollY).toBe(300)
     expect(canvases.map(readout).every((copy) => copy.includes('zoom 100%'))).toBe(true)
 
-    const zoomIn = new WheelEvent('wheel', { deltaY: -100, clientX: 250, clientY: 210, bubbles: true, cancelable: true })
+    const ordinaryWheel = new WheelEvent('wheel', { deltaY: 100, clientX: 250, clientY: 210, bubbles: true, cancelable: true })
+    act(() => { expect(viewport.dispatchEvent(ordinaryWheel)).toBe(true) })
+    expect(ordinaryWheel.defaultPrevented).toBe(false)
+    expect(readout(canvas)).toContain('zoom 100%')
+    expect(window.scrollY).toBe(400)
+
+    const zoomIn = new WheelEvent('wheel', { deltaY: -100, ctrlKey: true, clientX: 250, clientY: 210, bubbles: true, cancelable: true })
     act(() => { expect(viewport.dispatchEvent(zoomIn)).toBe(false) })
     expect(zoomIn.defaultPrevented).toBe(true)
     expect(readout(canvas)).toContain('zoom 115%')
     expect(canvases.slice(1).map(readout).every((copy) => copy.includes('zoom 100%'))).toBe(true)
-    expect(window.scrollY).toBe(300)
+    expect(window.scrollY).toBe(400)
 
-    const zoomOut = new WheelEvent('wheel', { deltaY: 100, clientX: 250, clientY: 210, bubbles: true, cancelable: true })
+    const zoomOut = new WheelEvent('wheel', { deltaY: 100, metaKey: true, clientX: 250, clientY: 210, bubbles: true, cancelable: true })
     act(() => { expect(viewport.dispatchEvent(zoomOut)).toBe(false) })
     expect(readout(canvas)).toContain('zoom 100%')
-    expect(window.scrollY).toBe(300)
+    expect(window.scrollY).toBe(400)
 
     viewport.scrollLeft = 100
     const shiftWheel = new WheelEvent('wheel', { deltaY: 100, shiftKey: true, bubbles: true, cancelable: true })
@@ -192,20 +198,20 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(viewport.scrollLeft).toBe(230)
     expect(readout(canvas)).toContain('zoom 100%')
 
-    const lineWheel = new WheelEvent('wheel', { deltaY: -3, deltaMode: WheelEvent.DOM_DELTA_LINE, bubbles: true, cancelable: true })
+    const lineWheel = new WheelEvent('wheel', { deltaY: -3, deltaMode: WheelEvent.DOM_DELTA_LINE, ctrlKey: true, bubbles: true, cancelable: true })
     act(() => { expect(viewport.dispatchEvent(lineWheel)).toBe(false) })
     expect(readout(canvas)).toContain('zoom 107%')
 
     fireEvent.click(screen.getByRole('button', { name: 'Reset tampilan semua chart' }))
-    const minWheel = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true })
+    const minWheel = new WheelEvent('wheel', { deltaY: 100, ctrlKey: true, bubbles: true, cancelable: true })
     act(() => { expect(viewport.dispatchEvent(minWheel)).toBe(false) })
     expect(readout(canvas)).toContain('zoom 100%')
     for (let index = 0; index < 5; index += 1) fireEvent.click(screen.getByRole('button', { name: 'Perbesar semua chart' }))
     expect(readout(canvas)).toContain('zoom 240%')
-    const maxWheel = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true })
+    const maxWheel = new WheelEvent('wheel', { deltaY: -100, ctrlKey: true, bubbles: true, cancelable: true })
     act(() => { expect(viewport.dispatchEvent(maxWheel)).toBe(false) })
     expect(readout(canvas)).toContain('zoom 240%')
-    expect(window.scrollY).toBe(300)
+    expect(window.scrollY).toBe(400)
 
     const zeroWheel = new WheelEvent('wheel', { bubbles: true, cancelable: true })
     act(() => { expect(viewport.dispatchEvent(zeroWheel)).toBe(true) })
