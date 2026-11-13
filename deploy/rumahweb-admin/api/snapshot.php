@@ -81,6 +81,10 @@ $token = (string) ($config['proxy_token'] ?? '');
 if (strpos($upstream, 'https://') !== 0 || $token === '') {
     json_error(503, 'configuration_invalid', 'Snapshot unavailable.');
 }
+// Release the per-session file lock before the bounded upstream request. Without
+// this, one slow snapshot blocks write-session.php and every authenticated API
+// call sharing the same PHP session cookie.
+session_write_close();
 
 $curl = curl_init($upstream);
 curl_setopt_array($curl, [
