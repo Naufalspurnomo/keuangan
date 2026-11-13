@@ -60,12 +60,18 @@ class PresensiReleaseTests(unittest.TestCase):
         self.assertIn("hollawall_admin_user", admin_common)
         self.assertIn("X-Content-Type-Options", photo)
 
-    def test_release_manifests_cover_every_file(self) -> None:
-        for root, payload in ((ABSEN.parent, ABSEN), (ADMIN.parent, ADMIN)):
-            manifest = root / "SHA256SUMS"
+    def test_release_manifests_cover_every_payload_file(self) -> None:
+        for payload in (ABSEN, ADMIN):
+            manifest = payload / "SHA256SUMS"
+            identity = payload / "release-manifest.json"
             self.assertTrue(manifest.is_file(), manifest)
+            self.assertTrue(identity.is_file(), identity)
             rows = [line.split("  ", 1)[1] for line in manifest.read_text(encoding="utf-8").splitlines()]
-            files = [path.relative_to(payload).as_posix() for path in sorted(payload.rglob("*")) if path.is_file()]
+            files = [
+                path.relative_to(payload).as_posix()
+                for path in sorted(payload.rglob("*"))
+                if path.is_file() and path.name not in {"SHA256SUMS", "release-manifest.json"}
+            ]
             self.assertEqual(rows, files)
 
     def test_employee_page_uses_hollawall_brand_system(self) -> None:

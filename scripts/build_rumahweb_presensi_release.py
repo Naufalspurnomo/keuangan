@@ -52,8 +52,8 @@ def build_release(*, output: Path, provenance_path: Path, artifact_revision: str
         provenance=release_manifest.load_provenance(provenance_path),
         artifact_revision=artifact_revision,
     )
-    release_manifest.write_manifest(output / "release-manifest.json", manifest)
-    release_manifest.write_sha256sums(output / "SHA256SUMS", manifest)
+    release_manifest.write_manifest(absen / "release-manifest.json", manifest)
+    release_manifest.write_sha256sums(absen / "SHA256SUMS", manifest)
     return output
 
 

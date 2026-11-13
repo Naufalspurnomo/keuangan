@@ -47,8 +47,8 @@ def test_presensi_builder_requires_and_consumes_provenance(tmp_path: Path) -> No
         provenance_path=write_provenance(tmp_path),
         artifact_revision=SHA,
     )
-    assert_release_manifest(output, "rumahweb-presensi")
-    sums = (output / "SHA256SUMS").read_text(encoding="utf-8")
+    assert_release_manifest(output / "absen", "rumahweb-presensi")
+    sums = (output / "absen" / "SHA256SUMS").read_text(encoding="utf-8")
     assert "release-manifest.json" not in sums
 
 
@@ -70,7 +70,7 @@ def test_admin_builder_consumes_provenance_without_running_node(tmp_path: Path) 
         run_dashboard_build=False,
     )
 
-    assert_release_manifest(output, "rumahweb-admin")
+    assert_release_manifest(output / "admin", "rumahweb-admin")
 
 
 def test_koyeb_builder_emits_release_manifest_for_container_context(tmp_path: Path) -> None:
