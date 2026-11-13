@@ -11,7 +11,7 @@ import os
 import re
 import ssl
 import time
-from ftplib import FTP_TLS
+from ftplib import FTP_TLS  # nosec B402 -- TLS-only deployer with certificate verification
 from pathlib import PurePosixPath
 from typing import cast
 
