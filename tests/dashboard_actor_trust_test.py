@@ -79,6 +79,20 @@ def test_missing_secret_or_assertion_fails_closed_without_default():
         assert actor_identity() is None
 
 
+def test_rejection_logs_non_secret_reason_code(caplog):
+    app = make_app()
+    with app.test_request_context(
+        "/api/dashboard/v1/canonical-transactions",
+        method="POST",
+        data=BODY,
+    ):
+        with caplog.at_level("WARNING"):
+            assert verify_upstream_actor_assertion() is None
+    assert "actor_assertion_rejected reason=header_missing" in caplog.text
+    assert SECRET not in caplog.text
+    assert BODY.decode() not in caplog.text
+
+
 def test_expired_wrong_audience_wrong_method_wrong_path_and_wrong_body_fail_closed():
     app = make_app()
     cases = (

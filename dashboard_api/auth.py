@@ -76,26 +76,35 @@ def _consume_nonce(nonce: str, expires_at: int, now: int) -> bool:
         return True
 
 
+def _reject_actor_assertion(reason: str) -> None:
+    """Record a non-secret rejection code for production diagnostics."""
+
+    current_app.logger.warning("actor_assertion_rejected reason=%s", reason)
+    return None
+
+
 def verify_upstream_actor_assertion(*, consume_nonce: bool = False) -> dict[str, str] | None:
     """Verify actor, audience, lifetime, request binding, and optional replay nonce."""
 
     secret = str(current_app.config.get("DASHBOARD_ACTOR_ASSERTION_SECRET") or "")
     audience = str(current_app.config.get("DASHBOARD_ACTOR_ASSERTION_AUDIENCE") or "")
     if len(secret.encode("utf-8")) < 32 or not audience:
-        return None
+        return _reject_actor_assertion("server_configuration")
     raw = str(request.headers.get(ACTOR_ASSERTION_HEADER) or "").strip()
+    if not raw:
+        return _reject_actor_assertion("header_missing")
     try:
         encoded, signature = raw.split(".", 1)
         expected = hmac.new(
             secret.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256
         ).digest()
         if not hmac.compare_digest(_b64decode(signature), expected):
-            return None
+            return _reject_actor_assertion("signature")
         claims = json.loads(_b64decode(encoded).decode("utf-8"))
     except (ValueError, UnicodeError, json.JSONDecodeError, TypeError):
-        return None
+        return _reject_actor_assertion("encoding")
     if not isinstance(claims, dict):
-        return None
+        return _reject_actor_assertion("claims_type")
 
     now = int(time.time())
     ttl = int(current_app.config.get("DASHBOARD_ACTOR_ASSERTION_TTL_SECONDS") or 60)
@@ -103,18 +112,18 @@ def verify_upstream_actor_assertion(*, consume_nonce: bool = False) -> dict[str,
         issued_at = int(claims["iat"])
         expires_at = int(claims["exp"])
     except (KeyError, TypeError, ValueError):
-        return None
+        return _reject_actor_assertion("time_claims")
     if ttl < 1 or issued_at > now + 5 or expires_at < now or expires_at - issued_at > ttl:
-        return None
+        return _reject_actor_assertion("ttl")
     if claims.get("aud") != audience:
-        return None
+        return _reject_actor_assertion("audience")
     if claims.get("method") != request.method:
-        return None
+        return _reject_actor_assertion("method")
     if claims.get("path") != request.path:
-        return None
+        return _reject_actor_assertion("path")
     body_hash = hashlib.sha256(request.get_data(cache=True)).hexdigest()
     if claims.get("body_sha256") != body_hash:
-        return None
+        return _reject_actor_assertion("body_hash")
 
     actor_id = claims.get("actor_id")
     email = claims.get("email")
@@ -129,9 +138,9 @@ def verify_upstream_actor_assertion(*, consume_nonce: bool = False) -> dict[str,
         or not isinstance(nonce, str)
         or len(nonce) < 16
     ):
-        return None
+        return _reject_actor_assertion("identity")
     if consume_nonce and not _consume_nonce(nonce, expires_at, now):
-        return None
+        return _reject_actor_assertion("replay")
     return {
         "id": actor_id.strip(),
         "email": email.strip().casefold(),
