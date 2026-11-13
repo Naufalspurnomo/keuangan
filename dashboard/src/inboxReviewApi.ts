@@ -27,6 +27,10 @@ export interface InboxReviewList {
   items: InboxReviewItem[]
   writesEnabled: boolean
   allowedActions: InboxReviewAction[]
+  total: number
+  offset: number
+  limit: number
+  hasMore: boolean
 }
 
 export interface InboxReviewResult {
@@ -43,7 +47,7 @@ export interface InboxReviewCommand {
 }
 
 export interface InboxReviewApi {
-  list: () => Promise<InboxReviewList>
+  list: (page?: { offset: number; limit: number }) => Promise<InboxReviewList>
   detail: (eventKey: string) => Promise<InboxReviewDetail>
   command: (input: {
     eventKey: string
@@ -220,9 +224,15 @@ export function createInboxReviewApi(options: ApiOptions = {}): InboxReviewApi {
   })
 
   return {
-    async list() {
-      const data = await read(`${endpoint}?action=list`)
-      if (!Array.isArray(data.items) || typeof data.writes_enabled !== 'boolean' || !Array.isArray(data.allowed_actions)) {
+    async list(page = { offset: 0, limit: 25 }) {
+      if (!Number.isSafeInteger(page.offset) || page.offset < 0
+          || !Number.isSafeInteger(page.limit) || page.limit < 1 || page.limit > 50) {
+        throw new InboxReviewApiError('Halaman peninjauan tidak valid.', { code: 'invalid_pagination' })
+      }
+      const data = await read(`${endpoint}?action=list&offset=${page.offset}&limit=${page.limit}`)
+      if (!Array.isArray(data.items) || typeof data.writes_enabled !== 'boolean' || !Array.isArray(data.allowed_actions)
+          || !Number.isSafeInteger(data.total) || !Number.isSafeInteger(data.offset)
+          || !Number.isSafeInteger(data.limit) || typeof data.has_more !== 'boolean') {
         throw new InboxReviewApiError('Daftar peninjauan tidak lengkap.', { code: 'invalid_response' })
       }
       const allowedActions = data.allowed_actions.map((action) => {
@@ -231,7 +241,15 @@ export function createInboxReviewApi(options: ApiOptions = {}): InboxReviewApi {
         }
         return action as InboxReviewAction
       })
-      return { items: data.items.map(reviewItem), writesEnabled: data.writes_enabled, allowedActions }
+      return {
+        items: data.items.map(reviewItem),
+        writesEnabled: data.writes_enabled,
+        allowedActions,
+        total: data.total as number,
+        offset: data.offset as number,
+        limit: data.limit as number,
+        hasMore: data.has_more,
+      }
     },
     async detail(key: string) {
       const data = await read(`${endpoint}?action=detail&event_key=${eventKey(key)}`)

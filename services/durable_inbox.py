@@ -441,9 +441,10 @@ def _review_metadata(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def list_review_events(*, limit: int = 50) -> list[dict[str, Any]]:
+def list_review_events(*, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
     """List private review metadata without message text, identities, or media."""
     safe_limit = max(1, min(int(limit), 100))
+    safe_offset = max(0, int(offset))
     if _ensure_db():
         import psycopg
 
@@ -455,9 +456,9 @@ def list_review_events(*, limit: int = 50) -> list[dict[str, Any]]:
                     FROM transaction_inbox
                     WHERE status LIKE 'needs_review%%'
                     ORDER BY received_at
-                    LIMIT %s
+                    LIMIT %s OFFSET %s
                     """,  # nosec B608 -- selected columns are a private module constant
-                    (safe_limit,),
+                    (safe_limit, safe_offset),
                 )
                 return [dict(row) for row in cur.fetchall()]
     with _memory_lock:
@@ -467,7 +468,27 @@ def list_review_events(*, limit: int = 50) -> list[dict[str, Any]]:
             if str(event.get("status") or "").startswith("needs_review")
         ]
     rows.sort(key=lambda row: str(row.get("received_at") or ""))
-    return rows[:safe_limit]
+    return rows[safe_offset:safe_offset + safe_limit]
+
+
+def count_review_events() -> int:
+    """Count all unresolved review events for bounded pagination."""
+    if _ensure_db():
+        import psycopg
+
+        with psycopg.connect(_database_url(), autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM transaction_inbox WHERE status LIKE 'needs_review%'"
+                )
+                row = cur.fetchone()
+                return int(row[0]) if row else 0
+    with _memory_lock:
+        return sum(
+            1
+            for event in _memory_events.values()
+            if str(event.get("status") or "").startswith("needs_review")
+        )
 
 
 def get_review_event(event_key: str) -> dict[str, Any] | None:

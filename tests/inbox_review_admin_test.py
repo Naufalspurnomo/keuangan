@@ -45,9 +45,12 @@ class FakeInboxReviewService:
         self.command_results: dict[str, tuple[dict, dict]] = {}
         self.conflict = False
 
-    def list_review_events(self, *, limit: int):
-        assert limit == 50
+    def list_review_events(self, *, limit: int, offset: int = 0):
+        self.list_request = {"limit": limit, "offset": offset}
         return [deepcopy(self.event)]
+
+    def count_review_events(self):
+        return 76
 
     def get_review_event(self, event_key: str):
         if event_key != EVENT_KEY or not str(self.event["status"]).startswith("needs_review"):
@@ -246,6 +249,34 @@ def test_metadata_and_detail_never_expose_identity_paths_or_raw_media(review_app
         "media_path", "last_error",
     }.isdisjoint(detail)
     assert detail_response.headers["Cache-Control"] == "no-store"
+
+
+def test_list_review_pagination_exposes_total_and_next_page(review_app):
+    app, service, _ledger = review_app
+    client = app.test_client()
+    login_owner(client)
+
+    response = client.get("/api/dashboard/v1/inbox/reviews?offset=50&limit=25")
+
+    assert response.status_code == 200
+    data = response.get_json()["data"]
+    assert service.list_request == {"offset": 50, "limit": 25}
+    assert data["total"] == 76
+    assert data["offset"] == 50
+    assert data["limit"] == 25
+    assert data["has_more"] is True
+
+
+@pytest.mark.parametrize("query", ("offset=-1", "limit=0", "limit=51", "offset=x", "limit=x", "extra=1"))
+def test_list_review_pagination_rejects_invalid_query(review_app, query):
+    app, _service, _ledger = review_app
+    client = app.test_client()
+    login_owner(client)
+
+    response = client.get(f"/api/dashboard/v1/inbox/reviews?{query}")
+
+    assert response.status_code == 422
+    assert response.get_json()["error"]["code"] == "invalid_pagination"
 
 
 def test_invalid_action_is_rejected_without_ledger_or_state_change(review_app):

@@ -242,7 +242,11 @@ function ir_sanitize(int $status, array $decoded, string $route, bool $localWrit
         if ($route === 'list') {
             if (!is_array($data['items'] ?? null)
                 || !is_bool($data['writes_enabled'] ?? null)
-                || !is_array($data['allowed_actions'] ?? null)) {
+                || !is_array($data['allowed_actions'] ?? null)
+                || !is_int($data['total'] ?? null)
+                || !is_int($data['offset'] ?? null)
+                || !is_int($data['limit'] ?? null)
+                || !is_bool($data['has_more'] ?? null)) {
                 ir_error(502, 'invalid_upstream_response', 'Review service unavailable.');
             }
             $allowed = [];
@@ -257,6 +261,10 @@ function ir_sanitize(int $status, array $decoded, string $route, bool $localWrit
                 'items' => array_map(static fn ($item) => ir_item($item), $data['items']),
                 'writes_enabled' => $localWrites && $data['writes_enabled'] === true,
                 'allowed_actions' => array_values(array_unique($allowed)),
+                'total' => $data['total'],
+                'offset' => $data['offset'],
+                'limit' => $data['limit'],
+                'has_more' => $data['has_more'],
             ]];
         }
         if ($route === 'detail') {
@@ -387,9 +395,14 @@ $localWrites = ($config['inbox_review_writes_enabled'] ?? false) === true;
 if ($method === 'GET') {
     $action = is_string($_GET['action'] ?? null) ? $_GET['action'] : '';
     if ($action === 'list') {
-        ir_exact_fields($_GET, ['action']);
+        ir_exact_fields($_GET, ['action', 'offset', 'limit']);
+        $offset = filter_var($_GET['offset'] ?? 0, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
+        $limit = filter_var($_GET['limit'] ?? 25, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 50]]);
+        if ($offset === false || $limit === false) {
+            ir_error(422, 'invalid_pagination', 'Review pagination is invalid.');
+        }
         session_write_close();
-        ir_proxy('GET', $upstream, false, 'list', $token, $localWrites);
+        ir_proxy('GET', $upstream . '?offset=' . $offset . '&limit=' . $limit, false, 'list', $token, $localWrites);
     }
     if ($action === 'detail') {
         ir_exact_fields($_GET, ['action', 'event_key']);

@@ -41,11 +41,24 @@ function api(list: InboxReviewList, submit = vi.fn().mockResolvedValue({
   } satisfies InboxReviewApi
 }
 
+function page(items = [item], overrides: Partial<InboxReviewList> = {}): InboxReviewList {
+  return {
+    items,
+    writesEnabled: true,
+    allowedActions: ['ignore', 'confirm_processed'],
+    total: items.length,
+    offset: 0,
+    limit: 25,
+    hasMore: false,
+    ...overrides,
+  }
+}
+
 afterEach(() => cleanup())
 
 describe('Perlu Ditinjau workspace', () => {
   it('shows a plain-language list and safe text detail without rendering raw HTML', async () => {
-    const reviewApi = api({ items: [item], writesEnabled: false, allowedActions: [] })
+    const reviewApi = api(page([item], { writesEnabled: false, allowedActions: [] }))
     const { container } = render(<InboxReviewWorkspace api={reviewApi} csrfToken="owner-csrf-token" />)
 
     expect(await screen.findByRole('heading', { name: 'Perlu Ditinjau' })).toBeTruthy()
@@ -60,7 +73,7 @@ describe('Perlu Ditinjau workspace', () => {
 
   it('shows terminal actions only when locally and upstream-enabled, requiring reason and explicit confirmation', async () => {
     const submit = vi.fn().mockResolvedValue({ eventKey: EVENT_KEY, messageId: 'message-1', action: 'ignore', status: 'ignored' })
-    const reviewApi = api({ items: [item], writesEnabled: true, allowedActions: ['ignore', 'confirm_processed'] }, submit)
+    const reviewApi = api(page(), submit)
     render(<InboxReviewWorkspace api={reviewApi} csrfToken="owner-csrf-token" />)
     fireEvent.click(await screen.findByRole('button', { name: /Tinjau message-1/i }))
 
@@ -89,7 +102,7 @@ describe('Perlu Ditinjau workspace', () => {
   it('keeps the same command after an uncertain result but gives no retry control', async () => {
     const error = Object.assign(new Error('unknown'), { code: 'review_outcome_unknown', uncertain: true, status: undefined })
     const submit = vi.fn().mockRejectedValue(error)
-    const reviewApi = api({ items: [item], writesEnabled: true, allowedActions: ['ignore'] }, submit)
+    const reviewApi = api(page([item], { allowedActions: ['ignore'] }), submit)
     render(<InboxReviewWorkspace api={reviewApi} csrfToken="owner-csrf-token" />)
     fireEvent.click(await screen.findByRole('button', { name: /Tinjau message-1/i }))
     fireEvent.change(await screen.findByLabelText('Alasan keputusan'), { target: { value: 'Bukan transaksi' } })
@@ -105,12 +118,31 @@ describe('Perlu Ditinjau workspace', () => {
     const submit = vi.fn().mockRejectedValue(Object.assign(new Error('server'), {
       code: 'review_conflict', status: 409, uncertain: false,
     }))
-    const reviewApi = api({ items: [item], writesEnabled: true, allowedActions: ['confirm_processed'] }, submit)
+    const reviewApi = api(page([item], { allowedActions: ['confirm_processed'] }), submit)
     render(<InboxReviewWorkspace api={reviewApi} csrfToken="owner-csrf-token" />)
     fireEvent.click(await screen.findByRole('button', { name: /Tinjau message-1/i }))
     fireEvent.change(await screen.findByLabelText('Alasan keputusan'), { target: { value: 'Sudah masuk ledger' } })
     fireEvent.click(screen.getByRole('button', { name: 'Tandai sudah diproses' }))
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Ya, tandai sudah diproses' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/sudah berubah/i)
+  })
+
+  it('navigates all review pages and reports the authoritative total', async () => {
+    const first = page([item], { total: 76, offset: 0, hasMore: true })
+    const secondItem = { ...item, eventKey: 'b'.repeat(64), messageId: 'message-26' }
+    const second = page([secondItem], { total: 76, offset: 25, hasMore: true })
+    const reviewApi = api(first)
+    reviewApi.list.mockResolvedValueOnce(first).mockResolvedValueOnce(second)
+
+    render(<InboxReviewWorkspace api={reviewApi} csrfToken="owner-csrf-token" />)
+    expect(await screen.findByText('1–1 dari 76')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Halaman berikutnya' }))
+
+    expect(await screen.findByText('message-26')).toBeTruthy()
+    expect(screen.getByText('26–26 dari 76')).toBeTruthy()
+    expect(reviewApi.list).toHaveBeenLastCalledWith({ offset: 25, limit: 25 })
+    fireEvent.click(screen.getByRole('button', { name: 'Halaman sebelumnya' }))
+    expect(reviewApi.list).toHaveBeenLastCalledWith({ offset: 0, limit: 25 })
   })
 })
