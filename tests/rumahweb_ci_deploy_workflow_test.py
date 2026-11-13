@@ -13,6 +13,7 @@ def test_rumahweb_deploy_runs_only_after_green_main_gate_or_manual_dispatch():
     assert "github.event.workflow_run.conclusion == 'success'" in text
     assert "github.event.workflow_run.head_branch == 'main'" in text
     assert "Require exact main revision" in text
+    assert "fetch-depth: 2" in text
     assert "git rev-parse origin/main" in text
 
 
