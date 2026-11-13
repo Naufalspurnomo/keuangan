@@ -103,8 +103,11 @@ def main() -> int:
     user = require_env("RW_FTP_USER")
     password = require_env("RW_FTP_PASSWORD")
     secret = require_env("DASHBOARD_ACTOR_ASSERTION_SECRET")
+    owner_email = require_env("HOLLAWALL_OWNER_EMAIL").casefold()
     if len(secret) < 32:
         raise RuntimeError("dashboard actor assertion secret is too short")
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", owner_email):
+        raise RuntimeError("owner email is invalid")
 
     remote = safe_remote(args.remote)
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
@@ -125,6 +128,7 @@ def main() -> int:
         text = replace_php_value(text, "upstream_canonical_transactions_url", args.canonical_url)
         text = replace_php_value(text, "dashboard_actor_assertion_audience", args.audience)
         text = replace_php_value(text, "dashboard_actor_assertion_secret", secret)
+        text = replace_php_value(text, "owner_email", owner_email)
         text = replace_php_bool(text, "canonical_finance_writes_enabled", True)
         updated = text.encode("utf-8")
         if secret.encode("utf-8") not in updated:
@@ -159,6 +163,7 @@ def main() -> int:
                 "final_readback": True,
                 "canonical_url_host": args.canonical_url.split("/", 3)[2],
                 "audience": args.audience,
+                "owner_email_configured": True,
                 "secret_present": True,
                 "secret_exposed": False,
             }

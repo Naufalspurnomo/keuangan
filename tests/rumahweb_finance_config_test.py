@@ -48,7 +48,8 @@ return [
     assert "'canonical_finance_writes_enabled' => true" in updated
     assert "'dashboard_actor_assertion_audience' => 'hollawall-finance-api'" in updated
     assert "'dashboard_actor_assertion_secret' => '" + ("x" * 48) + "'" in updated
-    assert "'owner_email' => 'owner@example.com'" in updated
+    updated = module.replace_php_value(updated, "owner_email", "naufalspurnomo@gmail.com")
+    assert "'owner_email' => 'naufalspurnomo@gmail.com'" in updated
 
 
 def test_finance_config_adds_missing_keys_to_single_return_array() -> None:
