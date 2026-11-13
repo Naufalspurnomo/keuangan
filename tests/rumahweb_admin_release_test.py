@@ -56,6 +56,7 @@ class RumahwebAdminReleaseTests(unittest.TestCase):
         self.assertIn("CURLOPT_FOLLOWLOCATION => false", proxy)
         self.assertIn("CURLOPT_SSL_VERIFYPEER => true", proxy)
         self.assertIn("Cache-Control: no-store", proxy)
+        self.assertLess(proxy.index("session_write_close();"), proxy.index("$curl = curl_init($upstream);"))
 
     def test_login_session_is_secure_persistent_and_rolling(self) -> None:
         login = (RELEASE / "index.php").read_text(encoding="utf-8")
