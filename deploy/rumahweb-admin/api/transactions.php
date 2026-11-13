@@ -293,7 +293,11 @@ if ($canonical
     && array_keys($decoded) === ['api_version', 'data']
     && ($decoded['api_version'] ?? null) === 'dashboard.v1'
     && is_array($decoded['data'] ?? null)
-    && array_keys($decoded['data']) === ['recorded', 'authority', 'transaction_id', 'transaction_version', 'duplicate']
+    && (static function (array $data): bool {
+        $keys = array_keys($data);
+        sort($keys);
+        return $keys === ['authority', 'duplicate', 'recorded', 'transaction_id', 'transaction_version'];
+    })($decoded['data'])
     && ($decoded['data']['recorded'] ?? null) === true
     && ($decoded['data']['authority'] ?? null) === 'postgresql'
     && is_string($decoded['data']['transaction_id'] ?? null)
