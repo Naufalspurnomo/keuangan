@@ -156,6 +156,10 @@ describe('ProjectLifecycleMarketChart', () => {
       scrollHeight: { value: 1000, configurable: true }, clientHeight: { value: 420, configurable: true },
     })
     Object.defineProperty(window, 'scrollY', { value: 200, configurable: true })
+    const scrollBy = vi.spyOn(window, 'scrollBy').mockImplementation((optionsOrX?: ScrollToOptions | number, y?: number) => {
+      const top = typeof optionsOrX === 'number' ? (y ?? 0) : (optionsOrX?.top ?? 0)
+      Object.defineProperty(window, 'scrollY', { value: window.scrollY + top, configurable: true })
+    })
     const emulatePageScroll = (event: Event) => {
       const wheel = event as WheelEvent
       if (!wheel.defaultPrevented) Object.defineProperty(window, 'scrollY', { value: window.scrollY + wheel.deltaY, configurable: true })
@@ -170,8 +174,8 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(canvases.map(readout).every((copy) => copy.includes('zoom 100%'))).toBe(true)
 
     const ordinaryWheel = new WheelEvent('wheel', { deltaY: 100, clientX: 250, clientY: 210, bubbles: true, cancelable: true })
-    act(() => { expect(viewport.dispatchEvent(ordinaryWheel)).toBe(true) })
-    expect(ordinaryWheel.defaultPrevented).toBe(false)
+    act(() => { expect(viewport.dispatchEvent(ordinaryWheel)).toBe(false) })
+    expect(ordinaryWheel.defaultPrevented).toBe(true)
     expect(readout(canvas)).toContain('zoom 100%')
     expect(window.scrollY).toBe(400)
 
@@ -217,6 +221,7 @@ describe('ProjectLifecycleMarketChart', () => {
     act(() => { expect(viewport.dispatchEvent(zeroWheel)).toBe(true) })
     expect(zeroWheel.defaultPrevented).toBe(false)
     window.removeEventListener('wheel', emulatePageScroll)
+    scrollBy.mockRestore()
     Object.defineProperty(window, 'scrollY', { value: 0, configurable: true })
   })
 
