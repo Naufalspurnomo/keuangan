@@ -124,8 +124,8 @@ jobs:
           python scripts/deploy_rumahweb_presensi_atomic.py \
             --admin-release artifacts/rumahweb-admin-release/admin \
             --absen-release artifacts/rumahweb-presensi-release/absen \
-            --admin-remote admin \
-            --absen-remote absen \
+            --admin-remote public_html/admin \
+            --absen-remote public_html/absen \
             --tag "${RELEASE_SHA:0:12}" \
             --evidence /tmp/rumahweb-deploy.json
           python - <<'PY'
