@@ -93,6 +93,26 @@ def test_rejection_logs_non_secret_reason_code(caplog):
     assert BODY.decode() not in caplog.text
 
 
+def test_configuration_rejection_logs_lengths_not_values(caplog, monkeypatch):
+    monkeypatch.setenv("DASHBOARD_ACTOR_ASSERTION_SECRET", "e" * 64)
+    monkeypatch.setenv("DASHBOARD_ACTOR_ASSERTION_AUDIENCE", "env-audience")
+    app = make_app(
+        DASHBOARD_ACTOR_ASSERTION_SECRET="",
+        DASHBOARD_ACTOR_ASSERTION_AUDIENCE="",
+    )
+    with app.test_request_context(
+        "/api/dashboard/v1/canonical-transactions",
+        method="POST",
+        data=BODY,
+    ):
+        with caplog.at_level("WARNING"):
+            assert verify_upstream_actor_assertion() is None
+    assert "app_secret_len=0 app_audience_len=0" in caplog.text
+    assert "env_secret_len=64 env_audience_len=12" in caplog.text
+    assert "e" * 64 not in caplog.text
+    assert "env-audience" not in caplog.text
+
+
 def test_expired_wrong_audience_wrong_method_wrong_path_and_wrong_body_fail_closed():
     app = make_app()
     cases = (

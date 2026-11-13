@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import threading
 import time
@@ -89,6 +90,14 @@ def verify_upstream_actor_assertion(*, consume_nonce: bool = False) -> dict[str,
     secret = str(current_app.config.get("DASHBOARD_ACTOR_ASSERTION_SECRET") or "")
     audience = str(current_app.config.get("DASHBOARD_ACTOR_ASSERTION_AUDIENCE") or "")
     if len(secret.encode("utf-8")) < 32 or not audience:
+        current_app.logger.warning(
+            "actor_assertion_config app_secret_len=%d app_audience_len=%d "
+            "env_secret_len=%d env_audience_len=%d",
+            len(secret.encode("utf-8")),
+            len(audience),
+            len(str(os.getenv("DASHBOARD_ACTOR_ASSERTION_SECRET") or "").encode("utf-8")),
+            len(str(os.getenv("DASHBOARD_ACTOR_ASSERTION_AUDIENCE") or "")),
+        )
         return _reject_actor_assertion("server_configuration")
     raw = str(request.headers.get(ACTOR_ASSERTION_HEADER) or "").strip()
     if not raw:
