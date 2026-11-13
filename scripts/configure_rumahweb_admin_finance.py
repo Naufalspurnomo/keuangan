@@ -41,25 +41,30 @@ def php_single_quoted(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-def replace_php_value(text: str, key: str, value: str) -> str:
+def upsert_php_literal(text: str, key: str, literal: str) -> str:
     pattern = re.compile(rf"('{re.escape(key)}'\s*=>\s*)(?:true|false|'(?:\\.|[^'])*')")
-    replacement = rf"\g<1>{php_single_quoted(value)}"
-    if len(pattern.findall(text)) != 1:
-        raise RuntimeError(f"config key missing or duplicated: {key}")
-    updated, count = pattern.subn(replacement, text, count=1)
-    if count != 1:
-        raise RuntimeError(f"config key update failed: {key}")
-    return updated
+    matches = pattern.findall(text)
+    if len(matches) > 1:
+        raise RuntimeError(f"config key duplicated: {key}")
+    if len(matches) == 1:
+        updated, count = pattern.subn(rf"\g<1>{literal}", text, count=1)
+        if count != 1:
+            raise RuntimeError(f"config key update failed: {key}")
+        return updated
+
+    closing = re.search(r"\n\s*\];\s*$", text)
+    if not closing:
+        raise RuntimeError("config is not a single return-array document")
+    insertion = f"\n    {php_single_quoted(key)} => {literal},"
+    return text[: closing.start()] + insertion + text[closing.start() :]
+
+
+def replace_php_value(text: str, key: str, value: str) -> str:
+    return upsert_php_literal(text, key, php_single_quoted(value))
 
 
 def replace_php_bool(text: str, key: str, value: bool) -> str:
-    pattern = re.compile(rf"('{re.escape(key)}'\s*=>\s*)(?:true|false|'(?:\\.|[^'])*')")
-    if len(pattern.findall(text)) != 1:
-        raise RuntimeError(f"config key missing or duplicated: {key}")
-    updated, count = pattern.subn(rf"\g<1>{str(value).lower()}", text, count=1)
-    if count != 1:
-        raise RuntimeError(f"config key update failed: {key}")
-    return updated
+    return upsert_php_literal(text, key, str(value).lower())
 
 
 def connect(host: str, user: str, password: str, port: int) -> FTP_TLS:
