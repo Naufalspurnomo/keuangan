@@ -336,6 +336,35 @@ class RumahwebAdminTransactionProxyTests(unittest.TestCase):
             self.assertNotIn("x-csrf-token", headers)
             self.assertNotIn("cookie", headers)
 
+    def test_canonical_dashboard_reply_accepts_verified_fields_regardless_of_json_key_order(self) -> None:
+        success = {
+            "api_version": "dashboard.v1",
+            "data": {
+                "authority": "postgresql",
+                "duplicate": False,
+                "recorded": True,
+                "transaction_id": "00000000-0000-4000-8000-000000000021",
+                "transaction_version": 1,
+            },
+        }
+        with self.https_upstream([(201, success)]) as (upstream, cert, _server):
+            self.write_config(enabled=True, upstream=upstream)
+            with self.php_server(ca_bundle=cert) as base:
+                session_id, csrf = self.login(base)
+                response = requests.post(
+                    self.transaction_url(base),
+                    headers={
+                        **self.cookie(session_id),
+                        "X-CSRF-Token": csrf,
+                        "Idempotency-Key": IDEMPOTENCY_KEY,
+                    },
+                    json=self.payload(),
+                    timeout=5,
+                )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json(), success)
+
     def test_http_200_replay_preserves_verified_duplicate_marker(self) -> None:
         replay = {
             "api_version": "dashboard.v1",
