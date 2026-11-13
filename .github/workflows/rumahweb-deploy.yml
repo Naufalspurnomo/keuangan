@@ -46,7 +46,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ steps.revision.outputs.sha }}
-          fetch-depth: 0
+          fetch-depth: 2
 
       - name: Require exact main revision
         env:
