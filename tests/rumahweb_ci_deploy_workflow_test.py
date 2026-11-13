@@ -28,8 +28,11 @@ def test_rumahweb_deploy_uses_scoped_secrets_and_atomic_readback():
         "secrets.RUMAHWEB_FTP_HOST",
         "secrets.RUMAHWEB_FTP_USER",
         "secrets.RUMAHWEB_FTP_PASSWORD",
+        "secrets.HOLLAWALL_DASHBOARD_ACTOR_ASSERTION_SECRET",
     ):
         assert secret in text
+    assert "configure_rumahweb_admin_finance.py" in text
+    assert "rumahweb-finance-config.json" in text
     assert "deploy_rumahweb_presensi_atomic.py" in text
     assert "--admin-remote public_html/admin" in text
     assert "--absen-remote public_html/absen" in text
