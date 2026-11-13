@@ -296,6 +296,11 @@ def main() -> int:
     parser.add_argument("--admin-remote", default="public_html/admin")
     parser.add_argument("--absen-remote", default="public_html/absen")
     parser.add_argument("--port", type=int, default=int(os.getenv("RW_FTP_PORT", "21")))
+    parser.add_argument(
+        "--probe-only",
+        action="store_true",
+        help="Verify noninteractive FTPS credentials without changing remote state.",
+    )
     parser.add_argument("--evidence", type=Path)
     args = parser.parse_args()
 
@@ -311,7 +316,17 @@ def main() -> int:
     ]
     ftp = connect(cast(str, host), cast(str, user), cast(str, password), args.port)
     try:
-        result = deploy_pair(ftp, specs, args.tag)
+        if args.probe_only:
+            ftp.pwd()
+            result: dict[str, object] = {
+                "success": True,
+                "probe_only": True,
+                "host_reachable": True,
+                "credentials_valid": True,
+                "remote_mutated": False,
+            }
+        else:
+            result = deploy_pair(ftp, specs, args.tag)
     finally:
         try:
             ftp.quit()
