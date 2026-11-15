@@ -8,9 +8,11 @@ import socket
 import struct
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 import zlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import requests
@@ -21,6 +23,9 @@ from tests.release_test_support import build_release
 ROOT = Path(__file__).resolve().parents[1]
 ABSEN_RELEASE = ROOT / "artifacts" / "rumahweb-presensi-release" / "absen"
 ADMIN_RELEASE = ROOT / "artifacts" / "rumahweb-admin-release" / "admin"
+PROJECT_A = "11111111-1111-4111-8111-111111111111"
+PROJECT_B = "22222222-2222-4222-8222-222222222222"
+OUTBOX_SECRET = "synthetic-outbox-secret-at-least-32-chars"
 
 
 def proof_png(width: int = 640, height: int = 480, solid: tuple[int, int, int] | None = None) -> bytes:
@@ -58,6 +63,33 @@ class PresensiIntegrationTests(unittest.TestCase):
         self.web_root = self.account_root / "public_html"
         shutil.copytree(ABSEN_RELEASE, self.web_root / "absen")
         shutil.copytree(ADMIN_RELEASE, self.web_root / "admin")
+        self.active_projects = [
+            {"id": PROJECT_A, "name": "Griya Wellness Center", "company": "Holla"},
+            {"id": PROJECT_B, "name": "Fajar Distribution Hub", "company": "Texturin Surabaya"},
+        ]
+        owner = self
+
+        class CatalogHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path != "/internal/presensi/projects" or self.headers.get("X-Presensi-Secret") != OUTBOX_SECRET:
+                    self.send_response(401)
+                    self.end_headers()
+                    return
+                body = json.dumps({"version": "presensi.projects.v1", "projects": owner.active_projects}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format, *args):
+                del format, args
+                return
+
+        self.catalog_server = ThreadingHTTPServer(("127.0.0.1", 0), CatalogHandler)
+        self.catalog_thread = threading.Thread(target=self.catalog_server.serve_forever, daemon=True)
+        self.catalog_thread.start()
+        self.catalog_url = f"http://127.0.0.1:{self.catalog_server.server_port}/internal/presensi/projects"
         self.config = self.account_root / ".hollawall-admin.php"
         self.config.write_text(
             "<?php return ["
@@ -69,21 +101,22 @@ class PresensiIntegrationTests(unittest.TestCase):
         )
         self.config.chmod(0o600)
         self.presensi_config = self.account_root / ".hollawall-presensi.php"
-        project = "['id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','active'=>true]"
-        other = "['id'=>'p26-fajar','name'=>'Fajar Distribution Hub','company'=>'Texturin Surabaya','active'=>true]"
         employees = (
             "[['id'=>'pegawai-1','name'=>'Pegawai 1','code'=>'EMP001','pin_hash'=>'" + self.employee_pin_hash + "'],"
             "['id'=>'pegawai-2','name'=>'Pegawai 2','code'=>'EMP002','pin_hash'=>'" + self.employee_pin_hash + "'],"
             "['id'=>'pegawai-3','name'=>'Pegawai 3','code'=>'EMP003','pin_hash'=>'" + self.employee_pin_hash + "']]"
         )
         self.presensi_config.write_text(
-            "<?php return ['retention_days'=>90,'outbox_shared_secret'=>'synthetic-outbox-secret-at-least-32-chars','employees'=>"
-            + employees + ",'projects'=>[" + project + "," + other + "]];",
+            "<?php return ['retention_days'=>90,'outbox_shared_secret'=>'" + OUTBOX_SECRET + "','project_catalog_url'=>'"
+            + self.catalog_url + "','employees'=>" + employees + "];",
             encoding="utf-8",
         )
         self.presensi_config.chmod(0o600)
 
     def tearDown(self) -> None:
+        self.catalog_server.shutdown()
+        self.catalog_server.server_close()
+        self.catalog_thread.join(timeout=5)
         self._tmp.cleanup()
 
     @contextlib.contextmanager
@@ -127,7 +160,7 @@ class PresensiIntegrationTests(unittest.TestCase):
             raise AssertionError("CSRF token missing")
         return match.group(1)
 
-    def public_bootstrap(self, origin: str):
+    def public_bootstrap(self, origin: str, *, code: str = "EMP001", expected_employee_id: str = "pegawai-1"):
         response = requests.get(origin + "/absen/api/bootstrap.php", timeout=5)
         self.assertEqual(response.status_code, 200, response.text)
         anonymous = response.json()
@@ -139,7 +172,7 @@ class PresensiIntegrationTests(unittest.TestCase):
         login = requests.post(
             origin + "/absen/api/login.php",
             headers={"Cookie": f"hollawall_presensi={session_id}", "Origin": origin, "Sec-Fetch-Site": "same-origin"},
-            data={"csrf": anonymous["csrf"], "code": "EMP001", "pin": self.employee_pin},
+            data={"csrf": anonymous["csrf"], "code": code, "pin": self.employee_pin},
             allow_redirects=False,
             timeout=5,
         )
@@ -150,11 +183,11 @@ class PresensiIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertTrue(payload["authenticated"])
-        self.assertEqual(payload["employee"]["id"], "pegawai-1")
+        self.assertEqual(payload["employee"]["id"], expected_employee_id)
         self.capture_token = payload["capture_token"]
         return payload, cookie
 
-    def submit(self, origin: str, cookie: dict[str, str], csrf: str, *, action: str, project_id: str = "p26-griya", latitude: float = -7.3546465, longitude: float = 112.7826242, accuracy: float = 10, capture_token: str | None = None, observed_at_ms: int | None = None, origin_header: str | None = None, selfie: bytes | None = None, submission_id: str | None = None):
+    def submit(self, origin: str, cookie: dict[str, str], csrf: str, *, action: str, project_id: str = "11111111-1111-4111-8111-111111111111", latitude: float = -7.3546465, longitude: float = 112.7826242, accuracy: float = 10, capture_token: str | None = None, observed_at_ms: int | None = None, origin_header: str | None = None, selfie: bytes | None = None, submission_id: str | None = None):
         observed_at_ms = observed_at_ms or int(time.time() * 1000)
         submission_id = submission_id or f"sub-{secrets.token_hex(16)}"
         response = requests.post(
@@ -184,11 +217,29 @@ class PresensiIntegrationTests(unittest.TestCase):
         self.assertTrue(authenticated)
         return {"Cookie": f"hollawall_admin={authenticated}"}
 
+    def test_catalog_accepts_database_valid_multibyte_character_limits(self) -> None:
+        self.active_projects = [{
+            "id": PROJECT_A,
+            "name": "é" * 200,
+            "company": "会" * 120,
+        }]
+        with self.server() as origin:
+            bootstrap, _cookie = self.public_bootstrap(origin)
+            self.assertEqual(bootstrap["projects"][0]["name"], "é" * 200)
+            self.assertEqual(bootstrap["projects"][0]["company"], "会" * 120)
+
+    def test_catalog_lookup_precedes_global_event_lock(self) -> None:
+        source = (ROOT / "deploy" / "rumahweb-presensi" / "api" / "submit.php").read_text(encoding="utf-8")
+        self.assertLess(
+            source.index("presensi_active_projects($config)"),
+            source.index("presensi_lock($paths)"),
+        )
+
     def test_location_sequence_private_photo_and_admin_readback(self) -> None:
         with self.server() as origin:
             bootstrap, public_cookie = self.public_bootstrap(origin)
             self.assertNotIn("employees", bootstrap)
-            self.assertIn("p26-griya", [row["id"] for row in bootstrap["projects"]])
+            self.assertIn("11111111-1111-4111-8111-111111111111", [row["id"] for row in bootstrap["projects"]])
             self.assertEqual(set(bootstrap["projects"][0]), {"id", "name", "company"})
             csrf = bootstrap["csrf"]
 
@@ -211,7 +262,7 @@ class PresensiIntegrationTests(unittest.TestCase):
             self.assertEqual(duplicate.status_code, 409)
             self.assertEqual(duplicate.json()["error"]["code"], "already_checked_in")
 
-            wrong_project = self.submit(origin, public_cookie, csrf, action="check_out", project_id="p26-fajar")
+            wrong_project = self.submit(origin, public_cookie, csrf, action="check_out", project_id="22222222-2222-4222-8222-222222222222")
             self.assertEqual(wrong_project.status_code, 409)
             self.assertEqual(wrong_project.json()["error"]["code"], "project_mismatch")
 
@@ -221,10 +272,10 @@ class PresensiIntegrationTests(unittest.TestCase):
             self.assertEqual(second["record"]["action"], "check_out")
             self.assertEqual(first["record"]["pair_id"], second["record"]["pair_id"])
 
-            unauthenticated = requests.get(origin + "/admin/api/presensi.php?project_id=p26-griya", timeout=5)
+            unauthenticated = requests.get(origin + "/admin/api/presensi.php?project_id=11111111-1111-4111-8111-111111111111", timeout=5)
             self.assertEqual(unauthenticated.status_code, 401)
             admin_cookie = self.admin_login(origin)
-            records_response = requests.get(origin + "/admin/api/presensi.php?project_id=p26-griya", headers=admin_cookie, timeout=5)
+            records_response = requests.get(origin + "/admin/api/presensi.php?project_id=11111111-1111-4111-8111-111111111111", headers=admin_cookie, timeout=5)
             self.assertEqual(records_response.status_code, 200, records_response.text)
             records = records_response.json()["records"]
             self.assertEqual(len(records), 1)
@@ -261,27 +312,50 @@ class PresensiIntegrationTests(unittest.TestCase):
             self.assertEqual((store.stat().st_mode & 0o777), 0o700)
             self.assertTrue(all((path.stat().st_mode & 0o777) == 0o600 for path in (store / "photos").iterdir()))
 
+    def test_any_configured_employee_uses_canonical_project_and_reaches_admin_outbox(self) -> None:
+        with self.server() as origin:
+            bootstrap, cookie = self.public_bootstrap(origin, code="EMP002", expected_employee_id="pegawai-2")
+            checked_in = self.submit(origin, cookie, bootstrap["csrf"], action="check_in")
+            self.assertEqual(checked_in.status_code, 201, checked_in.text)
+            self.assertEqual(checked_in.json()["record"]["employee_name"], "Pegawai 2")
+            self.assertEqual(checked_in.json()["record"]["project_name"], "Griya Wellness Center")
+
+            admin_cookie = self.admin_login(origin)
+            records = requests.get(
+                origin + f"/admin/api/presensi.php?project_id={PROJECT_A}",
+                headers=admin_cookie,
+                timeout=5,
+            )
+            self.assertEqual(records.status_code, 200, records.text)
+            self.assertEqual(records.json()["records"][0]["employee_name"], "Pegawai 2")
+
+            claim = requests.post(
+                origin + "/absen/api/outbox-claim.php",
+                headers={"X-Presensi-Secret": OUTBOX_SECRET},
+                timeout=5,
+            )
+            self.assertEqual(claim.status_code, 200, claim.text)
+            event = claim.json()["event"]
+            self.assertEqual(event["employee_name"], "Pegawai 2")
+            self.assertEqual(event["project_name"], "Griya Wellness Center")
+
     def test_open_checkin_can_checkout_after_project_is_deactivated(self) -> None:
         with self.server() as origin:
             bootstrap, cookie = self.public_bootstrap(origin)
             checked_in = self.submit(origin, cookie, bootstrap["csrf"], action="check_in")
             self.assertEqual(checked_in.status_code, 201, checked_in.text)
 
-            current = self.presensi_config.read_text(encoding="utf-8")
-            self.presensi_config.write_text(
-                current.replace("'id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','active'=>true", "'id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','active'=>false"),
-                encoding="utf-8",
-            )
+            self.active_projects = [row for row in self.active_projects if row["id"] != PROJECT_A]
             status = requests.get(origin + "/absen/api/status.php?employee_id=pegawai-1", headers=cookie, timeout=5)
             self.assertEqual(status.status_code, 200, status.text)
-            self.assertEqual(status.json()["active_project"]["id"], "p26-griya")
+            self.assertEqual(status.json()["active_project"]["id"], "11111111-1111-4111-8111-111111111111")
 
             checked_out = self.submit(
                 origin,
                 cookie,
                 checked_in.json()["csrf"],
                 action="check_out",
-                project_id="p26-griya",
+                project_id="11111111-1111-4111-8111-111111111111",
             )
             self.assertEqual(checked_out.status_code, 201, checked_out.text)
             self.assertEqual(checked_out.json()["record"]["project_name"], "Griya Wellness Center")
@@ -292,8 +366,7 @@ class PresensiIntegrationTests(unittest.TestCase):
             checked_in = self.submit(origin, cookie, bootstrap["csrf"], action="check_in")
             self.assertEqual(checked_in.status_code, 201, checked_in.text)
 
-            current = self.presensi_config.read_text(encoding="utf-8")
-            self.presensi_config.write_text(current.replace("'active'=>true", "'active'=>false"), encoding="utf-8")
+            self.active_projects = []
             checked_out = self.submit(
                 origin,
                 cookie,
@@ -322,12 +395,12 @@ class PresensiIntegrationTests(unittest.TestCase):
             self.assertEqual(conflict.json()["error"]["code"], "already_checked_in")
 
             own_status = requests.get(
-                origin + f"/absen/api/status.php?employee_id=pegawai-1&submission_id={own_submission}&submission_action=check_in&submission_project=p26-griya",
+                origin + f"/absen/api/status.php?employee_id=pegawai-1&submission_id={own_submission}&submission_action=check_in&submission_project=11111111-1111-4111-8111-111111111111",
                 headers=cookie,
                 timeout=5,
             )
             other_status = requests.get(
-                origin + f"/absen/api/status.php?employee_id=pegawai-1&submission_id={other_submission}&submission_action=check_in&submission_project=p26-griya",
+                origin + f"/absen/api/status.php?employee_id=pegawai-1&submission_id={other_submission}&submission_action=check_in&submission_project=11111111-1111-4111-8111-111111111111",
                 headers=cookie,
                 timeout=5,
             )
@@ -351,7 +424,7 @@ class PresensiIntegrationTests(unittest.TestCase):
             self.assertEqual(replay.status_code, 409, replay.text)
             self.assertEqual(replay.json()["error"]["code"], "submission_replayed")
             stolen_status = requests.get(
-                origin + f"/absen/api/status.php?employee_id=pegawai-1&submission_id={other_submission}&submission_action=check_in&submission_project=p26-griya",
+                origin + f"/absen/api/status.php?employee_id=pegawai-1&submission_id={other_submission}&submission_action=check_in&submission_project=11111111-1111-4111-8111-111111111111",
                 headers=other_cookie,
                 timeout=5,
             )
@@ -396,7 +469,7 @@ class PresensiIntegrationTests(unittest.TestCase):
                 capture_token=payload["capture_token"],
             )
             self.assertEqual(submitted.status_code, 201, submitted.text)
-            response = requests.get(origin + "/admin/api/presensi.php?project_id=p26-griya", timeout=5)
+            response = requests.get(origin + "/admin/api/presensi.php?project_id=11111111-1111-4111-8111-111111111111", timeout=5)
             self.assertEqual(response.status_code, 401, response.text)
             self.assertEqual(response.json()["error"]["code"], "authentication_required")
 
@@ -477,7 +550,7 @@ class PresensiIntegrationTests(unittest.TestCase):
         script = (
             f"require {str(common)!r}; "
             "$events=[['id'=>'evt-legacy','pair_id'=>'prs-legacy','action'=>'check_in',"
-            "'employee_id'=>'pegawai-1','employee_name'=>'Pegawai 1','project_id'=>'p26-griya',"
+            "'employee_id'=>'pegawai-1','employee_name'=>'Pegawai 1','project_id'=>'11111111-1111-4111-8111-111111111111',"
             "'project_name'=>'Griya Wellness Center','occurred_at'=>'2026-10-30T00:00:00+00:00',"
             "'accuracy_m'=>12]]; echo json_encode(presensi_build_records($events));"
         )
@@ -596,15 +669,15 @@ class PresensiIntegrationTests(unittest.TestCase):
             self.assertEqual(symlinked.json()["error"]["code"], "configuration_insecure")
 
     def test_all_required_employees_plus_duplicate_fail_closed(self) -> None:
-        duplicate = "<?php return ['retention_days'=>90,'employees'=>[['id'=>'pegawai-1','name'=>'Pegawai 1'],['id'=>'pegawai-2','name'=>'Pegawai 2'],['id'=>'pegawai-3','name'=>'Pegawai 3'],['id'=>'pegawai-1','name'=>'Pegawai 1']],'projects'=>[['id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','active'=>true]]];"
+        duplicate = "<?php return ['retention_days'=>90,'employees'=>[['id'=>'pegawai-1','name'=>'Pegawai 1'],['id'=>'pegawai-2','name'=>'Pegawai 2'],['id'=>'pegawai-3','name'=>'Pegawai 3'],['id'=>'pegawai-1','name'=>'Pegawai 1']],'projects'=>[['id'=>'11111111-1111-4111-8111-111111111111','name'=>'Griya Wellness Center','company'=>'Holla','active'=>true]]];"
         self.assert_config_rejected(duplicate)
 
     def test_active_inactive_duplicate_project_identity_fails_closed(self) -> None:
-        duplicate = "<?php return ['retention_days'=>90,'employees'=>[['id'=>'pegawai-1','name'=>'Pegawai 1'],['id'=>'pegawai-2','name'=>'Pegawai 2'],['id'=>'pegawai-3','name'=>'Pegawai 3']],'projects'=>[['id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','active'=>true],['id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','active'=>false]]];"
+        duplicate = "<?php return ['retention_days'=>90,'employees'=>[['id'=>'pegawai-1','name'=>'Pegawai 1'],['id'=>'pegawai-2','name'=>'Pegawai 2'],['id'=>'pegawai-3','name'=>'Pegawai 3']],'projects'=>[['id'=>'11111111-1111-4111-8111-111111111111','name'=>'Griya Wellness Center','company'=>'Holla','active'=>true],['id'=>'11111111-1111-4111-8111-111111111111','name'=>'Griya Wellness Center','company'=>'Holla','active'=>false]]];"
         self.assert_config_rejected(duplicate)
 
     def test_inactive_duplicate_project_names_fail_closed(self) -> None:
-        duplicate = "<?php return ['retention_days'=>90,'employees'=>[['id'=>'pegawai-1','name'=>'Pegawai 1'],['id'=>'pegawai-2','name'=>'Pegawai 2'],['id'=>'pegawai-3','name'=>'Pegawai 3']],'projects'=>[['id'=>'p26-griya','name'=>'Griya Wellness Center','company'=>'Holla','active'=>true],['id'=>'p26-old-a','name'=>'Arsip Sama','active'=>false],['id'=>'p26-old-b','name'=>'arsip sama','active'=>false]]];"
+        duplicate = "<?php return ['retention_days'=>90,'employees'=>[['id'=>'pegawai-1','name'=>'Pegawai 1'],['id'=>'pegawai-2','name'=>'Pegawai 2'],['id'=>'pegawai-3','name'=>'Pegawai 3']],'projects'=>[['id'=>'11111111-1111-4111-8111-111111111111','name'=>'Griya Wellness Center','company'=>'Holla','active'=>true],['id'=>'p26-old-a','name'=>'Arsip Sama','active'=>false],['id'=>'p26-old-b','name'=>'arsip sama','active'=>false]]];"
         self.assert_config_rejected(duplicate)
 
 

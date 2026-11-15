@@ -11,6 +11,8 @@ def test_private_config_sync_is_manual_bounded_and_does_not_deploy_site() -> Non
     assert "timeout-minutes: 8" in text
     assert "configure_rumahweb_admin_finance.py" in text
     assert "snapshot_url_configured" in text
+    assert "project_catalog_url_configured" in text
+    assert "presensi_final_readback" in text
     assert "deploy_rumahweb_presensi_atomic.py" not in text
     assert "npm ci" not in text
     for secret in (

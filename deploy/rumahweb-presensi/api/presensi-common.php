@@ -108,19 +108,35 @@ function presensi_config(): array
     $outboxSecret = (string) ($config['outbox_shared_secret'] ?? '');
     $deliveryTriggerUrl = trim((string) ($config['delivery_trigger_url'] ?? ''));
     $deliveryTriggerParts = $deliveryTriggerUrl === '' ? false : parse_url($deliveryTriggerUrl);
-    if (!isset($config['employees'], $config['projects'])
+    $projectCatalogUrl = trim((string) ($config['project_catalog_url'] ?? ''));
+    if ($projectCatalogUrl === '' && str_ends_with($deliveryTriggerUrl, '/internal/presensi/deliver')) {
+        $projectCatalogUrl = substr($deliveryTriggerUrl, 0, -strlen('/deliver')) . '/projects';
+    }
+    $projectCatalogParts = $projectCatalogUrl === '' ? false : parse_url($projectCatalogUrl);
+    $projectCatalogHost = is_array($projectCatalogParts) ? strtolower((string) ($projectCatalogParts['host'] ?? '')) : '';
+    $projectCatalogScheme = is_array($projectCatalogParts) ? strtolower((string) ($projectCatalogParts['scheme'] ?? '')) : '';
+    $projectCatalogIsLoopback = in_array($projectCatalogHost, ['127.0.0.1', 'localhost', '::1'], true);
+    if (!isset($config['employees'])
         || !is_array($config['employees'])
-        || !is_array($config['projects'])
         || strlen($outboxSecret) < 32
         || ($deliveryTriggerUrl !== '' && (
             !is_array($deliveryTriggerParts)
-            || strtolower((string) ($deliveryTriggerParts['scheme'] ?? '')) !== 'https'
+            || (strtolower((string) ($deliveryTriggerParts['scheme'] ?? '')) !== 'https'
+                && !(strtolower((string) ($deliveryTriggerParts['scheme'] ?? '')) === 'http'
+                    && in_array(strtolower((string) ($deliveryTriggerParts['host'] ?? '')), ['127.0.0.1', 'localhost', '::1'], true)))
             || trim((string) ($deliveryTriggerParts['host'] ?? '')) === ''
             || array_key_exists('user', $deliveryTriggerParts)
             || array_key_exists('pass', $deliveryTriggerParts)
             || array_key_exists('query', $deliveryTriggerParts)
             || array_key_exists('fragment', $deliveryTriggerParts)
         ))
+        || !is_array($projectCatalogParts)
+        || ($projectCatalogScheme !== 'https' && !($projectCatalogScheme === 'http' && $projectCatalogIsLoopback))
+        || $projectCatalogHost === ''
+        || array_key_exists('user', $projectCatalogParts)
+        || array_key_exists('pass', $projectCatalogParts)
+        || array_key_exists('query', $projectCatalogParts)
+        || array_key_exists('fragment', $projectCatalogParts)
         || $retentionDays === false || $retentionDays < 1 || $retentionDays > 365) {
         presensi_error(503, 'configuration_invalid', 'Konfigurasi presensi tidak valid.');
     }
@@ -153,70 +169,94 @@ function presensi_config(): array
         presensi_error(503, 'configuration_invalid', 'Konfigurasi presensi memiliki identitas ganda atau tidak sesuai.');
     }
 
-    $projects = [];
-    $allProjectIds = [];
-    $allProjectNames = [];
-    foreach ($config['projects'] as $row) {
-        $projectId = is_array($row) ? (string) ($row['id'] ?? '') : '';
-        $projectName = is_array($row) ? trim((string) ($row['name'] ?? '')) : '';
-        if (!is_array($row)
-            || !preg_match('/^[a-z0-9][a-z0-9-]{1,63}$/', $projectId)
-            || $projectName === ''
-            || !array_key_exists('active', $row)
-            || !is_bool($row['active'])) {
-            presensi_error(503, 'configuration_invalid', 'Konfigurasi proyek tidak valid.');
-        }
-        $allProjectIds[] = $projectId;
-        $allProjectNames[] = strtolower($projectName);
-        if ($row['active'] !== true) {
-            continue;
-        }
-        if (trim((string) ($row['company'] ?? '')) === '') {
-            presensi_error(503, 'configuration_invalid', 'Konfigurasi proyek tidak valid.');
-        }
-        $projects[] = [
-            'id' => $projectId,
-            'name' => $projectName,
-            'company' => trim((string) $row['company']),
-        ];
-    }
-    if (count(array_unique($allProjectIds)) !== count($allProjectIds)
-        || count(array_unique($allProjectNames)) !== count($allProjectNames)) {
-        presensi_error(503, 'configuration_invalid', 'Konfigurasi presensi memiliki identitas ganda atau tidak sesuai.');
-    }
     return [
         'employees' => $employees,
-        'projects' => $projects,
         'retention_days' => (int) $retentionDays,
         'outbox_shared_secret' => $outboxSecret,
         'delivery_trigger_url' => $deliveryTriggerUrl,
+        'project_catalog_url' => $projectCatalogUrl,
     ];
 }
 
-function presensi_trigger_delivery(array $config): void
+function presensi_remote_context(array $config, string $method): mixed
 {
-    $url = (string) ($config['delivery_trigger_url'] ?? '');
-    if ($url === '') return;
-    $headers = [
-        'Accept: application/json',
-        'Content-Length: 0',
-        'X-Presensi-Secret: ' . (string) $config['outbox_shared_secret'],
-    ];
-    $context = stream_context_create([
+    return stream_context_create([
         'http' => [
-            'method' => 'POST',
-            'header' => implode("\r\n", $headers),
+            'method' => $method,
+            'header' => implode("\r\n", [
+                'Accept: application/json',
+                'Content-Length: 0',
+                'X-Presensi-Secret: ' . (string) $config['outbox_shared_secret'],
+            ]),
             'content' => '',
-            'timeout' => 1.5,
+            'timeout' => 3.0,
             'ignore_errors' => true,
             'follow_location' => 0,
             'max_redirects' => 0,
         ],
         'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
     ]);
+}
+
+function presensi_http_status(array $headers): int
+{
+    $line = (string) ($headers[0] ?? '');
+    return preg_match('/\s(\d{3})(?:\s|$)/', $line, $match) === 1 ? (int) $match[1] : 0;
+}
+
+function presensi_utf8_length(string $value): ?int
+{
+    if (preg_match('//u', $value) !== 1) {
+        return null;
+    }
+    $count = preg_match_all('/./us', $value, $matches);
+    return $count === false ? null : $count;
+}
+
+function presensi_active_projects(array $config): array
+{
+    $url = (string) ($config['project_catalog_url'] ?? '');
+    $body = @file_get_contents($url, false, presensi_remote_context($config, 'GET'));
+    $headers = is_array($http_response_header ?? null) ? $http_response_header : [];
+    if (!is_string($body) || presensi_http_status($headers) !== 200 || strlen($body) > 262144) {
+        presensi_error(503, 'project_catalog_unavailable', 'Daftar proyek aktif belum tersedia. Coba lagi.');
+    }
+    try {
+        $payload = json_decode($body, true, 64, JSON_THROW_ON_ERROR);
+    } catch (JsonException) {
+        presensi_error(503, 'project_catalog_unavailable', 'Daftar proyek aktif belum tersedia. Coba lagi.');
+    }
+    if (!is_array($payload) || ($payload['version'] ?? '') !== 'presensi.projects.v1' || !is_array($payload['projects'] ?? null)) {
+        presensi_error(503, 'project_catalog_unavailable', 'Daftar proyek aktif belum tersedia. Coba lagi.');
+    }
+    $projects = [];
+    $ids = [];
+    foreach ($payload['projects'] as $row) {
+        $projectId = is_array($row) ? trim((string) ($row['id'] ?? '')) : '';
+        $projectName = is_array($row) ? trim((string) ($row['name'] ?? '')) : '';
+        $company = is_array($row) ? trim((string) ($row['company'] ?? '')) : '';
+        $projectNameLength = presensi_utf8_length($projectName);
+        $companyLength = presensi_utf8_length($company);
+        if (!is_array($row)
+            || !preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/D', strtolower($projectId))
+            || $projectName === '' || $projectNameLength === null || $projectNameLength > 200
+            || $company === '' || $companyLength === null || $companyLength > 120
+            || isset($ids[$projectId])) {
+            presensi_error(503, 'project_catalog_invalid', 'Daftar proyek aktif tidak valid.');
+        }
+        $ids[$projectId] = true;
+        $projects[] = ['id' => $projectId, 'name' => $projectName, 'company' => $company];
+    }
+    return $projects;
+}
+
+function presensi_trigger_delivery(array $config): void
+{
+    $url = (string) ($config['delivery_trigger_url'] ?? '');
+    if ($url === '') return;
     // The record is already durable. Delivery is best-effort here; the outbox
     // remains authoritative and can be retried safely by the bounded worker.
-    @file_get_contents($url, false, $context, 0, 1);
+    @file_get_contents($url, false, presensi_remote_context($config, 'POST'), 0, 1);
 }
 
 function presensi_find_named(array $rows, string $id): ?array

@@ -16,7 +16,9 @@ from pathlib import PurePosixPath
 from typing import cast
 
 DEFAULT_REMOTE = ".hollawall-admin.php"
+DEFAULT_PRESENSI_REMOTE = ".hollawall-presensi.php"
 DEFAULT_BACKEND_ORIGIN = "https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app"
+DEFAULT_PROJECT_CATALOG_URL = DEFAULT_BACKEND_ORIGIN + "/internal/presensi/projects"
 DEFAULT_CANONICAL_URL = DEFAULT_BACKEND_ORIGIN + "/api/dashboard/v1/canonical-transactions"
 DEFAULT_SNAPSHOT_URL = DEFAULT_BACKEND_ORIGIN + "/api/dashboard/v1/snapshot"
 DEFAULT_AUDIENCE = "hollawall-finance-api"
@@ -81,6 +83,95 @@ def download(ftp: FTP_TLS, path: str) -> bytes:
     return buffer.getvalue()
 
 
+def prepare_replace(ftp: FTP_TLS, remote: str, updated: bytes, timestamp: str) -> dict[str, object]:
+    staging = f"{remote}.__next_{timestamp}"
+    backup = f"{remote}.__prev_{timestamp}"
+    if exists(ftp, staging) or exists(ftp, backup):
+        raise RuntimeError(f"staging or backup collision for {remote}")
+    original = download(ftp, remote)
+    ftp.storbinary(f"STOR {staging}", io.BytesIO(updated))
+    if download(ftp, staging) != updated:
+        if exists(ftp, staging):
+            ftp.delete(staging)
+        raise RuntimeError(f"staged config readback mismatch for {remote}")
+    return {
+        "remote": remote,
+        "staging": staging,
+        "backup": backup,
+        "original": original,
+        "updated": updated,
+    }
+
+
+def restore_prepared(ftp: FTP_TLS, item: dict[str, object]) -> None:
+    remote = cast(str, item["remote"])
+    backup = cast(str, item["backup"])
+    original = cast(bytes, item["original"])
+    if exists(ftp, remote):
+        ftp.delete(remote)
+    if not exists(ftp, backup):
+        raise RuntimeError(f"rollback backup missing for {remote}")
+    ftp.rename(backup, remote)
+    if download(ftp, remote) != original:
+        raise RuntimeError(f"rollback readback mismatch for {remote}")
+
+
+def atomic_replace_many(
+    ftp: FTP_TLS,
+    updates: list[tuple[str, bytes]],
+    timestamp: str,
+) -> list[dict[str, object]]:
+    prepared: list[dict[str, object]] = []
+    activated: list[dict[str, object]] = []
+    try:
+        for remote, updated in updates:
+            prepared.append(prepare_replace(ftp, remote, updated, timestamp))
+        for item in prepared:
+            remote = cast(str, item["remote"])
+            staging = cast(str, item["staging"])
+            backup = cast(str, item["backup"])
+            ftp.rename(remote, backup)
+            try:
+                ftp.rename(staging, remote)
+                if download(ftp, remote) != cast(bytes, item["updated"]):
+                    raise RuntimeError(f"final config readback mismatch for {remote}")
+            except Exception:
+                restore_prepared(ftp, item)
+                raise
+            activated.append(item)
+    except Exception as activation_error:
+        rollback_errors: list[str] = []
+        for item in reversed(activated):
+            try:
+                restore_prepared(ftp, item)
+            except Exception as rollback_error:  # pragma: no cover - catastrophic remote failure
+                rollback_errors.append(str(rollback_error))
+        for item in prepared:
+            staging = cast(str, item["staging"])
+            if exists(ftp, staging):
+                ftp.delete(staging)
+        if rollback_errors:
+            raise RuntimeError("config activation failed and rollback was incomplete: " + "; ".join(rollback_errors)) from activation_error
+        raise
+
+    return [
+        {
+            "remote": item["remote"],
+            "backup": item["backup"],
+            "before_sha256": hashlib.sha256(cast(bytes, item["original"])).hexdigest(),
+            "after_sha256": hashlib.sha256(cast(bytes, item["updated"])).hexdigest(),
+            "staged_readback": True,
+            "final_readback": True,
+        }
+        for item in prepared
+    ]
+
+
+def atomic_replace(ftp: FTP_TLS, remote: str, updated: bytes, timestamp: str) -> dict[str, object]:
+    """Compatibility wrapper for one-file callers."""
+    return atomic_replace_many(ftp, [(remote, updated)], timestamp)[0]
+
+
 def exists(ftp: FTP_TLS, path: str) -> bool:
     try:
         ftp.size(path)
@@ -92,6 +183,8 @@ def exists(ftp: FTP_TLS, path: str) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--remote", default=DEFAULT_REMOTE)
+    parser.add_argument("--presensi-remote", default=DEFAULT_PRESENSI_REMOTE)
+    parser.add_argument("--project-catalog-url", default=DEFAULT_PROJECT_CATALOG_URL)
     parser.add_argument("--canonical-url", default=DEFAULT_CANONICAL_URL)
     parser.add_argument("--snapshot-url", default=DEFAULT_SNAPSHOT_URL)
     parser.add_argument("--audience", default=DEFAULT_AUDIENCE)
@@ -110,13 +203,15 @@ def main() -> int:
         raise RuntimeError("owner email is invalid")
 
     remote = safe_remote(args.remote)
+    presensi_remote = safe_remote(args.presensi_remote)
+    project_catalog_url = str(args.project_catalog_url).strip()
+    catalog_parts = project_catalog_url.split("/", 3)
+    if len(catalog_parts) < 4 or catalog_parts[0] != "https:" or not catalog_parts[2]:
+        raise RuntimeError("project catalog URL must be HTTPS")
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    staging = f"{remote}.__next_{timestamp}"
-    backup = f"{remote}.__prev_{timestamp}"
     evidence: dict[str, object] = {
         "remote": remote,
-        "staging": staging,
-        "backup": backup,
+        "presensi_remote": presensi_remote,
         "success": False,
         "rolled_back": False,
     }
@@ -134,37 +229,34 @@ def main() -> int:
         updated = text.encode("utf-8")
         if secret.encode("utf-8") not in updated:
             raise RuntimeError("secret synchronization validation failed")
-        if exists(ftp, staging) or exists(ftp, backup):
-            raise RuntimeError("staging or backup collision")
 
-        ftp.storbinary(f"STOR {staging}", io.BytesIO(updated))
-        staged = download(ftp, staging)
-        if staged != updated:
-            raise RuntimeError("staged config readback mismatch")
+        presensi_original = download(ftp, presensi_remote)
+        presensi_text = replace_php_value(
+            presensi_original.decode("utf-8"), "project_catalog_url", project_catalog_url
+        )
+        presensi_updated = presensi_text.encode("utf-8")
 
-        ftp.rename(remote, backup)
-        try:
-            ftp.rename(staging, remote)
-            final = download(ftp, remote)
-            if final != updated:
-                raise RuntimeError("final config readback mismatch")
-        except Exception:
-            if exists(ftp, remote):
-                ftp.delete(remote)
-            ftp.rename(backup, remote)
-            evidence["rolled_back"] = True
-            raise
-
+        admin_result, presensi_result = atomic_replace_many(
+            ftp,
+            [(remote, updated), (presensi_remote, presensi_updated)],
+            timestamp,
+        )
         evidence.update(
             {
                 "success": True,
-                "before_sha256": hashlib.sha256(original).hexdigest(),
-                "after_sha256": hashlib.sha256(updated).hexdigest(),
+                "before_sha256": admin_result["before_sha256"],
+                "after_sha256": admin_result["after_sha256"],
                 "staged_readback": True,
                 "final_readback": True,
                 "canonical_url_host": args.canonical_url.split("/", 3)[2],
                 "snapshot_url_host": args.snapshot_url.split("/", 3)[2],
                 "snapshot_url_configured": True,
+                "project_catalog_url_host": catalog_parts[2],
+                "project_catalog_url_configured": True,
+                "presensi_config_before_sha256": presensi_result["before_sha256"],
+                "presensi_config_after_sha256": presensi_result["after_sha256"],
+                "presensi_staged_readback": presensi_result["staged_readback"],
+                "presensi_final_readback": presensi_result["final_readback"],
                 "audience": args.audience,
                 "owner_email_configured": True,
                 "secret_present": True,

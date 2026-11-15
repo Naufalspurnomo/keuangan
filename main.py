@@ -319,7 +319,18 @@ _PROJECT_DOCUMENT_SCHEMA_AT_STARTUP = migrate_project_document_schema_at_startup
 # Register the optional private dashboard only when its database is configured.
 # This does not alter /health, /webhook_wuzapi, or /telegram behavior.
 register_dashboard(app)
-register_presensi_delivery_endpoint(app)
+
+
+def _presensi_active_projects():
+    dsn = str(os.getenv('STATE_DATABASE_URL') or os.getenv('DATABASE_URL') or '').strip()
+    if not dsn:
+        raise ProjectDocumentUnavailable('Presensi project catalog requires PostgreSQL')
+    from services.project_document_repository import ProjectDocumentRepository
+
+    return ProjectDocumentRepository(dsn).list_projects()
+
+
+register_presensi_delivery_endpoint(app, active_projects=_presensi_active_projects)
 
 # Configuration Flags
 DEBUG = os.getenv('FLASK_DEBUG', '0') == '1'
