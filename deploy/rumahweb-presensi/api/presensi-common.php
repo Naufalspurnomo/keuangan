@@ -204,7 +204,14 @@ function presensi_http_status(array $headers): int
     return preg_match('/\s(\d{3})(?:\s|$)/', $line, $match) === 1 ? (int) $match[1] : 0;
 }
 
-function presensi_remote_request(array $config, string $method, string $url, int $maxBytes): array
+function presensi_remote_request(
+    array $config,
+    string $method,
+    string $url,
+    int $maxBytes,
+    int $connectTimeout = 3,
+    int $totalTimeout = 5,
+): array
 {
     if (function_exists('curl_init')) {
         $body = '';
@@ -221,8 +228,8 @@ function presensi_remote_request(array $config, string $method, string $url, int
                 'X-Presensi-Secret: ' . (string) $config['outbox_shared_secret'],
             ],
             CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_CONNECTTIMEOUT => 3,
-            CURLOPT_TIMEOUT => 5,
+            CURLOPT_CONNECTTIMEOUT => $connectTimeout,
+            CURLOPT_TIMEOUT => $totalTimeout,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_NOSIGNAL => true,
@@ -264,7 +271,7 @@ function presensi_utf8_length(string $value): ?int
 function presensi_active_projects(array $config): array
 {
     $url = (string) ($config['project_catalog_url'] ?? '');
-    $response = presensi_remote_request($config, 'GET', $url, 262144);
+    $response = presensi_remote_request($config, 'GET', $url, 262144, 12, 20);
     $body = $response['body'];
     if (!is_string($body) || $response['status'] !== 200) {
         presensi_error(503, 'project_catalog_unavailable', 'Daftar proyek aktif belum tersedia. Coba lagi.');

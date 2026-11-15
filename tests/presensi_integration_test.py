@@ -67,6 +67,7 @@ class PresensiIntegrationTests(unittest.TestCase):
             {"id": PROJECT_A, "name": "Griya Wellness Center", "company": "Holla"},
             {"id": PROJECT_B, "name": "Fajar Distribution Hub", "company": "Texturin Surabaya"},
         ]
+        self.catalog_delay_seconds = 0.0
         owner = self
 
         class CatalogHandler(BaseHTTPRequestHandler):
@@ -75,6 +76,8 @@ class PresensiIntegrationTests(unittest.TestCase):
                     self.send_response(401)
                     self.end_headers()
                     return
+                if owner.catalog_delay_seconds:
+                    time.sleep(owner.catalog_delay_seconds)
                 body = json.dumps({"version": "presensi.projects.v1", "projects": owner.active_projects}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -179,7 +182,7 @@ class PresensiIntegrationTests(unittest.TestCase):
         self.assertEqual(login.status_code, 200, login.text)
         session_id = login.cookies.get("hollawall_presensi") or session_id
         cookie = {"Cookie": f"hollawall_presensi={session_id}"}
-        response = requests.get(origin + "/absen/api/bootstrap.php", headers=cookie, timeout=5)
+        response = requests.get(origin + "/absen/api/bootstrap.php", headers=cookie, timeout=25)
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertTrue(payload["authenticated"])
@@ -216,6 +219,12 @@ class PresensiIntegrationTests(unittest.TestCase):
         authenticated = response.cookies.get("hollawall_admin")
         self.assertTrue(authenticated)
         return {"Cookie": f"hollawall_admin={authenticated}"}
+
+    def test_catalog_tolerates_backend_cold_start_beyond_old_timeout(self) -> None:
+        self.catalog_delay_seconds = 5.5
+        with self.server() as origin:
+            bootstrap, _cookie = self.public_bootstrap(origin)
+            self.assertEqual(len(bootstrap["projects"]), 2)
 
     def test_catalog_accepts_database_valid_multibyte_character_limits(self) -> None:
         self.active_projects = [{
