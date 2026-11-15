@@ -1422,8 +1422,8 @@ class ProjectDocumentRepository:
     @staticmethod
     def _load_quotation(cursor: Any, quotation_id: str, *, for_update: bool = False) -> dict[str, Any]:
         cursor.execute(
-            "SELECT " + _SELECT_QUOTATION + " FROM project_quotation_handoffs WHERE id = %s" +
-            (" FOR UPDATE" if for_update else ""),  # nosec B608 -- internal column/lock constants
+            "SELECT " + _SELECT_QUOTATION + " FROM project_quotation_handoffs WHERE id = %s" +  # nosec B608 -- internal column/lock constants
+            (" FOR UPDATE" if for_update else ""),
             (quotation_id,),
         )
         quotation = ProjectDocumentRepository._quotation_metadata(cursor.fetchone())
@@ -1489,8 +1489,8 @@ class ProjectDocumentRepository:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
                     cursor.execute(
-                        "SELECT " + _SELECT_QUOTATION +
-                        " FROM project_quotation_handoffs WHERE project_id = %s ORDER BY version DESC",  # nosec B608
+                        "SELECT " + _SELECT_QUOTATION +  # nosec B608 -- internal column constant
+                        " FROM project_quotation_handoffs WHERE project_id = %s ORDER BY version DESC",
                         (project_id,),
                     )
                     return [self._quotation_metadata(row) or {} for row in cursor.fetchall()]
@@ -1644,8 +1644,8 @@ class ProjectDocumentRepository:
                     if replay is not None:
                         return replay
                     cursor.execute(
-                        "SELECT " + _SELECT_QUOTATION +
-                        " FROM project_quotation_handoffs WHERE id = %s FOR UPDATE",  # nosec B608
+                        "SELECT " + _SELECT_QUOTATION +  # nosec B608 -- internal column constant
+                        " FROM project_quotation_handoffs WHERE id = %s FOR UPDATE",
                         (quotation_id,),
                     )
                     current = self._quotation_metadata(cursor.fetchone())
@@ -1718,8 +1718,8 @@ class ProjectDocumentRepository:
                     if replay is not None:
                         return replay
                     cursor.execute(
-                        "SELECT " + _SELECT_QUOTATION +
-                        " FROM project_quotation_handoffs WHERE id = %s FOR UPDATE",  # nosec B608
+                        "SELECT " + _SELECT_QUOTATION +  # nosec B608 -- internal column constant
+                        " FROM project_quotation_handoffs WHERE id = %s FOR UPDATE",
                         (quotation_id,),
                     )
                     current = self._quotation_metadata(cursor.fetchone())
@@ -1802,8 +1802,8 @@ class ProjectDocumentRepository:
                     if replay is not None:
                         return replay
                     cursor.execute(
-                        "SELECT " + _SELECT_QUOTATION +
-                        " FROM project_quotation_handoffs WHERE id = %s FOR UPDATE",  # nosec B608
+                        "SELECT " + _SELECT_QUOTATION +  # nosec B608 -- internal column constant
+                        " FROM project_quotation_handoffs WHERE id = %s FOR UPDATE",
                         (quotation_id,),
                     )
                     quotation = self._quotation_metadata(cursor.fetchone())
