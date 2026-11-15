@@ -54,13 +54,33 @@ def upsert_php_literal(text: str, key: str, literal: str) -> str:
         return updated
 
     normalized = text.lstrip("\ufeff").lstrip()
+    if not normalized.startswith("<?php") or re.search(r"\b(?:class|function|namespace)\b", normalized):
+        raise RuntimeError("config is not a supported PHP config document")
+
     return_arrays = list(re.finditer(r"\breturn\s*\[", normalized))
-    closing = re.search(r"(?P<tail>\]\s*;)(?P<suffix>\s*(?:\?>\s*)?)\Z", text)
-    has_config_entries = len(return_arrays) == 1 and "=>" in normalized[return_arrays[0].end() :]
-    if not normalized.startswith("<?php") or not has_config_entries or closing is None:
-        raise RuntimeError("config is not a single return-array document")
-    insertion = f"\n    {php_single_quoted(key)} => {literal},"
-    return text[: closing.start("tail")] + insertion + text[closing.start("tail") :]
+    closing = re.search(
+        r"(?P<tail>\]\s*;)(?P<suffix>\s*(?:(?://[^\r\n]*|/\*.*?\*/)\s*)*(?:\?>\s*)?)\Z",
+        text,
+        re.DOTALL,
+    )
+    if len(return_arrays) == 1 and closing is not None and "=>" in normalized[return_arrays[0].end() :]:
+        insertion = f"\n    {php_single_quoted(key)} => {literal},"
+        return text[: closing.start("tail")] + insertion + text[closing.start("tail") :]
+
+    # Older production provisioners used either return array(...) or assigned
+    # the array to $config before returning it. In both forms the unique
+    # top-level employees key is a stable, syntax-preserving insertion anchor.
+    employees = list(re.finditer(r"(?m)^(?P<indent>\s*)'employees'\s*=>", text))
+    projects = list(re.finditer(r"(?m)^\s*'projects'\s*=>", text))
+    legacy_wrapper = bool(
+        re.search(r"\breturn\s+array\s*\(", normalized)
+        or (re.search(r"\$config\s*=\s*(?:\[|array\s*\()", normalized) and re.search(r"\breturn\s+\$config\s*;", normalized))
+    )
+    if not legacy_wrapper or len(employees) != 1 or len(projects) != 1:
+        raise RuntimeError("config is not a supported PHP config document")
+    anchor = employees[0]
+    insertion = f"{anchor.group('indent')}{php_single_quoted(key)} => {literal},\n"
+    return text[: anchor.start()] + insertion + text[anchor.start() :]
 
 
 def replace_php_value(text: str, key: str, value: str) -> str:

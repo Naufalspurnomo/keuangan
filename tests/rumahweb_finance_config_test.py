@@ -128,13 +128,26 @@ def test_finance_config_adds_missing_keys_to_single_return_array() -> None:
 
 def test_finance_config_accepts_legacy_bom_and_closing_tag_wrapper() -> None:
     module = load_module()
-    source = "\ufeff<?php\nreturn [\n  'employees' => [['id' => 'pegawai-1']],\n];\n?>\n"
+    source = "\ufeff<?php\nreturn [\n  'employees' => [['id' => 'pegawai-1']],\n];\n/* legacy provisioner */\n?>\n"
 
     updated = module.replace_php_value(source, "project_catalog_url", module.DEFAULT_PROJECT_CATALOG_URL)
 
     assert updated.startswith("\ufeff<?php")
     assert module.DEFAULT_PROJECT_CATALOG_URL in updated
     assert updated.rstrip().endswith("?>")
+
+
+@pytest.mark.parametrize("source", [
+    "<?php\nreturn array(\n  'employees' => array(array('id' => 'pegawai-1')),\n  'projects' => array(),\n);\n",
+    "<?php\n$config = [\n  'employees' => [['id' => 'pegawai-1']],\n  'projects' => [],\n];\nreturn $config;\n",
+])
+def test_finance_config_accepts_supported_legacy_array_wrappers(source: str) -> None:
+    module = load_module()
+
+    updated = module.replace_php_value(source, "project_catalog_url", module.DEFAULT_PROJECT_CATALOG_URL)
+
+    assert updated.count("project_catalog_url") == 1
+    assert updated.index("project_catalog_url") < updated.index("employees")
 
 
 def test_finance_config_fails_closed_for_duplicate_key_or_invalid_document() -> None:
