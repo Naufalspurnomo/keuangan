@@ -79,6 +79,43 @@ def _env_positive_int(name: str, *, default: int) -> int:
     return value
 
 
+def _export_enabled() -> bool:
+    """Default on only inside a fully configured Koyeb production runtime."""
+    external_ready = bool(
+        str(os.getenv("KOYEB_SERVICE_ID") or "").strip()
+        and str(os.getenv("STATE_DATABASE_URL") or os.getenv("DATABASE_URL") or "").strip()
+        and str(os.getenv("GOOGLE_SHEETS_ID") or "").strip()
+        and str(os.getenv("GOOGLE_CREDENTIALS") or "").strip()
+    )
+    return _env_bool("FINANCIAL_EXPORT_ENABLED", default=external_ready)
+
+
+def _worksheet_is_protected(spreadsheet: Any, worksheet: Any) -> bool:
+    metadata = spreadsheet.fetch_sheet_metadata(
+        params={
+            "fields": (
+                "sheets(properties(sheetId),"
+                "protectedRanges(range,warningOnly))"
+            )
+        }
+    )
+    worksheet_id = int(getattr(worksheet, "id"))
+    for sheet in metadata.get("sheets", []):
+        if int(sheet.get("properties", {}).get("sheetId", -1)) != worksheet_id:
+            continue
+        for protected in sheet.get("protectedRanges", []):
+            if protected.get("warningOnly"):
+                continue
+            cell_range = protected.get("range", {})
+            if int(cell_range.get("sheetId", -1)) != worksheet_id:
+                continue
+            start_column = int(cell_range.get("startColumnIndex", 0))
+            end_column = cell_range.get("endColumnIndex")
+            if start_column == 0 and (end_column is None or int(end_column) >= 10):
+                return True
+    return False
+
+
 def build_export_worker() -> ExportWorker:
     """Build the protected PostgreSQL-to-Sheets delivery boundary."""
     dsn = str(os.getenv("STATE_DATABASE_URL") or os.getenv("DATABASE_URL") or "").strip()
@@ -92,7 +129,10 @@ def build_export_worker() -> ExportWorker:
     if not workbook_id:
         raise RuntimeError("financial export requires GOOGLE_SHEETS_ID")
 
-    if not _env_bool("FINANCIAL_EXPORT_PROTECTED_DESTINATION"):
+    protected_setting = os.getenv("FINANCIAL_EXPORT_PROTECTED_DESTINATION")
+    if protected_setting is not None and not _env_bool(
+        "FINANCIAL_EXPORT_PROTECTED_DESTINATION"
+    ):
         raise RuntimeError("financial export requires a protected destination")
 
     worksheet_title = str(
@@ -103,6 +143,8 @@ def build_export_worker() -> ExportWorker:
 
     spreadsheet = get_spreadsheet()
     worksheet = spreadsheet.worksheet(worksheet_title)
+    if not _worksheet_is_protected(spreadsheet, worksheet):
+        raise RuntimeError("financial export destination is not protected")
     remote = GoogleSheetsRemoteExport(
         worksheet,
         expected_workbook_id=workbook_id,
@@ -151,7 +193,7 @@ def run_financial_export_service(
     *, stop_event: threading.Event | None = None
 ) -> None:
     """Run the external-runtime export service when explicitly enabled."""
-    enabled = _env_bool("FINANCIAL_EXPORT_ENABLED")
+    enabled = _export_enabled()
     _set_state(enabled=enabled, running=False, ready=False, last_result=None, last_error=None)
     if not enabled:
         secure_log("INFO", "Financial export worker disabled")

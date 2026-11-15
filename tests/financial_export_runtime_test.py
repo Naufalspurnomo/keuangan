@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class FakeWorksheet:
     title = "_CANONICAL_FINANCE_EXPORT"
+    id = 123
 
 
 class FakeSpreadsheet:
@@ -22,6 +23,25 @@ class FakeSpreadsheet:
     def worksheet(self, title: str):
         assert title == FakeWorksheet.title
         return FakeWorksheet()
+
+    def fetch_sheet_metadata(self, *, params):
+        assert "protectedRanges" in params["fields"]
+        return {
+            "sheets": [
+                {
+                    "properties": {"sheetId": FakeWorksheet.id},
+                    "protectedRanges": [
+                        {
+                            "range": {
+                                "sheetId": FakeWorksheet.id,
+                                "startColumnIndex": 0,
+                                "endColumnIndex": 10,
+                            }
+                        }
+                    ],
+                }
+            ]
+        }
 
 
 class FakeOutbox:
@@ -96,6 +116,43 @@ def test_build_worker_fails_closed_when_export_is_not_protected(monkeypatch: pyt
 
     with pytest.raises(RuntimeError, match="protected destination"):
         runtime.build_export_worker()
+
+
+def test_build_worker_fails_closed_when_sheet_has_no_protected_range(monkeypatch: pytest.MonkeyPatch) -> None:
+    class UnprotectedSpreadsheet(FakeSpreadsheet):
+        def fetch_sheet_metadata(self, *, params):
+            return {"sheets": [{"properties": {"sheetId": FakeWorksheet.id}}]}
+
+    monkeypatch.setenv("STATE_DATABASE_URL", "postgresql://external.example/db")
+    monkeypatch.setenv("GOOGLE_SHEETS_ID", "sheet-workbook-123")
+    monkeypatch.setenv("FINANCIAL_EXPORT_WORKSHEET", FakeWorksheet.title)
+    monkeypatch.delenv("FINANCIAL_EXPORT_PROTECTED_DESTINATION", raising=False)
+    monkeypatch.setattr(runtime, "get_spreadsheet", lambda: UnprotectedSpreadsheet())
+
+    with pytest.raises(RuntimeError, match="destination is not protected"):
+        runtime.build_export_worker()
+
+
+def test_export_defaults_on_only_for_fully_configured_koyeb(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in (
+        "FINANCIAL_EXPORT_ENABLED",
+        "KOYEB_SERVICE_ID",
+        "STATE_DATABASE_URL",
+        "DATABASE_URL",
+        "GOOGLE_SHEETS_ID",
+        "GOOGLE_CREDENTIALS",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    assert runtime._export_enabled() is False
+
+    monkeypatch.setenv("KOYEB_SERVICE_ID", "service-123")
+    monkeypatch.setenv("STATE_DATABASE_URL", "postgresql://external.example/db")
+    monkeypatch.setenv("GOOGLE_SHEETS_ID", "sheet-workbook-123")
+    monkeypatch.setenv("GOOGLE_CREDENTIALS", '{"private_key":"secret"}')
+    assert runtime._export_enabled() is True
+
+    monkeypatch.setenv("FINANCIAL_EXPORT_ENABLED", "false")
+    assert runtime._export_enabled() is False
 
 
 def test_export_loop_is_stop_event_driven_and_runs_worker(monkeypatch: pytest.MonkeyPatch) -> None:
