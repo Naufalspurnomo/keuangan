@@ -673,14 +673,12 @@ class ProjectDocumentRouteTests(unittest.TestCase):
         self.assertEqual(transitioned.status_code, 200)
         self.assertEqual(self.envelope(transitioned)["data"]["status"], "sent")
 
-        applied = client.post(
+        removed = client.post(
             f"/api/dashboard/v1/quotations/{EVIDENCE_ID}/apply",
             data=json.dumps({"idempotency_key": IDEMPOTENCY_KEY, "sales_order_version": 4}),
             headers=self.write_headers(version="*"),
         )
-        self.assertEqual(applied.status_code, 200)
-        apply_call = next(call for call in repository.calls if call[0] == "apply_accepted_quotation_to_sales_order")
-        self.assertEqual(apply_call[2]["expected_document_version"], 4)
+        self.assertEqual(removed.status_code, 404)
 
     def test_structured_quotation_edit_revision_and_deal_routes(self):
         app, repository = self.make_app(enabled=True)
@@ -717,6 +715,7 @@ class ProjectDocumentRouteTests(unittest.TestCase):
             data=json.dumps({
                 "idempotency_key": "project-document-test-0003",
                 "expected_version": 1,
+                "sales_order_id": DOCUMENT_ID,
                 "sales_order_version": 4,
                 "dp_percent": 30,
                 "remaining_installments": 2,
@@ -727,6 +726,7 @@ class ProjectDocumentRouteTests(unittest.TestCase):
         deal_call = next(call for call in repository.calls if call[0] == "deal_project_quotation")
         self.assertEqual(deal_call[2]["dp_percent"], 30)
         self.assertEqual(deal_call[2]["remaining_installments"], 2)
+        self.assertEqual(deal_call[2]["expected_document_id"], DOCUMENT_ID)
         self.assertEqual(deal_call[2]["expected_document_version"], 4)
 
 

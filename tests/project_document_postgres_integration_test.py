@@ -71,6 +71,7 @@ def dsn():
     evidence_migration = (migration_root / "007_project_transaction_evidence.sql").read_text(encoding="utf-8")
     quotation_migration = (migration_root / "008_project_quotation_handoffs.sql").read_text(encoding="utf-8")
     structured_quotation_migration = (migration_root / "019_structured_quotations.sql").read_text(encoding="utf-8")
+    quotation_invariant_migration = (migration_root / "020_quotation_invariants.sql").read_text(encoding="utf-8")
     with psycopg.connect(selected, autocommit=True) as connection:
         with connection.cursor() as cursor:
             cursor.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
@@ -108,6 +109,7 @@ def dsn():
             cursor.execute(evidence_migration)
             cursor.execute(quotation_migration)
             cursor.execute(structured_quotation_migration)
+            cursor.execute(quotation_invariant_migration)
     return selected
 
 
@@ -704,6 +706,7 @@ def test_invoice_with_zero_lines_is_rejected_before_numbering_and_rendering(dsn)
 
 def test_canonical_issuance_renders_locked_state_and_persists_exact_bytes(repository):
     created = project(repository)
+    valid_image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
     draft = repository.update_draft(
         created["sales_order"]["id"],
         {
@@ -711,7 +714,7 @@ def test_canonical_issuance_renders_locked_state_and_persists_exact_bytes(reposi
             "tax_percent": "2",
             "prepared_by": "Naufal",
             "client_signatory": "PT Client",
-            "project_image_url": "data:image/png;base64,Zm9v",
+            "project_image_url": valid_image,
             "lines": [
                 {
                     "description": "Backdrop",
@@ -733,7 +736,7 @@ def test_canonical_issuance_renders_locked_state_and_persists_exact_bytes(reposi
     assert snapshot["document"]["id"] == draft["id"]
     assert snapshot["document"]["prepared_by"] == "Naufal"
     assert snapshot["document"]["client_signatory"] == "PT Client"
-    assert snapshot["document"]["project_image_url"] == "data:image/png;base64,Zm9v"
+    assert snapshot["document"]["project_image_url"] == valid_image
     assert snapshot["issuer"]["legal_name"] == "CV Holla Berkreasi"
     assert snapshot["project"]["client_name"] == "PT Client"
     assert snapshot["lines"][0]["line_total"] == 250_000
@@ -758,12 +761,13 @@ def test_canonical_issuance_renders_locked_state_and_persists_exact_bytes(reposi
 def test_document_metadata_round_trips_and_rejects_unsafe_project_images(repository):
     created = project(repository, key="document-metadata-project-0001")
     draft = created["sales_order"]
+    valid_image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
     updated = repository.update_draft(
         draft["id"],
         {
             "prepared_by": "Naufal",
             "client_signatory": "PT Client",
-            "project_image_url": "data:image/jpeg;base64,Zm9v",
+            "project_image_url": valid_image,
         },
         expected_version=draft["lock_version"],
         idempotency_key="document-metadata-update-0001",
@@ -771,10 +775,11 @@ def test_document_metadata_round_trips_and_rejects_unsafe_project_images(reposit
     )
     assert updated["prepared_by"] == "Naufal"
     assert updated["client_signatory"] == "PT Client"
-    assert updated["project_image_url"] == "data:image/jpeg;base64,Zm9v"
+    assert updated["project_image_url"] == valid_image
 
     for key, image in (
         ("remote", "https://example.com/project.png"),
+        ("malformed", "data:image/jpeg;base64,Zm9v"),
         ("oversize", f"data:image/png;base64,{'A' * 196_609}"),
     ):
         with pytest.raises(ValueError, match="project_image_url"):
@@ -2067,7 +2072,8 @@ def test_sql_lifecycle_terminal_immutability_and_no_delete_guards(repository, ds
 def test_schema_health_detects_missing_exact_trigger(repository, dsn):
     import psycopg
 
-    assert project_document_schema_health(dsn)["ready"] is True
+    initial_health = project_document_schema_health(dsn)
+    assert initial_health["ready"] is True, initial_health
     with psycopg.connect(dsn) as connection:
         with connection.cursor() as cursor:
             cursor.execute("DROP TRIGGER trg_projects_no_delete ON projects")
@@ -2576,7 +2582,7 @@ def test_canva_quotation_cannot_bypass_structured_atomic_deal(repository):
     with pytest.raises(ProjectDocumentConflict, match="structured lines and project image"):
         repository.deal_project_quotation(
             quotation["id"], dp_percent=30, remaining_installments=1,
-            custom_installments=None, expected_version=sent["lock_version"],
+            expected_version=sent["lock_version"], expected_document_id=sales_order["id"],
             expected_document_version=sales_order["lock_version"],
             idempotency_key="quotation-legacy-deal-0001", actor=ACTOR,
         )
@@ -2620,7 +2626,7 @@ def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(reposit
     created = project(repository, key="structured-quotation-project-0001", quotation_required=True)
     project_id = created["project"]["id"]
     sales_order = created["sales_order"]
-    image = "data:image/png;base64,iVBORw0KGgo="
+    image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 
     first = repository.create_project_quotation(
         project_id,
@@ -2690,8 +2696,8 @@ def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(reposit
         revision_sent["id"],
         dp_percent=25,
         remaining_installments=3,
-        custom_installments=None,
         expected_version=revision_sent["lock_version"],
+        expected_document_id=sales_order["id"],
         expected_document_version=sales_order["lock_version"],
         idempotency_key="structured-quotation-deal-0001",
         actor=ACTOR,
@@ -2711,7 +2717,8 @@ def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(reposit
     with pytest.raises(ProjectDocumentConflict, match="already been dealt"):
         repository.deal_project_quotation(
             revision_sent["id"], dp_percent=25, remaining_installments=1,
-            custom_installments=None, expected_version=deal["quotation"]["lock_version"],
+            expected_version=deal["quotation"]["lock_version"],
+            expected_document_id=deal["sales_order"]["id"],
             expected_document_version=deal["sales_order"]["lock_version"],
             idempotency_key="structured-quotation-deal-duplicate-0001", actor=ACTOR,
         )
@@ -2727,7 +2734,7 @@ def test_structured_quotation_rejects_brand_override_and_incomplete_deal(reposit
             project_id,
             values={
                 "template_key": "HOJJA",
-                "project_image_url": "data:image/png;base64,iVBORw0KGgo=",
+                "project_image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
                 "lines": [{"description": "Item", "quantity": "1", "unit": "unit", "unit_price": 1}],
             },
             idempotency_key="structured-quotation-wrong-brand-0001", actor=ACTOR,
@@ -2745,10 +2752,81 @@ def test_structured_quotation_rejects_brand_override_and_incomplete_deal(reposit
     with pytest.raises(ProjectDocumentConflict, match="structured lines and project image"):
         repository.deal_project_quotation(
             sent["id"], dp_percent=30, remaining_installments=1,
-            custom_installments=None, expected_version=sent["lock_version"],
+            expected_version=sent["lock_version"], expected_document_id=sales_order["id"],
             expected_document_version=sales_order["lock_version"],
             idempotency_key="structured-quotation-legacy-deal-0001", actor=ACTOR,
         )
+
+
+def test_structured_quotation_rejects_invalid_project_image_and_wrong_sales_order(repository):
+    created = project(repository, key="structured-quotation-project-0003", quotation_required=True)
+    project_id = created["project"]["id"]
+    sales_order = created["sales_order"]
+    valid_image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+
+    with pytest.raises(ValueError, match="valid PNG or JPEG"):
+        repository.create_project_quotation(
+            project_id,
+            values={
+                "project_image_url": "data:image/png;base64,Zm9v",
+                "lines": [{"description": "Item", "quantity": "1", "unit": "unit", "unit_price": 1}],
+            },
+            idempotency_key="structured-invalid-image-0001", actor=ACTOR,
+        )
+
+    quotation = repository.create_project_quotation(
+        project_id,
+        values={
+            "project_image_url": valid_image,
+            "lines": [{"description": "Item", "quantity": "1", "unit": "unit", "unit_price": 1_000_000}],
+        },
+        idempotency_key="structured-wrong-sales-order-0001", actor=ACTOR,
+    )
+    sent = repository.transition_project_quotation(
+        quotation["id"], status="sent", note="", expected_version=quotation["lock_version"],
+        idempotency_key="structured-wrong-sales-order-sent-0001", actor=ACTOR,
+    )
+    with pytest.raises(ProjectDocumentConflict, match="draft Sales Order is required"):
+        repository.deal_project_quotation(
+            sent["id"], dp_percent=30, remaining_installments=1,
+            expected_version=sent["lock_version"], expected_document_id=str(uuid.uuid4()),
+            expected_document_version=sales_order["lock_version"],
+            idempotency_key="structured-wrong-sales-order-deal-0001", actor=ACTOR,
+        )
+
+
+def test_database_trigger_rejects_sent_rollback_and_legacy_acceptance(repository):
+    import psycopg
+
+    created = project(repository, key="structured-trigger-project-0001", quotation_required=True)
+    legacy = repository.create_project_quotation(
+        created["project"]["id"],
+        values={"canva_url": "https://canva.com/design/legacy-trigger", "amount": 1_000_000},
+        idempotency_key="structured-trigger-legacy-0001", actor=ACTOR,
+    )
+    sent = repository.transition_project_quotation(
+        legacy["id"], status="sent", note="", expected_version=legacy["lock_version"],
+        idempotency_key="structured-trigger-sent-0001", actor=ACTOR,
+    )
+
+    with psycopg.connect(repository._dsn, autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            with pytest.raises(psycopg.errors.RaiseException, match="sent quotation transition"):
+                cursor.execute(
+                    """UPDATE project_quotation_handoffs
+                       SET status = 'draft', sent_at = NULL, decided_at = NULL,
+                           lock_version = lock_version + 1
+                       WHERE id = %s""",
+                    (sent["id"],),
+                )
+            with pytest.raises(psycopg.errors.RaiseException, match="structured immutable artifacts"):
+                cursor.execute(
+                    """UPDATE project_quotation_handoffs
+                       SET status = 'accepted', decided_at = NOW(),
+                           lock_version = lock_version + 1
+                       WHERE id = %s""",
+                    (sent["id"],),
+                )
 
 
 def test_structured_quotation_renders_selected_version_with_production_renderer(dsn):
@@ -2769,7 +2847,7 @@ def test_structured_quotation_renders_selected_version_with_production_renderer(
             "project_name": "Lobby Cakrawala",
             "subject": "Wall branding lobby",
             "valid_until": "2027-01-14",
-            "project_image_url": "data:image/png;base64,iVBORw0KGgo=",
+            "project_image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
             "lines": [{
                 "description": "Mural lobby utama",
                 "quantity": "12.5",

@@ -391,6 +391,7 @@ export default function ProjectQuotationPanel({ project, salesOrder, session, ap
     setBusy(true); setError(''); setNotice('')
     try {
       const result: ProjectQuotationDealResult = await api.deal(dealItem, {
+        sales_order_id: salesOrder.id,
         sales_order_version: salesOrder.lock_version,
         dp_percent: dpPercent,
         remaining_installments: remainingInstallments,

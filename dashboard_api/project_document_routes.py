@@ -420,10 +420,16 @@ def create_project_document_blueprint(repository: Any) -> Blueprint:
     def deal_project_quotation(quotation_id: UUID):
         body, key, version, actor = _write_request(
             allowed_fields=frozenset({
-                "idempotency_key", "expected_version", "sales_order_version",
-                "dp_percent", "remaining_installments", "custom_installments",
+                "idempotency_key", "expected_version", "sales_order_id",
+                "sales_order_version", "dp_percent", "remaining_installments",
             })
         )
+        try:
+            expected_document_id = str(UUID(str(body.get("sales_order_id") or "")))
+        except ValueError as exc:
+            raise RequestContractError(
+                "invalid_sales_order_id", "sales_order_id must be a UUID"
+            ) from exc
         expected_document_version = body.get("sales_order_version")
         if (
             not isinstance(expected_document_version, int)
@@ -436,8 +442,8 @@ def create_project_document_blueprint(repository: Any) -> Blueprint:
         result = repository.deal_project_quotation(
             str(quotation_id), dp_percent=body.get("dp_percent"),
             remaining_installments=body.get("remaining_installments"),
-            custom_installments=body.get("custom_installments"),
             expected_version=int(version),
+            expected_document_id=expected_document_id,
             expected_document_version=expected_document_version,
             idempotency_key=key, actor=actor,
         )
@@ -456,22 +462,6 @@ def create_project_document_blueprint(repository: Any) -> Blueprint:
         )
         return _response(result)
 
-    @blueprint.post("/quotations/<uuid:quotation_id>/apply")
-    @owner_required
-    def apply_project_quotation(quotation_id: UUID):
-        body, key, _, actor = _write_request(
-            allowed_fields=frozenset({"idempotency_key", "sales_order_version"}), create=True
-        )
-        expected = body.get("sales_order_version")
-        if not isinstance(expected, int) or isinstance(expected, bool) or expected < 1:
-            raise RequestContractError(
-                "invalid_sales_order_version", "sales_order_version must be a positive integer"
-            )
-        result = repository.apply_accepted_quotation_to_sales_order(
-            str(quotation_id), expected_document_version=expected,
-            idempotency_key=key, actor=actor,
-        )
-        return _response(result)
 
     @blueprint.get("/projects/<uuid:project_id>/evidence")
     @owner_required

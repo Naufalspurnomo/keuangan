@@ -250,7 +250,7 @@ export function createProjectQuotationApi(options: ProjectQuotationApiOptions = 
     },
     async deal(
       item: ProjectQuotation,
-      setup: { sales_order_version: number; dp_percent: number; remaining_installments: number; custom_installments?: number[] },
+      setup: { sales_order_id: string; sales_order_version: number; dp_percent: number; remaining_installments: number },
       session: ProjectDocumentSession,
     ) {
       return dealResult(await write('deal_quotation', {

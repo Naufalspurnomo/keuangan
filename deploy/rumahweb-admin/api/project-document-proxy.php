@@ -178,7 +178,7 @@ function pd_write_headers(array $body, string $action, array $config): array
     if ($ifMatch === '') {
         pd_error(428, 'if_match_required', 'If-Match header is required.');
     }
-    $create = in_array($action, ['create', 'create_invoice', 'create_receipt', 'create_quotation', 'apply_quotation'], true);
+    $create = in_array($action, ['create', 'create_invoice', 'create_receipt', 'create_quotation'], true);
     if ($create) {
         if ($ifMatch !== '*') {
             pd_error(412, 'if_match_failed', 'If-Match must be * for creation.');
@@ -278,9 +278,9 @@ function pd_post_route(string $resource, string $action, array $body, string $pr
         'create_quotation' => ['action', 'project_id', 'idempotency_key', 'values'],
         'update_quotation' => ['action', 'quotation_id', 'idempotency_key', 'expected_version', 'changes'],
         'revise_quotation' => ['action', 'quotation_id', 'idempotency_key', 'expected_version', 'changes'],
-        'deal_quotation' => ['action', 'quotation_id', 'idempotency_key', 'expected_version', 'sales_order_version', 'dp_percent', 'remaining_installments', 'custom_installments'],
+        'deal_quotation' => ['action', 'quotation_id', 'idempotency_key', 'expected_version', 'sales_order_id', 'sales_order_version', 'dp_percent', 'remaining_installments'],
         'transition_quotation' => ['action', 'quotation_id', 'idempotency_key', 'expected_version', 'status', 'note'],
-        'apply_quotation' => ['action', 'quotation_id', 'idempotency_key', 'sales_order_version'],
+
         'update' => ['action', 'document_id', 'idempotency_key', 'expected_version', 'changes'],
         'issue' => ['action', 'document_id', 'idempotency_key', 'expected_version'],
         'void' => ['action', 'document_id', 'idempotency_key', 'expected_version', 'reason'],
@@ -299,7 +299,7 @@ function pd_post_route(string $resource, string $action, array $body, string $pr
     }
     if (in_array($action, [
         'update_quotation', 'revise_quotation', 'deal_quotation',
-        'transition_quotation', 'apply_quotation',
+        'transition_quotation',
     ], true)) {
         $id = pd_uuid($body['quotation_id'] ?? null);
         $payload = $body;
@@ -309,7 +309,7 @@ function pd_post_route(string $resource, string $action, array $body, string $pr
             'revise_quotation' => '/revisions',
             'deal_quotation' => '/deal',
             'transition_quotation' => '/transition',
-            'apply_quotation' => '/apply',
+
             default => '',
         };
         return [$action === 'update_quotation' ? 'PATCH' : 'POST', $base . $suffix, $payload];
@@ -487,7 +487,7 @@ $allowedActions = $resource === 'projects'
     ? ['create', 'update', 'status', 'archive']
     : [
         'create_invoice', 'create_receipt', 'create_quotation', 'update_quotation',
-        'revise_quotation', 'deal_quotation', 'transition_quotation', 'apply_quotation',
+        'revise_quotation', 'deal_quotation', 'transition_quotation',
         'update', 'issue', 'void', 'revise',
     ];
 if (!in_array($action, $allowedActions, true)) {
