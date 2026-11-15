@@ -74,6 +74,7 @@ class FakeFTP:
     def __init__(self, files: dict[str, bytes], fail_rename: tuple[str, str] | None = None):
         self.files = dict(files)
         self.fail_rename = fail_rename
+        self.modes: dict[str, int] = {path: 0o600 for path in files}
 
     def size(self, path: str) -> int:
         if path not in self.files:
@@ -84,15 +85,40 @@ class FakeFTP:
         callback(self.files[command.removeprefix("RETR ")])
 
     def storbinary(self, command: str, stream: io.BytesIO) -> None:
-        self.files[command.removeprefix("STOR ")] = stream.read()
+        path = command.removeprefix("STOR ")
+        self.files[path] = stream.read()
+        self.modes[path] = 0o644
+
+    def sendcmd(self, command: str) -> str:
+        prefix = "SITE CHMOD 600 "
+        if not command.startswith(prefix):
+            raise AssertionError(command)
+        self.modes[command.removeprefix(prefix)] = 0o600
+        return "200 Permissions changed"
 
     def rename(self, source: str, target: str) -> None:
         if self.fail_rename == (source, target):
             raise RuntimeError("synthetic activation failure")
         self.files[target] = self.files.pop(source)
+        self.modes[target] = self.modes.pop(source)
 
     def delete(self, path: str) -> None:
         del self.files[path]
+        self.modes.pop(path, None)
+
+
+def test_finance_config_pair_activates_private_permissions() -> None:
+    module = load_module()
+    ftp = FakeFTP({"admin.php": b"admin-old", "presensi.php": b"presensi-old"})
+
+    module.atomic_replace_many(
+        ftp,
+        [("admin.php", b"admin-new"), ("presensi.php", b"presensi-new")],
+        "t0",
+    )
+
+    assert ftp.modes["admin.php"] == 0o600
+    assert ftp.modes["presensi.php"] == 0o600
 
 
 def test_finance_config_pair_rolls_back_first_target_when_second_activation_fails() -> None:
