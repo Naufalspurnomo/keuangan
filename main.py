@@ -3926,6 +3926,7 @@ def start_background_workers():
         if _background_workers_started:
             return
         from services.ledger_bootstrap import start_ledger_bootstrap_if_requested
+        from services.financial_export_runtime import run_financial_export_service
 
         start_ledger_bootstrap_if_requested()
         start_wuzapi_monitor()
@@ -3941,8 +3942,17 @@ def start_background_workers():
             name="transaction-inbox-recovery-worker",
         )
         inbox_thread.start()
+        export_thread = threading.Thread(
+            target=run_financial_export_service,
+            daemon=True,
+            name="financial-export-worker",
+        )
+        export_thread.start()
         _background_workers_started = True
-        secure_log("INFO", "Background transaction retry and inbox recovery workers started")
+        secure_log(
+            "INFO",
+            "Background transaction retry, inbox recovery, and financial export workers started",
+        )
 
 if __name__ == '__main__':
     start_background_workers()
