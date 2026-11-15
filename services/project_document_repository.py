@@ -8,6 +8,9 @@ never writes Google Sheets or creates financial-ledger rows.
 from __future__ import annotations
 
 import hashlib
+import base64
+import binascii
+import io
 import json
 import os
 import re
@@ -18,6 +21,9 @@ from decimal import Decimal, DecimalException, ROUND_HALF_UP, localcontext
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
+
+from PIL import Image as PillowImage
+from PIL import UnidentifiedImageError
 
 from config.wallets import is_canonical_wallet_company_pair, normalize_wallet_company_pair
 from services.project_document_models import (
@@ -39,6 +45,8 @@ DOCUMENT_TYPES = frozenset(DOCUMENT_PREFIXES)
 PROJECT_STATUSES = frozenset({"planned", "active", "completed", "cancelled"})
 INVOICE_KINDS = frozenset({"DP", "PROGRESS", "FINAL"})
 MAX_PROJECT_IMAGE_URL_CHARS = 196_608
+MAX_PROJECT_IMAGE_BYTES = 144 * 1024
+MAX_PROJECT_IMAGE_PIXELS = 16_000_000
 _PROJECT_IMAGE_URL = re.compile(
     r"^data:image/(?:png|jpeg);base64,[A-Za-z0-9+/=]+$"
 )
@@ -133,6 +141,26 @@ def _project_image_url(value: Any) -> str | None:
         raise ValueError("project_image_url exceeds 196608 characters")
     if not _PROJECT_IMAGE_URL.fullmatch(cleaned):
         raise ValueError("project_image_url must be a PNG or JPEG data URL")
+    prefix, encoded = cleaned.split(",", 1)
+    expected_format = "PNG" if prefix == "data:image/png;base64" else "JPEG"
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("project_image_url must contain valid base64 image bytes") from exc
+    if not raw or len(raw) > MAX_PROJECT_IMAGE_BYTES:
+        raise ValueError("project_image_url decoded image exceeds 147456 bytes")
+    try:
+        with PillowImage.open(io.BytesIO(raw)) as image:
+            if image.format != expected_format:
+                raise ValueError("project_image_url MIME type does not match image bytes")
+            width, height = image.size
+            if width <= 0 or height <= 0 or width * height > MAX_PROJECT_IMAGE_PIXELS:
+                raise ValueError("project_image_url dimensions are invalid or too large")
+            image.verify()
+    except ValueError:
+        raise
+    except (OSError, UnidentifiedImageError, PillowImage.DecompressionBombError) as exc:
+        raise ValueError("project_image_url must contain a valid PNG or JPEG") from exc
     return cleaned
 
 
@@ -436,7 +464,7 @@ SELECT
             SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
             WHERE n.nspname = 'public'
               AND p.proname = 'guard_project_quotation_transition'
-              AND MD5(p.prosrc) = '79ccf28f556490f37fa09bb0c48a35a5'
+              AND MD5(p.prosrc) = 'be5b5468c257e3a5f1233b0dfa3a609e'
         )
         AND EXISTS (
             SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -722,6 +750,7 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
             "007_project_transaction_evidence.sql",
             "008_project_quotation_handoffs.sql",
             "019_structured_quotations.sql",
+            "020_quotation_invariants.sql",
         )
     ]
     try:
@@ -1772,14 +1801,14 @@ class ProjectDocumentRepository:
 
     def deal_project_quotation(
         self, quotation_id: str, *, dp_percent: Any, remaining_installments: Any,
-        custom_installments: Any, expected_version: int, expected_document_version: int,
+        expected_version: int, expected_document_id: str, expected_document_version: int,
         idempotency_key: str, actor: Mapping[str, Any],
     ) -> dict[str, Any]:
         rate = decimal_value(
             dp_percent, field="DP percent", minimum=Decimal("0.0001"),
             maximum=Decimal("99.9999"), max_fractional_digits=4,
         )
-        count_value = custom_installments if custom_installments is not None else remaining_installments
+        count_value = remaining_installments
         if isinstance(count_value, bool):
             raise ValueError("remaining installments must be an integer")
         try:
@@ -1792,6 +1821,7 @@ class ProjectDocumentRepository:
         request = {
             "quotation_id": quotation_id, "dp_percent": str(rate),
             "remaining_installments": count, "expected_version": expected_version,
+            "expected_document_id": expected_document_id,
             "expected_document_version": expected_document_version,
         }
         dp_invoice_id = str(uuid.uuid4())
@@ -1828,14 +1858,17 @@ class ProjectDocumentRepository:
                         raise ProjectDocumentConflict("Deal requires a planned or active project")
                     cursor.execute(
                         """SELECT id, lock_version FROM project_documents
-                           WHERE project_id = %s AND document_type = 'sales_order' AND status = 'draft'
-                           ORDER BY created_at LIMIT 1 FOR UPDATE""",
-                        (quotation["project_id"],),
+                           WHERE id = %s AND project_id = %s
+                             AND document_type = 'sales_order' AND status = 'draft'
+                           FOR UPDATE""",
+                        (expected_document_id, quotation["project_id"]),
                     )
                     sales_order_row = cursor.fetchone()
                     if not sales_order_row:
                         raise ProjectDocumentConflict("draft Sales Order is required")
                     sales_order_id, sales_order_version = str(sales_order_row[0]), int(sales_order_row[1])
+                    if sales_order_id != expected_document_id:
+                        raise ProjectDocumentConflict("Sales Order identity is stale")
                     if sales_order_version != expected_document_version:
                         raise ProjectDocumentConflict("Sales Order version is stale")
 

@@ -91,6 +91,7 @@ describe('projectQuotationApi production proxy contract', () => {
 
     await api.revise(quotation, values, session)
     const result = await api.deal(quotation, {
+      sales_order_id: salesOrderId,
       sales_order_version: 4,
       dp_percent: 30,
       remaining_installments: 2,
@@ -108,7 +109,7 @@ describe('projectQuotationApi production proxy contract', () => {
       headers: expect.objectContaining({ 'If-Match': '"2"' }),
       body: JSON.stringify({
         action: 'deal_quotation', idempotency_key: 'idem-key-1234567890', quotation_id: quotationId, expected_version: 2,
-        sales_order_version: 4, dp_percent: 30, remaining_installments: 2,
+        sales_order_id: salesOrderId, sales_order_version: 4, dp_percent: 30, remaining_installments: 2,
       }),
     }))
     expect(result).toEqual(expect.objectContaining({

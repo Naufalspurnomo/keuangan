@@ -506,13 +506,10 @@ class RumahwebAdminProjectDocumentProxyTests(unittest.TestCase):
                 self.assertEqual(created.status_code, 201, created.text)
                 sent = requests.post(endpoint, headers={**common, "If-Match": '"1"'}, json={"action": "transition_quotation", "quotation_id": EVIDENCE_ID, "idempotency_key": IDEMPOTENCY_KEY, "expected_version": 1, "status": "sent", "note": ""}, timeout=10)
                 self.assertEqual(sent.status_code, 200, sent.text)
-                applied = requests.post(endpoint, headers={**common, "If-Match": "*"}, json={"action": "apply_quotation", "quotation_id": EVIDENCE_ID, "idempotency_key": IDEMPOTENCY_KEY, "sales_order_version": 4}, timeout=10)
-                self.assertEqual(applied.status_code, 200, applied.text)
                 self.assertEqual([request["path"] for request in server.received], [
                     f"/api/dashboard/v1/projects/{PROJECT_ID}/quotations",
                     f"/api/dashboard/v1/projects/{PROJECT_ID}/quotations",
                     f"/api/dashboard/v1/quotations/{EVIDENCE_ID}/transition",
-                    f"/api/dashboard/v1/quotations/{EVIDENCE_ID}/apply",
                 ])
 
 

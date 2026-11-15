@@ -168,7 +168,9 @@ describe('ProjectQuotationPanel', () => {
     expect(within(dialog).queryByText(/sudah (?:lunas|dibayar)|telah (?:lunas|dibayar)/i)).toBeNull()
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Konfirmasi Deal & Buat Draf DP' }))
-    await waitFor(() => expect(subject.deal).toHaveBeenCalledWith(item, { sales_order_version: 7, dp_percent: 30, remaining_installments: 3 }, session))
+    await waitFor(() => expect(subject.deal).toHaveBeenCalledWith(item, {
+      sales_order_id: salesOrder.id, sales_order_version: 7, dp_percent: 30, remaining_installments: 3,
+    }, session))
     await waitFor(() => expect(applied).toHaveBeenCalledWith('22222222-2222-4222-8222-222222222222'))
   })
 
