@@ -53,11 +53,14 @@ def upsert_php_literal(text: str, key: str, literal: str) -> str:
             raise RuntimeError(f"config key update failed: {key}")
         return updated
 
-    closing = re.search(r"\n\s*\];\s*$", text)
-    if not closing:
+    normalized = text.lstrip("\ufeff").lstrip()
+    return_arrays = list(re.finditer(r"\breturn\s*\[", normalized))
+    closing = re.search(r"(?P<tail>\]\s*;)(?P<suffix>\s*(?:\?>\s*)?)\Z", text)
+    has_config_entries = len(return_arrays) == 1 and "=>" in normalized[return_arrays[0].end() :]
+    if not normalized.startswith("<?php") or not has_config_entries or closing is None:
         raise RuntimeError("config is not a single return-array document")
     insertion = f"\n    {php_single_quoted(key)} => {literal},"
-    return text[: closing.start()] + insertion + text[closing.start() :]
+    return text[: closing.start("tail")] + insertion + text[closing.start("tail") :]
 
 
 def replace_php_value(text: str, key: str, value: str) -> str:

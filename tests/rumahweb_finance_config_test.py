@@ -126,6 +126,17 @@ def test_finance_config_adds_missing_keys_to_single_return_array() -> None:
     assert updated.rstrip().endswith("];" )
 
 
+def test_finance_config_accepts_legacy_bom_and_closing_tag_wrapper() -> None:
+    module = load_module()
+    source = "\ufeff<?php\nreturn [\n  'employees' => [['id' => 'pegawai-1']],\n];\n?>\n"
+
+    updated = module.replace_php_value(source, "project_catalog_url", module.DEFAULT_PROJECT_CATALOG_URL)
+
+    assert updated.startswith("\ufeff<?php")
+    assert module.DEFAULT_PROJECT_CATALOG_URL in updated
+    assert updated.rstrip().endswith("?>")
+
+
 def test_finance_config_fails_closed_for_duplicate_key_or_invalid_document() -> None:
     module = load_module()
     sources = (
