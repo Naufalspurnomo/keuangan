@@ -27,6 +27,32 @@ _DEFAULT_BATCH_LIMIT = 100
 _DEFAULT_LEASE_SECONDS = 300
 _DEFAULT_BUILD_RETRY_SECONDS = 60
 
+_state_lock = threading.Lock()
+_state: dict[str, Any] = {
+    "enabled": False,
+    "running": False,
+    "ready": False,
+    "last_result": None,
+    "last_error": None,
+}
+
+
+def _set_state(**changes: Any) -> None:
+    with _state_lock:
+        _state.update(changes)
+
+
+def financial_export_health() -> dict[str, Any]:
+    """Return non-secret runtime evidence for production acceptance."""
+    with _state_lock:
+        result = dict(_state)
+    result["configured"] = bool(
+        str(os.getenv("STATE_DATABASE_URL") or os.getenv("DATABASE_URL") or "").strip()
+        and str(os.getenv("GOOGLE_SHEETS_ID") or "").strip()
+        and str(os.getenv("GOOGLE_CREDENTIALS") or "").strip()
+    )
+    return result
+
 
 def _env_bool(name: str, *, default: bool = False) -> bool:
     value = os.getenv(name)
@@ -55,9 +81,12 @@ def _env_positive_int(name: str, *, default: int) -> int:
 
 def build_export_worker() -> ExportWorker:
     """Build the protected PostgreSQL-to-Sheets delivery boundary."""
-    dsn = str(os.getenv("DATABASE_URL") or "").strip()
+    dsn = str(os.getenv("STATE_DATABASE_URL") or os.getenv("DATABASE_URL") or "").strip()
     if not dsn:
-        raise RuntimeError("financial export requires the canonical external DATABASE_URL")
+        raise RuntimeError(
+            "financial export requires the canonical external "
+            "STATE_DATABASE_URL or DATABASE_URL"
+        )
 
     workbook_id = str(os.getenv("GOOGLE_SHEETS_ID") or "").strip()
     if not workbook_id:
@@ -122,7 +151,9 @@ def run_financial_export_service(
     *, stop_event: threading.Event | None = None
 ) -> None:
     """Run the external-runtime export service when explicitly enabled."""
-    if not _env_bool("FINANCIAL_EXPORT_ENABLED"):
+    enabled = _env_bool("FINANCIAL_EXPORT_ENABLED")
+    _set_state(enabled=enabled, running=False, ready=False, last_result=None, last_error=None)
+    if not enabled:
         secure_log("INFO", "Financial export worker disabled")
         return
 
@@ -133,6 +164,7 @@ def run_financial_export_service(
     while not event.is_set():
         try:
             worker = build_export_worker()
+            _set_state(running=True, ready=True, last_error=None)
             run_export_loop(
                 worker,
                 stop_event=event,
@@ -143,9 +175,12 @@ def run_financial_export_service(
                 batch_limit=_env_positive_int(
                     "FINANCIAL_EXPORT_BATCH_LIMIT", default=_DEFAULT_BATCH_LIMIT
                 ),
+                on_result=lambda result: _set_state(last_result=dict(result), last_error=None),
             )
+            _set_state(running=False)
             return
         except Exception as exc:
+            _set_state(running=False, ready=False, last_error=type(exc).__name__)
             secure_log(
                 "ERROR",
                 f"Financial export worker setup failed: {type(exc).__name__}: {exc}",
