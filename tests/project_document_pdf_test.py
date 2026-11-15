@@ -84,6 +84,61 @@ def text(pdf: bytes) -> str:
     return "\n".join(page.extract_text() or "" for page in reader(pdf).pages)
 
 
+@pytest.mark.parametrize(
+    ("company", "display_name", "document_type", "expected_title", "page_size", "identity"),
+    [
+        ("HOLLA", "Hollawall", "invoice", "INVOICE", (419.53, 595.28), "Hollawall Mural Studio"),
+        ("HOLLA", "Hollawall", "sales_order", "QUOTATION", (419.53, 595.28), "Hollawall Mural Studio"),
+        ("HOJJA", "HOJJA ArtHouse", "invoice", "INVOICE", (595.28, 841.89), "HOJJA ArtHouse"),
+        ("HOJJA", "HOJJA ArtHouse", "sales_order", "QUOTATION", (595.28, 841.89), "HOJJA ArtHouse"),
+        ("TEXTURIN-Bali", "Texturin Bali", "invoice", "INVOICE", (595.28, 841.89), "texturin decorative finishes"),
+        ("TEXTURIN-Surabaya", "Texturin Surabaya", "sales_order", "QUOTATION", (595.28, 841.89), "texturin decorative finishes"),
+    ],
+)
+def test_renderer_selects_brand_page_size_title_and_identity(
+    company,
+    display_name,
+    document_type,
+    expected_title,
+    page_size,
+    identity,
+):
+    value = snapshot()
+    value["project"]["company"] = company
+    value["issuer"]["display_name"] = display_name
+    value["document"]["document_type"] = document_type
+
+    pdf = render_project_document_pdf(value, logo_path=None)
+    document = reader(pdf)
+    content = " ".join(text(pdf).split())
+
+    assert float(document.pages[0].mediabox.width) == pytest.approx(page_size[0], abs=0.5)
+    assert float(document.pages[0].mediabox.height) == pytest.approx(page_size[1], abs=0.5)
+    assert expected_title in content
+    assert identity in content
+
+
+@pytest.mark.parametrize(
+    ("company", "display_name", "document_type", "invoice_kind", "expected_labels"),
+    [
+        ("HOJJA", "HOJJA ArtHouse", "invoice", "DP", ("DATE", "LETTER ID", "Total DP")),
+        ("TEXTURIN-Bali", "Texturin Bali", "sales_order", None, ("QUOTATION NO.", "QTY/LUAS", "BANK DETAILS")),
+        ("HOLLA", "Hollawall", "invoice", "DP", ("TANGGAL", "LETTER NO.", "TOTAL DP", "Best regards")),
+    ],
+)
+def test_renderer_preserves_reference_labels_and_brand_signoff(
+    company, display_name, document_type, invoice_kind, expected_labels,
+):
+    value = snapshot()
+    value["project"]["company"] = company
+    value["issuer"]["display_name"] = display_name
+    value["document"]["document_type"] = document_type
+    value["document"]["invoice_kind"] = invoice_kind
+    content = " ".join(text(render_project_document_pdf(value)).split())
+    for label in expected_labels:
+        assert label in content
+
+
 def test_renderer_produces_deterministic_a5_branded_pdf():
     value = snapshot()
 
@@ -121,7 +176,7 @@ def test_renderer_paginates_long_tables_and_repeats_headers():
         if "Produksi wall branding" in (page_text := (page.extract_text() or ""))
     ]
     assert len(item_pages) >= 3
-    assert all("DESKRIPSI" in page_text and "TOTAL" in page_text for page_text in item_pages)
+    assert all("DESCRIPTION" in page_text and "JUMLAH" in page_text for page_text in item_pages)
     assert all("Hollawall" in (page.extract_text() or "") for page in document.pages)
     assert f"Halaman {len(document.pages)} / {len(document.pages)}" in text(pdf)
 
@@ -224,6 +279,17 @@ def test_renderer_uses_persisted_signature_labels():
 
     assert "Nadia Finance" in content
     assert "Arif Director" in content
+
+
+def test_renderer_does_not_duplicate_client_name_as_details():
+    value = snapshot()
+    value["project"]["client_company"] = ""
+    value["project"]["client_contact"] = ""
+    value["project"]["client_address"] = ""
+
+    content = text(render_project_document_pdf(value, logo_path=None))
+
+    assert content.count("Bapak Arif") == 1
 
 
 def project_image_data_url(image_format: str = "PNG") -> str:

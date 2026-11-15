@@ -354,6 +354,31 @@ def create_project_document_blueprint(repository: Any) -> Blueprint:
     def list_project_quotations(project_id: UUID):
         return _response({"items": repository.list_project_quotations(str(project_id))})
 
+    @blueprint.get("/quotations/<uuid:quotation_id>/download")
+    @owner_required
+    def download_project_quotation(quotation_id: UUID):
+        rendered = repository.render_project_quotation(str(quotation_id))
+        pdf = rendered.get("bytes")
+        expected_size = rendered.get("byte_size")
+        expected_hash = str(rendered.get("sha256") or "").casefold()
+        if (
+            not isinstance(pdf, bytes)
+            or not pdf.startswith(b"%PDF-")
+            or isinstance(expected_size, bool)
+            or not isinstance(expected_size, int)
+            or len(pdf) != expected_size
+            or len(expected_hash) != 64
+            or hashlib.sha256(pdf).hexdigest() != expected_hash
+        ):
+            raise ProjectDocumentUnavailable("rendered quotation PDF integrity validation failed")
+        filename = str(rendered.get("filename") or f"quotation-{quotation_id}.pdf")
+        response = make_response(pdf)
+        response.headers["Content-Type"] = "application/pdf"
+        response.headers["Content-Length"] = str(len(pdf))
+        response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        response.headers["X-Content-SHA256"] = expected_hash
+        return response
+
     @blueprint.post("/projects/<uuid:project_id>/quotations")
     @owner_required
     def create_project_quotation(project_id: UUID):
@@ -365,6 +390,58 @@ def create_project_document_blueprint(repository: Any) -> Blueprint:
             idempotency_key=key, actor=actor,
         )
         return _response(result, 201)
+
+    @blueprint.patch("/quotations/<uuid:quotation_id>")
+    @owner_required
+    def update_project_quotation(quotation_id: UUID):
+        body, key, version, actor = _write_request(
+            allowed_fields=frozenset({"idempotency_key", "expected_version", "changes"})
+        )
+        result = repository.update_project_quotation(
+            str(quotation_id), changes=_mapping(body.get("changes"), field="changes"),
+            expected_version=int(version), idempotency_key=key, actor=actor,
+        )
+        return _response(result)
+
+    @blueprint.post("/quotations/<uuid:quotation_id>/revisions")
+    @owner_required
+    def revise_project_quotation(quotation_id: UUID):
+        body, key, version, actor = _write_request(
+            allowed_fields=frozenset({"idempotency_key", "expected_version", "changes"})
+        )
+        result = repository.revise_project_quotation(
+            str(quotation_id), changes=_mapping(body.get("changes"), field="changes"),
+            expected_version=int(version), idempotency_key=key, actor=actor,
+        )
+        return _response(result, 201)
+
+    @blueprint.post("/quotations/<uuid:quotation_id>/deal")
+    @owner_required
+    def deal_project_quotation(quotation_id: UUID):
+        body, key, version, actor = _write_request(
+            allowed_fields=frozenset({
+                "idempotency_key", "expected_version", "sales_order_version",
+                "dp_percent", "remaining_installments", "custom_installments",
+            })
+        )
+        expected_document_version = body.get("sales_order_version")
+        if (
+            not isinstance(expected_document_version, int)
+            or isinstance(expected_document_version, bool)
+            or expected_document_version < 1
+        ):
+            raise RequestContractError(
+                "invalid_sales_order_version", "sales_order_version must be a positive integer"
+            )
+        result = repository.deal_project_quotation(
+            str(quotation_id), dp_percent=body.get("dp_percent"),
+            remaining_installments=body.get("remaining_installments"),
+            custom_installments=body.get("custom_installments"),
+            expected_version=int(version),
+            expected_document_version=expected_document_version,
+            idempotency_key=key, actor=actor,
+        )
+        return _response(result)
 
     @blueprint.post("/quotations/<uuid:quotation_id>/transition")
     @owner_required

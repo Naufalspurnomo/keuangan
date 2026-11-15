@@ -170,6 +170,23 @@ class FakeProjectDocumentRepository:
         self.calls.append(("apply_accepted_quotation_to_sales_order", quotation_id, kwargs))
         return dict(self.document)
 
+    def update_project_quotation(self, quotation_id, **kwargs):
+        self.calls.append(("update_project_quotation", quotation_id, kwargs))
+        return {**self.list_project_quotations(PROJECT_ID)[0], **kwargs["changes"], "lock_version": kwargs["expected_version"] + 1}
+
+    def revise_project_quotation(self, quotation_id, **kwargs):
+        self.calls.append(("revise_project_quotation", quotation_id, kwargs))
+        return {**self.list_project_quotations(PROJECT_ID)[0], **kwargs["changes"], "version": 2, "revision_of_id": quotation_id}
+
+    def deal_project_quotation(self, quotation_id, **kwargs):
+        self.calls.append(("deal_project_quotation", quotation_id, kwargs))
+        return {
+            "quotation": {**self.list_project_quotations(PROJECT_ID)[0], "status": "accepted"},
+            "sales_order": dict(self.document),
+            "dp_invoice": dict(self.document),
+            "installment_schedule": [{"kind": "dp", "amount": 300_000}],
+        }
+
     def list_transaction_evidence(self, project_id):
         self._raise()
         self.calls.append(("list_transaction_evidence", project_id))
@@ -195,6 +212,16 @@ class FakeProjectDocumentRepository:
         image = b"\x89PNG\r\n\x1a\nroute-evidence"
         self.calls.append(("get_transaction_evidence_bytes", evidence_id))
         return {"mime_type": "image/png", "byte_size": len(image), "sha256": hashlib.sha256(image).hexdigest(), "original_name": "bukti.png", "bytes": image}
+
+    def render_project_quotation(self, quotation_id):
+        self._raise()
+        pdf = b"%PDF-1.4\nsynthetic quotation render\n%%EOF\n"
+        self.calls.append(("render_project_quotation", quotation_id))
+        return {
+            "byte_size": len(pdf), "sha256": hashlib.sha256(pdf).hexdigest(),
+            "renderer_version": "test-renderer/1", "filename": "quotation-hojja-v1.pdf",
+            "bytes": pdf,
+        }
 
     def get_artifact(self, document_id):
         self._raise()
@@ -457,6 +484,19 @@ class ProjectDocumentRouteTests(unittest.TestCase):
         self.assertEqual(audit.status_code, 200)
         self.assertEqual(self.envelope(audit)["data"]["items"][0]["event_type"], "document.created")
 
+        quotation_download = client.get(f"/api/dashboard/v1/quotations/{EVIDENCE_ID}/download")
+        self.assertEqual(quotation_download.status_code, 200)
+        self.assertEqual(quotation_download.mimetype, "application/pdf")
+        self.assertEqual(
+            quotation_download.headers["Content-Disposition"],
+            'attachment; filename="quotation-hojja-v1.pdf"',
+        )
+        self.assertEqual(
+            quotation_download.headers["X-Content-SHA256"],
+            hashlib.sha256(quotation_download.data).hexdigest(),
+        )
+        self.assertIn(("render_project_quotation", EVIDENCE_ID), repository.calls)
+
         download = client.get(f"/api/dashboard/v1/documents/{DOCUMENT_ID}/download")
         self.assertEqual(download.status_code, 200)
         self.assertEqual(download.mimetype, "application/pdf")
@@ -641,6 +681,53 @@ class ProjectDocumentRouteTests(unittest.TestCase):
         self.assertEqual(applied.status_code, 200)
         apply_call = next(call for call in repository.calls if call[0] == "apply_accepted_quotation_to_sales_order")
         self.assertEqual(apply_call[2]["expected_document_version"], 4)
+
+    def test_structured_quotation_edit_revision_and_deal_routes(self):
+        app, repository = self.make_app(enabled=True)
+        client = app.test_client()
+        self.login(client)
+
+        edited = client.patch(
+            f"/api/dashboard/v1/quotations/{EVIDENCE_ID}",
+            data=json.dumps({
+                "idempotency_key": IDEMPOTENCY_KEY,
+                "expected_version": 1,
+                "changes": {"subject": "Revisi", "content_notes": "Catatan"},
+            }),
+            headers=self.write_headers(version='"1"'),
+        )
+        self.assertEqual(edited.status_code, 200)
+        update_call = next(call for call in repository.calls if call[0] == "update_project_quotation")
+        self.assertEqual(update_call[2]["changes"]["subject"], "Revisi")
+
+        revised = client.post(
+            f"/api/dashboard/v1/quotations/{EVIDENCE_ID}/revisions",
+            data=json.dumps({
+                "idempotency_key": "project-document-test-0002",
+                "expected_version": 1,
+                "changes": {"subject": "Final"},
+            }),
+            headers=self.write_headers(version='"1"', key="project-document-test-0002"),
+        )
+        self.assertEqual(revised.status_code, 201)
+        self.assertEqual(self.envelope(revised)["data"]["revision_of_id"], EVIDENCE_ID)
+
+        dealt = client.post(
+            f"/api/dashboard/v1/quotations/{EVIDENCE_ID}/deal",
+            data=json.dumps({
+                "idempotency_key": "project-document-test-0003",
+                "expected_version": 1,
+                "sales_order_version": 4,
+                "dp_percent": 30,
+                "remaining_installments": 2,
+            }),
+            headers=self.write_headers(version='"1"', key="project-document-test-0003"),
+        )
+        self.assertEqual(dealt.status_code, 200)
+        deal_call = next(call for call in repository.calls if call[0] == "deal_project_quotation")
+        self.assertEqual(deal_call[2]["dp_percent"], 30)
+        self.assertEqual(deal_call[2]["remaining_installments"], 2)
+        self.assertEqual(deal_call[2]["expected_document_version"], 4)
 
 
 class ProjectDocumentProductionWiringTests(unittest.TestCase):

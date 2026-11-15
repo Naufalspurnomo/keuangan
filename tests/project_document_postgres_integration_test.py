@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import os
 import threading
@@ -10,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from flask import Flask
+from pypdf import PdfReader
 
 from dashboard_api.project_document_routes import create_project_document_blueprint
 from services.project_document_repository import (
@@ -19,6 +21,7 @@ from services.project_document_repository import (
     ensure_project_document_schema,
     project_document_schema_health,
 )
+from services.project_document_pdf import render_project_document_artifact
 from services.project_documents import ProjectDocumentService
 
 
@@ -67,6 +70,7 @@ def dsn():
     payment_migration = (migration_root / "006_invoice_payment_applications.sql").read_text(encoding="utf-8")
     evidence_migration = (migration_root / "007_project_transaction_evidence.sql").read_text(encoding="utf-8")
     quotation_migration = (migration_root / "008_project_quotation_handoffs.sql").read_text(encoding="utf-8")
+    structured_quotation_migration = (migration_root / "019_structured_quotations.sql").read_text(encoding="utf-8")
     with psycopg.connect(selected, autocommit=True) as connection:
         with connection.cursor() as cursor:
             cursor.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
@@ -103,6 +107,7 @@ def dsn():
             cursor.execute(payment_migration)
             cursor.execute(evidence_migration)
             cursor.execute(quotation_migration)
+            cursor.execute(structured_quotation_migration)
     return selected
 
 
@@ -2538,12 +2543,11 @@ def test_transaction_evidence_rejects_cross_project_invalid_bytes_and_duplicate(
         )
 
 
-def test_canva_quotation_acceptance_applies_final_value_to_sales_order(repository):
+def test_canva_quotation_cannot_bypass_structured_atomic_deal(repository):
     created = project(repository, key="quotation-project-0001", quotation_required=True)
-    project_id = created["project"]["id"]
     sales_order = created["sales_order"]
     quotation = repository.create_project_quotation(
-        project_id,
+        created["project"]["id"],
         values={
             "canva_url": "https://www.canva.com/design/DAF-example/view",
             "amount": 12_500_000,
@@ -2553,50 +2557,29 @@ def test_canva_quotation_acceptance_applies_final_value_to_sales_order(repositor
         idempotency_key="quotation-create-0001",
         actor=ACTOR,
     )
-    assert quotation["version"] == 1
-    assert quotation["status"] == "draft"
+    sent = repository.transition_project_quotation(
+        quotation["id"], status="sent", note="", expected_version=quotation["lock_version"],
+        idempotency_key="quotation-sent-0001", actor=ACTOR,
+    )
 
+    with pytest.raises(ValueError, match="unsupported quotation status"):
+        repository.transition_project_quotation(
+            quotation["id"], status="accepted", note="Disetujui via WhatsApp",
+            expected_version=sent["lock_version"],
+            idempotency_key="quotation-accepted-0001", actor=ACTOR,
+        )
     with pytest.raises(ProjectDocumentConflict, match="must be accepted"):
         repository.apply_accepted_quotation_to_sales_order(
             quotation["id"], expected_document_version=sales_order["lock_version"],
             idempotency_key="quotation-apply-early-0001", actor=ACTOR,
         )
-
-    sent = repository.transition_project_quotation(
-        quotation["id"], status="sent", note="", expected_version=quotation["lock_version"],
-        idempotency_key="quotation-sent-0001", actor=ACTOR,
-    )
-    accepted = repository.transition_project_quotation(
-        quotation["id"], status="accepted", note="Disetujui via WhatsApp",
-        expected_version=sent["lock_version"], idempotency_key="quotation-accepted-0001", actor=ACTOR,
-    )
-    forged = repository.update_draft(
-        sales_order["id"],
-        {"lines": [{"description": "Bypass", "quantity": "1", "unit": "proyek", "unit_price": 12_500_000}]},
-        expected_version=sales_order["lock_version"],
-        idempotency_key="quotation-direct-so-bypass-0001", actor=ACTOR,
-    )
-    with pytest.raises(ProjectDocumentConflict, match="accepted quotation handoff"):
-        issue(repository, forged, "quotation-direct-so-issue-0001")
-
-    applied = repository.apply_accepted_quotation_to_sales_order(
-        accepted["id"], expected_document_version=forged["lock_version"],
-        idempotency_key="quotation-apply-0001", actor=ACTOR,
-    )
-    assert applied["lines"][0]["unit_price"] == 12_500_000
-    assert repository._calculate_totals(applied)["total"] == 12_500_000
-    assert repository.list_project_quotations(project_id)[0]["sales_order_id"] == applied["id"]
-    with pytest.raises(ProjectDocumentConflict, match="already applied"):
-        repository.apply_accepted_quotation_to_sales_order(
-            accepted["id"], expected_document_version=applied["lock_version"],
-            idempotency_key="quotation-apply-duplicate-new-key-0001", actor=ACTOR,
+    with pytest.raises(ProjectDocumentConflict, match="structured lines and project image"):
+        repository.deal_project_quotation(
+            quotation["id"], dp_percent=30, remaining_installments=1,
+            custom_installments=None, expected_version=sent["lock_version"],
+            expected_document_version=sales_order["lock_version"],
+            idempotency_key="quotation-legacy-deal-0001", actor=ACTOR,
         )
-
-    issued = issue(repository, applied, "quotation-sales-order-issue-0001")
-    summary = repository.get_project_payment_summary(project_id)
-    assert issued["status"] == "issued"
-    assert summary["contract_total"] == 12_500_000
-    assert repository.list_project_quotations(project_id)[0]["status"] == "accepted"
 
 
 def test_canva_quotation_revision_preserves_history_and_requires_valid_url(repository):
@@ -2631,6 +2614,190 @@ def test_canva_quotation_revision_preserves_history_and_requires_valid_url(repos
     assert second["version"] == 2
     assert [item["version"] for item in history] == [2, 1]
     assert history[1]["amount"] == 10_000_000
+
+
+def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(repository):
+    created = project(repository, key="structured-quotation-project-0001", quotation_required=True)
+    project_id = created["project"]["id"]
+    sales_order = created["sales_order"]
+    image = "data:image/png;base64,iVBORw0KGgo="
+
+    first = repository.create_project_quotation(
+        project_id,
+        values={
+            "template_key": "HOLLAWALL",
+            "subject": "Backdrop peluncuran",
+            "valid_until": "2026-12-15",
+            "project_image_url": image,
+            "lines": [{
+                "description": "Backdrop utama",
+                "quantity": "1",
+                "unit": "proyek",
+                "unit_price": 900_000,
+            }],
+            "discount_mode": "none",
+            "tax_percent": "0",
+            "payment_terms": "DP sebelum produksi",
+            "content_notes": "Harga termasuk pemasangan.",
+        },
+        idempotency_key="structured-quotation-create-0001",
+        actor=ACTOR,
+    )
+    assert first["template_key"] == "HOLLAWALL"
+    assert first["amount"] == 900_000
+    assert first["canva_url"] is None
+
+    edited = repository.update_project_quotation(
+        first["id"],
+        changes={
+            "subject": "Backdrop peluncuran — revisi internal",
+            "lines": [{
+                "description": "Backdrop utama final",
+                "quantity": "1",
+                "unit": "proyek",
+                "unit_price": 1_000_002,
+            }],
+        },
+        expected_version=first["lock_version"],
+        idempotency_key="structured-quotation-update-0001",
+        actor=ACTOR,
+    )
+    assert edited["amount"] == 1_000_002
+    assert edited["lock_version"] == first["lock_version"] + 1
+
+    sent = repository.transition_project_quotation(
+        edited["id"], status="sent", note="", expected_version=edited["lock_version"],
+        idempotency_key="structured-quotation-sent-0001", actor=ACTOR,
+    )
+    revision = repository.revise_project_quotation(
+        sent["id"],
+        changes={"subject": "Backdrop peluncuran — final"},
+        expected_version=sent["lock_version"],
+        idempotency_key="structured-quotation-revise-0001",
+        actor=ACTOR,
+    )
+    assert revision["version"] == 2
+    assert revision["revision_of_id"] == sent["id"]
+    assert revision["lines"] == edited["lines"]
+    assert revision["project_image_url"] == image
+    assert repository.list_project_quotations(project_id)[1]["status"] == "revised"
+
+    revision_sent = repository.transition_project_quotation(
+        revision["id"], status="sent", note="", expected_version=revision["lock_version"],
+        idempotency_key="structured-quotation-sent-0002", actor=ACTOR,
+    )
+    deal = repository.deal_project_quotation(
+        revision_sent["id"],
+        dp_percent=25,
+        remaining_installments=3,
+        custom_installments=None,
+        expected_version=revision_sent["lock_version"],
+        expected_document_version=sales_order["lock_version"],
+        idempotency_key="structured-quotation-deal-0001",
+        actor=ACTOR,
+    )
+
+    assert deal["quotation"]["status"] == "accepted"
+    assert deal["quotation"]["accepted_snapshot"]["amount"] == 1_000_002
+    assert deal["sales_order"]["lines"][0]["description"] == "Backdrop utama final"
+    assert repository._calculate_totals(deal["sales_order"])["total"] == 1_000_002
+    assert deal["dp_invoice"]["invoice_kind"] == "DP"
+    assert repository._calculate_totals(deal["dp_invoice"])["total"] == 250_001
+    schedule = deal["installment_schedule"]
+    assert [item["amount"] for item in schedule] == [250_001, 250_001, 250_000, 250_000]
+    assert sum(item["amount"] for item in schedule) == 1_000_002
+    assert schedule[0]["invoice_id"] == deal["dp_invoice"]["id"]
+
+    with pytest.raises(ProjectDocumentConflict, match="already been dealt"):
+        repository.deal_project_quotation(
+            revision_sent["id"], dp_percent=25, remaining_installments=1,
+            custom_installments=None, expected_version=deal["quotation"]["lock_version"],
+            expected_document_version=deal["sales_order"]["lock_version"],
+            idempotency_key="structured-quotation-deal-duplicate-0001", actor=ACTOR,
+        )
+
+
+def test_structured_quotation_rejects_brand_override_and_incomplete_deal(repository):
+    created = project(repository, key="structured-quotation-project-0002", quotation_required=True)
+    project_id = created["project"]["id"]
+    sales_order = created["sales_order"]
+
+    with pytest.raises(ValueError, match="template_key"):
+        repository.create_project_quotation(
+            project_id,
+            values={
+                "template_key": "HOJJA",
+                "project_image_url": "data:image/png;base64,iVBORw0KGgo=",
+                "lines": [{"description": "Item", "quantity": "1", "unit": "unit", "unit_price": 1}],
+            },
+            idempotency_key="structured-quotation-wrong-brand-0001", actor=ACTOR,
+        )
+
+    legacy = repository.create_project_quotation(
+        project_id,
+        values={"canva_url": "https://canva.com/design/legacy", "amount": 1_000_000},
+        idempotency_key="structured-quotation-legacy-0001", actor=ACTOR,
+    )
+    sent = repository.transition_project_quotation(
+        legacy["id"], status="sent", note="", expected_version=legacy["lock_version"],
+        idempotency_key="structured-quotation-legacy-sent-0001", actor=ACTOR,
+    )
+    with pytest.raises(ProjectDocumentConflict, match="structured lines and project image"):
+        repository.deal_project_quotation(
+            sent["id"], dp_percent=30, remaining_installments=1,
+            custom_installments=None, expected_version=sent["lock_version"],
+            expected_document_version=sales_order["lock_version"],
+            idempotency_key="structured-quotation-legacy-deal-0001", actor=ACTOR,
+        )
+
+
+def test_structured_quotation_renders_selected_version_with_production_renderer(dsn):
+    repository = ProjectDocumentRepository(
+        dsn,
+        now=lambda: FIXED_NOW,
+        renderer=render_project_document_artifact,
+        receipt_authority_reader=deterministic_receipt_authority,
+    )
+    created = project(repository, key="structured-render-project-0001", quotation_required=True)
+    quotation = repository.create_project_quotation(
+        created["project"]["id"],
+        values={
+            "recipient_name": "Ibu Maya",
+            "recipient_company": "PT Cakrawala",
+            "recipient_address": "Surabaya",
+            "recipient_contact": "+6281200000000",
+            "project_name": "Lobby Cakrawala",
+            "subject": "Wall branding lobby",
+            "valid_until": "2027-01-14",
+            "project_image_url": "data:image/png;base64,iVBORw0KGgo=",
+            "lines": [{
+                "description": "Mural lobby utama",
+                "quantity": "12.5",
+                "unit": "m2",
+                "unit_price": 650_000,
+            }],
+            "discount_mode": "fixed",
+            "discount_value": 125_000,
+            "tax_percent": "0",
+            "payment_terms": "Berlaku 14 hari.",
+            "content_notes": "Harga termasuk produksi dan pemasangan.",
+        },
+        idempotency_key="structured-render-create-0001",
+        actor=ACTOR,
+    )
+
+    rendered = repository.render_project_quotation(quotation["id"])
+    assert rendered["bytes"].startswith(b"%PDF-")
+    assert rendered["byte_size"] == len(rendered["bytes"])
+    assert hashlib.sha256(rendered["bytes"]).hexdigest() == rendered["sha256"]
+    assert rendered["filename"] == "quotation-hollawall-v1.pdf"
+    pdf = PdfReader(io.BytesIO(rendered["bytes"]))
+    assert len(pdf.pages) == 1
+    assert float(pdf.pages[0].mediabox.width) == pytest.approx(419.53, abs=0.5)
+    content = " ".join((pdf.pages[0].extract_text() or "").split())
+    assert "QUOTATION" in content
+    assert "Ibu Maya" in content
+    assert "Lobby Cakrawala" in content
 
 
 def test_quotation_schema_rerun_repairs_malformed_named_objects(dsn):

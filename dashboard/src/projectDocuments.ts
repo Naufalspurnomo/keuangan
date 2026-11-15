@@ -82,21 +82,84 @@ export interface InvoicePaymentSummary {
   payment_status: PaymentStatus
 }
 
+export interface ProjectQuotationLine extends DocumentLineInput {}
+
+export interface QuotationInstallment {
+  sequence: number
+  kind: 'DP' | 'INSTALLMENT'
+  label: string
+  amount: number
+  percent?: number
+}
+
+export interface ProjectQuotationAcceptedSnapshot {
+  quotation_id?: string
+  version: number
+  amount: number
+  accepted_at?: string
+  subject?: string
+  lines?: ProjectQuotationLine[]
+}
+
+export interface ProjectQuotationValues {
+  recipient_name: string
+  recipient_company: string
+  recipient_address: string
+  recipient_contact: string
+  project_name: string
+  subject: string
+  valid_until: string | null
+  project_image_url: string | null
+  lines: ProjectQuotationLine[]
+  discount_mode: DocumentDiscountMode
+  discount_value: string
+  tax_percent: string
+  payment_terms: string
+  content_notes: string
+  amount: number
+}
+
 export interface ProjectQuotation {
   id: string
   project_id: string
   version: number
+  /** Historical reference only. Structured quotation creation never requires this field. */
   canva_url: string
   amount: number
   status: 'draft' | 'sent' | 'revised' | 'accepted' | 'rejected'
   channel: 'whatsapp' | 'phone' | 'email' | 'meeting' | 'other'
   negotiation_notes: string | null
+  template_key?: 'hojja' | 'hollawall' | 'texturin' | string
+  recipient_name?: string
+  recipient_company?: string
+  recipient_address?: string
+  recipient_contact?: string
+  project_name?: string
+  subject?: string
+  valid_until?: string | null
+  project_image_url?: string | null
+  lines?: ProjectQuotationLine[]
+  discount_mode?: DocumentDiscountMode
+  discount_value?: string
+  tax_percent?: string
+  payment_terms?: string
+  content_notes?: string
+  accepted_snapshot?: ProjectQuotationAcceptedSnapshot | null
+  installment_schedule?: QuotationInstallment[]
   sent_at: string | null
   decided_at: string | null
   sales_order_id: string | null
+  dp_invoice_id?: string | null
   created_at: string
   updated_at: string
   lock_version: number
+}
+
+export interface ProjectQuotationDealResult {
+  quotation: ProjectQuotation
+  sales_order_id: string
+  dp_invoice_id: string
+  installment_schedule: QuotationInstallment[]
 }
 
 export interface ProjectPaymentSummary {
