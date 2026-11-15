@@ -106,6 +106,12 @@ def download(ftp: FTP_TLS, path: str) -> bytes:
     return buffer.getvalue()
 
 
+def chmod_private(ftp: FTP_TLS, path: str) -> None:
+    response = ftp.sendcmd(f"SITE CHMOD 600 {path}")
+    if not str(response).startswith("2"):
+        raise RuntimeError(f"private config chmod failed for {path}")
+
+
 def prepare_replace(ftp: FTP_TLS, remote: str, updated: bytes, timestamp: str) -> dict[str, object]:
     staging = f"{remote}.__next_{timestamp}"
     backup = f"{remote}.__prev_{timestamp}"
@@ -113,6 +119,7 @@ def prepare_replace(ftp: FTP_TLS, remote: str, updated: bytes, timestamp: str) -
         raise RuntimeError(f"staging or backup collision for {remote}")
     original = download(ftp, remote)
     ftp.storbinary(f"STOR {staging}", io.BytesIO(updated))
+    chmod_private(ftp, staging)
     if download(ftp, staging) != updated:
         if exists(ftp, staging):
             ftp.delete(staging)
@@ -135,6 +142,7 @@ def restore_prepared(ftp: FTP_TLS, item: dict[str, object]) -> None:
     if not exists(ftp, backup):
         raise RuntimeError(f"rollback backup missing for {remote}")
     ftp.rename(backup, remote)
+    chmod_private(ftp, remote)
     if download(ftp, remote) != original:
         raise RuntimeError(f"rollback readback mismatch for {remote}")
 
@@ -156,6 +164,7 @@ def atomic_replace_many(
             ftp.rename(remote, backup)
             try:
                 ftp.rename(staging, remote)
+                chmod_private(ftp, remote)
                 if download(ftp, remote) != cast(bytes, item["updated"]):
                     raise RuntimeError(f"final config readback mismatch for {remote}")
             except Exception:
