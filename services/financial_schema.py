@@ -10,7 +10,7 @@ from typing import Any, Callable, Iterable
 
 
 APPLICATION_SCHEMA_MIN = 18
-APPLICATION_SCHEMA_MAX = 18
+APPLICATION_SCHEMA_MAX = 19
 MIGRATION_LOCK_ID = 0x484F4C4C415741  # stable "HOLLAWA" advisory lock namespace
 _MIGRATION_PATTERN = re.compile(r"^(?P<version>\d{3})_.*\.sql$")
 

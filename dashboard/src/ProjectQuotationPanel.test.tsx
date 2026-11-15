@@ -1,57 +1,244 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import ProjectQuotationPanel from './ProjectQuotationPanel'
-import { createEmptyProjectDraft, type ProjectDocumentRecord, type ProjectQuotation, type ProjectRecord } from './projectDocuments'
+import ProjectQuotationPanel, { calculateInstallmentSchedule } from './ProjectQuotationPanel'
+import { createEmptyDocumentDraft, createEmptyProjectDraft, type ProjectQuotation, type ProjectRecord } from './projectDocuments'
+import type { ProjectQuotationApi } from './projectQuotationApi'
 
 const project: ProjectRecord = {
-  ...createEmptyProjectDraft('2026-11-10'), id: '11111111-1111-4111-8111-111111111111',
-  name: 'Backdrop Expo', client_name: 'PT Klien', issuer_key: 'hollawall',
-  wallet: 'CV HB(101)', company: 'HOLLA', status: 'planned', lock_version: 1,
-  archived_at: null, created_at: '2026-11-10T00:00:00Z', updated_at: '2026-11-10T00:00:00Z',
+  ...createEmptyProjectDraft('2026-11-10'),
+  id: '11111111-1111-4111-8111-111111111111',
+  name: 'Backdrop Expo',
+  client_name: 'Ibu Rani',
+  client_company: 'PT Klien',
+  client_address: 'Surabaya',
+  client_contact: '08123456789',
+  issuer_key: 'hollawall',
+  wallet: 'CV HB(101)',
+  company: 'HOLLA',
+  status: 'planned',
+  lock_version: 1,
+  archived_at: null,
+  created_at: '2026-11-10T00:00:00Z',
+  updated_at: '2026-11-10T00:00:00Z',
 }
+
 const item: ProjectQuotation = {
-  id: '44444444-4444-4444-8444-444444444444', project_id: project.id, version: 1,
-  canva_url: 'https://canva.com/design/test', amount: 12_500_000, status: 'accepted',
-  channel: 'whatsapp', negotiation_notes: 'Final', sent_at: '2026-11-10T00:00:00Z',
-  decided_at: '2026-11-10T01:00:00Z', sales_order_id: null, created_at: '2026-11-10T00:00:00Z',
-  updated_at: '2026-11-10T01:00:00Z', lock_version: 3,
+  id: '44444444-4444-4444-8444-444444444444',
+  project_id: project.id,
+  version: 1,
+  canva_url: '',
+  amount: 12_500_001,
+  status: 'sent',
+  channel: 'whatsapp',
+  negotiation_notes: null,
+  template_key: 'hollawall',
+  recipient_name: 'Ibu Rani',
+  recipient_company: 'PT Klien',
+  recipient_address: 'Surabaya',
+  recipient_contact: '08123456789',
+  project_name: 'Backdrop Expo',
+  subject: 'Penawaran backdrop expo',
+  valid_until: '2026-12-10',
+  project_image_url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  lines: [{ id: 'line-1', description: 'Backdrop', quantity: '1', unit: 'set', unit_price: 12_500_001, discount_percent: '0' }],
+  discount_mode: 'none',
+  discount_value: '0',
+  tax_percent: '0',
+  payment_terms: 'DP sebelum produksi',
+  content_notes: 'Harga termasuk pemasangan.',
+  accepted_snapshot: null,
+  installment_schedule: [],
+  sent_at: '2026-11-10T00:00:00Z',
+  decided_at: null,
+  sales_order_id: null,
+  created_at: '2026-11-10T00:00:00Z',
+  updated_at: '2026-11-10T01:00:00Z',
+  lock_version: 3,
 }
+
 const salesOrder = {
-  id: '22222222-2222-4222-8222-222222222222', project_id: project.id, issuer_key: 'hollawall',
-  type: 'sales_order', invoice_kind: null, applies_to_invoice_id: null, status: 'draft', number: null,
-  issue_date: '2026-11-10', due_date: null, valid_until: null, subject: '', introduction: '', notes: '',
-  payment_terms: '', prepared_by: '', client_signatory: '', project_image_url: null,
-  document_discount_amount: 0, document_discount_percent: '0', tax_percent: '0',
-  revision_of_id: null, void_reason: null, lock_version: 4, lines: [], allocations: [],
-  totals: { subtotal: 0, line_discount: 0, document_discount: 0, tax: 0, total: 0, lines: [] },
-  created_at: '2026-11-10T00:00:00Z', updated_at: '2026-11-10T00:00:00Z',
-} as unknown as ProjectDocumentRecord
-const session = { csrfToken: 'csrf-token-that-is-long-enough', capabilities: { projectWrites: true, documentWrites: true, transactionCorrections: false, transactionReversals: false } }
+  ...createEmptyDocumentDraft(project.id, 'sales_order', '2026-11-10'),
+  id: '22222222-2222-4222-8222-222222222222',
+  status: 'draft' as const,
+  number: null,
+  currency: 'IDR' as const,
+  totals: { lines: [], subtotal: 0, document_discount: 0, taxable_base: 0, tax: 0, total: 0 },
+  lock_version: 7,
+  revised_from_id: null,
+  superseded_by_id: null,
+  void_reason: null,
+  issued_at: null,
+  created_at: '2026-11-10T00:00:00Z',
+  updated_at: '2026-11-10T00:00:00Z',
+}
+
+const session = {
+  csrfToken: 'csrf-token-that-is-long-enough',
+  capabilities: { projectWrites: true, documentWrites: true, transactionCorrections: false, transactionReversals: false },
+}
+
+function api(items: ProjectQuotation[] = []) {
+  return {
+    list: vi.fn<ProjectQuotationApi['list']>(async () => items),
+    create: vi.fn<ProjectQuotationApi['create']>(async () => item),
+    saveDraft: vi.fn<ProjectQuotationApi['saveDraft']>(async (source, values) => ({ ...source, ...values })),
+    revise: vi.fn<ProjectQuotationApi['revise']>(async () => ({ ...item, id: '55555555-5555-4555-8555-555555555555', version: 2, status: 'draft' })),
+    transition: vi.fn<ProjectQuotationApi['transition']>(async () => item),
+    deal: vi.fn<ProjectQuotationApi['deal']>(async () => ({
+      quotation: { ...item, status: 'accepted' as const },
+      sales_order_id: '22222222-2222-4222-8222-222222222222',
+      dp_invoice_id: '33333333-3333-4333-8333-333333333333',
+      installment_schedule: calculateInstallmentSchedule(item.amount, 30, 3),
+    })),
+    download: vi.fn<ProjectQuotationApi['download']>(async () => new Blob(['%PDF-'], { type: 'application/pdf' })),
+  }
+}
+
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
 
 describe('ProjectQuotationPanel', () => {
-  it('applies only the accepted quotation to the draft Sales Order', async () => {
-    const api = { list: vi.fn(async () => [item]), create: vi.fn(), transition: vi.fn(), apply: vi.fn(async () => salesOrder.id) }
-    const applied = vi.fn()
-    render(<ProjectQuotationPanel project={project} salesOrder={salesOrder} session={session} api={api} onApplied={applied} />)
-    expect(await screen.findByText(/Rp\s*12\.500\.000/)).toBeTruthy()
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
-    fireEvent.click(screen.getByRole('button', { name: 'Terapkan ke Sales Order' }))
-    await waitFor(() => expect(api.apply).toHaveBeenCalledWith(item, 4, session))
-    expect(applied).toHaveBeenCalledWith(salesOrder.id)
+  it('creates a structured draft from project-derived recipient data and automatic brand', async () => {
+    const subject = api()
+    render(<ProjectQuotationPanel project={project} session={session} api={subject} onApplied={vi.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Buat quotation' }))
+    expect(screen.getByLabelText('Template merek')).toHaveValue('HOLLAWALL')
+    expect(screen.getByLabelText('Nama penerima')).toHaveValue('Ibu Rani')
+    expect(screen.queryByLabelText(/pilih.*merek/i)).toBeNull()
+
+    fireEvent.change(screen.getByLabelText('Subjek'), { target: { value: 'Penawaran backdrop premium' } })
+    fireEvent.change(screen.getByLabelText('Berlaku sampai'), { target: { value: '2026-12-10' } })
+    fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Backdrop premium' } })
+    fireEvent.change(screen.getByLabelText('Kuantitas item 1'), { target: { value: '2' } })
+    fireEvent.change(screen.getByLabelText('Satuan item 1'), { target: { value: 'set' } })
+    fireEvent.change(screen.getByLabelText('Harga satuan item 1'), { target: { value: '5000000' } })
+    fireEvent.change(screen.getByLabelText('Diskon item 1 (%)'), { target: { value: '10' } })
+    fireEvent.change(screen.getByLabelText('Pajak (%)'), { target: { value: '11' } })
+    expect(screen.getByText(/Rp\s*9\.990\.000/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan draf' }))
+    await waitFor(() => expect(subject.create).toHaveBeenCalledWith(project.id, expect.objectContaining({
+      recipient_name: 'Ibu Rani',
+      project_name: 'Backdrop Expo',
+      subject: 'Penawaran backdrop premium',
+      valid_until: '2026-12-10',
+      lines: [expect.objectContaining({ description: 'Backdrop premium', quantity: '2', unit: 'set', unit_price: 5_000_000, discount_percent: '10' })],
+      tax_percent: '11',
+    }), session))
+    expect(JSON.stringify(subject.create.mock.calls[0])).not.toContain('template_key')
+    expect(document.body.textContent).not.toMatch(/Quotation Canva|Link desain Canva/i)
   })
 
-  it('creates a Canva quotation version without issuing a document', async () => {
-    const api = { list: vi.fn().mockResolvedValueOnce([]).mockResolvedValue([item]), create: vi.fn(async () => item), transition: vi.fn(), apply: vi.fn() }
-    render(<ProjectQuotationPanel project={project} salesOrder={salesOrder} session={session} api={api} onApplied={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Versi baru' }))
-    fireEvent.change(screen.getByLabelText('Link desain Canva'), { target: { value: item.canva_url } })
-    fireEvent.change(screen.getByLabelText('Nilai penawaran'), { target: { value: '12500000' } })
-    fireEvent.change(screen.getByLabelText('Catatan negosiasi'), { target: { value: 'Final' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Simpan versi' }))
-    await waitFor(() => expect(api.create).toHaveBeenCalledWith(project.id, {
-      canva_url: item.canva_url, amount: 12_500_000, channel: 'whatsapp', negotiation_notes: 'Final',
-    }, session))
-    expect(await screen.findByText(/Versi 1/)).toBeTruthy()
+  it('saves an existing draft in place and creates an explicit revision as a new version', async () => {
+    const draft = { ...item, status: 'draft' as const }
+    const subject = api([draft])
+    render(<ProjectQuotationPanel project={project} session={session} api={subject} onApplied={vi.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit versi 1' }))
+    fireEvent.change(screen.getByLabelText('Subjek'), { target: { value: 'Draf diperbarui' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan draf' }))
+    await waitFor(() => expect(subject.saveDraft).toHaveBeenCalledWith(draft, expect.objectContaining({ subject: 'Draf diperbarui' }), session))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Buat revisi versi 1' }))
+    expect(screen.getByText('Revisi dari versi 1')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan sebagai revisi' }))
+    await waitFor(() => expect(subject.revise).toHaveBeenCalledWith(expect.objectContaining({ id: draft.id }), expect.objectContaining({ subject: 'Draf diperbarui' }), session))
+  })
+
+  it('shows exact DP allocation including rupiah remainder before creating deal documents', async () => {
+    const subject = api([item])
+    const applied = vi.fn()
+    render(<ProjectQuotationPanel project={project} salesOrder={salesOrder} session={session} api={subject} onApplied={applied} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Tandai Deal versi 1' }))
+    const dialog = screen.getByRole('dialog', { name: 'Setup DP dan cicilan' })
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'DP 30%' }))
+    fireEvent.click(within(dialog).getByRole('radio', { name: '3 kali pelunasan' }))
+
+    expect(within(dialog).getByText(/DP 30%/).parentElement).toHaveTextContent('Rp3.750.000')
+    expect(within(dialog).getByText('Pelunasan 1').parentElement).toHaveTextContent('Rp2.916.667')
+    expect(within(dialog).getByText('Pelunasan 2').parentElement).toHaveTextContent('Rp2.916.667')
+    expect(within(dialog).getByText('Pelunasan 3').parentElement).toHaveTextContent('Rp2.916.667')
+    expect(within(dialog).getByText(/Tidak ada selisih pembagian/)).toBeTruthy()
+    expect(within(dialog).getByText(/Total alokasi/)).toHaveTextContent('Rp12.500.001')
+    expect(within(dialog).queryByText(/sudah (?:lunas|dibayar)|telah (?:lunas|dibayar)/i)).toBeNull()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Konfirmasi Deal & Buat Draf DP' }))
+    await waitFor(() => expect(subject.deal).toHaveBeenCalledWith(item, { sales_order_version: 7, dp_percent: 30, remaining_installments: 3 }, session))
+    await waitFor(() => expect(applied).toHaveBeenCalledWith('22222222-2222-4222-8222-222222222222'))
+  })
+
+  it('supports bounded custom DP and installment values', async () => {
+    const subject = api([item])
+    render(<ProjectQuotationPanel project={project} salesOrder={salesOrder} session={session} api={subject} onApplied={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Tandai Deal versi 1' }))
+    const dialog = screen.getByRole('dialog', { name: 'Setup DP dan cicilan' })
+
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'DP kustom' }))
+    fireEvent.change(within(dialog).getByLabelText('Persentase DP kustom'), { target: { value: '35' } })
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Jumlah pelunasan kustom' }))
+    fireEvent.change(within(dialog).getAllByLabelText('Jumlah pelunasan kustom').at(-1)!, { target: { value: '25' } })
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('maksimal 24')
+    expect(within(dialog).getByRole('button', { name: 'Konfirmasi Deal & Buat Draf DP' })).toBeDisabled()
+  })
+
+  it('rejects non PNG/JPEG project images before upload', async () => {
+    render(<ProjectQuotationPanel project={project} session={session} api={api()} onApplied={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Buat quotation' }))
+    const file = new File(['hello'], 'project.svg', { type: 'image/svg+xml' })
+    fireEvent.change(screen.getByLabelText('Gambar proyek'), { target: { files: [file] } })
+    expect(await screen.findByRole('alert')).toHaveTextContent('PNG atau JPEG')
+  })
+
+  it('requires and forwards a rejection reason for sent quotations', async () => {
+    const subject = api([item])
+    render(<ProjectQuotationPanel project={project} salesOrder={salesOrder} session={session} api={subject} onApplied={vi.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Tandai ditolak' }))
+    const dialog = screen.getByRole('dialog', { name: 'Catat alasan penolakan' })
+    const confirm = within(dialog).getByRole('button', { name: 'Konfirmasi ditolak' })
+    expect(confirm).toBeDisabled()
+    fireEvent.change(within(dialog).getByLabelText('Alasan penolakan'), { target: { value: 'Anggaran klien berubah' } })
+    fireEvent.click(confirm)
+
+    await waitFor(() => expect(subject.transition).toHaveBeenCalledWith(item, 'rejected', 'Anggaran klien berubah', session))
+  })
+
+  it('hides generated PDF download for legacy Canva-only quotation history', async () => {
+    const legacy = { ...item, lines: [], project_image_url: null, canva_url: 'https://www.canva.com/design/legacy' }
+    render(<ProjectQuotationPanel project={project} session={session} api={api([legacy])} onApplied={vi.fn()} />)
+
+    await screen.findByText('Referensi desain lama:')
+    expect(screen.queryByRole('button', { name: 'Unduh PDF versi 1' })).toBeNull()
+  })
+
+  it('offers PDF history download and reports uncertain deal state without claiming success', async () => {
+    const subject = api([item])
+    vi.mocked(subject.deal).mockRejectedValueOnce(Object.assign(new Error('Hasil Deal belum dapat dipastikan.'), { uncertain: true }))
+    const createObjectURL = vi.fn(() => 'blob:quotation')
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
+    render(<ProjectQuotationPanel project={project} salesOrder={salesOrder} session={session} api={subject} onApplied={vi.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Unduh PDF versi 1' }))
+    await waitFor(() => expect(subject.download).toHaveBeenCalledWith(item))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tandai Deal versi 1' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Konfirmasi Deal & Buat Draf DP' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('belum dapat dipastikan')
+    expect(screen.queryByText(/berhasil dibuat/i)).toBeNull()
+  })
+})
+
+describe('calculateInstallmentSchedule', () => {
+  it('preserves the exact accepted total with deterministic remainder allocation', () => {
+    const schedule = calculateInstallmentSchedule(12_500_001, 30, 3)
+    expect(schedule.map((entry) => entry.amount)).toEqual([3_750_000, 2_916_667, 2_916_667, 2_916_667])
+    expect(schedule.reduce((total, entry) => total + entry.amount, 0)).toBe(12_500_001)
   })
 })

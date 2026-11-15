@@ -30,6 +30,7 @@ from services.project_document_models import (
     decimal_value,
     integer_rupiah,
 )
+from services.project_documents import calculate_document_totals
 
 
 JAKARTA = ZoneInfo("Asia/Jakarta")
@@ -55,6 +56,15 @@ _SELECT_DOCUMENT = """
     renderer_version, revision_of_id, superseded_by_id, void_reason,
     lock_version, issued_at, voided_at, superseded_at,
     created_by, updated_by, created_at, updated_at
+"""
+_SELECT_QUOTATION = """
+    id, project_id, version, canva_url, amount, status, channel,
+    negotiation_notes, sent_at, decided_at, sales_order_id, created_by, updated_by,
+    created_at, updated_at, lock_version, template_key, subject, valid_until,
+    recipient_name, recipient_company, recipient_address, recipient_contact, project_name,
+    project_image_url, lines, discount_mode, discount_value, tax_percent,
+    payment_terms, content_notes, accepted_snapshot, revision_of_id, dp_invoice_id,
+    installment_schedule
 """
 
 
@@ -210,6 +220,7 @@ def _columns(selection: str) -> list[str]:
 
 _PROJECT_COLUMNS = _columns(_SELECT_PROJECT)
 _DOCUMENT_COLUMNS = _columns(_SELECT_DOCUMENT)
+_QUOTATION_COLUMNS = _columns(_SELECT_QUOTATION)
 
 
 _SCHEMA_HEALTH_QUERY = """
@@ -325,7 +336,7 @@ SELECT
                 column_name || '|' || udt_name || '|' || is_nullable || '|' ||
                 COALESCE(column_default, '') || '|' || is_identity,
                 E'\n' ORDER BY ordinal_position
-            )) = '46180aa779aed49ebea952e1eb1c80d1'
+            )) = '1c0e81da67437c81355289eb2799142f'
             FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = 'project_quotation_handoffs'
         )
@@ -425,7 +436,7 @@ SELECT
             SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
             WHERE n.nspname = 'public'
               AND p.proname = 'guard_project_quotation_transition'
-              AND MD5(p.prosrc) = '2b92d36e51058151859b3dd8c8a5c6b8'
+              AND MD5(p.prosrc) = '79ccf28f556490f37fa09bb0c48a35a5'
         )
         AND EXISTS (
             SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -710,6 +721,7 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
             "006_invoice_payment_applications.sql",
             "007_project_transaction_evidence.sql",
             "008_project_quotation_handoffs.sql",
+            "019_structured_quotations.sql",
         )
     ]
     try:
@@ -1264,52 +1276,221 @@ class ProjectDocumentRepository:
 
     @staticmethod
     def _quotation_metadata(row: Sequence[Any] | None) -> dict[str, Any] | None:
-        if row is None:
+        result = _row_dict(None, _QUOTATION_COLUMNS, row)
+        if result is None:
             return None
-        columns = [
-            "id", "project_id", "version", "canva_url", "amount", "status", "channel",
-            "negotiation_notes", "sent_at", "decided_at", "sales_order_id", "created_by", "updated_by",
-            "created_at", "updated_at", "lock_version",
-        ]
-        result = dict(zip(columns, row))
-        result["id"] = str(result["id"])
-        result["project_id"] = str(result["project_id"])
-        result["sales_order_id"] = str(result["sales_order_id"]) if result.get("sales_order_id") else None
-        for field in ("created_by", "updated_by"):
+        for field in ("created_by", "updated_by", "accepted_snapshot"):
             result[field] = _safe_json_object(result.get(field)) if result.get(field) else None
+        for field in ("lines", "installment_schedule"):
+            result[field] = _safe_json_array(result.get(field))
+        for field in ("sales_order_id", "revision_of_id", "dp_invoice_id"):
+            result[field] = str(result[field]) if result.get(field) else None
         return result
 
     @staticmethod
-    def _quotation_values(values: Mapping[str, Any]) -> tuple[str, int, str, str]:
-        canva_url = str(values.get("canva_url") or "").strip()
-        if len(canva_url) > 2048 or not re.fullmatch(
-            r"https://(?:www\.)?canva\.com/[^\s]+", canva_url, re.IGNORECASE
-        ):
-            raise ValueError("quotation Canva URL must use https://canva.com")
-        amount = integer_rupiah(values.get("amount"), field="quotation amount")
-        if amount <= 0:
-            raise ValueError("quotation amount must be positive")
-        channel = str(values.get("channel") or "whatsapp").strip().lower()
+    def _quotation_template(company: str) -> str:
+        canonical = str(company or "").strip()
+        if canonical == "HOLLA":
+            return "HOLLAWALL"
+        if canonical == "HOJJA":
+            return "HOJJA"
+        if canonical in {"TEXTURIN-Surabaya", "TEXTURIN-Bali"}:
+            return "TEXTURIN"
+        raise ValueError("project company has no supported quotation template")
+
+    @classmethod
+    def _quotation_values(
+        cls,
+        values: Mapping[str, Any],
+        *,
+        company: str,
+    ) -> dict[str, Any]:
+        supplied = dict(values)
+        template_key = cls._quotation_template(company)
+        requested_template = str(supplied.get("template_key") or template_key).strip().upper()
+        if requested_template != template_key:
+            raise ValueError("template_key must match the project company")
+        channel = str(supplied.get("channel") or "whatsapp").strip().lower()
         if channel not in {"whatsapp", "phone", "email", "meeting", "other"}:
             raise ValueError("unsupported quotation channel")
-        notes = str(values.get("negotiation_notes") or "").strip()
-        if len(notes) > 10_000:
-            raise ValueError("quotation negotiation notes are too long")
-        return canva_url, amount, channel, notes
+        notes = str(supplied.get("negotiation_notes") or "").strip()
+        subject = str(supplied.get("subject") or "").strip()
+        recipient_name = str(supplied.get("recipient_name") or "").strip()
+        recipient_company = str(supplied.get("recipient_company") or "").strip()
+        recipient_address = str(supplied.get("recipient_address") or "").strip()
+        recipient_contact = str(supplied.get("recipient_contact") or "").strip()
+        project_name = str(supplied.get("project_name") or "").strip()
+        payment_terms = str(supplied.get("payment_terms") or "").strip()
+        content_notes = str(supplied.get("content_notes") or "").strip()
+        if any(len(value) > 10_000 for value in (
+            notes, subject, recipient_name, recipient_company, recipient_address,
+            recipient_contact, project_name, payment_terms, content_notes,
+        )):
+            raise ValueError("quotation text is too long")
+        valid_until = supplied.get("valid_until")
+        if isinstance(valid_until, str) and valid_until:
+            valid_until = date.fromisoformat(valid_until)
+        image = _project_image_url(supplied.get("project_image_url"))
+        lines = supplied.get("lines")
+        canva_url = str(supplied.get("canva_url") or "").strip() or None
+        if canva_url and (
+            len(canva_url) > 2048
+            or not re.fullmatch(r"https://(?:www\.)?canva\.com/[^\s]+", canva_url, re.IGNORECASE)
+        ):
+            raise ValueError("quotation Canva URL must use https://canva.com")
+
+        discount_mode = str(supplied.get("discount_mode") or "none").strip().lower()
+        if discount_mode not in {"none", "fixed", "percent"}:
+            raise ValueError("discount_mode must be none, fixed, or percent")
+        discount_value = supplied.get("discount_value", 0)
+        discount_amount = integer_rupiah(discount_value, field="quotation discount") if discount_mode == "fixed" else 0
+        discount_percent = discount_value if discount_mode == "percent" else "0"
+        tax_percent = supplied.get("tax_percent", "0")
+
+        if lines is not None:
+            if not image:
+                raise ValueError("structured quotation requires project_image_url")
+            totals = calculate_document_totals(
+                lines,
+                document_discount_amount=discount_amount,
+                document_discount_percent=discount_percent,
+                tax_percent=tax_percent,
+            )
+            canonical_lines = totals["lines"]
+            amount = int(totals["total"])
+            discount_value = discount_amount if discount_mode == "fixed" else (
+                str(decimal_value(discount_percent, field="quotation discount", maximum=PERCENT_MAX, max_fractional_digits=4))
+                if discount_mode == "percent" else 0
+            )
+            tax_percent = str(decimal_value(tax_percent, field="quotation tax", maximum=PERCENT_MAX, max_fractional_digits=4))
+        else:
+            if not canva_url:
+                raise ValueError("structured quotation lines or quotation Canva URL are required")
+            amount = integer_rupiah(supplied.get("amount"), field="quotation amount")
+            if amount <= 0:
+                raise ValueError("quotation amount must be positive")
+            canonical_lines = []
+            discount_mode, discount_value, tax_percent = "none", 0, "0"
+
+        return {
+            "canva_url": canva_url,
+            "amount": amount,
+            "channel": channel,
+            "negotiation_notes": notes,
+            "template_key": template_key,
+            "recipient_name": recipient_name,
+            "recipient_company": recipient_company,
+            "recipient_address": recipient_address,
+            "recipient_contact": recipient_contact,
+            "project_name": project_name,
+            "subject": subject,
+            "valid_until": valid_until,
+            "project_image_url": image,
+            "lines": canonical_lines,
+            "discount_mode": discount_mode,
+            "discount_value": discount_value,
+            "tax_percent": tax_percent,
+            "payment_terms": payment_terms,
+            "content_notes": content_notes,
+        }
+
+    @staticmethod
+    def _quotation_input(quotation: Mapping[str, Any]) -> dict[str, Any]:
+        """Return editable source values from a stored quotation."""
+        return {
+            "canva_url": quotation.get("canva_url"),
+            "amount": quotation.get("amount"),
+            "channel": quotation.get("channel"),
+            "negotiation_notes": quotation.get("negotiation_notes"),
+            "template_key": quotation.get("template_key"),
+            "recipient_name": quotation.get("recipient_name"),
+            "recipient_company": quotation.get("recipient_company"),
+            "recipient_address": quotation.get("recipient_address"),
+            "recipient_contact": quotation.get("recipient_contact"),
+            "project_name": quotation.get("project_name"),
+            "subject": quotation.get("subject"),
+            "valid_until": quotation.get("valid_until"),
+            "project_image_url": quotation.get("project_image_url"),
+            "lines": quotation.get("lines") or None,
+            "discount_mode": quotation.get("discount_mode"),
+            "discount_value": quotation.get("discount_value"),
+            "tax_percent": quotation.get("tax_percent"),
+            "payment_terms": quotation.get("payment_terms"),
+            "content_notes": quotation.get("content_notes"),
+        }
+
+    @staticmethod
+    def _load_quotation(cursor: Any, quotation_id: str, *, for_update: bool = False) -> dict[str, Any]:
+        cursor.execute(
+            "SELECT " + _SELECT_QUOTATION + " FROM project_quotation_handoffs WHERE id = %s" +  # nosec B608 -- internal column/lock constants
+            (" FOR UPDATE" if for_update else ""),
+            (quotation_id,),
+        )
+        quotation = ProjectDocumentRepository._quotation_metadata(cursor.fetchone())
+        if not quotation:
+            raise ProjectDocumentNotFound("quotation not found")
+        return quotation
+
+    @staticmethod
+    def _fixed_quotation_discount(quotation: Mapping[str, Any]) -> int:
+        if str(quotation.get("discount_mode") or "none") != "fixed":
+            return 0
+        exact = Decimal(str(quotation.get("discount_value") or 0))
+        if exact != exact.to_integral_value():
+            raise DocumentCalculationError("fixed quotation discount must be integer rupiah")
+        return bounded_idr(int(exact), field="discount_value")
+
+    @staticmethod
+    def _quotation_totals(quotation: Mapping[str, Any]) -> dict[str, Any]:
+        mode = str(quotation.get("discount_mode") or "none")
+        value = quotation.get("discount_value") or 0
+        return calculate_document_totals(
+            quotation.get("lines") or [],
+            document_discount_amount=ProjectDocumentRepository._fixed_quotation_discount(quotation),
+            document_discount_percent=value if mode == "percent" else 0,
+            tax_percent=quotation.get("tax_percent") or 0,
+        )
+
+    @staticmethod
+    def _insert_quotation(
+        cursor: Any, *, quotation_id: str, project_id: str, version: int,
+        values: Mapping[str, Any], actor_json: str, revision_of_id: str | None = None,
+    ) -> dict[str, Any]:
+        cursor.execute(
+            """INSERT INTO project_quotation_handoffs (
+                   id, project_id, version, canva_url, amount, channel,
+                   negotiation_notes, template_key, subject, valid_until,
+                   recipient_name, recipient_company, recipient_address,
+                   recipient_contact, project_name,
+                   project_image_url, lines, discount_mode, discount_value,
+                   tax_percent, payment_terms, content_notes, revision_of_id,
+                   created_by, updated_by
+               ) VALUES (
+                   %s, %s, %s, %s, %s, %s, NULLIF(%s, ''), %s, NULLIF(%s, ''), %s,
+                   NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''),
+                   %s, %s::jsonb, %s, %s, %s, NULLIF(%s, ''), NULLIF(%s, ''), %s,
+                   %s::jsonb, %s::jsonb
+               ) RETURNING """ + _SELECT_QUOTATION,  # nosec B608 -- internal column constant
+            (
+                quotation_id, project_id, version, values["canva_url"], values["amount"],
+                values["channel"], values["negotiation_notes"], values["template_key"],
+                values["subject"], values["valid_until"], values["recipient_name"],
+                values["recipient_company"], values["recipient_address"],
+                values["recipient_contact"], values["project_name"], values["project_image_url"],
+                json.dumps(values["lines"]), values["discount_mode"], values["discount_value"],
+                values["tax_percent"], values["payment_terms"], values["content_notes"],
+                revision_of_id, actor_json, actor_json,
+            ),
+        )
+        return ProjectDocumentRepository._quotation_metadata(cursor.fetchone()) or {}
 
     def list_project_quotations(self, project_id: str) -> list[dict[str, Any]]:
         try:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
                     cursor.execute(
-                        """
-                        SELECT id, project_id, version, canva_url, amount, status, channel,
-                               negotiation_notes, sent_at, decided_at, sales_order_id, created_by, updated_by,
-                               created_at, updated_at, lock_version
-                        FROM project_quotation_handoffs
-                        WHERE project_id = %s
-                        ORDER BY version DESC
-                        """,
+                        "SELECT " + _SELECT_QUOTATION +  # nosec B608 -- internal column constant
+                        " FROM project_quotation_handoffs WHERE project_id = %s ORDER BY version DESC",
                         (project_id,),
                     )
                     return [self._quotation_metadata(row) or {} for row in cursor.fetchall()]
@@ -1320,25 +1501,107 @@ class ProjectDocumentRepository:
                 f"Project quotation database unavailable: {type(exc).__name__}"
             ) from exc
 
+    def render_project_quotation(self, quotation_id: str) -> dict[str, Any]:
+        """Render the selected mutable quotation version without issuing a document."""
+        if self._renderer is None:
+            raise ProjectDocumentUnavailable("document renderer is not configured")
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    quotation = self._load_quotation(cursor, quotation_id)
+                    if not quotation.get("lines") or not quotation.get("project_image_url"):
+                        raise ProjectDocumentConflict(
+                            "legacy Canva quotation has no structured PDF artifact"
+                        )
+                    cursor.execute(
+                        "SELECT " + _SELECT_PROJECT + " FROM projects WHERE id = %s",  # nosec B608
+                        (quotation["project_id"],),
+                    )
+                    project = _row_dict(cursor, _PROJECT_COLUMNS, cursor.fetchone())
+                    if not project:
+                        raise ProjectDocumentNotFound("quotation project not found")
+                    cursor.execute(
+                        """SELECT issuer_key, legal_name, display_name, number_code,
+                                  address, phone, email, tax_identity, bank_details,
+                                  logo_path, profile_version, created_at, updated_at
+                           FROM project_issuer_profiles WHERE issuer_key = %s""",
+                        (project["issuer_key"],),
+                    )
+                    issuer = _row_dict(cursor, [
+                        "issuer_key", "legal_name", "display_name", "number_code", "address",
+                        "phone", "email", "tax_identity", "bank_details", "logo_path",
+                        "profile_version", "created_at", "updated_at",
+                    ], cursor.fetchone())
+                    if not issuer:
+                        raise ProjectDocumentNotFound("quotation issuer not found")
+            for field in ("created_by", "updated_by"):
+                project[field] = _safe_json_object(project.get(field))
+            project["name"] = quotation.get("project_name") or project.get("name")
+            project["client_name"] = quotation.get("recipient_name") or project.get("client_name")
+            project["client_company"] = quotation.get("recipient_company") or project.get("client_company")
+            project["client_address"] = quotation.get("recipient_address") or project.get("client_address")
+            project["client_contact"] = quotation.get("recipient_contact") or project.get("client_contact")
+            document = {
+                "id": quotation["id"], "project_id": quotation["project_id"],
+                "issuer_key": project["issuer_key"], "document_type": "sales_order",
+                "status": "draft", "official_number": f"QTN/{quotation['version']:03d}",
+                "issue_date": _instant(self._now()).astimezone(JAKARTA).date(),
+                "valid_until": quotation.get("valid_until"),
+                "document_discount_amount": self._fixed_quotation_discount(quotation),
+                "document_discount_percent": str(quotation.get("discount_value") or 0)
+                    if quotation.get("discount_mode") == "percent" else "0",
+                "tax_percent": str(quotation.get("tax_percent") or "0"),
+                "notes": quotation.get("content_notes"),
+                "payment_terms": quotation.get("payment_terms"),
+                "project_image_url": quotation.get("project_image_url"),
+            }
+            snapshot = _plain({
+                "schema_version": 1, "issued_at": _instant(self._now()),
+                "issuer": issuer, "project": project, "document": document,
+                "lines": quotation.get("lines") or [], "allocations": [],
+                "totals": self._quotation_totals(quotation),
+            })
+            rendered = self._renderer(snapshot)
+            if not isinstance(rendered, tuple) or len(rendered) != 2 or not isinstance(rendered[0], bytes):
+                raise ProjectDocumentUnavailable("document renderer must return (pdf_bytes, renderer_version)")
+            pdf, renderer_version = rendered
+            if not pdf.startswith(b"%PDF-"):
+                raise ProjectDocumentUnavailable("document renderer returned invalid PDF bytes")
+            return {
+                "bytes": pdf, "byte_size": len(pdf),
+                "sha256": hashlib.sha256(pdf).hexdigest(),
+                "renderer_version": str(renderer_version),
+                "filename": f"quotation-{quotation['template_key'].lower()}-v{quotation['version']}.pdf",
+            }
+        except ProjectDocumentError:
+            raise
+        except Exception as exc:
+            raise ProjectDocumentUnavailable(
+                f"Project quotation render unavailable: {type(exc).__name__}"
+            ) from exc
+
     def create_project_quotation(
         self, project_id: str, *, values: Mapping[str, Any],
         idempotency_key: str, actor: Mapping[str, Any],
     ) -> dict[str, Any]:
-        canva_url, amount, channel, notes = self._quotation_values(values)
-        request = {"project_id": project_id, "canva_url": canva_url, "amount": amount,
-                   "channel": channel, "negotiation_notes": notes}
         actor_json, _ = _actor(actor)
         quotation_id = str(uuid.uuid4())
+        request = {"project_id": project_id, "values": dict(values)}
         try:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
                     key_hash, _, replay = self._claim(cursor, "quotation.create", idempotency_key, request)
                     if replay is not None:
                         return replay
-                    cursor.execute("SELECT status FROM projects WHERE id = %s FOR UPDATE", (project_id,))
+                    cursor.execute(
+                        "SELECT status, company FROM projects WHERE id = %s FOR UPDATE", (project_id,)
+                    )
                     project = cursor.fetchone()
-                    if not project or str(project[0]) in {"completed", "cancelled"}:
+                    if not project:
+                        raise ProjectDocumentNotFound("project not found")
+                    if str(project[0]) in {"completed", "cancelled"}:
                         raise ProjectDocumentConflict("quotation project must be open")
+                    prepared = self._quotation_values(values, company=str(project[1]))
                     cursor.execute(
                         """SELECT id, version, status FROM project_quotation_handoffs
                            WHERE project_id = %s ORDER BY version DESC LIMIT 1 FOR UPDATE""",
@@ -1350,27 +1613,349 @@ class ProjectDocumentRepository:
                             "latest quotation must be rejected or revised before creating a new version"
                         )
                     version = int(latest[1]) + 1 if latest else 1
-                    cursor.execute(
-                        """INSERT INTO project_quotation_handoffs (
-                               id, project_id, version, canva_url, amount, channel,
-                               negotiation_notes, created_by, updated_by
-                           ) VALUES (%s, %s, %s, %s, %s, %s, NULLIF(%s, ''), %s::jsonb, %s::jsonb)
-                           RETURNING id, project_id, version, canva_url, amount, status, channel,
-                                     negotiation_notes, sent_at, decided_at, sales_order_id, created_by, updated_by,
-                                     created_at, updated_at, lock_version""",
-                        (quotation_id, project_id, version, canva_url, amount, channel,
-                         notes, actor_json, actor_json),
+                    quotation = self._insert_quotation(
+                        cursor, quotation_id=quotation_id, project_id=project_id,
+                        version=version, values=prepared, actor_json=actor_json,
                     )
-                    quotation = self._quotation_metadata(cursor.fetchone()) or {}
                     cursor.execute(
                         """INSERT INTO project_quotation_events (quotation_id, event_type, actor, data)
                            VALUES (%s, 'quotation.created', %s::jsonb, %s::jsonb)""",
-                        (quotation_id, actor_json, json.dumps({"version": version, "amount": amount})),
+                        (quotation_id, actor_json, json.dumps({"version": version, "amount": prepared["amount"]})),
                     )
                     return self._complete(cursor, key_hash, quotation)
-        except (ProjectDocumentError, ValueError, TypeError):
+        except (ProjectDocumentError, DocumentCalculationError, ValueError, TypeError):
             raise
         except Exception as exc:
+            raise ProjectDocumentUnavailable(
+                f"Project quotation database unavailable: {type(exc).__name__}"
+            ) from exc
+
+    def update_project_quotation(
+        self, quotation_id: str, *, changes: Mapping[str, Any], expected_version: int,
+        idempotency_key: str, actor: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        actor_json, _ = _actor(actor)
+        request = {"quotation_id": quotation_id, "changes": dict(changes),
+                   "expected_version": expected_version}
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    key_hash, _, replay = self._claim(cursor, "quotation.update", idempotency_key, request)
+                    if replay is not None:
+                        return replay
+                    cursor.execute(
+                        "SELECT " + _SELECT_QUOTATION +  # nosec B608 -- internal column constant
+                        " FROM project_quotation_handoffs WHERE id = %s FOR UPDATE",
+                        (quotation_id,),
+                    )
+                    current = self._quotation_metadata(cursor.fetchone())
+                    if not current:
+                        raise ProjectDocumentNotFound("quotation not found")
+                    if int(current["lock_version"]) != expected_version:
+                        raise ProjectDocumentConflict("quotation version is stale")
+                    if current["status"] != "draft":
+                        raise ProjectDocumentConflict("only draft quotation may be edited")
+                    cursor.execute("SELECT company FROM projects WHERE id = %s FOR SHARE", (current["project_id"],))
+                    company = cursor.fetchone()
+                    if not company:
+                        raise ProjectDocumentNotFound("project not found")
+                    merged = self._quotation_input(current)
+                    merged.update(dict(changes))
+                    prepared = self._quotation_values(merged, company=str(company[0]))
+                    cursor.execute(
+                        """UPDATE project_quotation_handoffs SET
+                               canva_url = %s, amount = %s, channel = %s,
+                               negotiation_notes = NULLIF(%s, ''), template_key = %s,
+                               subject = NULLIF(%s, ''), valid_until = %s, project_image_url = %s,
+                               recipient_name = NULLIF(%s, ''), recipient_company = NULLIF(%s, ''),
+                               recipient_address = NULLIF(%s, ''), recipient_contact = NULLIF(%s, ''),
+                               project_name = NULLIF(%s, ''),
+                               lines = %s::jsonb, discount_mode = %s, discount_value = %s,
+                               tax_percent = %s, payment_terms = NULLIF(%s, ''),
+                               content_notes = NULLIF(%s, ''), updated_by = %s::jsonb,
+                               lock_version = lock_version + 1
+                           WHERE id = %s AND lock_version = %s
+                           RETURNING """ + _SELECT_QUOTATION,  # nosec B608
+                        (
+                            prepared["canva_url"], prepared["amount"], prepared["channel"],
+                            prepared["negotiation_notes"], prepared["template_key"], prepared["subject"],
+                            prepared["valid_until"], prepared["project_image_url"], prepared["recipient_name"],
+                            prepared["recipient_company"], prepared["recipient_address"],
+                            prepared["recipient_contact"], prepared["project_name"], json.dumps(prepared["lines"]),
+                            prepared["discount_mode"], prepared["discount_value"], prepared["tax_percent"],
+                            prepared["payment_terms"], prepared["content_notes"], actor_json,
+                            quotation_id, expected_version,
+                        ),
+                    )
+                    updated = self._quotation_metadata(cursor.fetchone())
+                    if not updated:
+                        raise ProjectDocumentConflict("quotation version is stale")
+                    cursor.execute(
+                        """INSERT INTO project_quotation_events (quotation_id, event_type, actor, data)
+                           VALUES (%s, 'quotation.updated', %s::jsonb, %s::jsonb)""",
+                        (quotation_id, actor_json, json.dumps({"amount": prepared["amount"]})),
+                    )
+                    return self._complete(cursor, key_hash, updated)
+        except (ProjectDocumentError, DocumentCalculationError, ValueError, TypeError):
+            raise
+        except Exception as exc:
+            raise ProjectDocumentUnavailable(
+                f"Project quotation database unavailable: {type(exc).__name__}"
+            ) from exc
+
+    def revise_project_quotation(
+        self, quotation_id: str, *, changes: Mapping[str, Any], expected_version: int,
+        idempotency_key: str, actor: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        actor_json, _ = _actor(actor)
+        new_id = str(uuid.uuid4())
+        request = {"quotation_id": quotation_id, "changes": dict(changes),
+                   "expected_version": expected_version}
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    key_hash, _, replay = self._claim(cursor, "quotation.revise", idempotency_key, request)
+                    if replay is not None:
+                        return replay
+                    cursor.execute(
+                        "SELECT " + _SELECT_QUOTATION +  # nosec B608 -- internal column constant
+                        " FROM project_quotation_handoffs WHERE id = %s FOR UPDATE",
+                        (quotation_id,),
+                    )
+                    current = self._quotation_metadata(cursor.fetchone())
+                    if not current:
+                        raise ProjectDocumentNotFound("quotation not found")
+                    if int(current["lock_version"]) != expected_version:
+                        raise ProjectDocumentConflict("quotation version is stale")
+                    if current["status"] not in {"draft", "sent"}:
+                        raise ProjectDocumentConflict("quotation cannot be revised from its current status")
+                    cursor.execute(
+                        "SELECT status, company FROM projects WHERE id = %s FOR UPDATE", (current["project_id"],)
+                    )
+                    project = cursor.fetchone()
+                    if not project or str(project[0]) in {"completed", "cancelled"}:
+                        raise ProjectDocumentConflict("quotation project must be open")
+                    merged = self._quotation_input(current)
+                    merged.update(dict(changes))
+                    prepared = self._quotation_values(merged, company=str(project[1]))
+                    cursor.execute(
+                        """UPDATE project_quotation_handoffs
+                           SET status = 'revised', sent_at = COALESCE(sent_at, NOW()), decided_at = NOW(),
+                               updated_by = %s::jsonb, lock_version = lock_version + 1
+                           WHERE id = %s AND lock_version = %s""",
+                        (actor_json, quotation_id, expected_version),
+                    )
+                    if cursor.rowcount != 1:
+                        raise ProjectDocumentConflict("quotation version is stale")
+                    revision = self._insert_quotation(
+                        cursor, quotation_id=new_id, project_id=str(current["project_id"]),
+                        version=int(current["version"]) + 1, values=prepared,
+                        actor_json=actor_json, revision_of_id=quotation_id,
+                    )
+                    cursor.execute(
+                        """INSERT INTO project_quotation_events (quotation_id, event_type, actor, data)
+                           VALUES (%s, 'quotation.revised', %s::jsonb, %s::jsonb),
+                                  (%s, 'quotation.created', %s::jsonb, %s::jsonb)""",
+                        (
+                            quotation_id, actor_json, json.dumps({"revision_id": new_id}),
+                            new_id, actor_json, json.dumps({"revision_of_id": quotation_id,
+                                                           "version": revision["version"]}),
+                        ),
+                    )
+                    return self._complete(cursor, key_hash, revision)
+        except (ProjectDocumentError, DocumentCalculationError, ValueError, TypeError):
+            raise
+        except Exception as exc:
+            raise ProjectDocumentUnavailable(
+                f"Project quotation database unavailable: {type(exc).__name__}"
+            ) from exc
+
+    def deal_project_quotation(
+        self, quotation_id: str, *, dp_percent: Any, remaining_installments: Any,
+        custom_installments: Any, expected_version: int, expected_document_version: int,
+        idempotency_key: str, actor: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        rate = decimal_value(
+            dp_percent, field="DP percent", minimum=Decimal("0.0001"),
+            maximum=Decimal("99.9999"), max_fractional_digits=4,
+        )
+        count_value = custom_installments if custom_installments is not None else remaining_installments
+        if isinstance(count_value, bool):
+            raise ValueError("remaining installments must be an integer")
+        try:
+            count = int(count_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("remaining installments must be an integer") from exc
+        if count < 1 or count > 24:
+            raise ValueError("remaining installments must be between 1 and 24")
+        actor_json, _ = _actor(actor)
+        request = {
+            "quotation_id": quotation_id, "dp_percent": str(rate),
+            "remaining_installments": count, "expected_version": expected_version,
+            "expected_document_version": expected_document_version,
+        }
+        dp_invoice_id = str(uuid.uuid4())
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    key_hash, _, replay = self._claim(cursor, "quotation.deal", idempotency_key, request)
+                    if replay is not None:
+                        return replay
+                    cursor.execute(
+                        "SELECT " + _SELECT_QUOTATION +  # nosec B608 -- internal column constant
+                        " FROM project_quotation_handoffs WHERE id = %s FOR UPDATE",
+                        (quotation_id,),
+                    )
+                    quotation = self._quotation_metadata(cursor.fetchone())
+                    if not quotation:
+                        raise ProjectDocumentNotFound("quotation not found")
+                    if quotation["status"] == "accepted" or quotation.get("dp_invoice_id"):
+                        raise ProjectDocumentConflict("quotation has already been dealt")
+                    if int(quotation["lock_version"]) != expected_version:
+                        raise ProjectDocumentConflict("quotation version is stale")
+                    if quotation["status"] != "sent":
+                        raise ProjectDocumentConflict("quotation must be sent before Deal")
+                    if not quotation.get("lines") or not quotation.get("project_image_url"):
+                        raise ProjectDocumentConflict(
+                            "Deal requires structured lines and project image"
+                        )
+                    cursor.execute(
+                        "SELECT issuer_key, status FROM projects WHERE id = %s FOR UPDATE",
+                        (quotation["project_id"],),
+                    )
+                    project = cursor.fetchone()
+                    if not project or str(project[1]) not in {"planned", "active"}:
+                        raise ProjectDocumentConflict("Deal requires a planned or active project")
+                    cursor.execute(
+                        """SELECT id, lock_version FROM project_documents
+                           WHERE project_id = %s AND document_type = 'sales_order' AND status = 'draft'
+                           ORDER BY created_at LIMIT 1 FOR UPDATE""",
+                        (quotation["project_id"],),
+                    )
+                    sales_order_row = cursor.fetchone()
+                    if not sales_order_row:
+                        raise ProjectDocumentConflict("draft Sales Order is required")
+                    sales_order_id, sales_order_version = str(sales_order_row[0]), int(sales_order_row[1])
+                    if sales_order_version != expected_document_version:
+                        raise ProjectDocumentConflict("Sales Order version is stale")
+
+                    self._replace_lines(cursor, sales_order_id, quotation["lines"])
+                    discount_amount = int(quotation["discount_value"]) if quotation["discount_mode"] == "fixed" else 0
+                    discount_percent = str(quotation["discount_value"]) if quotation["discount_mode"] == "percent" else "0"
+                    cursor.execute(
+                        """UPDATE project_documents SET
+                               valid_until = %s, document_discount_amount = %s,
+                               document_discount_percent = %s, tax_percent = %s,
+                               notes = NULLIF(%s, ''), payment_terms = NULLIF(%s, ''),
+                               client_signatory = NULL, project_image_url = %s,
+                               updated_by = %s::jsonb, lock_version = lock_version + 1,
+                               updated_at = NOW()
+                           WHERE id = %s AND status = 'draft' AND lock_version = %s""",
+                        (
+                            quotation["valid_until"], discount_amount, discount_percent,
+                            quotation["tax_percent"], quotation["content_notes"],
+                            quotation["payment_terms"], quotation["project_image_url"],
+                            actor_json, sales_order_id, expected_document_version,
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise ProjectDocumentConflict("Sales Order version is stale")
+                    sales_order = self._load_document(cursor, sales_order_id)
+                    total = int(self._calculate_totals(sales_order)["total"])
+                    if total != int(quotation["amount"]):
+                        raise ProjectDocumentConflict("Sales Order total does not match quotation")
+                    dp_amount = int(
+                        (Decimal(total) * rate / Decimal("100")).quantize(
+                            Decimal("1"), rounding=ROUND_HALF_UP
+                        )
+                    )
+                    if dp_amount <= 0 or dp_amount >= total:
+                        raise ProjectDocumentConflict("DP amount must leave a positive balance")
+                    dp_values = self._numeric_document_values(self._with_document_defaults("invoice", {
+                        "invoice_kind": "DP", "project_image_url": quotation["project_image_url"],
+                        "payment_terms": quotation["payment_terms"],
+                        "notes": f"DP {rate}% — {quotation.get('subject') or 'Quotation'}",
+                        "document_discount_amount": 0, "document_discount_percent": "0", "tax_percent": "0",
+                    }))
+                    self._insert_document(
+                        cursor, document_id=dp_invoice_id, project_id=str(quotation["project_id"]),
+                        issuer_key=str(project[0]), document_type="invoice", invoice_kind="DP",
+                        values=dp_values, actor_json=actor_json,
+                    )
+                    self._replace_lines(cursor, dp_invoice_id, [{
+                        "description": f"DP {rate}% — {quotation.get('subject') or 'Proyek'}",
+                        "quantity": "1", "unit": "termin", "unit_price": dp_amount,
+                        "line_discount_percent": "0",
+                    }])
+                    dp_invoice = self._load_document(cursor, dp_invoice_id)
+                    balance = total - dp_amount
+                    base, remainder = divmod(balance, count)
+                    installments = [base + (1 if index < remainder else 0) for index in range(count)]
+                    schedule = [{
+                        "sequence": 1, "kind": "DP", "label": f"DP {rate}%",
+                        "amount": dp_amount, "percent": float(rate), "invoice_id": dp_invoice_id,
+                    }] + [{
+                        "sequence": index + 2, "kind": "INSTALLMENT",
+                        "label": f"Pelunasan {index + 1}", "amount": amount,
+                    } for index, amount in enumerate(installments)]
+                    snapshot = {
+                        "quotation_id": quotation_id, "version": int(quotation["version"]),
+                        "amount": total, "subject": quotation.get("subject"),
+                        "recipient_name": quotation.get("recipient_name"),
+                        "recipient_company": quotation.get("recipient_company"),
+                        "recipient_address": quotation.get("recipient_address"),
+                        "recipient_contact": quotation.get("recipient_contact"),
+                        "project_name": quotation.get("project_name"),
+                        "template_key": quotation.get("template_key"),
+                        "lines": quotation["lines"], "discount_mode": quotation["discount_mode"],
+                        "discount_value": quotation["discount_value"],
+                        "tax_percent": quotation["tax_percent"],
+                        "payment_terms": quotation.get("payment_terms"),
+                        "content_notes": quotation.get("content_notes"),
+                        "project_image_url": quotation.get("project_image_url"),
+                        "accepted_at": _instant(self._now()).isoformat(),
+                    }
+                    cursor.execute(
+                        """UPDATE project_quotation_handoffs SET
+                               status = 'accepted', decided_at = NOW(), sales_order_id = %s,
+                               dp_invoice_id = %s, accepted_snapshot = %s::jsonb,
+                               installment_schedule = %s::jsonb, updated_by = %s::jsonb,
+                               lock_version = lock_version + 1
+                           WHERE id = %s AND status = 'sent' AND lock_version = %s
+                           RETURNING """ + _SELECT_QUOTATION,  # nosec B608
+                        (
+                            sales_order_id, dp_invoice_id, json.dumps(snapshot), json.dumps(schedule),
+                            actor_json, quotation_id, expected_version,
+                        ),
+                    )
+                    accepted = self._quotation_metadata(cursor.fetchone())
+                    if not accepted:
+                        raise ProjectDocumentConflict("quotation Deal conflicted")
+                    cursor.execute(
+                        """INSERT INTO project_quotation_events (quotation_id, event_type, actor, data)
+                           VALUES (%s, 'quotation.accepted', %s::jsonb, %s::jsonb)""",
+                        (quotation_id, actor_json, json.dumps({
+                            "sales_order_id": sales_order_id, "dp_invoice_id": dp_invoice_id,
+                            "dp_percent": str(rate), "remaining_installments": count,
+                        })),
+                    )
+                    self._event(
+                        cursor, project_id=str(quotation["project_id"]),
+                        document_id=dp_invoice_id, event_type="document.created",
+                        actor_json=actor_json, data={"document_type": "invoice", "invoice_kind": "DP",
+                                                     "source_quotation_id": quotation_id},
+                    )
+                    result = {
+                        "quotation": accepted, "sales_order": sales_order,
+                        "dp_invoice": dp_invoice, "sales_order_id": sales_order_id,
+                        "dp_invoice_id": dp_invoice_id, "installment_schedule": schedule,
+                    }
+                    return self._complete(cursor, key_hash, result)
+        except (ProjectDocumentError, DocumentCalculationError, ValueError, TypeError):
+            raise
+        except Exception as exc:
+            if "uq_project_accepted_quotation" in str(exc):
+                raise ProjectDocumentConflict("project already has an accepted quotation") from exc
             raise ProjectDocumentUnavailable(
                 f"Project quotation database unavailable: {type(exc).__name__}"
             ) from exc
@@ -1380,7 +1965,7 @@ class ProjectDocumentRepository:
         idempotency_key: str, actor: Mapping[str, Any],
     ) -> dict[str, Any]:
         target = str(status or "").strip().lower()
-        if target not in {"sent", "accepted", "rejected", "revised"}:
+        if target not in {"sent", "rejected", "revised"}:
             raise ValueError("unsupported quotation status")
         note = str(note or "").strip()
         if len(note) > 10_000 or (target in {"rejected", "revised"} and not note):
@@ -1403,7 +1988,7 @@ class ProjectDocumentRepository:
                         raise ProjectDocumentNotFound("quotation not found")
                     if int(current[1]) != expected_version:
                         raise ProjectDocumentConflict("quotation version is stale")
-                    allowed = {"draft": {"sent"}, "sent": {"accepted", "rejected", "revised"}}
+                    allowed = {"draft": {"sent"}, "sent": {"rejected", "revised"}}
                     if target not in allowed.get(str(current[0]), set()):
                         raise ProjectDocumentConflict("quotation status transition is not allowed")
                     cursor.execute(
@@ -1414,9 +1999,7 @@ class ProjectDocumentRepository:
                                decided_at = CASE WHEN %s IN ('accepted', 'rejected', 'revised') THEN NOW() ELSE decided_at END,
                                updated_by = %s::jsonb, lock_version = lock_version + 1
                            WHERE id = %s AND lock_version = %s
-                           RETURNING id, project_id, version, canva_url, amount, status, channel,
-                                     negotiation_notes, sent_at, decided_at, sales_order_id, created_by, updated_by,
-                                     created_at, updated_at, lock_version""",
+                           RETURNING """ + _SELECT_QUOTATION,  # nosec B608 -- internal column constant
                         (target, note, note, target, target, actor_json, quotation_id, expected_version),
                     )
                     row = cursor.fetchone()

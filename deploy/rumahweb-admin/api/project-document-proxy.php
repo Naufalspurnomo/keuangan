@@ -221,6 +221,7 @@ function pd_get_route(string $resource, string $action, array $query, string $pr
         'payment_summary' => ['action', 'project_id'],
         'receipt_options' => ['action', 'project_id'],
         'quotations' => ['action', 'project_id'],
+        'download_quotation' => ['action', 'quotation_id'],
         'get' => ['action', 'document_id'],
         'audit' => ['action', 'document_id'],
         'download' => ['action', 'document_id'],
@@ -238,6 +239,11 @@ function pd_get_route(string $resource, string $action, array $query, string $pr
             default => '/documents',
         };
         return ['GET', $projectsBase . '/' . $id . $suffix, false];
+    }
+    if ($action === 'download_quotation') {
+        $id = pd_uuid($query['quotation_id'] ?? null);
+        $base = substr($documentsBase, 0, -strlen('/documents')) . '/quotations/' . $id;
+        return ['GET', $base . '/download', true];
     }
     $id = pd_uuid($query['document_id'] ?? null);
     $suffix = $action === 'get' ? '' : '/' . $action;
@@ -270,6 +276,9 @@ function pd_post_route(string $resource, string $action, array $body, string $pr
         'create_invoice' => ['action', 'project_id', 'idempotency_key', 'kind', 'values'],
         'create_receipt' => ['action', 'project_id', 'idempotency_key', 'invoice_id', 'allocations', 'values'],
         'create_quotation' => ['action', 'project_id', 'idempotency_key', 'values'],
+        'update_quotation' => ['action', 'quotation_id', 'idempotency_key', 'expected_version', 'changes'],
+        'revise_quotation' => ['action', 'quotation_id', 'idempotency_key', 'expected_version', 'changes'],
+        'deal_quotation' => ['action', 'quotation_id', 'idempotency_key', 'expected_version', 'sales_order_version', 'dp_percent', 'remaining_installments', 'custom_installments'],
         'transition_quotation' => ['action', 'quotation_id', 'idempotency_key', 'expected_version', 'status', 'note'],
         'apply_quotation' => ['action', 'quotation_id', 'idempotency_key', 'sales_order_version'],
         'update' => ['action', 'document_id', 'idempotency_key', 'expected_version', 'changes'],
@@ -288,12 +297,22 @@ function pd_post_route(string $resource, string $action, array $body, string $pr
             'values' => $body['values'] ?? null,
         ]];
     }
-    if (in_array($action, ['transition_quotation', 'apply_quotation'], true)) {
+    if (in_array($action, [
+        'update_quotation', 'revise_quotation', 'deal_quotation',
+        'transition_quotation', 'apply_quotation',
+    ], true)) {
         $id = pd_uuid($body['quotation_id'] ?? null);
         $payload = $body;
         unset($payload['action'], $payload['quotation_id']);
         $base = substr($documentsBase, 0, -strlen('/documents')) . '/quotations/' . $id;
-        return ['POST', $base . ($action === 'transition_quotation' ? '/transition' : '/apply'), $payload];
+        $suffix = match ($action) {
+            'revise_quotation' => '/revisions',
+            'deal_quotation' => '/deal',
+            'transition_quotation' => '/transition',
+            'apply_quotation' => '/apply',
+            default => '',
+        };
+        return [$action === 'update_quotation' ? 'PATCH' : 'POST', $base . $suffix, $payload];
     }
     if (str_starts_with($action, 'create_')) {
         $id = pd_uuid($body['project_id'] ?? null);
@@ -466,7 +485,11 @@ $body = pd_json_body();
 $action = is_string($body['action'] ?? null) ? $body['action'] : '';
 $allowedActions = $resource === 'projects'
     ? ['create', 'update', 'status', 'archive']
-    : ['create_invoice', 'create_receipt', 'create_quotation', 'transition_quotation', 'apply_quotation', 'update', 'issue', 'void', 'revise'];
+    : [
+        'create_invoice', 'create_receipt', 'create_quotation', 'update_quotation',
+        'revise_quotation', 'deal_quotation', 'transition_quotation', 'apply_quotation',
+        'update', 'issue', 'void', 'revise',
+    ];
 if (!in_array($action, $allowedActions, true)) {
     pd_error(400, 'invalid_action', 'Unsupported project document action.');
 }
