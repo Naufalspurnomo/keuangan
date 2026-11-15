@@ -204,6 +204,54 @@ function presensi_http_status(array $headers): int
     return preg_match('/\s(\d{3})(?:\s|$)/', $line, $match) === 1 ? (int) $match[1] : 0;
 }
 
+function presensi_remote_request(array $config, string $method, string $url, int $maxBytes): array
+{
+    if (function_exists('curl_init')) {
+        $body = '';
+        $overflow = false;
+        $handle = curl_init($url);
+        if ($handle === false) {
+            return ['status' => 0, 'body' => null];
+        }
+        curl_setopt_array($handle, [
+            CURLOPT_CUSTOMREQUEST => $method,
+            CURLOPT_HTTPHEADER => [
+                'Accept: application/json',
+                'Content-Length: 0',
+                'X-Presensi-Secret: ' . (string) $config['outbox_shared_secret'],
+            ],
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_CONNECTTIMEOUT => 3,
+            CURLOPT_TIMEOUT => 5,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_NOSIGNAL => true,
+            CURLOPT_WRITEFUNCTION => static function ($curl, string $chunk) use (&$body, &$overflow, $maxBytes): int {
+                unset($curl);
+                if (strlen($body) + strlen($chunk) > $maxBytes) {
+                    $overflow = true;
+                    return 0;
+                }
+                $body .= $chunk;
+                return strlen($chunk);
+            },
+        ]);
+        $ok = curl_exec($handle);
+        $status = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+        curl_close($handle);
+        return $ok === true && !$overflow
+            ? ['status' => $status, 'body' => $body]
+            : ['status' => 0, 'body' => null];
+    }
+
+    $body = @file_get_contents($url, false, presensi_remote_context($config, $method));
+    $headers = is_array($http_response_header ?? null) ? $http_response_header : [];
+    if (!is_string($body) || strlen($body) > $maxBytes) {
+        return ['status' => 0, 'body' => null];
+    }
+    return ['status' => presensi_http_status($headers), 'body' => $body];
+}
+
 function presensi_utf8_length(string $value): ?int
 {
     if (preg_match('//u', $value) !== 1) {
@@ -216,9 +264,9 @@ function presensi_utf8_length(string $value): ?int
 function presensi_active_projects(array $config): array
 {
     $url = (string) ($config['project_catalog_url'] ?? '');
-    $body = @file_get_contents($url, false, presensi_remote_context($config, 'GET'));
-    $headers = is_array($http_response_header ?? null) ? $http_response_header : [];
-    if (!is_string($body) || presensi_http_status($headers) !== 200 || strlen($body) > 262144) {
+    $response = presensi_remote_request($config, 'GET', $url, 262144);
+    $body = $response['body'];
+    if (!is_string($body) || $response['status'] !== 200) {
         presensi_error(503, 'project_catalog_unavailable', 'Daftar proyek aktif belum tersedia. Coba lagi.');
     }
     try {
@@ -256,7 +304,7 @@ function presensi_trigger_delivery(array $config): void
     if ($url === '') return;
     // The record is already durable. Delivery is best-effort here; the outbox
     // remains authoritative and can be retried safely by the bounded worker.
-    @file_get_contents($url, false, presensi_remote_context($config, 'POST'), 0, 1);
+    presensi_remote_request($config, 'POST', $url, 65536);
 }
 
 function presensi_find_named(array $rows, string $id): ?array
