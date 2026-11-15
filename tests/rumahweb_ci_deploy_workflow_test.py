@@ -34,6 +34,8 @@ def test_rumahweb_deploy_uses_scoped_secrets_and_atomic_readback():
     assert "configure_rumahweb_admin_finance.py" in text
     assert "vars.HOLLAWALL_OWNER_EMAIL" in text
     assert "owner_email_configured" in text
+    assert "project_catalog_url_configured" in text
+    assert "presensi_final_readback" in text
     assert "rumahweb-finance-config.json" in text
     assert "deploy_rumahweb_presensi_atomic.py" in text
     assert "--admin-remote public_html/admin" in text

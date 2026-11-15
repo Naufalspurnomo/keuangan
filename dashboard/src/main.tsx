@@ -26,6 +26,15 @@ import './design-system.css'
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 20_000 } } })
 
+try {
+  const storedTheme = localStorage.getItem('hollawall-theme')
+  document.documentElement.dataset.theme = storedTheme === 'dark' || storedTheme === 'light'
+    ? storedTheme
+    : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+} catch {
+  document.documentElement.dataset.theme = 'light'
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>

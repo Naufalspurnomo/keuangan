@@ -11,6 +11,7 @@ return [
     'retention_days' => 90,
     'outbox_shared_secret' => 'replace-with-a-random-64-character-hex-secret-before-deploying',
     'delivery_trigger_url' => 'https://your-backend.example/internal/presensi/deliver',
+    'project_catalog_url' => 'https://your-backend.example/internal/presensi/projects',
     'employees' => [
         [
             'id' => 'pegawai-1',
@@ -30,15 +31,5 @@ return [
             'code' => 'EMP003',
             'pin_hash' => '$2y$10$7OuurItIj7ylUssqZ9D7MuqfBJGMN6U9.2sRCO1obS0ys04e..J.G',
         ],
-    ],
-    'projects' => [
-        ['id' => 'p25-umbara', 'name' => 'Umbara Headquarters', 'company' => 'Holla', 'active' => true],
-        ['id' => 'p25-vistara', 'name' => 'Vistara Convention', 'company' => 'Hojja', 'active' => true],
-        ['id' => 'p25-xanadu', 'name' => 'Xanadu Experience Center', 'company' => 'Texturin Surabaya', 'active' => true],
-        ['id' => 'p26-dahayu', 'name' => 'Dahayu Boutique Hotel', 'company' => 'Hojja', 'active' => true],
-        ['id' => 'p26-elok', 'name' => 'Elok Seaside Restaurant', 'company' => 'Texturin Bali', 'active' => true],
-        ['id' => 'p26-fajar', 'name' => 'Fajar Distribution Hub', 'company' => 'Texturin Surabaya', 'active' => true],
-        ['id' => 'p26-griya', 'name' => 'Griya Wellness Center', 'company' => 'Holla', 'active' => true],
-        ['id' => 'p26-harmoni', 'name' => 'Harmoni Kids Library', 'company' => 'Hojja', 'active' => true],
     ],
 ];

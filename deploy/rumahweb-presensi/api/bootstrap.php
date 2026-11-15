@@ -13,11 +13,7 @@ $payload = [
     'csrf' => (string) $_SESSION['presensi_csrf'],
 ];
 if ($employee !== null) {
-    $payload['projects'] = array_map(static fn(array $project): array => [
-        'id' => $project['id'],
-        'name' => $project['name'],
-        'company' => $project['company'],
-    ], $config['projects']);
+    $payload['projects'] = presensi_active_projects($config);
     $payload['capture_token'] = presensi_issue_capture_token();
     $payload['capture_expires_in'] = 300;
 }

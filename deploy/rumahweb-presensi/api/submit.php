@@ -30,15 +30,12 @@ presensi_require_fresh_observation($_POST['location_observed_at_ms'] ?? null, 'l
 presensi_require_fresh_observation($_POST['selfie_observed_at_ms'] ?? null, 'selfie_stale', 'Selfie sudah tidak segar. Ambil selfie dan lokasi lagi.');
 $config = presensi_config();
 $employee = presensi_find_named($config['employees'], $employeeId);
-$project = presensi_find_named($config['projects'], $projectId);
+$project = null;
 if ($employee === null) {
     presensi_error(422, 'employee_invalid', 'Pegawai tidak valid.');
 }
 if (!in_array($action, ['check_in', 'check_out'], true)) {
     presensi_error(422, 'action_invalid', 'Jenis presensi tidak valid.');
-}
-if ($action === 'check_in' && $project === null) {
-    presensi_error(422, 'project_invalid', 'Proyek aktif tidak valid.');
 }
 if ($latitude === false || $longitude === false || $accuracy === false
     || !is_finite((float) $latitude) || !is_finite((float) $longitude) || !is_finite((float) $accuracy)
@@ -46,6 +43,7 @@ if ($latitude === false || $longitude === false || $accuracy === false
     presensi_error(422, 'location_required', 'Lokasi presisi wajib diaktifkan.');
 }
 $selfie = presensi_validate_selfie($_FILES['selfie'] ?? []);
+$activeProjects = $action === 'check_in' ? presensi_active_projects($config) : [];
 $paths = presensi_store_paths();
 $lock = presensi_lock($paths);
 $photoPath = null;
@@ -62,6 +60,12 @@ try {
     $open = presensi_open_event($events, $employeeId);
     if ($action === 'check_in' && $open !== null) {
         presensi_error(409, 'already_checked_in', 'Pegawai masih aktif di proyek ' . (string) $open['project_name'] . '.');
+    }
+    if ($action === 'check_in') {
+        $project = presensi_find_named($activeProjects, $projectId);
+        if ($project === null) {
+            presensi_error(422, 'project_invalid', 'Proyek aktif tidak valid.');
+        }
     }
     if ($action === 'check_out' && $open === null) {
         presensi_error(409, 'check_in_required', 'Check-in wajib dilakukan lebih dulu.');

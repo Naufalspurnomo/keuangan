@@ -12,8 +12,9 @@ Each accepted Check-in/Check-out is durable before WhatsApp delivery starts. The
 2. Generate a distinct PIN hash for every employee using `password_hash`; never store plaintext PINs.
 3. Generate a random `outbox_shared_secret` of at least 32 characters.
 4. Set `delivery_trigger_url` to the backend HTTPS endpoint `/internal/presensi/deliver`.
-5. Keep employee IDs, codes, names, and active project identities unique.
-6. Set owner-only mode `0600`. Private data/session directories use `0700`.
+5. Set `project_catalog_url` to the backend HTTPS endpoint `/internal/presensi/projects`; PostgreSQL projects with status `active` are the only check-in options.
+6. Keep employee IDs, codes, and names unique.
+7. Set owner-only mode `0600`. Private data/session directories use `0700`.
 
 Missing, malformed, duplicate, symlinked, wrong-owner, or wrong-mode configuration fails closed.
 
@@ -25,6 +26,8 @@ Configure the Koyeb service with owner-scoped secrets:
 - `PRESENSI_OUTBOX_SHARED_SECRET=<same private shared secret>`
 - `PRESENSI_WHATSAPP_GROUP_JID=<exact Presensi group JID ending @g.us>`
 - existing `WUZAPI_DOMAIN` and `WUZAPI_TOKEN`
+
+The authenticated catalog endpoint reads the same PostgreSQL project authority used by `/admin`. A project appears for check-in only while its canonical status is `active`. If the catalog or PostgreSQL is unavailable, check-in fails closed rather than falling back to a stale file list. An already-open attendance pair may still check out after its project closes so no employee remains stranded.
 
 The employee submission calls the internal trigger once. The worker claims one event with a lease, validates the JPEG, sends `/chat/send/image` with event ID as stable provider ID, then ACKs `sent`, `failed`, or `unknown`. Ambiguous transport/provider outcomes become `unknown` and are not blindly retried because the group may already have received the photo.
 

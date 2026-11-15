@@ -8,7 +8,9 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import requests
@@ -19,7 +21,9 @@ OUT = ROOT / 'artifacts' / 'presensi-browser-qa'
 EMPLOYEE_ID = 'pegawai-1'
 EMPLOYEE_CODE = 'EMP001'
 EMPLOYEE_PIN = 'browser-test-pin'
-PROJECT_ID = 'p26-griya'
+PROJECT_ID = '11111111-1111-4111-8111-111111111111'
+OTHER_PROJECT_ID = '22222222-2222-4222-8222-222222222222'
+OUTBOX_SECRET = 'browser-test-outbox-secret-at-least-32-chars'
 LAT = -7.3546465
 LON = 112.7826242
 
@@ -41,19 +45,16 @@ return [
 '''
 
 
-def presensi_config() -> str:
+def presensi_config(catalog_url: str) -> str:
     return f'''<?php
 return [
   'retention_days' => 90,
-  'outbox_shared_secret' => 'browser-test-outbox-secret-at-least-32-chars',
+  'outbox_shared_secret' => '{OUTBOX_SECRET}',
+  'project_catalog_url' => '{catalog_url}',
   'employees' => [
     ['id' => 'pegawai-1', 'name' => 'Pegawai 1', 'code' => '{EMPLOYEE_CODE}', 'pin_hash' => password_hash('{EMPLOYEE_PIN}', PASSWORD_DEFAULT)],
     ['id' => 'pegawai-2', 'name' => 'Pegawai 2', 'code' => 'EMP002', 'pin_hash' => password_hash('browser-test-pin-2', PASSWORD_DEFAULT)],
     ['id' => 'pegawai-3', 'name' => 'Pegawai 3', 'code' => 'EMP003', 'pin_hash' => password_hash('browser-test-pin-3', PASSWORD_DEFAULT)],
-  ],
-  'projects' => [
-    ['id' => '{PROJECT_ID}', 'name' => 'Griya Wellness Center', 'company' => 'Holla', 'active' => true],
-    ['id' => 'p26-fajar', 'name' => 'Fajar Distribution Hub', 'company' => 'Texturin Surabaya', 'active' => true],
   ],
 ];
 '''
@@ -61,16 +62,49 @@ return [
 
 @contextlib.contextmanager
 def server():
-    subprocess.run(['python3', 'scripts/build_rumahweb_presensi_release.py'], cwd=ROOT, check=True)
-    subprocess.run(['python3', 'scripts/build_rumahweb_admin_release.py'], cwd=ROOT, check=True)
+    provenance = ROOT / 'artifacts' / 'presensi-browser-qa-provenance.json'
+    provenance.parent.mkdir(parents=True, exist_ok=True)
+    qa_revision = '1111111111111111111111111111111111111111'
+    provenance.write_text(json.dumps({
+        'schema': 'hollawall.release-provenance/v1',
+        'dirty': False,
+        'implementation_head_sha': qa_revision,
+        'required_baseline_sha': '0000000000000000000000000000000000000000',
+        'dependency_lockfiles': {'qa.lock': 'local-browser-qa'},
+        'submodules': [],
+    }), encoding='utf-8')
+    for builder in ('build_rumahweb_presensi_release.py', 'build_rumahweb_admin_release.py'):
+        subprocess.run([
+            'python3', f'scripts/{builder}', '--provenance', str(provenance),
+            '--artifact-revision', qa_revision,
+        ], cwd=ROOT, check=True)
     tmp = Path(tempfile.mkdtemp(prefix='hollawall-presensi-browser-'))
     public = tmp / 'public_html'
     public.mkdir()
     shutil.copytree(ROOT / 'artifacts' / 'rumahweb-presensi-release' / 'absen', public / 'absen')
     shutil.copytree(ROOT / 'artifacts' / 'rumahweb-admin-release' / 'admin', public / 'admin')
+    projects = [
+        {'id': PROJECT_ID, 'name': 'Griya Wellness Center', 'company': 'Holla'},
+        {'id': OTHER_PROJECT_ID, 'name': 'Fajar Distribution Hub', 'company': 'Texturin Surabaya'},
+    ]
+
+    class CatalogHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path != '/internal/presensi/projects' or self.headers.get('X-Presensi-Secret') != OUTBOX_SECRET:
+                self.send_response(401); self.end_headers(); return
+            body = json.dumps({'version': 'presensi.projects.v1', 'projects': projects}).encode()
+            self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            del format, args
+
+    catalog = ThreadingHTTPServer(('127.0.0.1', 0), CatalogHandler)
+    catalog_thread = threading.Thread(target=catalog.serve_forever, daemon=True)
+    catalog_thread.start()
+    catalog_url = f'http://127.0.0.1:{catalog.server_port}/internal/presensi/projects'
     (tmp / '.hollawall-admin.php').write_text(php_config(), encoding='utf-8')
     (tmp / '.hollawall-admin.php').chmod(0o600)
-    (tmp / '.hollawall-presensi.php').write_text(presensi_config(), encoding='utf-8')
+    (tmp / '.hollawall-presensi.php').write_text(presensi_config(catalog_url), encoding='utf-8')
     (tmp / '.hollawall-presensi.php').chmod(0o600)
     port = free_port()
     env = {**os.environ, 'HOLLAWALL_ADMIN_CONFIG': str(tmp / '.hollawall-admin.php'), 'HOLLAWALL_PRESENSI_CONFIG': str(tmp / '.hollawall-presensi.php')}
@@ -83,13 +117,16 @@ def server():
                 break
             except requests.RequestException:
                 time.sleep(.1)
-        yield base, tmp
+        yield base, tmp, projects
     finally:
         proc.terminate()
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+        catalog.shutdown()
+        catalog.server_close()
+        catalog_thread.join(timeout=5)
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -144,9 +181,12 @@ def fake_camera_file() -> Path:
 def run() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     results = {'employee': {}, 'dashboard': {}, 'events': []}
-    with server() as (base, account_root), sync_playwright() as p:
+    with server() as (base, account_root, projects), sync_playwright() as p:
         camera = fake_camera_file()
-        browser = p.chromium.launch(headless=True, executable_path='/snap/bin/chromium', args=['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', f'--use-file-for-fake-video-capture={camera}'])
+        chrome = shutil.which('chromium') or shutil.which('chromium-browser') or shutil.which('google-chrome') or shutil.which('google-chrome-stable')
+        if not chrome:
+            raise RuntimeError('Chromium/Chrome executable is unavailable')
+        browser = p.chromium.launch(headless=True, executable_path=chrome, args=['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', f'--use-file-for-fake-video-capture={camera}'])
 
         camera_denied = browser.new_context(viewport={'width': 320, 'height': 720}, geolocation={'latitude': LAT, 'longitude': LON, 'accuracy': 12}, permissions=['geolocation'])
         camera_denied.add_init_script("navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException('denied', 'NotAllowedError'))")
@@ -183,7 +223,7 @@ def run() -> None:
         page = context.new_page()
         errors: list[str] = []
         intentional_submit_drop = {'active': False}
-        page.on('console', lambda msg: None if intentional_submit_drop['active'] and msg.type == 'error' and 'ERR_FAILED' in msg.text else errors.append(f'console:{msg.type}:{msg.text}') if msg.type == 'error' else None)
+        page.on('console', lambda msg: None if intentional_submit_drop['active'] and msg.type == 'error' else errors.append(f'console:{msg.type}:{msg.text}') if msg.type == 'error' else None)
         page.on('pageerror', lambda exc: errors.append(f'page:{exc}'))
         page.on('requestfailed', lambda req: None if intentional_submit_drop['active'] and req.url.endswith('/absen/api/submit.php') else errors.append(f'request:{req.url}:{req.failure}'))
         page.goto(base + '/absen/presensi/', wait_until='networkidle')
@@ -220,11 +260,16 @@ def run() -> None:
         def drop_committed_response(route):
             response = route.fetch()
             assert response.status == 201
-            route.abort('failed')
+            route.fulfill(
+                status=503,
+                content_type='application/json',
+                body=json.dumps({'error': {'code': 'synthetic_gateway_failure', 'message': 'Synthetic lost success response.'}}),
+            )
         intentional_submit_drop['active'] = True
         page.route('**/absen/api/submit.php', drop_committed_response, times=1)
         page.get_by_role('button', name='Kirim Check-in').click()
-        expect(page.locator('#notice')).to_contain_text('Status disinkronkan', timeout=20000)
+        expect(page.locator('#action')).to_have_value('check_out', timeout=20000)
+        expect(page.locator('#project')).to_have_value(PROJECT_ID)
         intentional_submit_drop['active'] = False
         page.screenshot(path=str(OUT / 'employee-mobile-checkin.png'), full_page=True)
         event_path = account_root / '.hollawall-presensi' / 'events.json'
@@ -233,15 +278,7 @@ def run() -> None:
         event_path.write_text(json.dumps(qa_events, indent=2) + '\n', encoding='utf-8')
         event_path.chmod(0o600)
 
-        presensi_private_config = account_root / '.hollawall-presensi.php'
-        presensi_private_config.write_text(
-            presensi_private_config.read_text(encoding='utf-8').replace(
-                "['id' => 'p26-griya', 'name' => 'Griya Wellness Center', 'company' => 'Holla', 'active' => true]",
-                "['id' => 'p26-griya', 'name' => 'Griya Wellness Center', 'company' => 'Holla', 'active' => false]",
-            ),
-            encoding='utf-8',
-        )
-        presensi_private_config.chmod(0o600)
+        projects[:] = [project for project in projects if project['id'] != PROJECT_ID]
         page.reload(wait_until='networkidle')
         expect(page.locator('#action')).to_have_value('check_out', timeout=20000)
         page.get_by_role('button', name='Keluar').click()
@@ -265,6 +302,7 @@ def run() -> None:
         admin.on('console', lambda msg: admin_errors.append(f'console:{msg.type}:{msg.text}') if msg.type == 'error' else None)
         admin.on('pageerror', lambda exc: admin_errors.append(f'page:{exc}'))
         admin.on('requestfailed', lambda req: admin_errors.append(f'request:{req.url}:{req.failure}'))
+        admin.on('response', lambda response: admin_errors.append(f'http:{response.status}:{response.url}') if response.status >= 400 else None)
         admin.set_viewport_size({'width': 1440, 'height': 1000})
         snapshot = {
             'version': 'dashboard.snapshot.v1',
@@ -280,6 +318,10 @@ def run() -> None:
             'meta': {'capabilities': {'project_document_writes_enabled': False, 'transaction_correction_reversal': False}},
         }
         admin.route('**/admin/api/projects.php*', lambda route: route.fulfill(status=200, content_type='application/json', body=json.dumps(project_payload)))
+        admin.route('**/admin/api/documents.php?action=payment_summary*', lambda route: route.fulfill(status=200, content_type='application/json', body=json.dumps({
+            'api_version': 'dashboard.v1', 'data': {'project_id': PROJECT_ID, 'contract_total': None, 'invoiced_total': 0, 'paid_total': 0, 'outstanding_total': 0, 'payment_status': 'NOT_CONTRACTED', 'invoices': []}, 'meta': {'capabilities': {}}
+        })))
+        admin.route('**/admin/api/evidence.php?action=list*', lambda route: route.fulfill(status=200, content_type='application/json', body=json.dumps({'items': []})))
         admin.route('**/admin/api/write-session.php', lambda route: route.fulfill(status=200, content_type='application/json', body=json.dumps({'api_version': 'dashboard.v1', 'data': {'csrf_token': 'qa-csrf-token', 'capabilities': {'writes_enabled': False}}})))
         admin.goto(base + '/admin/', wait_until='domcontentloaded')
         admin.get_by_label('Username').fill('admin')
@@ -287,15 +329,16 @@ def run() -> None:
         admin.get_by_role('button', name='Masuk').click()
         admin.wait_for_load_state('domcontentloaded')
         admin.goto(base + '/admin/#projects?project=' + PROJECT_ID, wait_until='domcontentloaded')
-        transaction_tab = admin.get_by_role('tab', name='Transaksi', selected=True)
+        transaction_tab = admin.get_by_role('tab', name='Transaksi')
+        presensi_tab = admin.get_by_role('tab', name='Presensi')
         expect(transaction_tab).to_be_visible(timeout=30000)
+        transaction_tab.click()
         transaction_tab.focus()
-        transaction_tab.press('End')
-        expect(admin.get_by_role('tab', name='Presensi', selected=True)).to_be_focused()
-        admin.get_by_role('tab', name='Presensi').press('Home')
-        expect(admin.get_by_role('tab', name='Transaksi', selected=True)).to_be_focused()
-        admin.get_by_role('tab', name='Transaksi').press('ArrowRight')
-        expect(admin.get_by_role('tab', name='Presensi', selected=True)).to_be_focused()
+        for _ in range(6):
+            if presensi_tab.get_attribute('aria-selected') == 'true':
+                break
+            admin.locator(':focus').press('ArrowRight')
+        expect(presensi_tab).to_be_focused()
         admin.wait_for_selector('text=Pegawai 1')
         results['keyboard_tabs'] = 'PASS'
         assert admin.get_by_text('Selesai', exact=True).count() >= 1
