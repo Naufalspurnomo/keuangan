@@ -489,6 +489,8 @@ def _shadow_compare_narrow_resolver(original_text, pipeline_dompet,
 def health_check():
     """Report core readiness and sanitized WhatsApp provider health."""
     try:
+        from services.financial_export_runtime import financial_export_health
+
         inbox = inbox_health()
         durable = bool(inbox.get('durable'))
         dashboard_schema = dashboard_write_schema_health()
@@ -586,6 +588,7 @@ def health_check():
             'project_document_schema': project_schema,
             'project_document_readiness': project_document_readiness,
             'inbox_review_readiness': review_readiness,
+            'financial_export': financial_export_health(),
             'security': {
                 'ready': security_ready,
                 'required': security_required,

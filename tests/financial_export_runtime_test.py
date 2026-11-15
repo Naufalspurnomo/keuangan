@@ -51,8 +51,8 @@ class FakeWorker:
 
 
 def test_build_worker_binds_external_postgres_and_protected_sheets(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DATABASE_URL", "postgresql://external.example/db")
-    monkeypatch.setenv("STATE_DATABASE_URL", "postgresql://wrong-state.example/db")
+    monkeypatch.setenv("STATE_DATABASE_URL", "postgresql://external.example/db")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://fallback.example/db")
     monkeypatch.setenv("GOOGLE_SHEETS_ID", "sheet-workbook-123")
     monkeypatch.setenv("FINANCIAL_EXPORT_WORKSHEET", FakeWorksheet.title)
     monkeypatch.setenv("FINANCIAL_EXPORT_PROTECTED_DESTINATION", "true")
@@ -70,6 +70,22 @@ def test_build_worker_binds_external_postgres_and_protected_sheets(monkeypatch: 
     assert worker.remote.ensure_header is True
     assert worker.protected_destination is True
     assert worker.lease_seconds == 77
+
+
+def test_build_worker_falls_back_to_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("STATE_DATABASE_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://fallback.example/db")
+    monkeypatch.setenv("GOOGLE_SHEETS_ID", "sheet-workbook-123")
+    monkeypatch.setenv("FINANCIAL_EXPORT_WORKSHEET", FakeWorksheet.title)
+    monkeypatch.setenv("FINANCIAL_EXPORT_PROTECTED_DESTINATION", "true")
+    monkeypatch.setattr(runtime, "get_spreadsheet", lambda: FakeSpreadsheet())
+    monkeypatch.setattr(runtime, "PostgresExportOutbox", FakeOutbox)
+    monkeypatch.setattr(runtime, "GoogleSheetsRemoteExport", FakeRemote)
+    monkeypatch.setattr(runtime, "ExportWorker", FakeWorker)
+
+    worker = runtime.build_export_worker()
+
+    assert worker.outbox.dsn == "postgresql://fallback.example/db"
 
 
 def test_build_worker_fails_closed_when_export_is_not_protected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -102,6 +118,31 @@ def test_export_loop_is_stop_event_driven_and_runs_worker(monkeypatch: pytest.Mo
 
     runtime.run_export_loop(Worker(), stop_event=stop, interval_seconds=12, batch_limit=9, sleep=sleeps.append)
     assert calls == [9]
+
+
+def test_financial_export_health_reports_runtime_state_without_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STATE_DATABASE_URL", "postgresql://secret.example/db")
+    monkeypatch.setenv("GOOGLE_SHEETS_ID", "sheet-workbook-123")
+    monkeypatch.setenv("GOOGLE_CREDENTIALS", '{"private_key":"secret"}')
+    runtime._set_state(
+        enabled=True,
+        running=True,
+        ready=True,
+        last_result={"claimed": 0, "exported": 0},
+        last_error=None,
+    )
+
+    health = runtime.financial_export_health()
+
+    assert health == {
+        "enabled": True,
+        "running": True,
+        "ready": True,
+        "last_result": {"claimed": 0, "exported": 0},
+        "last_error": None,
+        "configured": True,
+    }
+    assert "secret" not in str(health)
 
 
 def test_main_registers_financial_export_worker_thread() -> None:
