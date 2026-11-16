@@ -34,6 +34,7 @@ from urllib.parse import urlsplit
 
 import requests
 
+from services.presensi_geocoder import reverse_geocode
 from wuzapi_helper import _validated_jpeg_bytes, send_image_to_whatsapp_group
 
 
@@ -167,6 +168,8 @@ class ClaimedEvent:
     action: str
     project_name: str
     occurred_at: str
+    latitude: Optional[float]
+    longitude: Optional[float]
     accuracy_m: float
     jpeg: bytes
 
@@ -217,6 +220,26 @@ def _claim_identity(raw_event: Any) -> tuple[str, str]:
     return event_id, lease_token
 
 
+def _optional_bounded_coordinate(
+    raw_event: dict,
+    field: str,
+    minimum: float,
+    maximum: float,
+) -> Optional[float]:
+    raw_value = raw_event.get(field)
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, bool):
+        raise ClaimValidationError(f"claim_invalid_{field}")
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        raise ClaimValidationError(f"claim_invalid_{field}")
+    if not math.isfinite(value) or value < minimum or value > maximum:
+        raise ClaimValidationError(f"claim_invalid_{field}")
+    return value
+
+
 def _decode_claim(raw_event: Any, max_jpeg_bytes: int) -> ClaimedEvent:
     event_id, lease_token = _claim_identity(raw_event)
     employee_name = _bounded_text(raw_event.get("employee_name"), "employee_name", 100)
@@ -229,6 +252,10 @@ def _decode_claim(raw_event: Any, max_jpeg_bytes: int) -> ClaimedEvent:
         datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
     except ValueError:
         raise ClaimValidationError("claim_invalid_occurred_at")
+    latitude = _optional_bounded_coordinate(raw_event, "latitude", -90, 90)
+    longitude = _optional_bounded_coordinate(raw_event, "longitude", -180, 180)
+    if (latitude is None) != (longitude is None):
+        raise ClaimValidationError("claim_incomplete_coordinates")
     try:
         accuracy_m = float(raw_event.get("accuracy_m"))
     except (TypeError, ValueError):
@@ -257,12 +284,14 @@ def _decode_claim(raw_event: Any, max_jpeg_bytes: int) -> ClaimedEvent:
         action=action,
         project_name=project_name,
         occurred_at=occurred_at,
+        latitude=latitude,
+        longitude=longitude,
         accuracy_m=accuracy_m,
         jpeg=jpeg,
     )
 
 
-def _caption(event: ClaimedEvent) -> str:
+def _caption(event: ClaimedEvent, location_label: str = "") -> str:
     action = "masuk" if event.action == "check_in" else "pulang"
     occurred = datetime.fromisoformat(event.occurred_at.replace("Z", "+00:00"))
     if occurred.tzinfo is None:
@@ -274,10 +303,23 @@ def _caption(event: ClaimedEvent) -> str:
         occurred = occurred.astimezone(ZoneInfo("Asia/Jakarta"))
         timezone_name = "Asia/Jakarta"
     timezone_label = "WIB" if timezone_name == "Asia/Jakarta" else timezone_name
-    return (
-        f"Presensi {action} — {event.employee_name}\n"
-        f"{event.project_name} · {occurred:%Y-%m-%d %H:%M} {timezone_label} · ±{event.accuracy_m:.0f} m"
-    )
+    lines = [
+        f"Presensi {action} — {event.employee_name}",
+        f"{event.project_name} · {occurred:%Y-%m-%d %H:%M} {timezone_label}",
+    ]
+    if event.latitude is not None and event.longitude is not None:
+        coordinates = f"{event.latitude:.6f}, {event.longitude:.6f}"
+        maps_url = f"https://www.google.com/maps?q={event.latitude:.6f},{event.longitude:.6f}"
+        lines.extend((
+            f"Lokasi: {location_label or coordinates}",
+            f"Maps: {maps_url}",
+            f"Akurasi GPS: ±{event.accuracy_m:.0f} m",
+        ))
+        if location_label:
+            lines.append("Nama lokasi: © OpenStreetMap contributors")
+    else:
+        lines.append("Lokasi: tidak tersedia pada data lama")
+    return "\n".join(lines)
 
 
 def _normalize_send_result(value: Any) -> Dict[str, str]:
@@ -306,10 +348,12 @@ class PresensiDeliveryWorker:
         *,
         session: Optional[Any] = None,
         sender: Callable[..., Dict[str, str]] = send_image_to_whatsapp_group,
+        geocoder: Callable[[float, float], str] = reverse_geocode,
     ) -> None:
         self.config = config
         self.session = session or requests.Session()
         self.sender = sender
+        self.geocoder = geocoder
         self._outcomes_by_event: Dict[str, Dict[str, str]] = {}
 
     @property
@@ -427,10 +471,16 @@ class PresensiDeliveryWorker:
                         "error_code": exc.code,
                     }
                 else:
+                    location_label = ""
+                    if event.latitude is not None and event.longitude is not None:
+                        try:
+                            location_label = self.geocoder(event.latitude, event.longitude)
+                        except Exception:
+                            location_label = ""
                     try:
                         send_value = self.sender(
                             event.jpeg,
-                            _caption(event),
+                            _caption(event, location_label),
                             event_id=event.event_id,
                             group_jid=self.config.group_jid,
                         )

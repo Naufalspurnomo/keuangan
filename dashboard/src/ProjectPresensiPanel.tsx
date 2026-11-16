@@ -64,7 +64,9 @@ function WhatsAppDeliveryBadge({ label, delivery }: { label: string; delivery?: 
 function EvidenceCard({ label, employee, evidence }: { label: string; employee: string; evidence: PresensiEvidence | null }) {
   if (!evidence) return <article className="presensi-evidence is-empty"><div className="presensi-photo-placeholder"><Clock3 size={24} /></div><div><small>{label}</small><strong>Belum dilakukan</strong><span>Menunggu selfie dan lokasi baru.</span></div></article>
   const hasLocation = typeof evidence.latitude === 'number' && Number.isFinite(evidence.latitude)
+    && evidence.latitude >= -90 && evidence.latitude <= 90
     && typeof evidence.longitude === 'number' && Number.isFinite(evidence.longitude)
+    && evidence.longitude >= -180 && evidence.longitude <= 180
   const coordinate = hasLocation ? `${evidence.latitude},${evidence.longitude}` : ''
   const locationLabel = hasLocation ? `${evidence.latitude!.toFixed(6)}, ${evidence.longitude!.toFixed(6)}` : ''
   return <article className="presensi-evidence">
@@ -74,7 +76,7 @@ function EvidenceCard({ label, employee, evidence }: { label: string; employee: 
       <strong>{DATE_TIME.format(new Date(evidence.occurred_at))} WIB</strong>
       {hasLocation ? <>
         <span>{locationLabel}</span>
-        <span>Akurasi {Math.round(evidence.accuracy_m)} m</span>
+        <span>Akurasi GPS ±{Math.round(evidence.accuracy_m)} m</span>
         <a href={`https://www.google.com/maps?q=${encodeURIComponent(coordinate)}`} target="_blank" rel="noreferrer" aria-label={`Buka lokasi ${label} ${employee} di peta`}><LocateFixed size={13} /> Buka peta</a>
       </> : <span>Lokasi tidak tersedia pada data lama.</span>}
       <WhatsAppDeliveryBadge label={label} delivery={evidence.whatsapp_delivery} />

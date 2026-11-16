@@ -97,7 +97,7 @@ describe('project presensi detail', () => {
     expect(screen.getByRole('img', { name: 'Selfie check-out Pegawai 1' })).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Buka lokasi Check-in Pegawai 1 di peta' }).getAttribute('href')).toBe('https://www.google.com/maps?q=-6.2%2C106.816666')
     expect(screen.getByText('-6.200000, 106.816666')).toBeTruthy()
-    expect(screen.getByText('Akurasi 12 m')).toBeTruthy()
+    expect(screen.getByText('Akurasi GPS ±12 m')).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Cari presensi'), { target: { value: 'Pegawai 2' } })
     expect(screen.queryByText('Pegawai 1')).toBeNull()
     expect(screen.getByText('Pegawai 2')).toBeTruthy()
@@ -120,12 +120,16 @@ describe('project presensi detail', () => {
     expect(screen.queryByText('Pegawai 1')).toBeNull()
   })
 
-  it('does not misrepresent legacy evidence without coordinates as Null Island', async () => {
+  it.each([
+    { latitude: null, longitude: null },
+    { latitude: 91, longitude: 112.75 },
+    { latitude: -7.25, longitude: 181 },
+  ])('does not expose missing or out-of-range coordinates as a real location', async (coordinates) => {
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         version: 'presensi.admin.v1',
-        records: [{ ...records[1], check_in: { ...records[1].check_in, latitude: null, longitude: null } }],
+        records: [{ ...records[1], check_in: { ...records[1].check_in, ...coordinates } }],
       }),
     } as Response)
     renderWorkspace()

@@ -8,7 +8,7 @@ from PIL import Image
 
 import presensi_delivery_worker as delivery
 import wuzapi_helper
-
+from services import presensi_geocoder as geocoder
 
 EVENT_ID = "evt-0123456789abcdef01234567"
 LEASE_TOKEN = "a" * 64
@@ -51,8 +51,9 @@ class FakeSession:
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = []
+        self.closed = False
 
-    def post(self, url, **kwargs):
+    def _request(self, url, kwargs):
         self.calls.append((url, kwargs))
         if not self.responses:
             raise AssertionError("unexpected HTTP call")
@@ -60,6 +61,15 @@ class FakeSession:
         if isinstance(response, BaseException):
             raise response
         return response
+
+    def post(self, url, **kwargs):
+        return self._request(url, kwargs)
+
+    def get(self, url, **kwargs):
+        return self._request(url, kwargs)
+
+    def close(self):
+        self.closed = True
 
 
 def claim_payload(photo=None, **overrides):
@@ -72,6 +82,8 @@ def claim_payload(photo=None, **overrides):
         "action": "check_in",
         "project_name": "Project Atlas",
         "occurred_at": "2026-11-05T08:00:00+07:00",
+        "latitude": -7.2575,
+        "longitude": 112.7521,
         "accuracy_m": 4.2,
         "photo_mime": "image/jpeg",
         "photo_base64": base64.b64encode(photo or jpeg_bytes()).decode("ascii"),
@@ -223,7 +235,10 @@ def test_worker_claims_sends_and_acks_sent_with_auth_headers_only():
         "provider_message_id": "wamid-1",
         "error_code": "",
     })
-    worker = delivery.PresensiDeliveryWorker(worker_config(), session=session, sender=sender)
+    geocoder = Mock(return_value="Tunjungan, Surabaya, Jawa Timur")
+    worker = delivery.PresensiDeliveryWorker(
+        worker_config(), session=session, sender=sender, geocoder=geocoder
+    )
 
     summary = worker.run(max_items=2)
 
@@ -235,6 +250,10 @@ def test_worker_claims_sends_and_acks_sent_with_auth_headers_only():
     assert image_arg[:3] == b"\xff\xd8\xff"
     assert "Presensi masuk" in caption_arg
     assert "Naufal" in caption_arg
+    assert "Lokasi: Tunjungan, Surabaya, Jawa Timur" in caption_arg
+    assert "Maps: https://www.google.com/maps?q=-7.257500,112.752100" in caption_arg
+    assert "Akurasi GPS: ±4 m" in caption_arg
+    geocoder.assert_called_once_with(-7.2575, 112.7521)
     assert sender.call_args.kwargs == {"event_id": EVENT_ID, "group_jid": GROUP_JID}
 
     claim_url, claim_kwargs = session.calls[0]
@@ -271,7 +290,9 @@ def test_worker_acks_provider_failed_and_unknown(outcome):
         "provider_message_id": "",
         "error_code": "wuzapi_rejected" if outcome == "failed" else "wuzapi_ack_unknown",
     })
-    worker = delivery.PresensiDeliveryWorker(worker_config(), session=session, sender=sender)
+    worker = delivery.PresensiDeliveryWorker(
+        worker_config(), session=session, sender=sender, geocoder=lambda _lat, _lon: ""
+    )
 
     summary = worker.run(max_items=1)
 
@@ -292,7 +313,9 @@ def test_worker_does_not_send_duplicate_event_in_same_bounded_run():
         "provider_message_id": "wamid-1",
         "error_code": "",
     })
-    worker = delivery.PresensiDeliveryWorker(worker_config(), session=session, sender=sender)
+    worker = delivery.PresensiDeliveryWorker(
+        worker_config(), session=session, sender=sender, geocoder=lambda _lat, _lon: ""
+    )
 
     summary = worker.run(max_items=2)
 
@@ -310,7 +333,9 @@ def test_worker_rejects_invalid_jpeg_and_acks_failed_without_sending():
         FakeResponse(200, ack_payload("failed")),
     ])
     sender = Mock()
-    worker = delivery.PresensiDeliveryWorker(worker_config(), session=session, sender=sender)
+    worker = delivery.PresensiDeliveryWorker(
+        worker_config(), session=session, sender=sender, geocoder=lambda _lat, _lon: ""
+    )
 
     summary = worker.run(max_items=1)
 
@@ -327,7 +352,9 @@ def test_worker_sender_exception_is_unknown_and_acked_without_retry():
         FakeResponse(200, ack_payload("unknown")),
     ])
     sender = Mock(side_effect=RuntimeError("secret provider details"))
-    worker = delivery.PresensiDeliveryWorker(worker_config(), session=session, sender=sender)
+    worker = delivery.PresensiDeliveryWorker(
+        worker_config(), session=session, sender=sender, geocoder=lambda _lat, _lon: ""
+    )
 
     summary = worker.run(max_items=1)
 
@@ -371,20 +398,136 @@ def test_worker_config_requires_https_same_origin_endpoints_and_long_secret(monk
         delivery.WorkerConfig.from_env()
 
 
-def test_caption_converts_server_utc_to_wib(monkeypatch):
+def claimed_event(**overrides):
+    values = {
+        "event_id": EVENT_ID,
+        "lease_token": LEASE_TOKEN,
+        "employee_name": "Naufal",
+        "action": "check_in",
+        "project_name": "Project Atlas",
+        "occurred_at": "2026-11-05T08:00:00+00:00",
+        "latitude": -7.2575,
+        "longitude": 112.7521,
+        "accuracy_m": 4.2,
+        "jpeg": jpeg_bytes(),
+    }
+    values.update(overrides)
+    return delivery.ClaimedEvent(**values)
+
+
+def test_caption_converts_server_utc_to_wib_and_labels_location_fields(monkeypatch):
     monkeypatch.delenv("PRESENSI_BUSINESS_TIMEZONE", raising=False)
-    event = delivery.ClaimedEvent(
-        event_id=EVENT_ID,
-        lease_token=LEASE_TOKEN,
-        employee_name="Naufal",
-        action="check_in",
-        project_name="Project Atlas",
-        occurred_at="2026-11-05T08:00:00+00:00",
-        accuracy_m=4.2,
-        jpeg=jpeg_bytes(),
-    )
-    caption = delivery._caption(event)
+    caption = delivery._caption(claimed_event(), "Tunjungan, Surabaya, Jawa Timur")
     assert "2026-11-05 15:00 WIB" in caption
+    assert "Lokasi: Tunjungan, Surabaya, Jawa Timur" in caption
+    assert "Maps: https://www.google.com/maps?q=-7.257500,112.752100" in caption
+    assert "Akurasi GPS: ±4 m" in caption
+    assert "Nama lokasi: © OpenStreetMap contributors" in caption
+    assert "· ±4 m" not in caption
+
+
+def test_reverse_geocode_formats_indonesian_locality_without_full_street_address():
+    session = FakeSession([FakeResponse(200, {
+        "address": {
+            "suburb": "Tunjungan",
+            "city": "Surabaya",
+            "state": "Jawa Timur",
+            "country": "Indonesia",
+        }
+    })])
+    result = geocoder._lookup_nominatim(
+        -7.258, 112.752, session=session, url="https://nominatim.openstreetmap.org/reverse"
+    )
+    assert result.label == "Tunjungan, Surabaya, Jawa Timur"
+    assert result.outcome == "found"
+    url, kwargs = session.calls[0]
+    assert url == "https://nominatim.openstreetmap.org/reverse"
+    assert kwargs["params"] == {
+        "format": "jsonv2",
+        "lat": "-7.258",
+        "lon": "112.752",
+        "zoom": "14",
+        "addressdetails": "1",
+    }
+    assert kwargs["headers"]["User-Agent"].startswith("Hollawall-Presensi/")
+    assert kwargs["timeout"] == (0.8, 1.2)
+    assert kwargs["allow_redirects"] is False
+
+
+def test_reverse_geocode_failure_keeps_coordinates_maps_and_whatsapp_delivery():
+    session = FakeSession([TimeoutError("reverse lookup down")])
+    event = claimed_event()
+    result = geocoder._lookup_nominatim(
+        -7.258, 112.752, session=session, url="https://nominatim.openstreetmap.org/reverse"
+    )
+    assert result.label == ""
+    assert result.outcome == "error"
+    caption = delivery._caption(event, result.label)
+    assert "Lokasi: -7.257500, 112.752100" in caption
+    assert "Maps: https://www.google.com/maps?q=-7.257500,112.752100" in caption
+    assert "Akurasi GPS: ±4 m" in caption
+    assert "OpenStreetMap" not in caption
+
+
+@pytest.mark.parametrize(
+    ("overrides", "error_code"),
+    [
+        ({"latitude": None}, "claim_incomplete_coordinates"),
+        ({"latitude": 91}, "claim_invalid_latitude"),
+        ({"longitude": None}, "claim_incomplete_coordinates"),
+        ({"longitude": 181}, "claim_invalid_longitude"),
+    ],
+)
+def test_claim_rejects_incomplete_or_out_of_range_coordinates(overrides, error_code):
+    with pytest.raises(delivery.ClaimValidationError, match=error_code):
+        delivery._decode_claim(claim_payload(**overrides)["event"], 3_145_728)
+
+
+def test_new_worker_delivers_old_claim_without_coordinates_and_does_not_call_geocoder():
+    old_claim = claim_payload(latitude=None, longitude=None)
+    session = FakeSession([
+        FakeResponse(200, old_claim),
+        FakeResponse(200, ack_payload("sent")),
+        FakeResponse(200, {"version": "presensi.outbox.claim.v1", "event": None}),
+    ])
+    sender = Mock(return_value={"outcome": "sent", "provider_message_id": "wamid-old", "error_code": ""})
+    geocoder = Mock(side_effect=AssertionError("legacy event must not be geocoded"))
+    worker = delivery.PresensiDeliveryWorker(
+        worker_config(), session=session, sender=sender, geocoder=geocoder
+    )
+
+    summary = worker.run(max_items=2)
+
+    assert summary["sent"] == 1
+    assert summary["acked"] == 1
+    assert summary["fatal_error"] == ""
+    geocoder.assert_not_called()
+    caption = sender.call_args.args[1]
+    assert "Lokasi: tidak tersedia pada data lama" in caption
+    assert "Maps:" not in caption
+
+
+def test_worker_geocoder_exception_still_sends_coordinate_fallback_and_acks_sent():
+    session = FakeSession([
+        FakeResponse(200, claim_payload()),
+        FakeResponse(200, ack_payload("sent")),
+        FakeResponse(200, {"version": "presensi.outbox.claim.v1", "event": None}),
+    ])
+    sender = Mock(return_value={"outcome": "sent", "provider_message_id": "wamid-fallback", "error_code": ""})
+    worker = delivery.PresensiDeliveryWorker(
+        worker_config(), session=session, sender=sender,
+        geocoder=Mock(side_effect=TimeoutError("geocoder unavailable")),
+    )
+
+    summary = worker.run(max_items=2)
+
+    assert summary["sent"] == 1
+    assert summary["acked"] == 1
+    assert summary["fatal_error"] == ""
+    caption = sender.call_args.args[1]
+    assert "Lokasi: -7.257500, 112.752100" in caption
+    assert "Maps: https://www.google.com/maps?q=-7.257500,112.752100" in caption
+    assert session.calls[1][1]["json"]["outcome"] == "sent"
 
 
 def test_send_image_rejects_plaintext_wuzapi_before_http(monkeypatch):
