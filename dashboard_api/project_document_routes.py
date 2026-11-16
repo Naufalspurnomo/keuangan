@@ -311,11 +311,17 @@ def create_project_document_blueprint(repository: Any) -> Blueprint:
     @owner_required
     def delete_project(project_id: UUID):
         body, key, version, actor = _write_request(
-            allowed_fields=frozenset({"idempotency_key", "expected_version"})
+            allowed_fields=frozenset({"idempotency_key", "expected_version", "expected_name"})
         )
+        expected_name = body.get("expected_name")
+        if not isinstance(expected_name, str) or not 1 <= len(expected_name) <= 200 or expected_name != expected_name.strip():
+            raise RequestContractError(
+                "project_name_confirmation_required", "Exact project name confirmation is required"
+            )
         result = repository.delete_project(
             str(project_id),
             expected_version=version,
+            expected_name=expected_name,
             idempotency_key=key,
             actor=actor,
         )

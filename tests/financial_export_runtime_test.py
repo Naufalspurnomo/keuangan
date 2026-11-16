@@ -157,7 +157,10 @@ def test_export_defaults_on_only_for_fully_configured_koyeb(monkeypatch: pytest.
 
 def test_export_loop_is_stop_event_driven_and_runs_worker(monkeypatch: pytest.MonkeyPatch) -> None:
     stop = threading.Event()
-    worker = SimpleNamespace(run_once=lambda *, limit: (stop.set(), {"exported": 1})[1])
+    worker = SimpleNamespace(
+        run_once=lambda *, limit: (stop.set(), {"exported": 1})[1],
+        has_unresolved_drift=lambda: False,
+    )
     sleeps: list[float] = []
 
     runtime.run_export_loop(worker, stop_event=stop, interval_seconds=12, batch_limit=9, sleep=sleeps.append)
@@ -173,8 +176,36 @@ def test_export_loop_is_stop_event_driven_and_runs_worker(monkeypatch: pytest.Mo
             stop.set()
             return {"exported": 1}
 
+        def has_unresolved_drift(self) -> bool:
+            return False
+
     runtime.run_export_loop(Worker(), stop_event=stop, interval_seconds=12, batch_limit=9, sleep=sleeps.append)
     assert calls == [9]
+
+
+def test_export_loop_marks_recovery_only_after_persistent_drift_is_clear() -> None:
+    stop = threading.Event()
+    results: list[dict[str, object]] = []
+
+    class Worker:
+        def run_once(self, *, limit: int):
+            stop.set()
+            return {"claimed": 0, "drifted": 0}
+
+        def has_unresolved_drift(self) -> bool:
+            return False
+
+    runtime.run_export_loop(
+        Worker(),
+        stop_event=stop,
+        interval_seconds=12,
+        batch_limit=9,
+        on_result=results.append,
+    )
+
+    assert results == [
+        {"claimed": 0, "drifted": 0, "recovery_verified": True}
+    ]
 
 
 def test_financial_export_health_reports_runtime_state_without_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -187,6 +218,8 @@ def test_financial_export_health_reports_runtime_state_without_secrets(monkeypat
         ready=True,
         last_result={"claimed": 0, "exported": 0},
         last_error=None,
+        drift_latched=False,
+        last_drift=None,
     )
 
     health = runtime.financial_export_health()
@@ -197,9 +230,45 @@ def test_financial_export_health_reports_runtime_state_without_secrets(monkeypat
         "ready": True,
         "last_result": {"claimed": 0, "exported": 0},
         "last_error": None,
+        "drift_latched": False,
+        "last_drift": None,
         "configured": True,
     }
     assert "secret" not in str(health)
+
+
+def test_export_runtime_latches_drift_until_explicit_recovery_evidence() -> None:
+    runtime._set_state(
+        enabled=True,
+        running=True,
+        ready=True,
+        last_result=None,
+        last_error=None,
+        drift_latched=False,
+        last_drift=None,
+    )
+
+    runtime._record_export_result({"claimed": 1, "exported": 0, "drifted": 1})
+    runtime._record_export_result({"claimed": 0, "exported": 0, "drifted": 0})
+
+    health = runtime.financial_export_health()
+    assert health["drift_latched"] is True
+    assert health["ready"] is False
+    assert health["last_drift"] == {"claimed": 1, "exported": 0, "drifted": 1}
+
+    runtime._record_export_result(
+        {
+            "claimed": 0,
+            "exported": 0,
+            "drifted": 0,
+            "recovery_verified": True,
+        }
+    )
+
+    recovered = runtime.financial_export_health()
+    assert recovered["drift_latched"] is False
+    assert recovered["ready"] is True
+    assert recovered["last_drift"] is None
 
 
 def test_main_registers_financial_export_worker_thread() -> None:

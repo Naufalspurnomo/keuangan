@@ -163,6 +163,13 @@ function recordedTransactionResponse() {
 
 const forbiddenProductionCopy = /DATA LIVE|Workspace live|Mode live|PostgreSQL|buku besar produksi|pemetaan kanonis|snapshot live|kontrak snapshot|ID proyek PostgreSQL/i
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((accept, decline) => { resolve = accept; reject = decline })
+  return { promise, resolve, reject }
+}
+
 function expectNoProductionChatter() {
   expect(document.body.textContent).not.toMatch(forbiddenProductionCopy)
 }
@@ -353,6 +360,68 @@ describe('production live source mode', () => {
     expect(screen.getByRole('status').textContent).toBe('Proyek aktif dibuat. Lanjutkan dengan mencatat transaksi proyek.')
     expect(createBody).toMatchObject({ action: 'create', values: { name: created.name, wallet: 'TX SBY(216)', company: 'TEXTURIN-Surabaya', status: 'active' } })
   }, 30_000)
+
+  it('keeps a newer project mutation when an older background refresh resolves later', async () => {
+    const staleRefresh = deferred<Response>()
+    const original = await productionProjectsResponse().json() as { data: { items: Array<Record<string, unknown>> } }
+    const current = original.data.items[0]
+    const completed = { ...current, status: 'completed', completion_date: '2026-11-16', lock_version: 2 }
+    let listReads = 0
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/admin/api/write-session.php') return writeSessionResponse()
+      if (url.startsWith('/admin/api/projects.php?action=list')) {
+        listReads += 1
+        return listReads === 1 ? writableProductionProjectsResponse() : staleRefresh.promise
+      }
+      if (url.startsWith(`/admin/api/projects.php?action=get&project_id=${current.id}`)) {
+        return new Response(JSON.stringify({ api_version: 'dashboard.v1', data: completed, meta: { capabilities: { project_document_writes_enabled: true, hard_delete: true } } }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url === '/admin/api/projects.php' && init?.method === 'POST') {
+        return new Response(JSON.stringify({ api_version: 'dashboard.v1', data: completed, meta: { capabilities: { project_document_writes_enabled: true, hard_delete: true } } }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return liveResponse()
+    })
+    vi.stubGlobal('fetch', request)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
+    fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Buka proyek Kontrak Panggung Utama' }))
+
+    act(() => window.dispatchEvent(new Event('focus')))
+    await waitFor(() => expect(listReads).toBe(2))
+    fireEvent.click(screen.getByRole('button', { name: 'Selesaikan proyek' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Aktifkan proyek' })).toBeTruthy())
+
+    staleRefresh.resolve(await writableProductionProjectsResponse())
+    await act(async () => { await staleRefresh.promise; await Promise.resolve() })
+    expect(screen.getByRole('button', { name: 'Aktifkan proyek' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Selesaikan proyek' })).toBeNull()
+  })
+
+  it('fails project write capabilities closed when a registry refresh fails', async () => {
+    let listReads = 0
+    const request = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/admin/api/write-session.php') return writeSessionResponse()
+      if (url.startsWith('/admin/api/projects.php?action=list')) {
+        listReads += 1
+        if (listReads === 1) return writableProductionProjectsResponse()
+        throw new Error('session expired')
+      }
+      return liveResponse()
+    })
+    vi.stubGlobal('fetch', request)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
+    fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
+    expect(await screen.findByRole('button', { name: 'Buat proyek' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Muat ulang proyek' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Pembaruan proyek gagal')
+    expect(screen.queryByRole('button', { name: 'Buat proyek' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Hapus permanen/ })).toBeNull()
+  })
 
   it('gates and persists canonical correction and reversal before authoritative refresh', async () => {
     const snapshot = liveSnapshot()

@@ -9,6 +9,7 @@ PROXY_TOKEN_HASH = hashlib.sha256(PROXY_TOKEN.encode("utf-8")).hexdigest()
 from flask import Flask
 from werkzeug.security import generate_password_hash
 
+from dashboard_api import auth as dashboard_auth
 from dashboard_api import register_dashboard
 from dashboard_api.repository import Page
 
@@ -172,6 +173,38 @@ class DashboardRouteTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 401)
+
+    def test_missing_reverse_proxy_hash_fails_closed_without_compiled_fallback(self):
+        self.app.config["DASHBOARD_PROXY_TOKEN_HASH"] = ""
+        response = self.client.get(
+            "/api/dashboard/v1/overview",
+            headers={"X-Hollawall-Proxy-Token": PROXY_TOKEN},
+        )
+        self.assertEqual(response.status_code, 401)
+
+    def test_direct_owner_login_is_throttled_with_generic_response(self):
+        self.app.config.update(
+            DASHBOARD_LOGIN_RATE_MAX=3,
+            DASHBOARD_LOGIN_RATE_BLOCK_SECONDS=60,
+        )
+        responses = [
+            self.client.post(
+                "/api/dashboard/v1/auth/login",
+                json={"email": "naufalspurnomo@gmail.com", "password": "wrong"},
+                environ_base={"REMOTE_ADDR": "192.0.2.10"},
+            )
+            for _ in range(3)
+        ]
+        self.assertEqual([response.status_code for response in responses], [401, 401, 429])
+        self.assertEqual(responses[-1].get_json()["error"]["code"], "invalid_credentials")
+        self.assertGreaterEqual(int(responses[-1].headers["Retry-After"]), 1)
+        blocked_valid = self.client.post(
+            "/api/dashboard/v1/auth/login",
+            json={"email": "naufalspurnomo@gmail.com", "password": "boss-test-password"},
+            environ_base={"REMOTE_ADDR": "192.0.2.10"},
+        )
+        self.assertEqual(blocked_valid.status_code, 429)
+        self.assertEqual(blocked_valid.get_json(), responses[-1].get_json())
 
     def test_non_owner_role_is_forbidden(self):
         self.login_session("viewer")

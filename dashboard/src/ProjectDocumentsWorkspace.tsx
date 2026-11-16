@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import ProjectDocumentComposer from './ProjectDocumentComposer'
 import ProjectDocumentPreview from './ProjectDocumentPreview'
 import ProjectQuotationPanel from './ProjectQuotationPanel'
+import { useModalDialog } from './CanonicalDebtForms'
 import type { ProjectDocumentApi, ProjectDocumentCommand, ProjectDocumentSession } from './projectDocumentApi'
 import {
   createEmptyDocumentDraft,
@@ -53,6 +54,7 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
   const [retryAfter, setRetryAfter] = useState<(() => Promise<void>) | null>(null)
   const [voiding, setVoiding] = useState(false)
   const [voidReason, setVoidReason] = useState('')
+  const voidDialog = useModalDialog(() => setVoiding(false), voiding)
 
   const writesEnabled = session.capabilities.documentWrites
   const today = new Date().toISOString().slice(0, 10)
@@ -240,7 +242,7 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
       <ProjectDocumentComposer project={project} document={active} writesEnabled={writesEnabled} saving={busy} receiptOptions={receiptOptions} onSave={saveDraft} onClose={close} />
       {'status' in active && <div className="document-issue-bar"><button type="button" className="primary-button" onClick={issue} disabled={!writesEnabled || busy}>Terbitkan dokumen</button></div>}
     </>}
-    {voiding && <div className="modal-backdrop" role="presentation"><section className="modal-card document-void-dialog" role="dialog" aria-modal="true" aria-label="Batalkan dokumen">
+    {voiding && <div className="modal-backdrop" role="presentation"><section ref={voidDialog.dialogRef} onKeyDown={voidDialog.onKeyDown} className="modal-card document-void-dialog" role="dialog" aria-modal="true" aria-label="Batalkan dokumen" tabIndex={-1}>
       <header><h2>Batalkan dokumen</h2><button type="button" className="icon-button" aria-label="Tutup pembatalan" onClick={() => setVoiding(false)}><X size={19} /></button></header>
       <p>Pembatalan disimpan sebagai jejak audit. Dokumen tidak dihapus.</p>
       <label>Alasan pembatalan<textarea aria-label="Alasan pembatalan" value={voidReason} onChange={(event) => setVoidReason(event.target.value)} autoFocus /></label>

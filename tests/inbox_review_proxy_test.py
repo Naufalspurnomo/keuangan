@@ -71,7 +71,11 @@ session_name('hollawall_admin');
 session_save_path({json.dumps(str(session_path))});
 session_set_cookie_params(['path'=>'/admin/','secure'=>true,'httponly'=>true,'samesite'=>'Strict']);
 session_start();
+$now = time();
 $_SESSION['hollawall_admin_user'] = {json.dumps(OWNER)};
+$_SESSION['authenticated_at'] = $now;
+$_SESSION['last_seen'] = $now;
+$_SESSION['cookie_renewed_at'] = $now;
 $_SESSION['csrf'] = {json.dumps(CSRF)};
 echo json_encode(['ok'=>true]);
 """)

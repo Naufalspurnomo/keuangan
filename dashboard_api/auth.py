@@ -19,12 +19,6 @@ from werkzeug.security import check_password_hash
 
 F = TypeVar("F", bound=Callable[..., Any])
 
-# Transitional verifier for the existing owner-scoped Rumahweb proxy token.
-# Only its SHA-256 digest is compiled; the token remains outside source control.
-# Remove after the Koyeb environment verifier is reconciled.
-_PRODUCTION_PROXY_COMPATIBILITY_HASHES = frozenset(
-    {"4e27151b079d42b5347a988f0a4c24280bd38af3ff23f971a47e4e6a890cc26c"}
-)
 SESSION_USER_KEY = "dashboard_user"
 SESSION_ROLE_KEY = "dashboard_role"
 SESSION_CSRF_KEY = "dashboard_csrf_token"
@@ -32,6 +26,8 @@ ACTOR_ASSERTION_HEADER = "X-Hollawall-Actor-Assertion"
 ACTOR_ROLES = frozenset({"boss", "admin"})
 _NONCE_LOCK = threading.Lock()
 _SEEN_NONCES: dict[str, int] = {}
+_LOGIN_THROTTLE_EXTENSION = "hollawall_dashboard_login_throttle"
+_LOGIN_THROTTLE_MAX_ENTRIES = 2048
 
 
 def _b64encode(value: bytes) -> str:
@@ -187,6 +183,74 @@ def authenticate_owner(email: str, password: str) -> bool:
     return check_password_hash(password_hash, supplied_password)
 
 
+def _login_throttle_state() -> tuple[threading.Lock, dict[str, dict[str, int]]]:
+    state = current_app.extensions.get(_LOGIN_THROTTLE_EXTENSION)
+    if not isinstance(state, dict):
+        state = {"lock": threading.Lock(), "entries": {}}
+        current_app.extensions[_LOGIN_THROTTLE_EXTENSION] = state
+    return cast(threading.Lock, state["lock"]), cast(dict[str, dict[str, int]], state["entries"])
+
+
+def _login_throttle_keys(email: str, source: str) -> tuple[str, str]:
+    normalized_source = str(source or "unknown").strip()
+    account = f"account\0{str(email or '').strip().casefold()}\0{normalized_source}"
+    source_only = f"source\0{normalized_source}"
+    return (
+        hashlib.sha256(account.encode("utf-8")).hexdigest(),
+        hashlib.sha256(source_only.encode("utf-8")).hexdigest(),
+    )
+
+
+def login_retry_after(email: str, source: str, *, now: int | None = None) -> int:
+    """Return process-local retry delay; shared-edge throttling remains the outer control."""
+    current = int(time.time() if now is None else now)
+    lock, entries = _login_throttle_state()
+    keys = _login_throttle_keys(email, source)
+    with lock:
+        retry_after = 0
+        for key in keys:
+            entry = entries.get(key)
+            if entry is None:
+                continue
+            blocked_until = int(entry.get("blocked_until", 0))
+            retry_after = max(retry_after, blocked_until - current)
+            if blocked_until <= current and int(entry.get("updated_at", 0)) < current - 3600:
+                entries.pop(key, None)
+        return max(0, retry_after)
+
+
+def record_login_result(email: str, source: str, *, success: bool, now: int | None = None) -> int:
+    current = int(time.time() if now is None else now)
+    maximum = max(2, int(current_app.config.get("DASHBOARD_LOGIN_RATE_MAX") or 5))
+    block_seconds = max(1, int(current_app.config.get("DASHBOARD_LOGIN_RATE_BLOCK_SECONDS") or 60))
+    lock, entries = _login_throttle_state()
+    keys = _login_throttle_keys(email, source)
+    with lock:
+        if success:
+            for key in keys:
+                entries.pop(key, None)
+            return 0
+        retry_after = 0
+        for key in keys:
+            entry = entries.get(key, {"attempts": 0, "blocked_until": 0, "updated_at": current})
+            if int(entry.get("blocked_until", 0)) > current:
+                retry_after = max(retry_after, int(entry["blocked_until"]) - current)
+                continue
+            attempts = int(entry.get("attempts", 0)) + 1
+            blocked_until = current + block_seconds if attempts >= maximum else 0
+            entries[key] = {"attempts": 0 if blocked_until else attempts, "blocked_until": blocked_until, "updated_at": current}
+            retry_after = max(retry_after, blocked_until - current)
+        if len(entries) > _LOGIN_THROTTLE_MAX_ENTRIES:
+            protected = set(keys)
+            candidates = sorted(
+                ((key, entry) for key, entry in entries.items() if key not in protected),
+                key=lambda item: item[1].get("updated_at", 0),
+            )
+            for stale_key, _ in candidates[: max(0, len(entries) - _LOGIN_THROTTLE_MAX_ENTRIES)]:
+                entries.pop(stale_key, None)
+        return max(0, retry_after)
+
+
 def establish_owner_session(email: str) -> str:
     session.clear()
     session[SESSION_USER_KEY] = str(email).strip().casefold()
@@ -203,19 +267,13 @@ def clear_owner_session() -> None:
 
 def proxy_owner_authenticated() -> bool:
     expected_hash = str(current_app.config.get("DASHBOARD_PROXY_TOKEN_HASH") or "").strip().casefold()
-    expected_hashes = set(_PRODUCTION_PROXY_COMPATIBILITY_HASHES)
-    if len(expected_hash) == 64 and not any(
-        character not in "0123456789abcdef" for character in expected_hash
-    ):
-        expected_hashes.add(expected_hash)
+    if len(expected_hash) != 64 or any(character not in "0123456789abcdef" for character in expected_hash):
+        return False
     token = str(request.headers.get("X-Hollawall-Proxy-Token") or "").strip()
     if not token:
         return False
     supplied_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    return any(
-        hmac.compare_digest(supplied_hash, candidate)
-        for candidate in expected_hashes
-    )
+    return hmac.compare_digest(supplied_hash, expected_hash)
 
 
 def write_csrf_valid() -> bool:

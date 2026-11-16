@@ -4,6 +4,7 @@ declare(strict_types=1);
 const ADMIN_PATH = '/admin/';
 const SESSION_LIFETIME = 2592000;
 const SESSION_RENEW_AFTER = 86400;
+const SESSION_ABSOLUTE_LIFETIME = 604800;
 const MAX_REQUEST_BYTES = 65536;
 const MAX_RESPONSE_BYTES = 1048576;
 
@@ -69,6 +70,11 @@ if (empty($_SESSION['hollawall_admin_user'])) {
 }
 $now = time();
 if (isset($_SESSION['last_seen']) && $now - (int) $_SESSION['last_seen'] > SESSION_LIFETIME) {
+    $_SESSION = [];
+    session_regenerate_id(true);
+    json_error(401, 'session_expired', 'Sign in required.');
+}
+if (!isset($_SESSION['authenticated_at']) || $now - (int) $_SESSION['authenticated_at'] > SESSION_ABSOLUTE_LIFETIME) {
     $_SESSION = [];
     session_regenerate_id(true);
     json_error(401, 'session_expired', 'Sign in required.');

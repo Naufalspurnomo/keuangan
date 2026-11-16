@@ -649,6 +649,7 @@ def test_project_hard_delete_requires_gate_removes_descendants_and_replays(repos
     result = repository.delete_project(
         project_id,
         expected_version=expected_version,
+        expected_name=created["project"]["name"],
         idempotency_key="hard-delete-project-command-0001",
         actor=ACTOR,
     )
@@ -657,6 +658,7 @@ def test_project_hard_delete_requires_gate_removes_descendants_and_replays(repos
     assert repository.delete_project(
         project_id,
         expected_version=expected_version,
+        expected_name=created["project"]["name"],
         idempotency_key="hard-delete-project-command-0001",
         actor=ACTOR,
     ) == result

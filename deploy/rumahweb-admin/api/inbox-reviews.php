@@ -4,6 +4,7 @@ declare(strict_types=1);
 const IR_ADMIN_PATH = '/admin/';
 const IR_SESSION_LIFETIME = 2592000;
 const IR_SESSION_RENEW_AFTER = 86400;
+const IR_SESSION_ABSOLUTE_LIFETIME = 604800;
 const IR_MAX_REQUEST_BYTES = 8192;
 const IR_MAX_RESPONSE_BYTES = 1048576;
 
@@ -84,6 +85,11 @@ function ir_session(string $accountRoot): void
     }
     $now = time();
     if (isset($_SESSION['last_seen']) && $now - (int) $_SESSION['last_seen'] > IR_SESSION_LIFETIME) {
+        $_SESSION = [];
+        session_regenerate_id(true);
+        ir_error(401, 'session_expired', 'Sign in required.');
+    }
+    if (!isset($_SESSION['authenticated_at']) || $now - (int) $_SESSION['authenticated_at'] > IR_SESSION_ABSOLUTE_LIFETIME) {
         $_SESSION = [];
         session_regenerate_id(true);
         ir_error(401, 'session_expired', 'Sign in required.');

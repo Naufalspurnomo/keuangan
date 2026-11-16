@@ -334,6 +334,106 @@ def _source_database_fingerprint(manifest: dict[str, object]) -> str:
     return value
 
 
+def _source_database_identity(manifest: dict[str, object]) -> tuple[str, str] | None:
+    if manifest.get("schema") == backup.LEGACY_SCHEMA_VERSION:
+        return None
+    sources = manifest.get("sources")
+    postgres = sources.get("postgres") if isinstance(sources, dict) else None
+    identity = postgres.get("server_identity") if isinstance(postgres, dict) else None
+    contract = manifest.get("postgresql")
+    contract_identity = contract.get("source_identity") if isinstance(contract, dict) else None
+    system_identifier = identity.get("system_identifier") if isinstance(identity, dict) else None
+    database = identity.get("database") if isinstance(identity, dict) else None
+    if (
+        not isinstance(system_identifier, str)
+        or not system_identifier.isdigit()
+        or not isinstance(database, str)
+        or not database
+        or contract_identity != identity
+    ):
+        raise RestoreVerificationError("manifest PostgreSQL source identity is invalid")
+    return system_identifier, database
+
+
+def _restored_schema_sha256(runner: CommandRunner, config: RestoreVerifyConfig, dsn: str) -> str:
+    output = runner(
+        [
+            config.psql_command,
+            "--no-psqlrc",
+            "--quiet",
+            "--tuples-only",
+            "--no-align",
+            "--set=ON_ERROR_STOP=1",
+            "--command",
+            "BEGIN TRANSACTION READ ONLY;\n"
+            "/* hollawall-restore-schema */\n"
+            "SELECT jsonb_build_object("
+            "'table_name', table_name, 'column_name', column_name, 'data_type', data_type)::text "
+            "FROM information_schema.columns WHERE table_schema = 'public' "
+            "ORDER BY table_name, ordinal_position;\nROLLBACK",
+        ],
+        env=backup.libpq_env(dsn),
+    )
+    if not isinstance(output, str):
+        raise RestoreVerificationError("restored PostgreSQL schema query failed")
+    rows = [line for line in output.splitlines() if line]
+    if not rows:
+        raise RestoreVerificationError("restored PostgreSQL schema query failed")
+    return backup._rows_sha256(rows)
+
+
+def _read_database_identity(
+    runner: CommandRunner,
+    config: RestoreVerifyConfig,
+    dsn: str,
+) -> tuple[str, str]:
+    """Read target identity before any restore mutation; unavailable means unsafe."""
+
+    try:
+        output = runner(
+            [
+                config.psql_command,
+                "--no-psqlrc",
+                "--quiet",
+                "--tuples-only",
+                "--no-align",
+                "--set=ON_ERROR_STOP=1",
+                "--command",
+                "BEGIN TRANSACTION READ ONLY;\n"
+                "/* hollawall-restore-target-identity */\n"
+                "SELECT jsonb_build_object("
+                "'system_identifier', (pg_control_system()).system_identifier::text, "
+                "'database', current_database())::text;\nROLLBACK",
+            ],
+            env=backup.libpq_env(dsn),
+        )
+    except Exception as error:
+        raise RestoreVerificationError(
+            "disposable database server identity query failed"
+        ) from error
+    if not isinstance(output, str):
+        raise RestoreVerificationError("disposable database server identity query failed")
+    rows = [line for line in output.splitlines() if line]
+    if len(rows) != 1:
+        raise RestoreVerificationError("disposable database server identity query failed")
+    try:
+        identity = json.loads(rows[0])
+    except json.JSONDecodeError as error:
+        raise RestoreVerificationError(
+            "disposable database server identity query failed"
+        ) from error
+    system_identifier = identity.get("system_identifier") if isinstance(identity, dict) else None
+    database = identity.get("database") if isinstance(identity, dict) else None
+    if (
+        not isinstance(system_identifier, str)
+        or not system_identifier.isdigit()
+        or not isinstance(database, str)
+        or not database
+    ):
+        raise RestoreVerificationError("disposable database server identity query failed")
+    return system_identifier, database
+
+
 def run_restore_verification(
     config: RestoreVerifyConfig,
     *,
@@ -387,7 +487,12 @@ def run_restore_verification(
         manifest = _load_manifest(extracted)
         postgres_contract = _postgres_contract(manifest)
         source_fingerprint = _source_database_fingerprint(manifest)
-        if target_fingerprint == source_fingerprint:
+        source_identity = _source_database_identity(manifest)
+        target_identity = _read_database_identity(selected_runner, config, dsn)
+        if (
+            source_identity is not None
+            and target_identity[0] == source_identity[0]
+        ) or target_fingerprint == source_fingerprint:
             raise RestoreVerificationError("disposable database matches backup source")
 
         postgres_rows = _verify_component_inventory(extracted, manifest, "postgres")
@@ -429,6 +534,10 @@ def run_restore_verification(
         )
         if restored_application != expected_application:
             raise RestoreVerificationError("application totals/hashes mismatch after restore")
+        schema_contract = postgres_contract["schema"]
+        assert isinstance(schema_contract, dict)
+        if _restored_schema_sha256(selected_runner, config, dsn) != schema_contract["sha256"]:
+            raise RestoreVerificationError("PostgreSQL schema hash mismatch after restore")
         return {
             "action": "verify",
             "verified": True,
@@ -436,7 +545,8 @@ def run_restore_verification(
             "sheets_files_verified": len(sheets_rows),
             "presensi_events_verified": events,
             "presensi_photos_verified": photos,
-            "backup_cutoff_verified": True,
+            "coordinated_cutoff_verified": False,
+            "projection_reconciliation_verified": False,
             "application_totals_verified": sum(
                 int(entry["total"]) for entry in restored_application.values()
             ),

@@ -131,6 +131,14 @@ def _selected_migrations(migrations: Iterable[Migration] | None) -> list[Migrati
     return list(migrations) if migrations is not None else load_financial_migrations()
 
 
+def _verification_migrations(migrations: Iterable[Migration] | None) -> list[Migration]:
+    return (
+        list(migrations)
+        if migrations is not None
+        else load_production_bootstrap_migrations()
+    )
+
+
 def apply_financial_migrations(
     dsn: str,
     *,
@@ -219,7 +227,7 @@ def verify_financial_schema(
     selected_dsn = str(dsn or "").strip()
     if not selected_dsn:
         raise FinancialSchemaError("canonical finance schema check requires a database DSN")
-    selected = _selected_migrations(migrations)
+    selected = _verification_migrations(migrations)
     expected = {item.version: (item.sha256, item.filename) for item in selected}
     connector = connection_factory or _connect
     try:

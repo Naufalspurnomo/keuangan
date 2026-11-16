@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 from copy import deepcopy
 
 import pytest
@@ -34,6 +35,9 @@ class FakeOutbox:
             self.status = "exporting"
             return [self.row]
         return []
+
+    def has_unresolved_drift(self) -> bool:
+        return self.status == "drifted"
 
     def acknowledge(self, row_id: str, claim_token: str, remote_locator: str) -> bool:
         assert row_id == self.row.id
@@ -131,11 +135,119 @@ def test_manual_remote_drift_is_marked_and_never_overwritten() -> None:
     assert outbox.drifted
 
 
+def test_existing_drift_blocks_new_claims() -> None:
+    class DriftedOutbox:
+        def has_unresolved_drift(self) -> bool:
+            return True
+
+        def claim(self, *, limit: int, lease_seconds: int):
+            raise AssertionError("unresolved drift must block new claims")
+
+    result = ExportWorker(
+        outbox=DriftedOutbox(),
+        remote=FakeRemote(),
+        protected_destination=True,
+    ).run_once()
+
+    assert result == {
+        "claimed": 0,
+        "written": 0,
+        "unchanged": 0,
+        "exported": 0,
+        "drifted": 0,
+        "failed": 0,
+    }
+
+
+def test_worker_guard_wraps_the_complete_remote_write_and_ack_cycle() -> None:
+    class GuardedOutbox(FakeOutbox):
+        def __init__(self, claimed: ClaimedExport) -> None:
+            super().__init__(claimed)
+            self.guard_active = False
+            self.events: list[str] = []
+
+        @contextmanager
+        def worker_guard(self):
+            self.guard_active = True
+            self.events.append("enter")
+            try:
+                yield
+            finally:
+                self.events.append("exit")
+                self.guard_active = False
+
+        def acknowledge(self, row_id: str, claim_token: str, remote_locator: str) -> bool:
+            assert self.guard_active
+            self.events.append("ack")
+            return super().acknowledge(row_id, claim_token, remote_locator)
+
+    outbox = GuardedOutbox(row())
+
+    class GuardedRemote(FakeRemote):
+        def read(self, ordinal: int):
+            assert outbox.guard_active
+            outbox.events.append("read")
+            return super().read(ordinal)
+
+        def write(self, ordinal: int, document):
+            assert outbox.guard_active
+            outbox.events.append("write")
+            super().write(ordinal, document)
+
+    result = ExportWorker(outbox=outbox, remote=GuardedRemote(), protected_destination=True).run_once()
+
+    assert result["exported"] == 1
+    assert outbox.events == ["enter", "read", "write", "read", "ack", "exit"]
+
+
+def test_new_drift_stops_the_rest_of_the_claimed_batch() -> None:
+    first = row(export_ordinal=1)
+    second = row(export_ordinal=2)
+
+    class BatchOutbox:
+        def __init__(self) -> None:
+            self.drifted = []
+
+        def has_unresolved_drift(self) -> bool:
+            return False
+
+        def claim(self, *, limit: int, lease_seconds: int):
+            return [first, second]
+
+        def mark_drifted(self, row_id: str, claim_token: str, error: str) -> bool:
+            self.drifted.append((row_id, claim_token, error))
+            return True
+
+        def acknowledge(self, row_id: str, claim_token: str, remote_locator: str) -> bool:
+            raise AssertionError("rows after drift must not be exported")
+
+        def fail(self, row_id: str, claim_token: str, error: str) -> bool:
+            raise AssertionError("rows after drift must remain untouched")
+
+    outbox = BatchOutbox()
+    remote = FakeRemote()
+    remote.rows[first.export_ordinal] = {**first.document, "payload_json": "{}"}
+
+    result = ExportWorker(
+        outbox=outbox,
+        remote=remote,
+        protected_destination=True,
+    ).run_once()
+
+    assert result["claimed"] == 2
+    assert result["drifted"] == 1
+    assert result["exported"] == 0
+    assert second.export_ordinal not in remote.rows
+    assert len(outbox.drifted) == 1
+
+
 def test_postgres_store_uses_qualified_returning_and_token_guarded_ack() -> None:
     from services.financial_export_worker import PostgresExportOutbox
 
     assert "outbox.id" in PostgresExportOutbox._CLAIM_SQL
     assert "outbox.claim_token" in PostgresExportOutbox._CLAIM_SQL
+    assert "NOT EXISTS" in PostgresExportOutbox._CLAIM_SQL
+    assert "status = 'drifted'" in PostgresExportOutbox._CLAIM_SQL
 
 
 class FakeSpreadsheet:

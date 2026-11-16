@@ -183,6 +183,28 @@ def test_schema_readiness_is_read_only_and_rejects_checksum_drift():
     assert APPLICATION_SCHEMA_MIN <= APPLICATION_SCHEMA_MAX
 
 
+def test_schema_readiness_default_verifies_complete_production_bootstrap():
+    migrations = load_production_bootstrap_migrations(
+        ROOT / "dashboard_api" / "migrations"
+    )
+    cursor = _Cursor(
+        applied=[
+            (migration.version, migration.sha256, migration.filename)
+            for migration in migrations
+        ]
+    )
+    connection = _Connection(cursor)
+
+    result = verify_financial_schema(
+        "postgres://test",
+        connection_factory=lambda _dsn: connection,
+    )
+
+    assert result["current_version"] == 22
+    assert result["checksums_verified"] == 22
+    assert connection.commits == 0
+
+
 def test_migration_refuses_to_modify_a_schema_newer_than_the_release():
     migration = Migration(9, "009_test.sql", "SELECT 1", hashlib.sha256(b"SELECT 1").hexdigest())
     cursor = _Cursor(applied=[(10, "1" * 64, "010_future.sql")])

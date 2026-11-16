@@ -259,6 +259,7 @@ jobs:
             --network host \
             --env GROQ_API_KEY=verification-placeholder \
             --env DATABASE_URL=postgresql://hollawall_test:ci_test_only@127.0.0.1:5432/hollawall_test \
+            --env RELEASE_SHA=${GITHUB_SHA} \
             --env PYTHON_DOTENV_DISABLED=1 \
             --env STATE_STORE_BACKEND=local \
             --env STATE_STORE_REQUIRED=0 \

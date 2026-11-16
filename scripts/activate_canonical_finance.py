@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 
 from services.financial_schema import (
     MIGRATION_LOCK_ID,
@@ -13,6 +14,7 @@ from services.financial_schema import (
 )
 
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_RELEASE_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _PROJECT_TABLES = (
     "projects",
     "project_scopes",
@@ -51,6 +53,12 @@ def activate() -> None:
     if not dsn:
         raise RuntimeError("canonical finance activation requires a database DSN")
 
+    release = str(os.getenv("RELEASE_SHA") or os.getenv("KOYEB_GIT_SHA") or "").strip()
+    if _RELEASE_SHA_PATTERN.fullmatch(release) is None:
+        raise RuntimeError(
+            "canonical finance activation requires a 40-character lowercase release SHA"
+        )
+
     apply_financial_migrations(
         dsn,
         migrations=load_production_bootstrap_migrations(),
@@ -59,7 +67,6 @@ def activate() -> None:
     import psycopg
     from psycopg import sql
 
-    release = str(os.getenv("RELEASE_SHA") or os.getenv("KOYEB_GIT_SHA") or "unknown").strip()
     evidence = hashlib.sha256(
         f"hollawall:finance-authority:postgresql:fresh-zero:v1:{release}".encode()
     ).hexdigest()

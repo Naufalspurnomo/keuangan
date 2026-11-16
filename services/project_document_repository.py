@@ -2615,6 +2615,7 @@ class ProjectDocumentRepository:
         project_id: str,
         *,
         expected_version: int,
+        expected_name: str,
         idempotency_key: str,
         actor: Mapping[str, Any],
     ) -> dict[str, Any]:
@@ -2624,8 +2625,10 @@ class ProjectDocumentRepository:
             raise ValueError("project_id must be a UUID") from exc
         if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 1:
             raise ValueError("expected_version must be a positive integer")
+        if not isinstance(expected_name, str) or not 1 <= len(expected_name) <= 200 or expected_name != expected_name.strip():
+            raise ValueError("expected_name must be the exact project name")
         actor_json, actor_value = _actor(actor)
-        request = {"project_id": project_id, "expected_version": expected_version}
+        request = {"project_id": project_id, "expected_version": expected_version, "expected_name": expected_name}
         try:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
@@ -2635,13 +2638,15 @@ class ProjectDocumentRepository:
                     if replay is not None:
                         return replay
                     cursor.execute(
-                        "SELECT lock_version FROM projects WHERE id = %s FOR UPDATE",
+                        "SELECT name, lock_version FROM projects WHERE id = %s FOR UPDATE",
                         (project_id,),
                     )
                     current = cursor.fetchone()
                     if not current:
                         raise ProjectDocumentNotFound("project not found")
-                    if int(current[0]) != expected_version:
+                    if str(current[0]) != expected_name:
+                        raise ProjectDocumentConflict("project name confirmation mismatch")
+                    if int(current[1]) != expected_version:
                         raise ProjectDocumentConflict("optimistic lock version conflict")
 
                     cursor.execute(
