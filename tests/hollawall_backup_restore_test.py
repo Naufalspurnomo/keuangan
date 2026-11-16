@@ -149,6 +149,14 @@ def source_tree(tmp_path: Path) -> tuple[Path, Path]:
     return sheets, presensi
 
 
+def test_schema_inventory_covers_database_invariants() -> None:
+    sql = hollawall_backup.SCHEMA_INVENTORY_SQL
+    for catalog in ("pg_constraint", "pg_index", "pg_sequences", "pg_proc", "pg_trigger"):
+        assert catalog in sql
+    assert "is_nullable" in sql
+    assert "column_default" in sql
+
+
 def backup_config(tmp_path: Path, sheets: Path, presensi: Path, **overrides: object) -> hollawall_backup.BackupConfig:
     values: dict[str, object] = {
         "output_dir": tmp_path / "backups",

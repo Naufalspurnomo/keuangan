@@ -54,6 +54,39 @@ CANONICAL_REQUIRED_TABLES = frozenset({
 TABLE_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*$")
 LSN_PATTERN = re.compile(r"^[0-9A-F]+/[0-9A-F]+$")
 SNAPSHOT_PATTERN = re.compile(r"^[0-9A-Fa-f]+-[0-9A-Fa-f]+-[0-9A-Fa-f]+$")
+SCHEMA_INVENTORY_SQL = """
+WITH inventory AS (
+    SELECT 'column' AS kind,
+           format('%I.%I.%I', table_schema, table_name, column_name) AS identity,
+           concat_ws('|', data_type, is_nullable, coalesce(column_default, '')) AS definition
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+    UNION ALL
+    SELECT 'constraint', format('%I.%I', n.nspname, c.conname), pg_get_constraintdef(c.oid, true)
+    FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+    WHERE n.nspname = 'public'
+    UNION ALL
+    SELECT 'index', format('%I.%I', ns.nspname, idx.relname), pg_get_indexdef(i.indexrelid)
+    FROM pg_index i JOIN pg_class idx ON idx.oid = i.indexrelid
+    JOIN pg_class tbl ON tbl.oid = i.indrelid JOIN pg_namespace ns ON ns.oid = tbl.relnamespace
+    WHERE ns.nspname = 'public'
+    UNION ALL
+    SELECT 'sequence', format('%I.%I', schemaname, sequencename),
+           concat_ws('|', data_type, start_value, min_value, max_value, increment_by, cycle, cache_size)
+    FROM pg_sequences WHERE schemaname = 'public'
+    UNION ALL
+    SELECT 'function', format('%I.%I(%s)', n.nspname, p.proname, pg_get_function_identity_arguments(p.oid)),
+           pg_get_functiondef(p.oid)
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public'
+    UNION ALL
+    SELECT 'trigger', format('%I.%I', ns.nspname, t.tgname), pg_get_triggerdef(t.oid, true)
+    FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+    JOIN pg_namespace ns ON ns.oid = c.relnamespace
+    WHERE ns.nspname = 'public' AND NOT t.tgisinternal
+)
+SELECT jsonb_build_object('kind', kind, 'identity', identity, 'definition', definition)::text
+FROM inventory ORDER BY kind, identity
+"""
 
 
 class BackupError(RuntimeError):
@@ -336,16 +369,7 @@ def _postgres_contract(
         dsn,
         snapshot,
         "schema",
-        """
-        SELECT jsonb_build_object(
-            'table_name', table_name,
-            'column_name', column_name,
-            'data_type', data_type
-        )::text
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-        ORDER BY table_name, ordinal_position
-        """,
+        SCHEMA_INVENTORY_SQL,
     )
     if not schema_rows:
         raise BackupError("PostgreSQL public schema inventory is empty")

@@ -16,6 +16,10 @@ from services.finance_write_authority import (
     legacy_sheets_finance_writes_fenced,
 )
 from services.financial_export_worker import PostgresExportOutbox
+from services.financial_transaction_repository import (
+    FinancialRepositoryConflict,
+    PostgresFinancialTransactionRepository,
+)
 from services.financial_schema import apply_financial_migrations, load_financial_migrations
 
 
@@ -147,3 +151,105 @@ def test_finance_authority_latch_is_one_way_and_fences_legacy_writers():
                 """,
                 ("0" * 64,),
             )
+
+
+def test_transaction_idempotency_is_atomic_across_real_postgres_connections():
+    apply_financial_migrations(
+        DSN,
+        migrations=load_financial_migrations(ROOT / "dashboard_api" / "migrations"),
+    )
+    with _connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT setval(
+                'financial_export_ordinal_seq',
+                GREATEST(COALESCE((SELECT max(export_ordinal) FROM financial_export_outbox), 0), 1),
+                COALESCE((SELECT max(export_ordinal) FROM financial_export_outbox), 0) > 0
+            )
+            """
+        )
+    key_hash = hashlib.sha256(uuid.uuid4().bytes).hexdigest()
+    request_hash = hashlib.sha256(b"same canonical request").hexdigest()
+    barrier = threading.Barrier(2)
+
+    def append(index: int):
+        transaction_id = str(uuid.uuid4())
+        payload = {"schema_version": "canonical.finance.transaction.v1", "request": "same"}
+        payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        record = {
+            "id": transaction_id,
+            "scope": "group",
+            "project_id": None,
+            "transaction_type": "adjustment",
+            "flow_class": "adjustment",
+            "amount": 1000,
+            "currency": "IDR",
+            "category": "ci",
+            "description": "Concurrent idempotency test",
+            "occurred_at": "2026-11-16T00:00:00Z",
+            "source": "system",
+            "source_reference": None,
+            "evidence": {},
+            "actor": {"type": "system", "id": "ci"},
+            "revision_of_id": None,
+            "reversal_of_id": None,
+            "version": 1,
+            "status": "posted",
+            "postings": [
+                {
+                    "id": str(uuid.uuid4()),
+                    "wallet_id": None,
+                    "business_unit_id": None,
+                    "account_class": "revenue",
+                    "signed_amount": 1000,
+                    "currency": "IDR",
+                },
+                {
+                    "id": str(uuid.uuid4()),
+                    "wallet_id": None,
+                    "business_unit_id": None,
+                    "account_class": "expense",
+                    "signed_amount": -1000,
+                    "currency": "IDR",
+                },
+            ],
+        }
+        outbox = {
+            "id": str(uuid.uuid4()),
+            "export_key": f"transaction:{transaction_id}:v1",
+            "payload": payload,
+            "payload_sha256": hashlib.sha256(payload_json.encode()).hexdigest(),
+        }
+        barrier.wait(timeout=5)
+        return PostgresFinancialTransactionRepository(DSN).append(
+            record,
+            idempotency_key_hash=key_hash,
+            request_hash=request_hash,
+            outbox_payload=outbox,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(append, range(2)))
+
+    assert sorted(replayed for _record, replayed in results) == [False, True]
+    transaction_id = results[0][0]["id"]
+    assert results[1][0]["id"] == transaction_id
+    with _connection() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM financial_transactions WHERE idempotency_key_hash = %s",
+            (key_hash,),
+        )
+        assert cursor.fetchone()[0] == 1
+        cursor.execute(
+            "SELECT count(*) FROM financial_export_outbox WHERE aggregate_id = %s",
+            (transaction_id,),
+        )
+        assert cursor.fetchone()[0] == 1
+
+    with pytest.raises(FinancialRepositoryConflict, match="different request"):
+        PostgresFinancialTransactionRepository(DSN).append(
+            {},
+            idempotency_key_hash=key_hash,
+            request_hash=hashlib.sha256(b"conflicting request").hexdigest(),
+            outbox_payload={},
+        )
