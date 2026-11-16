@@ -1,1 +1,1 @@
-{"pending_transactions": {}, "bot_message_refs": {}, "pending_message_refs": {}, "bot_interactions": {}, "visual_buffer": {}, "last_bot_reports": {}}
+{"pending_transactions": {}, "bot_message_refs": {}, "pending_message_refs": {}, "processed_messages": {}, "project_registry": {}, "project_knowledge": {"projects": {}, "aliases": {}}, "audit_log": [], "bot_interactions": {}, "visual_buffer": {}, "last_bot_reports": {}, "last_tx_events": {}, "pending_confirmations": {}}

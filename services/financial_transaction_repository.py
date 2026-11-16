@@ -9,6 +9,7 @@ optimistic-concurrency semantics.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import threading
 from collections.abc import Callable, Mapping, Sequence
@@ -25,6 +26,13 @@ class FinancialRepositoryNotFound(LookupError):
 
 def _clone(value: Any) -> Any:
     return copy.deepcopy(value)
+
+
+def _idempotency_lock_id(idempotency_key_hash: str) -> int:
+    """Derive a stable signed bigint transaction-lock key from the exact hash."""
+
+    digest = hashlib.sha256(idempotency_key_hash.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], byteorder="big", signed=True)
 
 
 def _root_id(records: Mapping[str, dict[str, Any]], transaction_id: str) -> str:
@@ -214,6 +222,12 @@ class PostgresFinancialTransactionRepository:
         connection = self._connect()
         try:
             with connection.cursor() as cursor:
+                # Serialize first use before the SELECT. A lock-key collision can
+                # only add serialization because the exact hash remains queried.
+                cursor.execute(
+                    "SELECT pg_advisory_xact_lock(%s)",
+                    (_idempotency_lock_id(idempotency_key_hash),),
+                )
                 cursor.execute(
                     "SELECT id, request_hash FROM financial_transactions "
                     "WHERE idempotency_key_hash = %s FOR UPDATE",

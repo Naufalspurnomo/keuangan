@@ -58,6 +58,8 @@ class PresensiReleaseTests(unittest.TestCase):
         self.assertNotIn("public_html/.hollawall-presensi", common)
         self.assertIn("presensi_admin_session", photo)
         self.assertIn("hollawall_admin_user", admin_common)
+        self.assertIn("PRESENSI_ADMIN_SESSION_ABSOLUTE_LIFETIME", admin_common)
+        self.assertIn("authenticated_at", admin_common)
         self.assertIn("X-Content-Type-Options", photo)
 
     def test_release_manifests_cover_every_payload_file(self) -> None:

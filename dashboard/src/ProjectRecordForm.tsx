@@ -1,6 +1,7 @@
 import { X } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 
+import { useModalDialog } from './CanonicalDebtForms'
 import { createEmptyProjectDraft, validateProjectDraft, type ProjectDraft, type ProjectRecord } from './projectDocuments'
 import { CANONICAL_WALLETS, CANONICAL_WALLET_COMPANY_PAIRS, canonicalCompaniesForWallet } from './transactionMappings'
 
@@ -16,6 +17,7 @@ interface ProjectRecordFormProps {
 }
 
 export default function ProjectRecordForm({ project, clients = [], saving = false, onSave, onClose }: ProjectRecordFormProps) {
+  const dialog = useModalDialog(onClose)
   const [draft, setDraft] = useState<ProjectDraft>(() => project ? { ...project } : {
     ...createEmptyProjectDraft(new Date().toISOString().slice(0, 10)),
     issuer_key: PROJECT_ISSUER_KEY,
@@ -52,7 +54,7 @@ export default function ProjectRecordForm({ project, clients = [], saving = fals
       setError(reason instanceof Error ? reason.message : 'Proyek belum dapat disimpan.')
     }
   }
-  return <div className="modal-backdrop" role="presentation"><section className="modal-card project-record-form" role="dialog" aria-modal="true" aria-label={project ? 'Ubah proyek' : 'Buat proyek'}>
+  return <div className="modal-backdrop" role="presentation"><section ref={dialog.dialogRef} onKeyDown={dialog.onKeyDown} className="modal-card project-record-form" role="dialog" aria-modal="true" aria-label={project ? 'Ubah proyek' : 'Buat proyek'} tabIndex={-1}>
     <header><div><p className="eyebrow">PROYEK</p><h2>{project ? 'Ubah proyek' : 'Buat proyek baru'}</h2></div><button type="button" className="icon-button" aria-label="Tutup formulir proyek" onClick={onClose}><X size={19} /></button></header>
     <form onSubmit={submit} noValidate>
       {error && <p className="form-error" role="alert">{error}</p>}

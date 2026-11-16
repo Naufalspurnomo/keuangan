@@ -5,9 +5,12 @@ const ADMIN_PATH = '/admin/';
 const SESSION_KEY = 'hollawall_admin_user';
 const SESSION_LIFETIME = 2592000;
 const SESSION_RENEW_AFTER = 86400;
+const SESSION_ABSOLUTE_LIFETIME = 604800;
 const LOGIN_RATE_MAX = 5;
 const LOGIN_RATE_BLOCK_SECONDS = 60;
 const LOGIN_RATE_RETENTION_SECONDS = 86400;
+const LOGIN_RATE_MAX_ENTRIES = 4096;
+const LOGIN_RATE_MAX_BYTES = 1048576;
 
 function fail_closed(int $status, string $message): void
 {
@@ -44,6 +47,11 @@ function admin_login_rate(string $path, string $accountRoot, string $key, string
     }
     rewind($handle);
     $raw = stream_get_contents($handle);
+    if (!is_string($raw) || strlen($raw) > LOGIN_RATE_MAX_BYTES) {
+        flock($handle, LOCK_UN);
+        fclose($handle);
+        fail_closed(503, 'Admin login protection unavailable.');
+    }
     $ledger = $raw === '' ? [] : json_decode($raw, true);
     if (!is_array($ledger)) {
         flock($handle, LOCK_UN);
@@ -53,6 +61,13 @@ function admin_login_rate(string $path, string $accountRoot, string $key, string
     foreach ($ledger as $entryKey => $entry) {
         if (!is_array($entry) || (int) ($entry['updated_at'] ?? 0) < $now - LOGIN_RATE_RETENTION_SECONDS) {
             unset($ledger[$entryKey]);
+        }
+    }
+    if (!array_key_exists($key, $ledger) && count($ledger) >= LOGIN_RATE_MAX_ENTRIES) {
+        uasort($ledger, static fn(array $left, array $right): int =>
+            (int) ($left['updated_at'] ?? 0) <=> (int) ($right['updated_at'] ?? 0));
+        while (count($ledger) >= LOGIN_RATE_MAX_ENTRIES) {
+            array_shift($ledger);
         }
     }
     $state = $ledger[$key] ?? ['attempts' => 0, 'blocked_until' => 0, 'updated_at' => $now];
@@ -70,6 +85,7 @@ function admin_login_rate(string $path, string $accountRoot, string $key, string
     }
     $encoded = json_encode($ledger, JSON_UNESCAPED_SLASHES);
     if ($encoded === false
+        || strlen($encoded) > LOGIN_RATE_MAX_BYTES
         || !rewind($handle)
         || !ftruncate($handle, 0)
         || fwrite($handle, $encoded . "\n") === false
@@ -149,6 +165,12 @@ if (isset($_SESSION['last_seen']) && $now - (int) $_SESSION['last_seen'] > SESSI
     $_SESSION = [];
     session_regenerate_id(true);
 }
+if (isset($_SESSION[SESSION_KEY])
+    && (!isset($_SESSION['authenticated_at'])
+        || $now - (int) $_SESSION['authenticated_at'] > SESSION_ABSOLUTE_LIFETIME)) {
+    $_SESSION = [];
+    session_regenerate_id(true);
+}
 $_SESSION['last_seen'] = $now;
 if (empty($_SESSION['csrf'])) {
     $_SESSION['csrf'] = bin2hex(random_bytes(24));
@@ -172,9 +194,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $password = (string) ($_POST['password'] ?? '');
     $source = (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
     $rateKey = hash_hmac('sha256', strtolower($username) . "\0" . $source, (string) $config['password_hash']);
+    $sourceRateKey = hash_hmac('sha256', "source\0" . $source, (string) $config['password_hash']);
     $ratePath = $realAccountRoot . '/.hollawall-admin-login-rate.json';
     $rate = admin_login_rate($ratePath, $realAccountRoot, $rateKey, 'inspect', $now);
-    if ((int) ($rate['blocked_until'] ?? 0) > $now) {
+    $sourceRate = admin_login_rate($ratePath, $realAccountRoot, $sourceRateKey, 'inspect', $now);
+    if ((int) ($rate['blocked_until'] ?? 0) > $now || (int) ($sourceRate['blocked_until'] ?? 0) > $now) {
         $loginError = 'Terlalu banyak percobaan. Coba lagi sebentar.';
     } else {
         $validUser = hash_equals((string) $config['username'], $username);
@@ -182,8 +206,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($validUser && $validPassword) {
             admin_login_rate($ratePath, $realAccountRoot, $rateKey, 'success', $now);
+            admin_login_rate($ratePath, $realAccountRoot, $sourceRateKey, 'success', $now);
             session_regenerate_id(true);
             $_SESSION[SESSION_KEY] = (string) $config['username'];
+            $_SESSION['authenticated_at'] = $now;
             $_SESSION['last_seen'] = $now;
             $_SESSION['csrf'] = bin2hex(random_bytes(24));
             $_SESSION['cookie_renewed_at'] = $now;
@@ -193,6 +219,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         admin_login_rate($ratePath, $realAccountRoot, $rateKey, 'failure', $now);
+        admin_login_rate($ratePath, $realAccountRoot, $sourceRateKey, 'failure', $now);
         usleep(400000);
         $loginError = 'Username atau password tidak cocok.';
     }

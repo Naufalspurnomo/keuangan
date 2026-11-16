@@ -10,6 +10,7 @@ from typing import Any, Callable, Mapping, Protocol
 
 
 EXPORT_SCHEMA_VERSION = "canonical.finance.export.v1"
+_DRIFT_GATE_LOCK_ID = 764_341_986_015_202_611
 
 
 class RemoteExportDrift(RuntimeError):
@@ -71,6 +72,8 @@ class ClaimedExport:
 
 
 class ExportOutbox(Protocol):
+    def has_unresolved_drift(self) -> bool: ...
+
     def claim(self, *, limit: int, lease_seconds: int) -> list[ClaimedExport]: ...
 
     def acknowledge(
@@ -270,9 +273,13 @@ class ExportWorker:
             "drifted": 0,
             "failed": 0,
         }
+        if self.has_unresolved_drift():
+            return counts
         claimed = self._outbox.claim(limit=limit, lease_seconds=self._lease_seconds)
         counts["claimed"] = len(claimed)
         for row in claimed:
+            if self.has_unresolved_drift():
+                break
             try:
                 expected = row.document
                 observed = self._remote.read(row.export_ordinal)
@@ -288,7 +295,7 @@ class ExportWorker:
                     message = f"remote export drift at ordinal {row.export_ordinal}"
                     self._outbox.mark_drifted(row.id, row.claim_token, message)
                     counts["drifted"] += 1
-                    continue
+                    break
                 locator = f"row:{row.export_ordinal}:sha256:{expected['row_sha256']}"
                 if not self._outbox.acknowledge(row.id, row.claim_token, locator):
                     raise RuntimeError("outbox acknowledgement lost its claim")
@@ -296,10 +303,15 @@ class ExportWorker:
             except RemoteExportDrift as exc:
                 self._outbox.mark_drifted(row.id, row.claim_token, str(exc))
                 counts["drifted"] += 1
+                break
             except Exception as exc:
                 self._outbox.fail(row.id, row.claim_token, f"{type(exc).__name__}: {exc}")
                 counts["failed"] += 1
         return counts
+
+    def has_unresolved_drift(self) -> bool:
+        probe = getattr(self._outbox, "has_unresolved_drift", None)
+        return bool(probe()) if callable(probe) else False
 
 
 class PostgresExportOutbox:
@@ -310,10 +322,15 @@ class PostgresExportOutbox:
             SELECT id
             FROM financial_export_outbox
             WHERE (
-                status IN ('pending', 'failed') AND available_at <= now()
-            ) OR (
-                status = 'exporting'
-                AND claimed_at < now() - (%s * interval '1 second')
+                (
+                    status IN ('pending', 'failed') AND available_at <= now()
+                ) OR (
+                    status = 'exporting'
+                    AND claimed_at < now() - (%s * interval '1 second')
+                )
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM financial_export_outbox WHERE status = 'drifted'
             )
             ORDER BY export_ordinal
             FOR UPDATE SKIP LOCKED
@@ -378,12 +395,32 @@ class PostgresExportOutbox:
         try:
             with connection.cursor() as cursor:
                 cursor.execute(
+                    "SELECT pg_advisory_xact_lock(%s)",
+                    (_DRIFT_GATE_LOCK_ID,),
+                )
+                cursor.execute(
                     self._CLAIM_SQL,
                     (lease_seconds, limit, claim_token),
                 )
                 rows = [self._row(tuple(values)) for values in cursor.fetchall()]
             connection.commit()
             return rows
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def has_unresolved_drift(self) -> bool:
+        connection = self._connect()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT EXISTS (SELECT 1 FROM financial_export_outbox WHERE status = 'drifted')"
+                )
+                row = cursor.fetchone()
+            connection.commit()
+            return bool(row and row[0])
         except Exception:
             connection.rollback()
             raise
@@ -402,6 +439,11 @@ class PostgresExportOutbox:
         connection = self._connect()
         try:
             with connection.cursor() as cursor:
+                if status == "drifted":
+                    cursor.execute(
+                        "SELECT pg_advisory_xact_lock(%s)",
+                        (_DRIFT_GATE_LOCK_ID,),
+                    )
                 cursor.execute(
                     """
                     UPDATE financial_export_outbox

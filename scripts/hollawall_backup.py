@@ -304,7 +304,9 @@ def _postgres_contract(
         SELECT jsonb_build_object(
             'lsn', pg_current_wal_lsn()::text,
             'cutoff', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
-            'schema', current_schema()
+            'schema', current_schema(),
+            'system_identifier', (pg_control_system()).system_identifier::text,
+            'database', current_database()
         )::text
         """,
     )
@@ -321,6 +323,10 @@ def _postgres_contract(
         or not isinstance(metadata.get("cutoff"), str)
         or not metadata["cutoff"].endswith("Z")
         or metadata.get("schema") != "public"
+        or not isinstance(metadata.get("system_identifier"), str)
+        or not metadata["system_identifier"].isdigit()
+        or not isinstance(metadata.get("database"), str)
+        or not metadata["database"]
     ):
         raise BackupError("PostgreSQL cutoff metadata is invalid")
 
@@ -380,6 +386,10 @@ def _postgres_contract(
     return {
         "lsn": metadata["lsn"],
         "cutoff": metadata["cutoff"],
+        "source_identity": {
+            "system_identifier": metadata["system_identifier"],
+            "database": metadata["database"],
+        },
         "schema": {"name": "public", "sha256": _rows_sha256(schema_rows)},
         "migration_version": _migration_version(),
         "application": application,
@@ -410,6 +420,9 @@ def _build_manifest(
                 "kind": "postgresql",
                 "identifier": "[REDACTED]",
                 "fingerprint_sha256": database_fingerprint(dsn),
+                "server_identity": dict(
+                    cast(Mapping[str, object], postgres_contract["source_identity"])
+                ),
             },
             "sheets": _source_record("google-sheets-export-or-copy", str(config.sheets_source.expanduser().resolve())),
             "presensi": _source_record("presensi-private-tree", str(config.presensi_source.expanduser().resolve())),

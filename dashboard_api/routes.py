@@ -13,8 +13,10 @@ from dashboard_api.auth import (
     authenticate_owner,
     clear_owner_session,
     establish_owner_session,
+    login_retry_after,
     owner_identity,
     owner_required,
+    record_login_result,
     write_csrf_valid,
 )
 from dashboard_api import live_source
@@ -178,8 +180,23 @@ def create_dashboard_blueprint(
         body = request.get_json(silent=True) or {}
         email = str(body.get("email") or "")
         password = str(body.get("password") or "")
+        source = str(request.remote_addr or "unknown")
+        retry_after = login_retry_after(email, source)
+        if retry_after:
+            response = jsonify({"error": {"code": "invalid_credentials", "message": "Invalid email or password"}})
+            response.status_code = 429
+            response.headers["Retry-After"] = str(retry_after)
+            response.headers["Cache-Control"] = "no-store"
+            return response
         if not authenticate_owner(email, password):
-            return jsonify({"error": {"code": "invalid_credentials", "message": "Invalid email or password"}}), 401
+            retry_after = record_login_result(email, source, success=False)
+            response = jsonify({"error": {"code": "invalid_credentials", "message": "Invalid email or password"}})
+            response.status_code = 429 if retry_after else 401
+            if retry_after:
+                response.headers["Retry-After"] = str(retry_after)
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        record_login_result(email, source, success=True)
         csrf_token = establish_owner_session(email)
         return jsonify(
             {

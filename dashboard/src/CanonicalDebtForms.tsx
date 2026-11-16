@@ -1,5 +1,5 @@
 import { X } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 
 import type { FinanceDebt, FinanceProject } from './financeWorkspace'
 import { CANONICAL_WALLETS } from './transactionMappings'
@@ -14,8 +14,56 @@ export interface CanonicalDebtCreateInput {
   description: string
 }
 
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+export function useModalDialog(onClose: () => void, active = true) {
+  const dialogRef = useRef<HTMLElement>(null)
+  const openerRef = useRef<HTMLElement | null>(null)
+  const wasActiveRef = useRef(false)
+  if (active && !wasActiveRef.current && typeof document !== 'undefined') {
+    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  }
+  wasActiveRef.current = active
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+
+  useEffect(() => {
+    if (!active) return
+    const frame = window.requestAnimationFrame(() => {
+      const dialog = dialogRef.current
+      const target = dialog?.querySelector<HTMLElement>('[autofocus]') ?? dialog?.querySelector<HTMLElement>(FOCUSABLE)
+      target?.focus()
+    })
+    return () => {
+      window.cancelAnimationFrame(frame)
+      const opener = openerRef.current
+      window.queueMicrotask(() => { if (opener?.isConnected) opener.focus() })
+    }
+  }, [active])
+
+  const onKeyDown = useCallback((event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      closeRef.current()
+      return
+    }
+    if (event.key !== 'Tab') return
+    const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])]
+      .filter((element) => !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true')
+    if (!focusable.length) { event.preventDefault(); dialogRef.current?.focus(); return }
+    const first = focusable[0]
+    const last = focusable.at(-1)!
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+  }, [])
+
+  return { dialogRef, onKeyDown }
+}
+
 function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  return <div className="modal-backdrop" role="presentation"><section className="modal-card" role="dialog" aria-modal="true" aria-label={title}>
+  const dialog = useModalDialog(onClose)
+  return <div className="modal-backdrop" role="presentation"><section ref={dialog.dialogRef} onKeyDown={dialog.onKeyDown} className="modal-card" role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}>
     <header><div><p className="eyebrow">HUTANG INTERNAL</p><h2>{title}</h2></div><button type="button" className="icon-button" aria-label="Tutup formulir hutang" onClick={onClose}><X size={19} /></button></header>
     {children}
   </section></div>

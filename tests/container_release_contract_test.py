@@ -92,6 +92,29 @@ def test_nonlocal_container_without_database_fails_closed():
             raise AssertionError("production activation must fail closed without a database DSN")
 
 
+def test_activation_rejects_noncanonical_release_before_migration():
+    with (
+        patch.dict(
+            "os.environ",
+            {
+                "CANONICAL_FINANCE_ACTIVATE": "1",
+                "DATABASE_URL": "postgresql://isolated-test/db",
+                "RELEASE_SHA": "ABC123",
+            },
+            clear=True,
+        ),
+        patch.object(activate_canonical_finance, "apply_financial_migrations") as migrate,
+    ):
+        try:
+            activate_canonical_finance.activate()
+        except RuntimeError as error:
+            assert str(error) == "canonical finance activation requires a 40-character lowercase release SHA"
+        else:
+            raise AssertionError("activation must reject a noncanonical release SHA")
+
+    migrate.assert_not_called()
+
+
 def test_container_context_excludes_private_runtime_material():
     patterns = {
         line.strip() for line in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()

@@ -54,10 +54,37 @@ describe('ProjectDetailWorkspace', () => {
 
     rerender(<ProjectDetailWorkspace project={project} tab="documents" onRouteChange={vi.fn()} onBack={vi.fn()} transactions={null} presensi={null} documents={null} capabilities={{ projectWrites: true, documentWrites: true, transactionCorrections: false, transactionReversals: false, hardDelete: true }} onEdit={onEdit} onStatusChange={onStatusChange} onDelete={onDelete} />)
     fireEvent.click(screen.getByRole('button', { name: 'Ubah proyek' }))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
     fireEvent.click(screen.getByRole('button', { name: 'Batalkan proyek' }))
     fireEvent.click(screen.getByRole('button', { name: 'Hapus proyek permanen' }))
     expect(onEdit).toHaveBeenCalledWith(project)
     expect(onStatusChange).toHaveBeenCalledWith('cancelled')
     expect(onDelete).toHaveBeenCalled()
+  })
+
+  it('requires cancellation confirmation and lets a cancelled project be reactivated', () => {
+    const onStatusChange = vi.fn()
+    const confirmation = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
+    const props = {
+      tab: 'overview' as const,
+      onRouteChange: vi.fn(),
+      onBack: vi.fn(),
+      transactions: null,
+      presensi: null,
+      documents: null,
+      capabilities: { projectWrites: true, documentWrites: false, transactionCorrections: false, transactionReversals: false, hardDelete: false },
+      onStatusChange,
+    }
+    const { rerender } = render(<ProjectDetailWorkspace {...props} project={project} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Batalkan proyek' }))
+    expect(onStatusChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Batalkan proyek' }))
+    expect(confirmation).toHaveBeenCalledTimes(2)
+    expect(onStatusChange).toHaveBeenCalledWith('cancelled')
+
+    rerender(<ProjectDetailWorkspace {...props} project={{ ...project, status: 'cancelled' }} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Aktifkan proyek' }))
+    expect(onStatusChange).toHaveBeenLastCalledWith('active')
   })
 })

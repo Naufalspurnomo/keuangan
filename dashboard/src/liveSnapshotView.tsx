@@ -179,7 +179,7 @@ export function LiveSnapshotBanner({ endpoint, loader = loadLiveSnapshot }: Live
           <strong>Data belum tersedia</strong>
           <p>{state.error.message} Data demo tidak ditampilkan sebagai pengganti.</p>
         </div>
-        <button type="button" onClick={() => void state.reload()} aria-label="Coba lagi data">
+        <button type="button" onClick={() => void state.reload().catch(() => undefined)} aria-label="Coba lagi data">
           Coba lagi
         </button>
       </section>
@@ -188,18 +188,24 @@ export function LiveSnapshotBanner({ endpoint, loader = loadLiveSnapshot }: Live
 
   if (!view) return null
 
+  const refreshFailed = Boolean(state.error)
+
   return (
-    <section className={`live-snapshot live-snapshot--${view.freshness}`} aria-label="Status data">
+    <section className={`live-snapshot live-snapshot--${refreshFailed ? 'error' : view.freshness}`} aria-label="Status data">
+      {state.error && <div className="live-snapshot__refresh-error" role="alert">
+        <strong>Data tidak terverifikasi</strong>
+        <p>Pembaruan gagal: {state.error.message}. Angka di bawah adalah pembacaan terakhir dan tidak boleh dianggap terbaru.</p>
+      </div>}
       <div className="live-snapshot__heading">
         <div>
           <span className="live-snapshot__eyebrow">Ringkasan keuangan</span>
           <h2>{view.source}</h2>
           <p>
-            {view.freshnessLabel} · Data sampai {formatSnapshotDate(view.dataThrough)} · {view.validRows} baris valid ·{' '}
+            {refreshFailed ? 'Pembacaan terakhir' : view.freshnessLabel} · Data sampai {formatSnapshotDate(view.dataThrough)} · {view.validRows} baris valid ·{' '}
             {view.invalidRows} perlu ditinjau
           </p>
         </div>
-        <button type="button" onClick={() => void state.reload()} aria-label="Muat ulang data" disabled={state.refreshing}>
+        <button type="button" onClick={() => void state.reload().catch(() => undefined)} aria-label="Muat ulang data" disabled={state.refreshing}>
           {state.refreshing ? 'Memperbarui…' : 'Muat ulang'}
         </button>
       </div>

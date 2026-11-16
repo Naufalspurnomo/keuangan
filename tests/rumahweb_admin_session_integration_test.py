@@ -18,6 +18,7 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / "artifacts" / "rumahweb-admin-release" / "admin"
 SESSION_LIFETIME = 2_592_000
+SESSION_ABSOLUTE_LIFETIME = 604_800
 
 
 class RumahwebAdminSessionIntegrationTests(unittest.TestCase):
@@ -172,6 +173,19 @@ class RumahwebAdminSessionIntegrationTests(unittest.TestCase):
             self.assertIn("Masuk ke dashboard", expired.text)
             replay = requests.get(base, headers=self.cookie_header(expiring_id), timeout=5)
             self.assertIn("Masuk ke dashboard", replay.text, "expired session ID must not be revived")
+
+        with self.server() as base:
+            _, absolute_id = self.login(base)
+            absolute_path = self.session_file(absolute_id)
+            self.replace_session_int(
+                absolute_path,
+                "authenticated_at",
+                int(time.time()) - SESSION_ABSOLUTE_LIFETIME - 1,
+            )
+            expired = requests.get(base, headers=self.cookie_header(absolute_id), timeout=5)
+            self.assertIn("Masuk ke dashboard", expired.text)
+            replay = requests.get(base, headers=self.cookie_header(absolute_id), timeout=5)
+            self.assertIn("Masuk ke dashboard", replay.text, "absolute-expired session ID must not be revived")
 
     def test_login_throttle_survives_cookie_reset_and_process_restart(self) -> None:
         def attempt(base: str, password: str):

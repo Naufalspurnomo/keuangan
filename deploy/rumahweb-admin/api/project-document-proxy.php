@@ -6,6 +6,7 @@ declare(strict_types=1);
 const PD_ADMIN_PATH = '/admin/';
 const PD_SESSION_LIFETIME = 2592000;
 const PD_SESSION_RENEW_AFTER = 86400;
+const PD_SESSION_ABSOLUTE_LIFETIME = 604800;
 const PD_MAX_REQUEST_BYTES = 262144;
 const PD_MAX_JSON_RESPONSE_BYTES = 2097152;
 const PD_MAX_PDF_RESPONSE_BYTES = 10485760;
@@ -95,6 +96,12 @@ function pd_session(string $accountRoot): void
     }
     $now = time();
     if (isset($_SESSION['last_seen']) && $now - (int) $_SESSION['last_seen'] > PD_SESSION_LIFETIME) {
+        $_SESSION = [];
+        session_regenerate_id(true);
+        pd_error(401, 'session_expired', 'Sign in required.');
+    }
+    if (!isset($_SESSION['authenticated_at'])
+        || $now - (int) $_SESSION['authenticated_at'] > PD_SESSION_ABSOLUTE_LIFETIME) {
         $_SESSION = [];
         session_regenerate_id(true);
         pd_error(401, 'session_expired', 'Sign in required.');
@@ -257,7 +264,7 @@ function pd_post_route(string $resource, string $action, array $body, string $pr
             'create' => ['action', 'idempotency_key', 'values'],
             'update' => ['action', 'project_id', 'idempotency_key', 'expected_version', 'changes'],
             'status' => ['action', 'project_id', 'idempotency_key', 'expected_version', 'status'],
-            'delete' => ['action', 'project_id', 'idempotency_key', 'expected_version'],
+            'delete' => ['action', 'project_id', 'idempotency_key', 'expected_version', 'expected_name'],
         ];
         if (!isset($fields[$action])) {
             pd_error(400, 'invalid_action', 'Unsupported project action.');

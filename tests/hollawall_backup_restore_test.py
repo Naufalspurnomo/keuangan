@@ -19,6 +19,8 @@ SOURCE_DSN = "postgresql://owner:database-secret@db.internal:5432/hollawall?sslm
 DISPOSABLE_DSN = "postgresql://tester:other-secret@127.0.0.1:55432/hollawall_restore"
 ARCHIVE_SECRET = "owner-scoped-archive-secret"
 FIXTURE_SNAPSHOT = "00000003-0000001B-1"
+SOURCE_SYSTEM_IDENTIFIER = "7349876543210000001"
+DISPOSABLE_SYSTEM_IDENTIFIER = "7349876543210000002"
 
 
 CONTRACT_ROWS = {
@@ -77,8 +79,20 @@ class FakeTools:
                     "lsn": "0/16B6C50",
                     "cutoff": "2026-11-09T01:15:29Z",
                     "schema": "public",
+                    "system_identifier": SOURCE_SYSTEM_IDENTIFIER,
+                    "database": "hollawall",
                 }) + "\n"
-            if "hollawall-contract:schema" in sql:
+            if "hollawall-restore-target-identity" in sql:
+                source_target = selected_env.get("PGDATABASE") == "hollawall"
+                return json.dumps({
+                    "system_identifier": (
+                        SOURCE_SYSTEM_IDENTIFIER
+                        if source_target
+                        else DISPOSABLE_SYSTEM_IDENTIFIER
+                    ),
+                    "database": selected_env.get("PGDATABASE"),
+                }) + "\n"
+            if "hollawall-contract:schema" in sql or "hollawall-restore-schema" in sql:
                 return "\n".join([
                     '{"column_name":"id","data_type":"uuid","table_name":"financial_transactions"}',
                     '{"column_name":"id","data_type":"uuid","table_name":"projects"}',
@@ -222,6 +236,10 @@ def test_apply_builds_custom_dump_redacted_manifest_and_verified_archive(tmp_pat
     assert manifest["components"]["presensi"]["file_count"] == 3
     assert manifest["sources"]["postgres"]["identifier"] == "[REDACTED]"
     assert len(manifest["sources"]["postgres"]["fingerprint_sha256"]) == 64
+    assert manifest["sources"]["postgres"]["server_identity"] == {
+        "system_identifier": SOURCE_SYSTEM_IDENTIFIER,
+        "database": "hollawall",
+    }
     assert "database-secret" not in rendered
     assert ARCHIVE_SECRET not in rendered
     assert str(sheets) not in rendered
@@ -244,6 +262,10 @@ def test_backup_manifest_records_cutoff_schema_migration_and_application_hashes(
     contract = archive_manifest(Path(result["archive"]))["postgresql"]
     assert contract["lsn"] == "0/16B6C50"
     assert contract["cutoff"] == "2026-11-09T01:15:29Z"
+    assert contract["source_identity"] == {
+        "system_identifier": SOURCE_SYSTEM_IDENTIFIER,
+        "database": "hollawall",
+    }
     assert contract["schema"] == {
         "name": "public",
         "sha256": rows_sha256([
@@ -374,6 +396,43 @@ def test_restore_refuses_database_matching_manifest_source_before_pg_restore(tmp
     assert not any(Path(command[0]).name == "pg_restore" for command, _env in tools.calls)
 
 
+def test_restore_refuses_source_identity_reached_through_different_endpoint(tmp_path: Path) -> None:
+    class SourceAliasTools(FakeTools):
+        def __call__(self, command, *, env=None):
+            if Path(command[0]).name == "psql":
+                sql = command[command.index("--command") + 1]
+                if "hollawall-restore-target-identity" in sql:
+                    self.calls.append((list(command), dict(env or {})))
+                    return json.dumps({
+                        "system_identifier": SOURCE_SYSTEM_IDENTIFIER,
+                        "database": "hollawall",
+                    }) + "\n"
+            return super().__call__(command, env=env)
+
+    tools = SourceAliasTools()
+    archive = make_archive(tmp_path, tools)
+    tools.calls.clear()
+
+    with pytest.raises(
+        hollawall_restore_verify.RestoreVerificationError,
+        match="matches backup source",
+    ):
+        hollawall_restore_verify.run_restore_verification(
+            restore_config(archive),
+            verify=True,
+            runner=tools,
+            environ={
+                "TEST_ARCHIVE_KEY": ARCHIVE_SECRET,
+                "TEST_DISPOSABLE_DSN": DISPOSABLE_DSN,
+            },
+        )
+
+    assert hollawall_backup.database_fingerprint(DISPOSABLE_DSN) != (
+        hollawall_backup.database_fingerprint(SOURCE_DSN)
+    )
+    assert not any(Path(command[0]).name == "pg_restore" for command, _env in tools.calls)
+
+
 def test_restore_verifies_manifest_sheets_presensi_and_disposable_pg_restore(tmp_path: Path) -> None:
     tools = FakeTools()
     archive = make_archive(tmp_path, tools)
@@ -392,7 +451,8 @@ def test_restore_verifies_manifest_sheets_presensi_and_disposable_pg_restore(tmp
     assert result["sheets_files_verified"] == 2
     assert result["presensi_events_verified"] == 1
     assert result["presensi_photos_verified"] == 1
-    assert result["backup_cutoff_verified"] is True
+    assert result["coordinated_cutoff_verified"] is False
+    assert result["projection_reconciliation_verified"] is False
     assert result["application_totals_verified"] == sum(len(rows) for rows in CONTRACT_ROWS.values())
     assert result["application_hashes_verified"] == len(CONTRACT_ROWS)
     restore_calls = [(command, child_env) for command, child_env in tools.calls if Path(command[0]).name == "pg_restore"]
@@ -405,6 +465,49 @@ def test_restore_verifies_manifest_sheets_presensi_and_disposable_pg_restore(tmp
     assert restore_calls[1][1]["PGHOST"] == "127.0.0.1"
     assert restore_calls[1][1]["PGUSER"] == "tester"
     assert DISPOSABLE_DSN not in " ".join(restore_calls[1][0])
+    identity_call_index = next(
+        index
+        for index, (command, _env) in enumerate(tools.calls)
+        if Path(command[0]).name == "psql"
+        and "hollawall-restore-target-identity" in command[command.index("--command") + 1]
+    )
+    restore_call_index = next(
+        index
+        for index, (command, _env) in enumerate(tools.calls)
+        if Path(command[0]).name == "pg_restore" and "--clean" in command
+    )
+    assert identity_call_index < restore_call_index
+
+
+def test_restore_fails_closed_when_server_identity_query_is_unavailable(tmp_path: Path) -> None:
+    class IdentityUnavailableTools(FakeTools):
+        def __call__(self, command, *, env=None):
+            if Path(command[0]).name == "psql":
+                sql = command[command.index("--command") + 1]
+                if "hollawall-restore-target-identity" in sql:
+                    self.calls.append((list(command), dict(env or {})))
+                    raise RuntimeError("permission denied")
+            return super().__call__(command, env=env)
+
+    tools = IdentityUnavailableTools()
+    archive = make_archive(tmp_path, tools)
+    tools.calls.clear()
+
+    with pytest.raises(
+        hollawall_restore_verify.RestoreVerificationError,
+        match="server identity query failed",
+    ):
+        hollawall_restore_verify.run_restore_verification(
+            restore_config(archive),
+            verify=True,
+            runner=tools,
+            environ={
+                "TEST_ARCHIVE_KEY": ARCHIVE_SECRET,
+                "TEST_DISPOSABLE_DSN": DISPOSABLE_DSN,
+            },
+        )
+
+    assert not any(Path(command[0]).name == "pg_restore" for command, _env in tools.calls)
 
 
 def rewrite_archive_manifest(archive: Path, tmp_path: Path, mutate) -> None:

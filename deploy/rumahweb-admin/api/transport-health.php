@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 const ADMIN_PATH = '/admin/';
 const SESSION_LIFETIME = 2592000;
+const SESSION_ABSOLUTE_LIFETIME = 604800;
 
 function json_result(int $status, array $payload): void
 {
@@ -36,6 +37,13 @@ if (session_name('hollawall_admin') === false
     json_result(503, ['ok' => false, 'code' => 'session_unavailable']);
 }
 $user = (string) ($_SESSION['hollawall_admin_user'] ?? '');
+$now = time();
+if ($user !== '' && (!isset($_SESSION['authenticated_at']) || $now - (int) $_SESSION['authenticated_at'] > SESSION_ABSOLUTE_LIFETIME)) {
+    $_SESSION = [];
+    session_regenerate_id(true);
+    session_write_close();
+    json_result(401, ['ok' => false, 'code' => 'session_expired']);
+}
 session_write_close();
 if ($user === '') {
     json_result(401, ['ok' => false, 'code' => 'authentication_required']);

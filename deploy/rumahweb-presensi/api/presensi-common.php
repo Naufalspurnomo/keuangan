@@ -9,6 +9,7 @@ const PRESENSI_SESSION_LIFETIME = 43_200;
 const PRESENSI_SESSION_IDLE_LIFETIME = 1_800;
 const PRESENSI_ADMIN_SESSION_LIFETIME = 2_592_000;
 const PRESENSI_ADMIN_RENEW_AFTER = 86_400;
+const PRESENSI_ADMIN_SESSION_ABSOLUTE_LIFETIME = 604_800;
 const PRESENSI_RATE_LIMIT_WINDOW = 600;
 const PRESENSI_RATE_LIMIT_MAX = 12;
 const PRESENSI_LOCATION_MAX_AGE_SECONDS = 120;
@@ -799,6 +800,12 @@ function presensi_admin_session(): void
     }
     if (empty($_SESSION['hollawall_admin_user'])) {
         presensi_error(401, 'authentication_required', 'Masuk sebagai admin diperlukan.');
+    }
+    if (!isset($_SESSION['authenticated_at'])
+        || $now - (int) $_SESSION['authenticated_at'] > PRESENSI_ADMIN_SESSION_ABSOLUTE_LIFETIME) {
+        $_SESSION = [];
+        session_regenerate_id(true);
+        presensi_error(401, 'session_expired', 'Masuk sebagai admin diperlukan.');
     }
     $_SESSION['last_seen'] = $now;
     if ($now - (int) ($_SESSION['cookie_renewed_at'] ?? 0) >= PRESENSI_ADMIN_RENEW_AFTER) {

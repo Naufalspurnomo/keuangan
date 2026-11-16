@@ -1,3 +1,4 @@
+import React from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -61,5 +62,27 @@ describe('ProjectRecordForm', () => {
     const units = screen.getByLabelText('Unit usaha')
     expect([...units.querySelectorAll('option')].map((option) => option.textContent)).toEqual(['HOLLA', 'HOJJA'])
     expect(screen.queryByRole('option', { name: 'CV HB' })).toBeNull()
+  })
+
+  it('traps focus, closes on Escape, and returns focus to the opener', async () => {
+    function Harness() {
+      const [open, setOpen] = React.useState(false)
+      return <><button type="button" onClick={() => setOpen(true)}>Buka formulir</button>{open && <ProjectRecordForm onSave={vi.fn()} onClose={() => setOpen(false)} />}</>
+    }
+    render(<Harness />)
+    const opener = screen.getByRole('button', { name: 'Buka formulir' })
+    opener.focus()
+    fireEvent.click(opener)
+
+    const dialog = screen.getByRole('dialog', { name: 'Buat proyek' })
+    const close = screen.getByRole('button', { name: 'Tutup formulir proyek' })
+    const save = screen.getByRole('button', { name: 'Simpan proyek' })
+    save.focus()
+    fireEvent.keyDown(dialog, { key: 'Tab' })
+    expect(close).toHaveFocus()
+
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(opener).toHaveFocus()
   })
 })

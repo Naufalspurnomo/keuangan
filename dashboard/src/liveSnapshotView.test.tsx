@@ -120,6 +120,22 @@ describe('LiveSnapshotBanner', () => {
     await screen.findByText((text) => text.replace(/\s/g, '') === 'Rp22.000.000')
   })
 
+  it('marks the last snapshot unverified when a refresh fails instead of calling it fresh', async () => {
+    const loader = vi.fn()
+      .mockResolvedValueOnce(snapshot())
+      .mockRejectedValueOnce(new Error('refresh offline'))
+    render(<LiveSnapshotBanner loader={loader} />)
+
+    await screen.findByText('Ringkasan keuangan')
+    fireEvent.click(screen.getByRole('button', { name: 'Muat ulang data' }))
+
+    const warning = await screen.findByRole('alert')
+    expect(warning).toHaveTextContent('Data tidak terverifikasi')
+    expect(warning).toHaveTextContent('refresh offline')
+    expect(screen.queryByText(/Segar ·/)).toBeNull()
+    expect(screen.getAllByText(/pembacaan terakhir/i)).toHaveLength(2)
+  })
+
   it('does not abort and restart a slow snapshot on each poll tick', async () => {
     vi.useFakeTimers()
     let resolveSnapshot!: (value: DashboardSnapshot) => void

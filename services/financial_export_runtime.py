@@ -34,12 +34,31 @@ _state: dict[str, Any] = {
     "ready": False,
     "last_result": None,
     "last_error": None,
+    "drift_latched": False,
+    "last_drift": None,
 }
 
 
 def _set_state(**changes: Any) -> None:
     with _state_lock:
         _state.update(changes)
+
+
+def _record_export_result(result: dict[str, Any]) -> None:
+    """Record a batch without treating an empty batch as drift recovery."""
+
+    observed = dict(result)
+    with _state_lock:
+        _state["last_result"] = observed
+        _state["last_error"] = None
+        if int(observed.get("drifted", 0) or 0) > 0:
+            _state["drift_latched"] = True
+            _state["last_drift"] = observed
+            _state["ready"] = False
+        elif observed.get("recovery_verified") is True:
+            _state["drift_latched"] = False
+            _state["last_drift"] = None
+            _state["ready"] = True
 
 
 def financial_export_health() -> dict[str, Any]:
@@ -168,13 +187,18 @@ def run_export_loop(
     stop_event: threading.Event,
     interval_seconds: int,
     batch_limit: int,
-    on_result: Callable[[dict[str, int]], None] | None = None,
+    on_result: Callable[[dict[str, Any]], None] | None = None,
     sleep: Callable[[float], None] | None = None,
 ) -> None:
     """Drain the outbox until stopped; transient batch failures do not kill it."""
     while not stop_event.is_set():
         try:
             result = worker.run_once(limit=batch_limit)
+            if (
+                worker.has_unresolved_drift() is False
+                and int(result.get("drifted", 0) or 0) == 0
+            ):
+                result = {**result, "recovery_verified": True}
             if on_result is not None:
                 on_result(result)
             if result.get("claimed", 0) or result.get("failed", 0) or result.get("drifted", 0):
@@ -194,7 +218,15 @@ def run_financial_export_service(
 ) -> None:
     """Run the external-runtime export service when explicitly enabled."""
     enabled = _export_enabled()
-    _set_state(enabled=enabled, running=False, ready=False, last_result=None, last_error=None)
+    _set_state(
+        enabled=enabled,
+        running=False,
+        ready=False,
+        last_result=None,
+        last_error=None,
+        drift_latched=False,
+        last_drift=None,
+    )
     if not enabled:
         secure_log("INFO", "Financial export worker disabled")
         return
@@ -206,7 +238,15 @@ def run_financial_export_service(
     while not event.is_set():
         try:
             worker = build_export_worker()
-            _set_state(running=True, ready=True, last_error=None)
+            drift_probe = getattr(worker, "has_unresolved_drift", None)
+            unresolved_drift = bool(drift_probe()) if callable(drift_probe) else False
+            _set_state(
+                running=True,
+                ready=not unresolved_drift,
+                last_error=None,
+                drift_latched=unresolved_drift,
+                last_drift={"source": "postgresql", "unresolved": True} if unresolved_drift else None,
+            )
             run_export_loop(
                 worker,
                 stop_event=event,
@@ -217,7 +257,7 @@ def run_financial_export_service(
                 batch_limit=_env_positive_int(
                     "FINANCIAL_EXPORT_BATCH_LIMIT", default=_DEFAULT_BATCH_LIMIT
                 ),
-                on_result=lambda result: _set_state(last_result=dict(result), last_error=None),
+                on_result=_record_export_result,
             )
             _set_state(running=False)
             return

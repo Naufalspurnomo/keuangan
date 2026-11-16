@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BarChart3,
   BriefcaseBusiness,
@@ -12,6 +12,7 @@ import {
   Menu,
   Moon,
   Plus,
+  RefreshCw,
   Sun,
   WalletCards,
   X,
@@ -52,6 +53,7 @@ import hollawallLogo from './assets/hollawall-logo.png'
 import { createProjectDocumentApi, type ProjectDocumentApi, type ProjectDocumentSession } from './projectDocumentApi'
 import { createInboxReviewApi, type InboxReviewApi } from './inboxReviewApi'
 import { canonicalDebtIdentity } from './debtRegistry'
+import { normalizeCanonicalPair } from './transactionMappings'
 import { createDebtAttempt, createDebtCorrectionAttempt, createDebtRepaymentAttempt, createDebtReversalAttempt } from './debtApi'
 import {
   NO_PROJECT_DOCUMENT_WRITES,
@@ -70,7 +72,7 @@ type Modal =
   | { kind: 'project'; value?: FinanceProject }
   | { kind: 'complete-project'; value: FinanceProject }
   | { kind: 'transaction'; value?: FinanceTransaction; scope?: 'project' | 'office'; projectId?: string }
-  | { kind: 'debt'; value?: FinanceDebt; projectId?: string; borrower?: WalletId }
+  | { kind: 'debt'; value?: FinanceDebt; projectId?: string; borrower?: string }
   | null
 const MOBILE_NAVIGATION_QUERY = '(max-width: 900px)'
 const PAGES: Page[] = ['overview', 'cashflow', 'wallets', 'projects', 'office', 'debts', 'reports', 'inbox-reviews']
@@ -185,7 +187,11 @@ function productionFinanceProject(project: ProjectRecord): FinanceProject {
   }
 }
 
-export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, onCreateLiveTransaction, onMutateLiveTransaction, onCreateLiveDebt, onRepayLiveDebt, onMutateLiveDebt, projectApi, inboxReviewApi }: { suppliedWorkspace?: Readonly<FinanceWorkspace>; liveWriteSession?: TransactionWriteSession; liveWriteStatus?: string; onCreateLiveTransaction?: (input: TransactionFormInput) => Promise<RecordedTransaction>; onMutateLiveTransaction?: (row: FinanceTransaction, action: 'correction' | 'reversal', reason: string, amount?: number) => Promise<void>; onCreateLiveDebt?: (input: CanonicalDebtCreateInput) => Promise<void>; onRepayLiveDebt?: (debt: FinanceDebt, amount: number, occurredOn: string, description: string) => Promise<void>; onMutateLiveDebt?: (debt: FinanceDebt, action: 'correction' | 'reversal') => Promise<void>; projectApi?: ProjectDocumentApi; inboxReviewApi?: InboxReviewApi } = {}) {
+function canonicalProjectWallet(project: ProjectRecord) {
+  return normalizeCanonicalPair(project.wallet, project.company)?.wallet ?? null
+}
+
+export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession, liveWriteStatus, onCreateLiveTransaction, onMutateLiveTransaction, onCreateLiveDebt, onRepayLiveDebt, onMutateLiveDebt, projectApi, inboxReviewApi }: { suppliedWorkspace?: Readonly<FinanceWorkspace>; liveSnapshotError?: Error | null; liveWriteSession?: TransactionWriteSession; liveWriteStatus?: string; onCreateLiveTransaction?: (input: TransactionFormInput) => Promise<RecordedTransaction>; onMutateLiveTransaction?: (row: FinanceTransaction, action: 'correction' | 'reversal', reason: string, amount?: number) => Promise<void>; onCreateLiveDebt?: (input: CanonicalDebtCreateInput) => Promise<void>; onRepayLiveDebt?: (debt: FinanceDebt, amount: number, occurredOn: string, description: string) => Promise<void>; onMutateLiveDebt?: (debt: FinanceDebt, action: 'correction' | 'reversal') => Promise<void>; projectApi?: ProjectDocumentApi; inboxReviewApi?: InboxReviewApi } = {}) {
   const finance = useFinanceWorkspace(suppliedWorkspace)
   const readOnly = finance.readOnly
   const canCreateTransactions = readOnly && liveWriteSession?.canonicalWritesEnabled === true && Boolean(onCreateLiveTransaction)
@@ -213,6 +219,8 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
   const mobile = useMobileNavigation()
   const previousMobile = useRef(mobile)
   const pendingScroll = useRef<number | null>(null)
+  const activeProjectLoad = useRef<Promise<void> | null>(null)
+  const projectLoadSequence = useRef(0)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const mainRef = useRef<HTMLElement>(null)
   const meta = pageMeta[active]
@@ -225,25 +233,53 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
     return [...merged.values()]
   }, [finance.workspace.projects, productionProjects])
 
-  const loadProductionProjects = async () => {
-    if (!readOnly || !projectApi) return
+  const loadProductionProjects = useCallback((force = false) => {
+    if (!readOnly || !projectApi) return Promise.resolve()
+    if (activeProjectLoad.current && !force) return activeProjectLoad.current
+    if (force) {
+      projectLoadSequence.current += 1
+      activeProjectLoad.current = null
+    }
+    const sequence = ++projectLoadSequence.current
     setProjectDataLoading(true)
     setProjectApiError('')
-    try {
-      const result = await projectApi.listProjects()
-      const projects = result.projects.filter((project) => !project.archived_at)
-      setProductionProjects(projects)
-      setProjectCapabilities(result.capabilities)
-      setProjectApiAvailable(true)
-    } catch (error) {
-      setProductionProjects([])
-      setProjectCapabilities(NO_PROJECT_DOCUMENT_WRITES)
-      setProjectApiAvailable(false)
-      setProjectApiError(error instanceof Error ? error.message : 'Data proyek belum tersedia.')
-    } finally { setProjectDataLoading(false) }
-  }
+    const request = projectApi.listProjects()
+      .then((result) => {
+        if (sequence !== projectLoadSequence.current) return
+        const projects = result.projects.filter((project) => !project.archived_at)
+        setProductionProjects(projects)
+        setProjectCapabilities(result.capabilities)
+        setProjectApiAvailable(true)
+      })
+      .catch((error: unknown) => {
+        if (sequence !== projectLoadSequence.current) return
+        setProjectApiError(error instanceof Error ? error.message : 'Data proyek belum tersedia.')
+      })
+      .finally(() => {
+        if (sequence === projectLoadSequence.current) setProjectDataLoading(false)
+        if (activeProjectLoad.current === request) activeProjectLoad.current = null
+      })
+    activeProjectLoad.current = request
+    return request
+  }, [projectApi, readOnly])
 
-  useEffect(() => { void loadProductionProjects() }, [projectApi, readOnly])
+  useEffect(() => {
+    void loadProductionProjects()
+    return () => {
+      projectLoadSequence.current += 1
+      activeProjectLoad.current = null
+    }
+  }, [loadProductionProjects])
+  useEffect(() => {
+    if (!readOnly || !projectApi) return
+    const refresh = () => { if (document.visibilityState === 'visible') void loadProductionProjects() }
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [loadProductionProjects, projectApi, readOnly])
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('hollawall-theme', theme) }, [theme])
   useEffect(() => { document.title = `${meta.title} — Hollawall` }, [meta.title])
   useEffect(() => {
@@ -318,12 +354,21 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
     window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'auto' }))
   }
   const navigate = (page: Page) => pushRoute(page)
+  const openProjectDetail = (projectId: string) => pushRoute('projects', projectId)
   const setProjectDetailRoute = (detail: ProjectDocumentRoute) => {
     const next: AppRoute = { page: 'projects', projectId: detail.projectId, tab: detail.tab, document: detail.document, type: detail.type }
-    window.history.pushState({ ...next, scrollY: 0 }, '', routeHash('projects', detail.projectId, detail))
+    window.history.replaceState({ ...window.history.state, ...next }, '', routeHash('projects', detail.projectId, detail))
     setRoute(next)
   }
-  const backToProjects = () => window.history.state?.fromPage === 'projects' ? window.history.back() : pushRoute('projects')
+  const backToProjects = () => {
+    if (window.history.state?.fromPage === 'projects') {
+      window.history.back()
+      return
+    }
+    window.history.replaceState({ page: 'projects', scrollY: 0 }, '', routeHash('projects'))
+    setRoute({ page: 'projects' })
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'auto' }))
+  }
   const closeMenu = () => { setMenuOpen(false); if (mobile) window.requestAnimationFrame(() => menuButtonRef.current?.focus()) }
   const commit = (action: () => void, success: string) => { if (readOnly) throw new Error('Data ini hanya dapat dilihat.'); action(); setNotice(success) }
   const safe = (action: () => void, success: string) => { try { commit(action, success) } catch (error) { setNotice(error instanceof Error ? error.message : 'Tindakan belum dapat diproses.') } }
@@ -424,7 +469,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
         ? projects.map((project) => project.id === current.id ? current : project)
         : [current, ...projects])
       setProjectModal(null)
-      if (creating) setProjectDetailRoute({ projectId: current.id, tab: 'transactions' })
+      if (creating) openProjectDetail(current.id)
       setNotice(creating ? 'Proyek aktif dibuat. Lanjutkan dengan mencatat transaksi proyek.' : 'Proyek diperbarui.')
     } catch (error) {
       throw error instanceof Error ? error : new Error('Proyek belum dapat disimpan.')
@@ -462,9 +507,9 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
     }
     setProjectBusy(true)
     try {
-      await projectApi.deleteProject(project.id, project.lock_version).submit(projectSession)
+      await projectApi.deleteProject(project.id, project.lock_version, typedName).submit(projectSession)
       setProductionProjects((projects) => projects.filter((item) => item.id !== project.id))
-      await loadProductionProjects()
+      await loadProductionProjects(true)
       pushRoute('projects')
       setNotice('Proyek dan seluruh data turunannya dihapus permanen.')
     } catch (error) {
@@ -521,7 +566,9 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
         session={projectSession}
       />
     : null
-  const content = active === 'overview'
+  const content = active === 'projects' && projectDataLoading && !projectApiAvailable
+    ? <section className="application-state" role="status"><span className="application-state-mark" aria-hidden="true" /><div><p className="eyebrow">DATA PROYEK</p><h2>Memuat data proyek</h2><p>Mengambil registry proyek terbaru dari server.</p></div></section>
+    : active === 'overview'
     ? <OverviewWorkspace workspace={finance.workspace} readOnly={readOnly} onOpenProjects={() => navigate('projects')} onAddProject={!readOnly ? () => setModal({ kind: 'project' }) : projectCapabilities.projectWrites ? () => setProjectModal('create') : undefined} onOpenOffice={() => navigate('office')} onOpenReviews={inboxReviewApi ? () => navigate('inbox-reviews') : undefined} />
     : active === 'cashflow' ? <CashflowWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
       : active === 'wallets' ? <WalletWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
@@ -540,7 +587,12 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
             capabilities={projectCapabilities}
             onEdit={setProjectModal}
             onAddTransaction={productionProject.status === 'active' && canCreateTransactions ? (project) => setModal({ kind: 'transaction', projectId: project.id }) : undefined}
-            onOpenDebt={(project) => { navigate('debts'); setModal({ kind: 'debt', projectId: project.id, borrower: project.wallet as WalletId }) }}
+            onOpenDebt={(project) => {
+              const borrower = canonicalProjectWallet(project)
+              if (!borrower) { setNotice('Dompet proyek belum memiliki pemetaan kanonis. Perbarui proyek sebelum mencatat hutang.'); return }
+              navigate('debts')
+              setModal({ kind: 'debt', projectId: project.id, borrower })
+            }}
             onStatusChange={changeProductionProjectStatus}
             onDelete={deleteProductionProject}
             busy={projectBusy}
@@ -555,7 +607,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
               onComplete={(project) => void changeProductionProjectStatusById(project.id, 'completed')}
               onQuickComplete={(project) => void changeProductionProjectStatusById(project.id, 'completed')}
               onDelete={(project) => void deleteProductionProjectById(project.id)}
-              onOpen={(project) => setProjectDetailRoute({ projectId: project.id, tab: 'transactions' })}
+              onOpen={(project) => openProjectDetail(project.id)}
               readOnly={!projectCapabilities.hardDelete}
               canAdd={projectCapabilities.projectWrites}
               destructiveActionLabel="Hapus permanen"
@@ -583,9 +635,11 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
           </div>
         </header>
         <div className="content">
+          {readOnly && liveSnapshotError && <section className="document-state-alert live-data-warning" role="alert"><strong>Data keuangan tidak terverifikasi.</strong> Pembaruan gagal: {liveSnapshotError.message}. Angka yang tampil adalah pembacaan terakhir, bukan data terbaru.</section>}
           {!readOnly && <p className="demo-mode-label">Mode demo · data browser</p>}
           {readOnly && !canCreateTransactions && active !== 'inbox-reviews' && <p className="form-error">{liveWriteStatus ?? 'Pencatatan transaksi belum tersedia.'}</p>}
           {!readOnly && <DemoBanner updatedAt={finance.workspace.updated_at} onReset={reset} />}
+          {readOnly && active === 'projects' && <div className="project-registry-refresh"><button type="button" className="secondary-button" onClick={() => void loadProductionProjects()} disabled={projectDataLoading} aria-label="Muat ulang proyek"><RefreshCw size={16} /> {projectDataLoading ? 'Memuat proyek…' : 'Muat ulang proyek'}</button>{projectApiError && projectApiAvailable && <span role="alert">Pembaruan proyek gagal: {projectApiError}. Registry terakhir tetap ditampilkan.</span>}</div>}
           {!['overview', 'projects', 'reports', 'inbox-reviews'].includes(active) && <header className="page-heading"><div><p className="eyebrow">{meta.eyebrow}</p><h1>{meta.title}</h1><p>{meta.copy}</p></div>{!readOnly && <span className="demo-badge">DATA DEMO</span>}</header>}
           {content}
         </div>
@@ -743,5 +797,5 @@ function LiveDashboardApp() {
 
   if (state.status === 'loading') return <main className="application-state" role="status"><span className="application-state-mark" aria-hidden="true" /><div><p className="eyebrow">RUANG FINANSIAL</p><h1>Memuat data keuangan</h1><p>Menyiapkan posisi kas, proyek, dan laporan terbaru.</p></div></main>
   if (state.status === 'error') return <main className="application-state application-state-error" role="alert"><div><p className="eyebrow">DATA PRODUKSI</p><h1>Data belum tersedia</h1><p>Data demo tidak ditampilkan sebagai pengganti. Periksa koneksi, lalu coba lagi.</p><button className="primary-button" onClick={() => void state.reload()}>Coba lagi</button></div></main>
-  return workspace ? <DemoApp suppliedWorkspace={workspace} liveWriteSession={writeSession} liveWriteStatus={writeStatus} onCreateLiveTransaction={createLiveTransaction} onMutateLiveTransaction={mutateLiveTransaction} onCreateLiveDebt={createLiveDebt} onRepayLiveDebt={repayLiveDebt} onMutateLiveDebt={mutateLiveDebt} projectApi={projectApi} inboxReviewApi={inboxReviewApi} /> : null
+  return workspace ? <DemoApp suppliedWorkspace={workspace} liveSnapshotError={state.error} liveWriteSession={writeSession} liveWriteStatus={writeStatus} onCreateLiveTransaction={createLiveTransaction} onMutateLiveTransaction={mutateLiveTransaction} onCreateLiveDebt={createLiveDebt} onRepayLiveDebt={repayLiveDebt} onMutateLiveDebt={mutateLiveDebt} projectApi={projectApi} inboxReviewApi={inboxReviewApi} /> : null
 }

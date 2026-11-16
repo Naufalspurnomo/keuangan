@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 const EV_ADMIN_PATH = '/admin/';
 const EV_SESSION_LIFETIME = 2592000;
+const EV_SESSION_ABSOLUTE_LIFETIME = 604800;
 const EV_MAX_IMAGE_BYTES = 5242880;
 const EV_MAX_JSON_BYTES = 2097152;
 
@@ -62,6 +63,11 @@ function ev_session(string $accountRoot): void
     }
     $now = time();
     if (isset($_SESSION['last_seen']) && $now - (int) $_SESSION['last_seen'] > EV_SESSION_LIFETIME) {
+        $_SESSION = [];
+        session_regenerate_id(true);
+        ev_error(401, 'session_expired', 'Sign in required.');
+    }
+    if (!isset($_SESSION['authenticated_at']) || $now - (int) $_SESSION['authenticated_at'] > EV_SESSION_ABSOLUTE_LIFETIME) {
         $_SESSION = [];
         session_regenerate_id(true);
         ev_error(401, 'session_expired', 'Sign in required.');

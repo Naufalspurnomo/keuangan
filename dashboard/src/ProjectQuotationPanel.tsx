@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
 
+import { useModalDialog } from './CanonicalDebtForms'
 import { ProjectDocumentApiError, type ProjectDocumentSession } from './projectDocumentApi'
 import { createProjectQuotationApi, type ProjectQuotationApi } from './projectQuotationApi'
 import {
@@ -293,6 +294,7 @@ function DealDialog({ item, busy, onCancel, onConfirm }: {
   onCancel: () => void
   onConfirm: (dpPercent: number, installments: number) => Promise<void>
 }) {
+  const dialog = useModalDialog(onCancel)
   const total = item.accepted_snapshot?.amount ?? item.amount
   const [dpChoice, setDpChoice] = useState('30')
   const [customDp, setCustomDp] = useState('35')
@@ -311,7 +313,7 @@ function DealDialog({ item, busy, onCancel, onConfirm }: {
   const conceptualRemainderRecipients = installmentEntries.filter((entry) => entry.amount > minimumInstallment).length
 
   return <div className="modal-backdrop" role="presentation">
-    <section className="modal-card quotation-deal-dialog" role="dialog" aria-modal="true" aria-labelledby="deal-dialog-title">
+    <section ref={dialog.dialogRef} onKeyDown={dialog.onKeyDown} className="modal-card quotation-deal-dialog" role="dialog" aria-modal="true" aria-labelledby="deal-dialog-title" tabIndex={-1}>
       <header><div><span className="eyebrow">Kunci versi {item.version}</span><h2 id="deal-dialog-title">Setup DP dan cicilan</h2><p>Nilai deal {IDR.format(total)}. Konfirmasi membuat Sales Order, draf invoice DP, dan jadwal tagihan.</p></div></header>
       <div className="modal-body">
         <fieldset className="quotation-choice-group"><legend>Persentase DP</legend>{['30', '40', '50'].map((value) => <label key={value}><input type="radio" name="dp-choice" value={value} aria-label={`DP ${value}%`} checked={dpChoice === value} onChange={() => setDpChoice(value)} />{value}%</label>)}<label><input type="radio" name="dp-choice" value="custom" checked={dpChoice === 'custom'} onChange={() => setDpChoice('custom')} />DP kustom</label></fieldset>
@@ -349,6 +351,8 @@ export default function ProjectQuotationPanel({ project, salesOrder, session, ap
   const [dealItem, setDealItem] = useState<ProjectQuotation | null>(null)
   const [rejectItem, setRejectItem] = useState<ProjectQuotation | null>(null)
   const [rejectNote, setRejectNote] = useState('')
+  const closeReject = () => { setRejectItem(null); setRejectNote('') }
+  const rejectDialog = useModalDialog(closeReject, Boolean(rejectItem))
 
   const load = async () => {
     setLoading(true); setError('')
@@ -443,10 +447,10 @@ export default function ProjectQuotationPanel({ project, salesOrder, session, ap
     </div>}
     {dealItem && <DealDialog item={dealItem} busy={busy} onCancel={() => setDealItem(null)} onConfirm={deal} />}
     {rejectItem && <div className="modal-backdrop" role="presentation">
-      <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="reject-dialog-title">
+      <section ref={rejectDialog.dialogRef} onKeyDown={rejectDialog.onKeyDown} className="modal-card" role="dialog" aria-modal="true" aria-labelledby="reject-dialog-title" tabIndex={-1}>
         <header><div><span className="eyebrow">Versi {rejectItem.version}</span><h2 id="reject-dialog-title">Catat alasan penolakan</h2><p>Alasan tersimpan pada audit quotation dan tidak mengubah versi yang pernah dikirim.</p></div></header>
         <div className="modal-body"><label>Alasan penolakan<textarea aria-label="Alasan penolakan" value={rejectNote} onChange={(event) => setRejectNote(event.target.value)} required /></label></div>
-        <footer className="modal-actions"><button type="button" className="secondary" onClick={() => { setRejectItem(null); setRejectNote('') }} disabled={busy}>Batal</button><button type="button" className="danger-secondary" disabled={busy || !rejectNote.trim()} onClick={() => void transition(rejectItem, 'rejected', rejectNote.trim())}>{busy ? 'Menyimpan…' : 'Konfirmasi ditolak'}</button></footer>
+        <footer className="modal-actions"><button type="button" className="secondary" onClick={closeReject} disabled={busy}>Batal</button><button type="button" className="danger-secondary" disabled={busy || !rejectNote.trim()} onClick={() => void transition(rejectItem, 'rejected', rejectNote.trim())}>{busy ? 'Menyimpan…' : 'Konfirmasi ditolak'}</button></footer>
       </section>
     </div>}
   </section>

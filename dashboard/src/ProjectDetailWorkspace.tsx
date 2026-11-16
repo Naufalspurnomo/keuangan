@@ -113,8 +113,10 @@ export default function ProjectDetailWorkspace({
       <div><small>STATUS PROYEK</small><span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span></div>
       {capabilities.projectWrites ? <div className="project-lifecycle-actions">
         {project.status === 'active' && <button type="button" className="secondary-button" disabled={busy} onClick={() => onStatusChange?.('completed')} {...actionProps('projects.status-change')}><CheckCircle2 size={16} /> Selesaikan proyek</button>}
-        {(project.status === 'planned' || project.status === 'completed') && <button type="button" className="secondary-button" disabled={busy} onClick={() => onStatusChange?.('active')} {...actionProps('projects.status-change')}><RotateCcw size={16} /> Aktifkan proyek</button>}
-        {(project.status === 'planned' || project.status === 'active') && <button type="button" className="secondary-button danger" disabled={busy} onClick={() => onStatusChange?.('cancelled')} {...actionProps('projects.status-change')}><Ban size={16} /> Batalkan proyek</button>}
+        {(project.status === 'planned' || project.status === 'completed' || project.status === 'cancelled') && <button type="button" className="secondary-button" disabled={busy} onClick={() => onStatusChange?.('active')} {...actionProps('projects.status-change')}><RotateCcw size={16} /> Aktifkan proyek</button>}
+        {(project.status === 'planned' || project.status === 'active') && <button type="button" className="secondary-button danger" disabled={busy} onClick={() => {
+          if (window.confirm(`Batalkan proyek ${project.name}? Proyek dapat diaktifkan kembali nanti.`)) onStatusChange?.('cancelled')
+        }} {...actionProps('projects.status-change')}><Ban size={16} /> Batalkan proyek</button>}
         {capabilities.hardDelete && <button type="button" className="secondary-button danger" disabled={busy} onClick={onDelete} {...actionProps('projects.delete')}><Trash2 size={16} /> Hapus proyek permanen</button>}
       </div> : <p className="write-disabled-note">Perubahan proyek belum diaktifkan.</p>}
     </section>
