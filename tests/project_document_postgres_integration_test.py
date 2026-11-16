@@ -111,6 +111,9 @@ def dsn():
             cursor.execute(payment_migration)
             cursor.execute(evidence_migration)
             cursor.execute(quotation_migration)
+    ensure_project_document_schema(selected)
+    with psycopg.connect(selected, autocommit=True) as connection:
+        with connection.cursor() as cursor:
             for migration in canonical_extensions:
                 cursor.execute(migration)
     return selected

@@ -470,7 +470,7 @@ SELECT
             SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
             WHERE n.nspname = 'public'
               AND p.proname = 'reject_project_quotation_event_mutation'
-              AND MD5(p.prosrc) = '06e46fef2577f847a816569c78e6b5f3'
+              AND MD5(p.prosrc) = 'c2ba6a89b4e2cf84070a429b300f644d'
         )
     ) AS tables_ready,
     (
