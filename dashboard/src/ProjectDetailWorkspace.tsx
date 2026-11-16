@@ -1,4 +1,4 @@
-import { Archive, ArrowLeft, Ban, CheckCircle2, Landmark, Pencil, Plus, RotateCcw } from 'lucide-react'
+import { ArrowLeft, Ban, CheckCircle2, Landmark, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import { type KeyboardEvent, type ReactNode } from 'react'
 
 import { actionProps, type ActionId } from './actionRegistry'
@@ -48,7 +48,7 @@ interface ProjectDetailWorkspaceProps {
   onAddTransaction?: (project: ProjectRecord) => void
   onOpenDebt?: (project: ProjectRecord) => void
   onStatusChange?: (status: ProductionProjectStatus) => void
-  onArchive?: () => void
+  onDelete?: () => void
   busy?: boolean
 }
 
@@ -69,7 +69,7 @@ export default function ProjectDetailWorkspace({
   onAddTransaction,
   onOpenDebt,
   onStatusChange,
-  onArchive,
+  onDelete,
   busy = false,
 }: ProjectDetailWorkspaceProps) {
   const handleTabKey = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -115,7 +115,7 @@ export default function ProjectDetailWorkspace({
         {project.status === 'active' && <button type="button" className="secondary-button" disabled={busy} onClick={() => onStatusChange?.('completed')} {...actionProps('projects.status-change')}><CheckCircle2 size={16} /> Selesaikan proyek</button>}
         {(project.status === 'planned' || project.status === 'completed') && <button type="button" className="secondary-button" disabled={busy} onClick={() => onStatusChange?.('active')} {...actionProps('projects.status-change')}><RotateCcw size={16} /> Aktifkan proyek</button>}
         {(project.status === 'planned' || project.status === 'active') && <button type="button" className="secondary-button danger" disabled={busy} onClick={() => onStatusChange?.('cancelled')} {...actionProps('projects.status-change')}><Ban size={16} /> Batalkan proyek</button>}
-        {!project.archived_at && <button type="button" className="secondary-button danger" disabled={busy} onClick={onArchive} {...actionProps('projects.archive')}><Archive size={16} /> Arsipkan proyek</button>}
+        {capabilities.hardDelete && <button type="button" className="secondary-button danger" disabled={busy} onClick={onDelete} {...actionProps('projects.delete')}><Trash2 size={16} /> Hapus proyek permanen</button>}
       </div> : <p className="write-disabled-note">Perubahan proyek belum diaktifkan.</p>}
     </section>
 

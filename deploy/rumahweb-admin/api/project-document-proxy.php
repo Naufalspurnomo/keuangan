@@ -257,7 +257,7 @@ function pd_post_route(string $resource, string $action, array $body, string $pr
             'create' => ['action', 'idempotency_key', 'values'],
             'update' => ['action', 'project_id', 'idempotency_key', 'expected_version', 'changes'],
             'status' => ['action', 'project_id', 'idempotency_key', 'expected_version', 'status'],
-            'archive' => ['action', 'project_id', 'idempotency_key', 'expected_version'],
+            'delete' => ['action', 'project_id', 'idempotency_key', 'expected_version'],
         ];
         if (!isset($fields[$action])) {
             pd_error(400, 'invalid_action', 'Unsupported project action.');
@@ -269,8 +269,9 @@ function pd_post_route(string $resource, string $action, array $body, string $pr
         $id = pd_uuid($body['project_id'] ?? null);
         $payload = $body;
         unset($payload['action'], $payload['project_id']);
-        $suffix = $action === 'update' ? '' : '/' . $action;
-        return [$action === 'update' ? 'PATCH' : 'POST', $projectsBase . '/' . $id . $suffix, $payload];
+        $suffix = in_array($action, ['update', 'delete'], true) ? '' : '/' . $action;
+        $method = $action === 'update' ? 'PATCH' : ($action === 'delete' ? 'DELETE' : 'POST');
+        return [$method, $projectsBase . '/' . $id . $suffix, $payload];
     }
     $fields = [
         'create_invoice' => ['action', 'project_id', 'idempotency_key', 'kind', 'values'],
@@ -416,7 +417,8 @@ function pd_proxy(string $method, string $url, array|false $payload, bool $pdf, 
                 'project_document_writes_enabled' => $localWritesEnabled
                     && ($capabilities['project_document_writes_enabled'] ?? null) === true,
                 'transaction_correction_reversal' => false,
-                'hard_delete' => false,
+                'hard_delete' => $localWritesEnabled
+                    && ($capabilities['hard_delete'] ?? null) === true,
             ]],
         ];
     } elseif (!in_array($status, [200, 201], true)
@@ -484,7 +486,7 @@ if ($method === 'GET') {
 $body = pd_json_body();
 $action = is_string($body['action'] ?? null) ? $body['action'] : '';
 $allowedActions = $resource === 'projects'
-    ? ['create', 'update', 'status', 'archive']
+    ? ['create', 'update', 'status', 'delete']
     : [
         'create_invoice', 'create_receipt', 'create_quotation', 'update_quotation',
         'revise_quotation', 'deal_quotation', 'transition_quotation',

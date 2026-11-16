@@ -251,7 +251,7 @@ def test_backup_manifest_records_cutoff_schema_migration_and_application_hashes(
             '{"column_name":"id","data_type":"uuid","table_name":"projects"}',
         ]),
     }
-    assert contract["migration_version"] == "021_presensi_geocode_cache"
+    assert contract["migration_version"] == "022_project_hard_delete"
     assert contract["application"] == {
         table: {"total": len(rows), "sha256": rows_sha256(rows)}
         for table, rows in CONTRACT_ROWS.items()

@@ -70,8 +70,11 @@ def dsn():
     payment_migration = (migration_root / "006_invoice_payment_applications.sql").read_text(encoding="utf-8")
     evidence_migration = (migration_root / "007_project_transaction_evidence.sql").read_text(encoding="utf-8")
     quotation_migration = (migration_root / "008_project_quotation_handoffs.sql").read_text(encoding="utf-8")
-    structured_quotation_migration = (migration_root / "019_structured_quotations.sql").read_text(encoding="utf-8")
-    quotation_invariant_migration = (migration_root / "020_quotation_invariants.sql").read_text(encoding="utf-8")
+    canonical_extensions = [
+        path.read_text(encoding="utf-8")
+        for path in sorted(migration_root.glob("*.sql"))
+        if 9 <= int(path.name.split("_", 1)[0]) <= 22
+    ]
     with psycopg.connect(selected, autocommit=True) as connection:
         with connection.cursor() as cursor:
             cursor.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
@@ -108,8 +111,8 @@ def dsn():
             cursor.execute(payment_migration)
             cursor.execute(evidence_migration)
             cursor.execute(quotation_migration)
-            cursor.execute(structured_quotation_migration)
-            cursor.execute(quotation_invariant_migration)
+            for migration in canonical_extensions:
+                cursor.execute(migration)
     return selected
 
 
@@ -582,6 +585,104 @@ def test_rejected_issuer_code_rotation_does_not_interrupt_numbering(repository):
 
     assert first["official_number"] == "SO/HW/2027/000001"
     assert second["official_number"] == "SO/HW/2027/000002"
+
+
+def test_project_hard_delete_requires_gate_removes_descendants_and_replays(repository, dsn):
+    import psycopg
+
+    created = project(repository, key="hard-delete-project-create-0001")
+    project_id = created["project"]["id"]
+    expected_version = created["project"]["lock_version"]
+
+    other = project(repository, key="hard-delete-other-project-0001")
+    other_project_id = other["project"]["id"]
+    foreign_command_hash = hashlib.sha256(b"foreign-command-with-target-reference").hexdigest()
+    target_status_event_id = str(uuid.uuid4())
+    target_outbox_id = str(uuid.uuid4())
+    with psycopg.connect(dsn) as connection:
+        connection.execute(
+            "INSERT INTO project_document_commands "
+            "(idempotency_key_hash, command_type, request_hash, response, completed_at) "
+            "VALUES (%s, 'foreign.command', %s, %s::jsonb, NOW())",
+            (
+                foreign_command_hash,
+                hashlib.sha256(b"foreign-request").hexdigest(),
+                json.dumps({"project_id": other_project_id, "note": f"references {project_id}"}),
+            ),
+        )
+        connection.execute(
+            "INSERT INTO project_status_events "
+            "(id, project_id, from_status, to_status, visible, actor, occurred_at) "
+            "VALUES (%s, %s, 'planned', 'active', TRUE, %s::jsonb, NOW())",
+            (target_status_event_id, project_id, json.dumps(ACTOR)),
+        )
+        outbox_payload = json.dumps({"project_id": project_id, "status": "active"})
+        connection.execute(
+            "INSERT INTO financial_export_outbox "
+            "(id, aggregate_type, aggregate_id, aggregate_version, export_key, payload, payload_sha256, destination) "
+            "VALUES (%s, 'project_status', %s, 1, %s, %s::jsonb, %s, 'test')",
+            (
+                target_outbox_id,
+                target_status_event_id,
+                f"test-project-status-{target_status_event_id}",
+                outbox_payload,
+                hashlib.sha256(outbox_payload.encode()).hexdigest(),
+            ),
+        )
+        connection.commit()
+        with connection.cursor() as cursor:
+            with pytest.raises(psycopg.errors.RaiseException, match="projects cannot be hard deleted"):
+                cursor.execute("DELETE FROM projects WHERE id = %s", (project_id,))
+        connection.rollback()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT set_config('hollawall.project_hard_delete_target', %s, true)",
+                (project_id,),
+            )
+            with pytest.raises(psycopg.errors.RaiseException, match="projects cannot be hard deleted"):
+                cursor.execute("DELETE FROM projects WHERE id = %s", (other_project_id,))
+        connection.rollback()
+
+    result = repository.delete_project(
+        project_id,
+        expected_version=expected_version,
+        idempotency_key="hard-delete-project-command-0001",
+        actor=ACTOR,
+    )
+    assert result["project_id"] == project_id
+    assert result["deleted"] is True
+    assert repository.delete_project(
+        project_id,
+        expected_version=expected_version,
+        idempotency_key="hard-delete-project-command-0001",
+        actor=ACTOR,
+    ) == result
+
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            counts = {}
+            for table, column in (
+                ("projects", "id"),
+                ("project_documents", "project_id"),
+                ("project_document_events", "project_id"),
+                ("project_status_events", "project_id"),
+                ("project_scopes", "project_id"),
+            ):
+                cursor.execute(f"SELECT COUNT(*) FROM {table} WHERE {column} = %s", (project_id,))
+                counts[table] = cursor.fetchone()[0]
+            cursor.execute(
+                "SELECT COUNT(*) FROM project_document_commands WHERE idempotency_key_hash = %s",
+                (foreign_command_hash,),
+            )
+            foreign_command_count = cursor.fetchone()[0]
+            cursor.execute(
+                "SELECT COUNT(*) FROM financial_export_outbox WHERE id = %s",
+                (target_outbox_id,),
+            )
+            target_outbox_count = cursor.fetchone()[0]
+    assert counts == {table: 0 for table in counts}
+    assert foreign_command_count == 1
+    assert target_outbox_count == 0
 
 
 def test_project_creation_defaults_and_invoice_status_restrictions(repository):

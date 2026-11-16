@@ -67,7 +67,9 @@ def _capabilities() -> dict[str, bool]:
         ),
         # The shared service does not safely mutate authoritative Sheets cash.
         "transaction_correction_reversal": False,
-        "hard_delete": False,
+        "hard_delete": bool(
+            current_app.config.get("PROJECT_DOCUMENT_WRITES_ENABLED", False)
+        ),
     }
 
 
@@ -305,16 +307,14 @@ def create_project_document_blueprint(repository: Any) -> Blueprint:
         )
         return _response(result)
 
-    @blueprint.post("/projects/<uuid:project_id>/archive")
+    @blueprint.delete("/projects/<uuid:project_id>")
     @owner_required
-    def archive_project(project_id: UUID):
+    def delete_project(project_id: UUID):
         body, key, version, actor = _write_request(
             allowed_fields=frozenset({"idempotency_key", "expected_version"})
         )
-        # The persisted soft-terminal state is `cancelled`; hard deletion is forbidden.
-        result = repository.update_project(
+        result = repository.delete_project(
             str(project_id),
-            {"status": "cancelled"},
             expected_version=version,
             idempotency_key=key,
             actor=actor,

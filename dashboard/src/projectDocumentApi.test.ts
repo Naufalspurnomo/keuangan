@@ -142,7 +142,7 @@ describe('project/document API', () => {
 
     const listed = await api.listProjects()
     expect(listed.projects[0]).toMatchObject({ id: project.id, started_on: project.started_on, completed_on: null, wallet: 'CV HB(101)', company: 'HOLLA' })
-    expect(listed.capabilities).toEqual({ projectWrites: true, documentWrites: true, transactionCorrections: false, transactionReversals: false })
+    expect(listed.capabilities).toEqual({ projectWrites: true, documentWrites: true, transactionCorrections: false, transactionReversals: false, hardDelete: false })
     expect(await api.getProject(project.id)).toMatchObject({ id: project.id, started_on: project.started_on })
     expect((await api.listDocuments(project.id)).documents[0]).toMatchObject({ id: document.id, type: 'invoice', number: null, lock_version: 4 })
     expect(await api.getDocument(document.id)).toMatchObject({ id: document.id, type: 'invoice' })
@@ -211,7 +211,9 @@ describe('project/document API', () => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
       const result = body.action === 'create'
         ? { project: backendProject, sales_order: { ...document, document_type: 'sales_order' } }
-        : backendProject
+        : body.action === 'delete'
+          ? { project_id: project.id, deleted: true }
+          : backendProject
       return json({ api_version: 'dashboard.v1', data: result, meta })
     })
     const api = createProjectDocumentApi({ request, keyFactory: () => 'idem-key-1234567890' })
@@ -234,8 +236,8 @@ describe('project/document API', () => {
     expect(fullUpdate.changes).not.toHaveProperty('id')
     await api.setProjectStatus(project.id, 'cancelled', 2).submit(session)
     expect(JSON.parse(String(request.mock.calls[3][1]?.body))).toEqual({ action: 'status', project_id: project.id, idempotency_key: 'idem-key-1234567890', expected_version: 2, status: 'cancelled' })
-    await api.archiveProject(project.id, 2).submit(session)
-    expect(JSON.parse(String(request.mock.calls[4][1]?.body))).toEqual({ action: 'archive', project_id: project.id, idempotency_key: 'idem-key-1234567890', expected_version: 2 })
+    await api.deleteProject(project.id, 2).submit(session)
+    expect(JSON.parse(String(request.mock.calls[4][1]?.body))).toEqual({ action: 'delete', project_id: project.id, idempotency_key: 'idem-key-1234567890', expected_version: 2 })
   })
 
   it('sends document commands with proxy-allowlisted fields', async () => {

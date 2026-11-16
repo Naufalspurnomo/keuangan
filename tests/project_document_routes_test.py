@@ -85,6 +85,11 @@ class FakeProjectDocumentRepository:
         self.calls.append(("update_project", project_id, dict(changes), kwargs))
         return {**self.project, **changes, "lock_version": kwargs["expected_version"] + 1}
 
+    def delete_project(self, project_id, **kwargs):
+        self._raise()
+        self.calls.append(("delete_project", project_id, kwargs))
+        return {"project_id": project_id, "deleted": True}
+
     def list_documents(self, project_id):
         self._raise()
         self.calls.append(("list_documents", project_id))
@@ -276,7 +281,6 @@ class ProjectDocumentRouteTests(unittest.TestCase):
         payload = response.get_json()
         assert payload["api_version"] == "dashboard.v1"
         assert payload["meta"]["capabilities"]["transaction_correction_reversal"] is False
-        assert payload["meta"]["capabilities"]["hard_delete"] is False
         return payload
 
     def test_owner_auth_reads_work_while_independent_write_gate_is_off(self):
@@ -303,8 +307,8 @@ class ProjectDocumentRouteTests(unittest.TestCase):
         self.assertEqual(blocked.get_json()["error"]["code"], "project_document_writes_disabled")
         self.assertFalse(any(call[0] == "create_project" for call in repository.calls))
 
-    def test_capabilities_explicitly_reject_fake_cash_correction_or_hard_delete(self):
-        app, _repository = self.make_app(enabled=True)
+    def test_capabilities_enable_owner_project_hard_delete_but_not_document_delete(self):
+        app, repository = self.make_app(enabled=True)
         client = app.test_client()
         self.login(client)
 
@@ -312,12 +316,20 @@ class ProjectDocumentRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = self.envelope(response)["data"]
         self.assertEqual(data["transaction_correction_reversal"], False)
-        self.assertEqual(data["hard_delete"], False)
+        self.assertEqual(data["hard_delete"], True)
         self.assertEqual(data["reads_enabled"], True)
-        self.assertEqual(client.delete(f"/api/dashboard/v1/projects/{PROJECT_ID}").status_code, 405)
+
+        deleted = client.delete(
+            f"/api/dashboard/v1/projects/{PROJECT_ID}",
+            headers=self.write_headers(version='"3"'),
+            json={"idempotency_key": IDEMPOTENCY_KEY, "expected_version": 3},
+        )
+        self.assertEqual(deleted.status_code, 200, deleted.get_data(as_text=True))
+        self.assertEqual(self.envelope(deleted)["data"], {"project_id": PROJECT_ID, "deleted": True})
+        self.assertEqual(repository.calls[-1][0], "delete_project")
         self.assertEqual(client.delete(f"/api/dashboard/v1/documents/{DOCUMENT_ID}").status_code, 405)
 
-    def test_project_create_update_status_archive_contract(self):
+    def test_project_create_update_status_contract(self):
         app, repository = self.make_app(enabled=True)
         client = app.test_client()
         self.login(client)
@@ -357,15 +369,8 @@ class ProjectDocumentRouteTests(unittest.TestCase):
         )
         self.assertEqual(status.status_code, 200)
 
-        archive = client.post(
-            f"/api/dashboard/v1/projects/{PROJECT_ID}/archive",
-            headers=self.write_headers(version='"3"'),
-            json={"idempotency_key": IDEMPOTENCY_KEY, "expected_version": 3},
-        )
-        self.assertEqual(archive.status_code, 200)
         updates = [call for call in repository.calls if call[0] == "update_project"]
-        self.assertEqual(updates[-2][2], {"status": "active"})
-        self.assertEqual(updates[-1][2], {"status": "cancelled"})
+        self.assertEqual(updates[-1][2], {"status": "active"})
 
     def test_project_create_rejects_missing_wallet_company_binding(self):
         app, repository = self.make_app(enabled=True)

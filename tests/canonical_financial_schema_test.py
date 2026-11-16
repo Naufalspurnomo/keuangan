@@ -23,7 +23,7 @@ ROOT = Path(__file__).parents[1]
 def test_canonical_migrations_are_versioned_additive_and_checksums_are_stable():
     migrations = load_financial_migrations(ROOT / "dashboard_api" / "migrations")
 
-    assert [migration.version for migration in migrations] == list(range(9, 22))
+    assert [migration.version for migration in migrations] == list(range(9, 23))
     assert all(migration.sha256 == hashlib.sha256(migration.sql.encode()).hexdigest() for migration in migrations)
     combined = "\n".join(migration.sql for migration in migrations).lower()
     assert "opening_balances" in combined
@@ -70,10 +70,10 @@ def test_canonical_migrations_are_versioned_additive_and_checksums_are_stable():
     assert "historical_import boolean not null default false check (not historical_import)" in compact_sql
 
 
-def test_production_bootstrap_orders_prerequisite_project_schema_before_finance_through_021():
+def test_production_bootstrap_orders_prerequisite_project_schema_before_finance_through_022():
     migrations = load_production_bootstrap_migrations(ROOT / "dashboard_api" / "migrations")
 
-    assert [migration.version for migration in migrations] == list(range(1, 22))
+    assert [migration.version for migration in migrations] == list(range(1, 23))
     combined = "\n".join(migration.sql for migration in migrations).lower()
     assert combined.index("create table if not exists financial_ledger") < combined.index(
         "create index if not exists idx_financial_ledger_dashboard_scope"

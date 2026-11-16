@@ -447,22 +447,46 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
   const changeProductionProjectStatus = async (status: ProductionProjectStatus) => {
     if (productionProject) await changeProductionProjectStatusById(productionProject.id, status)
   }
-  const archiveProductionProjectById = async (projectId: string) => {
-    if (!projectApi) return
+  const deleteProductionProjectById = async (projectId: string) => {
+    if (!projectApi || !projectCapabilities.hardDelete) return
     const project = productionProjects.find((item) => item.id === projectId)
-    if (!project || !window.confirm(`Arsipkan proyek ${project.name}?`)) return
+    if (!project) return
+    const confirmed = window.confirm(
+      `Hapus proyek ${project.name} secara permanen? Semua transaksi, dokumen, bukti, quotation, dan audit proyek ini ikut dihapus. Tindakan ini tidak dapat dibatalkan dari dashboard.`,
+    )
+    if (!confirmed) return
+    const typedName = window.prompt(`Ketik nama proyek persis untuk konfirmasi:\n${project.name}`, '')
+    if (typedName !== project.name) {
+      setNotice('Penghapusan dibatalkan karena nama proyek tidak cocok.')
+      return
+    }
     setProjectBusy(true)
     try {
-      await projectApi.archiveProject(project.id, project.lock_version).submit(projectSession)
+      await projectApi.deleteProject(project.id, project.lock_version).submit(projectSession)
+      setProductionProjects((projects) => projects.filter((item) => item.id !== project.id))
       await loadProductionProjects()
       pushRoute('projects')
-      setNotice('Proyek diarsipkan.')
+      setNotice('Proyek dan seluruh data turunannya dihapus permanen.')
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Proyek belum dapat diarsipkan.')
+      try {
+        const reconciled = await projectApi.listProjects()
+        const targetStillExists = reconciled.projects.some((item) => item.id === project.id)
+        const projects = reconciled.projects.filter((item) => !item.archived_at)
+        setProductionProjects(projects)
+        setProjectCapabilities(reconciled.capabilities)
+        if (!targetStillExists) {
+          pushRoute('projects')
+          setNotice('Proyek dan seluruh data turunannya dihapus permanen.')
+          return
+        }
+      } catch {
+        // Preserve the original command error when authoritative reconciliation is unavailable.
+      }
+      setNotice(error instanceof Error ? error.message : 'Proyek belum dapat dihapus.')
     } finally { setProjectBusy(false) }
   }
-  const archiveProductionProject = async () => {
-    if (productionProject) await archiveProductionProjectById(productionProject.id)
+  const deleteProductionProject = async () => {
+    if (productionProject) await deleteProductionProjectById(productionProject.id)
   }
   const addAction = active === 'projects'
     ? { label: 'Tambah proyek', run: () => readOnly ? setProjectModal('create') : setModal({ kind: 'project' } as Modal) }
@@ -518,7 +542,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
             onAddTransaction={productionProject.status === 'active' && canCreateTransactions ? (project) => setModal({ kind: 'transaction', projectId: project.id }) : undefined}
             onOpenDebt={(project) => { navigate('debts'); setModal({ kind: 'debt', projectId: project.id, borrower: project.wallet as WalletId }) }}
             onStatusChange={changeProductionProjectStatus}
-            onArchive={archiveProductionProject}
+            onDelete={deleteProductionProject}
             busy={projectBusy}
           />
           : active === 'projects' && projectApiAvailable ? <ProjectCommandCenter
@@ -530,11 +554,11 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
               }}
               onComplete={(project) => void changeProductionProjectStatusById(project.id, 'completed')}
               onQuickComplete={(project) => void changeProductionProjectStatusById(project.id, 'completed')}
-              onDelete={(project) => void archiveProductionProjectById(project.id)}
+              onDelete={(project) => void deleteProductionProjectById(project.id)}
               onOpen={(project) => setProjectDetailRoute({ projectId: project.id, tab: 'transactions' })}
-              readOnly={!projectCapabilities.projectWrites}
+              readOnly={!projectCapabilities.hardDelete}
               canAdd={projectCapabilities.projectWrites}
-              destructiveActionLabel="Arsipkan"
+              destructiveActionLabel="Hapus permanen"
             />
             : active === 'projects' && readOnly ? <section className="application-state application-state-error" role="alert"><div><p className="eyebrow">DATA PROYEK</p><h2>Data proyek belum tersedia</h2><p>{projectApiError || 'Layanan proyek belum siap. Data snapshot tidak dipakai sebagai pengganti.'}</p><button className="primary-button" onClick={() => void loadProductionProjects()}>Coba lagi</button></div></section>
               : active === 'projects' && selectedProject ? <ProjectTransactionsWorkspace workspace={finance.workspace} project={selectedProject} onBack={backToProjects} onAdd={(project) => setModal({ kind: 'transaction', projectId: project.id })} onEdit={(value) => setModal({ kind: 'transaction', value, projectId: selectedProject.id })} onDelete={(value) => confirmDelete('transaksi', () => finance.removeTransaction(value.id))} onComplete={completeProjectNow} onReactivate={reactivateProject} readOnly={false} canCreateTransactions />

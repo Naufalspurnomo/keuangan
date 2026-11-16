@@ -113,7 +113,7 @@ function writableProductionProjectsResponse() {
   const response = productionProjectsResponse()
   return response.json().then((body) => new Response(JSON.stringify({
     ...body,
-    meta: { capabilities: { project_document_writes_enabled: true, transaction_correction_reversal: false } },
+    meta: { capabilities: { project_document_writes_enabled: true, transaction_correction_reversal: false, hard_delete: true } },
   }), { status: 200, headers: { 'content-type': 'application/json' } }))
 }
 
@@ -557,6 +557,78 @@ describe('production live source mode', () => {
     expect(await screen.findByRole('heading', { name: 'Portofolio proyek per tahun' })).toBeTruthy()
     expect(screen.queryByRole('dialog')).toBeNull()
     expectNoProductionChatter()
+  })
+
+  it('reconciles a committed project delete after response loss without sending a second delete', async () => {
+    let deleteCommitted = false
+    let deleteRequests = 0
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    vi.stubGlobal('prompt', vi.fn(() => 'Kontrak Panggung Utama'))
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/admin/api/write-session.php') return writeSessionResponse(false, false)
+      if (url.startsWith('/admin/api/projects.php?action=list')) {
+        if (!deleteCommitted) return writableProductionProjectsResponse()
+        const response = await writableProductionProjectsResponse()
+        const body = await response.json()
+        return new Response(JSON.stringify({ ...body, data: { items: [] } }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url === '/admin/api/projects.php' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as { action?: string }
+        if (body.action === 'delete') {
+          deleteRequests += 1
+          deleteCommitted = true
+          throw new TypeError('simulated response loss')
+        }
+      }
+      return liveResponse()
+    })
+    vi.stubGlobal('fetch', request)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
+
+    fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Buka proyek Kontrak Panggung Utama' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Hapus proyek permanen' }))
+
+    await screen.findByText('Proyek dan seluruh data turunannya dihapus permanen.')
+    expect(deleteRequests).toBe(1)
+    expect(screen.queryByRole('button', { name: 'Buka proyek Kontrak Panggung Utama' })).toBeNull()
+  })
+
+  it('does not report hard-delete success when reconciliation still finds an archived target', async () => {
+    let deleteRequests = 0
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    vi.stubGlobal('prompt', vi.fn(() => 'Kontrak Panggung Utama'))
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/admin/api/write-session.php') return writeSessionResponse(false, false)
+      if (url.startsWith('/admin/api/projects.php?action=list')) {
+        const response = await writableProductionProjectsResponse()
+        if (deleteRequests === 0) return response
+        const body = await response.json()
+        body.data.items[0].archived_at = '2026-11-16T00:00:00Z'
+        return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url === '/admin/api/projects.php' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as { action?: string }
+        if (body.action === 'delete') {
+          deleteRequests += 1
+          throw new TypeError('simulated response loss')
+        }
+      }
+      return liveResponse()
+    })
+    vi.stubGlobal('fetch', request)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
+
+    fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Buka proyek Kontrak Panggung Utama' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Hapus proyek permanen' }))
+
+    await waitFor(() => expect(deleteRequests).toBe(1))
+    expect(screen.queryByText('Proyek dan seluruh data turunannya dihapus permanen.')).toBeNull()
   })
 
   it('refreshes immediately after a transaction write and again on the next poll', async () => {
