@@ -87,7 +87,14 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onCompl
   useEffect(() => { sessionStorage.setItem(PROJECT_VIEW_KEY, JSON.stringify({ year, company, status, query, page })) }, [year, company, status, query, page])
   useEffect(() => {
     const nav = yearNavRef.current
-    const reveal = () => activeYearRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+    const reveal = () => {
+      const activeYear = activeYearRef.current
+      if (!nav || !activeYear) return
+      const left = activeYear.offsetLeft
+      const right = left + activeYear.offsetWidth
+      if (left < nav.scrollLeft) nav.scrollLeft = left
+      else if (right > nav.scrollLeft + nav.clientWidth) nav.scrollLeft = Math.max(0, right - nav.clientWidth)
+    }
     reveal()
     if (!nav || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(reveal)
