@@ -3,7 +3,6 @@ import {
   BarChart3,
   BriefcaseBusiness,
   Building2,
-  FileText,
 
   FileBarChart,
 
@@ -66,7 +65,7 @@ import {
   type ProductionProjectStatus,
 } from './projectDocuments'
 
-type Page = 'overview' | 'cashflow' | 'wallets' | 'projects' | 'documents' | 'office' | 'debts' | 'reports' | 'inbox-reviews'
+type Page = 'overview' | 'cashflow' | 'wallets' | 'projects' | 'office' | 'debts' | 'reports' | 'inbox-reviews'
 type Modal =
   | { kind: 'project'; value?: FinanceProject }
   | { kind: 'complete-project'; value: FinanceProject }
@@ -74,7 +73,7 @@ type Modal =
   | { kind: 'debt'; value?: FinanceDebt; projectId?: string; borrower?: WalletId }
   | null
 const MOBILE_NAVIGATION_QUERY = '(max-width: 900px)'
-const PAGES: Page[] = ['overview', 'cashflow', 'wallets', 'projects', 'documents', 'office', 'debts', 'reports', 'inbox-reviews']
+const PAGES: Page[] = ['overview', 'cashflow', 'wallets', 'projects', 'office', 'debts', 'reports', 'inbox-reviews']
 
 function routeHash(page: Page, projectId?: string, detail?: Partial<ProjectDocumentRoute>) {
   if (page === 'projects' && projectId) return projectDocumentRoute({ projectId, tab: detail?.tab ?? 'transactions', document: detail?.document, type: detail?.type })
@@ -112,7 +111,6 @@ const pageMeta: Record<Page, { eyebrow: string; title: string; copy: string }> =
   wallets: { eyebrow: 'SUMBER DANA', title: 'Dompet', copy: 'Posisi CV HB, TX SBY, dan TX Bali.' },
 
   projects: { eyebrow: 'PORTOFOLIO', title: 'Proyek', copy: 'Kinerja proyek per tahun, perusahaan, dan status.' },
-  documents: { eyebrow: 'DOKUMEN KOMERSIAL', title: 'Quotation & Invoice', copy: 'Buat quotation, sales order, invoice, dan kuitansi per proyek.' },
   office: { eyebrow: 'KEBUTUHAN KANTOR', title: 'Operasional Kantor', copy: 'Biaya kantor yang terpisah dari proyek.' },
   debts: { eyebrow: 'PERGERAKAN INTERNAL', title: 'Hutang', copy: 'Hutang antar-dompet tanpa mengubah kas konsolidasi.' },
   reports: { eyebrow: 'PELAPORAN', title: 'Laporan', copy: 'Filter, pratinjau, dan ekspor PDF.' },
@@ -135,11 +133,11 @@ function Sidebar({ active, open, mobile, live, close, navigate }: { active: Page
   useEffect(() => { if (mobile && open) closeButtonRef.current?.focus() }, [mobile, open])
   const items: ReadonlyArray<readonly [Page, string, typeof LayoutDashboard]> = [
     ['overview', 'Dashboard', LayoutDashboard], ['cashflow', 'Arus Kas', BarChart3], ['wallets', 'Dompet', WalletCards],
-    ['projects', 'Proyek', BriefcaseBusiness], ['documents', 'Quotation & Invoice', FileText], ['office', 'Operasional Kantor', Building2],
+    ['projects', 'Proyek', BriefcaseBusiness], ['office', 'Operasional Kantor', Building2],
     ['debts', 'Hutang', Landmark], ['reports', 'Laporan', FileBarChart],
   ]
   const navAction: Record<Exclude<Page, 'inbox-reviews'>, ActionId> = {
-    overview: 'nav.dashboard', cashflow: 'nav.cashflow', wallets: 'nav.wallets', projects: 'nav.projects', documents: 'nav.documents',
+    overview: 'nav.dashboard', cashflow: 'nav.cashflow', wallets: 'nav.wallets', projects: 'nav.projects',
     office: 'nav.office', debts: 'nav.debts', reports: 'nav.reports',
   }
   const hidden = mobile && !open
@@ -149,18 +147,6 @@ function Sidebar({ active, open, mobile, live, close, navigate }: { active: Page
 function ThemeToggle({ theme, setTheme }: { theme: string; setTheme: (theme: string) => void }) {
   const dark = theme === 'dark'
   return <button type="button" className="theme-toggle" onClick={() => setTheme(dark ? 'light' : 'dark')} aria-label={`Gunakan tema ${dark ? 'terang' : 'gelap'}`} aria-pressed={dark} title={`Tema ${dark ? 'gelap' : 'terang'}`} {...actionProps('shell.theme-toggle')}><Sun size={16} aria-hidden="true" /><span className={theme} aria-hidden="true" /><Moon size={16} aria-hidden="true" /></button>
-}
-
-function CommercialDocumentsHub({ projects, onOpen, onAdd }: {
-  projects: ProjectRecord[]
-  onOpen: (project: ProjectRecord) => void
-  onAdd: () => void
-}) {
-  return <section className="project-command-center">
-    <header className="command-head"><div><p className="eyebrow">DOKUMEN KOMERSIAL</p><h1>Quotation & Invoice</h1><p>Pilih proyek untuk membuat quotation, sales order, invoice, atau kuitansi.</p></div><button type="button" className="primary-button" onClick={onAdd}><Plus size={16} /> Buat proyek</button></header>
-    {projects.length ? <section className="project-register" aria-label="Daftar proyek untuk quotation dan invoice"><header><div><p className="eyebrow">PILIH PROYEK</p><h3>Workspace dokumen</h3></div></header><div className="project-register-headings" aria-hidden="true"><span>Proyek</span><span>Status</span><span>Quotation</span><span>Invoice</span><span>Aksi</span></div>{projects.map((project) => <article key={project.id}><button type="button" className="project-register-main" aria-label={`Buka quotation dan invoice ${project.name}`} onClick={() => onOpen(project)}><span><strong>{project.name}</strong><small>{project.company} · {project.wallet}{project.client_name ? ` · ${project.client_name}` : ''}</small></span><b className={`status-chip ${project.status}`}>{project.status}</b><span>Quotation</span><span>Invoice & kuitansi</span><span>Buka dokumen</span></button></article>)}</section>
-      : <section className="command-empty" aria-label="Belum ada proyek untuk dokumen komersial"><FileText size={28} aria-hidden="true" /><strong>Belum ada proyek</strong><p>Buat proyek pertama, lalu quotation dan invoice tersedia di workspace dokumennya.</p><button type="button" className="primary-button" onClick={onAdd}><Plus size={16} /> Buat proyek dulu</button></section>}
-  </section>
 }
 
 function projectStatusInput(project: FinanceProject, status: 'active' | 'completed', completedOn: string | null): ProjectInput {
@@ -539,11 +525,6 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
     ? <OverviewWorkspace workspace={finance.workspace} readOnly={readOnly} onOpenProjects={() => navigate('projects')} onAddProject={!readOnly ? () => setModal({ kind: 'project' }) : projectCapabilities.projectWrites ? () => setProjectModal('create') : undefined} onOpenOffice={() => navigate('office')} onOpenReviews={inboxReviewApi ? () => navigate('inbox-reviews') : undefined} />
     : active === 'cashflow' ? <CashflowWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
       : active === 'wallets' ? <WalletWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
-        : active === 'documents' ? <CommercialDocumentsHub
-            projects={productionProjects}
-            onOpen={(project) => setProjectDetailRoute({ projectId: project.id, tab: 'documents' })}
-            onAdd={() => setProjectModal('create')}
-          />
         : active === 'projects' && productionProject && projectApi ? <ProjectDetailWorkspace
             project={productionProject}
             tab={route.tab ?? 'transactions'}
@@ -605,7 +586,7 @@ export function DemoApp({ suppliedWorkspace, liveWriteSession, liveWriteStatus, 
           {!readOnly && <p className="demo-mode-label">Mode demo · data browser</p>}
           {readOnly && !canCreateTransactions && active !== 'inbox-reviews' && <p className="form-error">{liveWriteStatus ?? 'Pencatatan transaksi belum tersedia.'}</p>}
           {!readOnly && <DemoBanner updatedAt={finance.workspace.updated_at} onReset={reset} />}
-          {!['overview', 'projects', 'documents', 'reports', 'inbox-reviews'].includes(active) && <header className="page-heading"><div><p className="eyebrow">{meta.eyebrow}</p><h1>{meta.title}</h1><p>{meta.copy}</p></div>{!readOnly && <span className="demo-badge">DATA DEMO</span>}</header>}
+          {!['overview', 'projects', 'reports', 'inbox-reviews'].includes(active) && <header className="page-heading"><div><p className="eyebrow">{meta.eyebrow}</p><h1>{meta.title}</h1><p>{meta.copy}</p></div>{!readOnly && <span className="demo-badge">DATA DEMO</span>}</header>}
           {content}
         </div>
       </main>

@@ -1,4 +1,4 @@
-export type OwnerRoute = 'dashboard' | 'cashflow' | 'wallets' | 'projects' | 'documents' | 'office' | 'debts' | 'reports' | 'shell'
+export type OwnerRoute = 'dashboard' | 'cashflow' | 'wallets' | 'projects' | 'office' | 'debts' | 'reports' | 'shell'
 export type ActionKind = 'navigate' | 'mutate' | 'filter' | 'export' | 'preference'
 
 export interface RegisteredAction {
@@ -12,7 +12,6 @@ export const ACTION_REGISTRY = {
   'nav.cashflow': { owner: 'cashflow', kind: 'navigate', label: 'Buka Arus Kas' },
   'nav.wallets': { owner: 'wallets', kind: 'navigate', label: 'Buka Dompet' },
   'nav.projects': { owner: 'projects', kind: 'navigate', label: 'Buka Proyek' },
-  'nav.documents': { owner: 'documents', kind: 'navigate', label: 'Buka Quotation & Invoice' },
   'nav.office': { owner: 'office', kind: 'navigate', label: 'Buka Operasional Kantor' },
   'nav.debts': { owner: 'debts', kind: 'navigate', label: 'Buka Hutang' },
   'nav.reports': { owner: 'reports', kind: 'navigate', label: 'Buka Laporan' },
@@ -41,7 +40,7 @@ export const ACTION_REGISTRY = {
   'projects.tab-debts': { owner: 'projects', kind: 'navigate', label: 'Buka tab pinjaman proyek' },
   'projects.tab-profitability': { owner: 'projects', kind: 'navigate', label: 'Buka tab profitabilitas proyek' },
   'projects.tab-presensi': { owner: 'projects', kind: 'navigate', label: 'Buka tab presensi proyek' },
-  'projects.tab-documents': { owner: 'projects', kind: 'navigate', label: 'Buka tab dokumen proyek' },
+  'projects.tab-documents': { owner: 'projects', kind: 'navigate', label: 'Buka tab Quotation & Invoice proyek' },
   'projects.tab-audit': { owner: 'projects', kind: 'navigate', label: 'Buka tab audit proyek' },
   'office.transaction-create': { owner: 'office', kind: 'mutate', label: 'Catat biaya kantor' },
   'office.transaction-correct': { owner: 'office', kind: 'mutate', label: 'Koreksi biaya kantor' },

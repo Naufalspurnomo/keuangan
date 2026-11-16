@@ -22,7 +22,7 @@ const project: ProjectRecord = {
 afterEach(cleanup)
 
 describe('ProjectDetailWorkspace', () => {
-  it('renders URL-controlled Transaksi, Presensi, and Dokumen tabs', () => {
+  it('renders URL-controlled Transaksi, Presensi, and Quotation & Invoice tabs', () => {
     const onRouteChange = vi.fn()
     const onAddTransaction = vi.fn()
     render(<ProjectDetailWorkspace project={project} tab="transactions" onRouteChange={onRouteChange} onBack={vi.fn()} transactions={<p>Ledger proyek</p>} presensi={<p>Bukti presensi</p>} documents={<p>Pusat dokumen</p>} onAddTransaction={onAddTransaction} />)
@@ -30,7 +30,7 @@ describe('ProjectDetailWorkspace', () => {
     expect(screen.queryByText(project.id!)).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Tambah transaksi' }))
     expect(onAddTransaction).toHaveBeenCalledWith(project)
-    fireEvent.click(screen.getByRole('tab', { name: 'Dokumen' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Quotation & Invoice' }))
     expect(onRouteChange).toHaveBeenCalledWith({ tab: 'documents' })
   })
 
@@ -40,7 +40,7 @@ describe('ProjectDetailWorkspace', () => {
     const tab = screen.getByRole('tab', { name: 'Presensi' })
     tab.focus()
     fireEvent.keyDown(tab, { key: 'ArrowRight' })
-    expect(screen.getByRole('tab', { name: 'Dokumen' })).toHaveFocus()
+    expect(screen.getByRole('tab', { name: 'Quotation & Invoice' })).toHaveFocus()
     expect(onRouteChange).toHaveBeenCalledWith({ tab: 'documents' })
   })
 

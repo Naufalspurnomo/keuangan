@@ -141,6 +141,8 @@ describe('ProjectDocumentsWorkspace', () => {
     const onRouteChange = vi.fn()
     render(<ProjectDocumentsWorkspace project={project} api={api()} session={session} route={{ tab: 'documents' }} onRouteChange={onRouteChange} />)
     expect(await screen.findByText('INV/HW/2026/000001')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Quotation, invoice, dan kuitansi' })).toBeTruthy()
+    expect(screen.getByText(/Template otomatis mengikuti identitas proyek, klien, perusahaan, issuer, dan dompet proyek ini/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Buat invoice' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Buat kuitansi' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Sales Order baru/ })).toBeNull()

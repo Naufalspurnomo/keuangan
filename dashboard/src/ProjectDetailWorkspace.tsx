@@ -17,7 +17,7 @@ const TABS: Array<{ id: ProjectDetailTab; label: string }> = [
   { id: 'debts', label: 'Pinjaman' },
   { id: 'profitability', label: 'Profitabilitas' },
   { id: 'presensi', label: 'Presensi' },
-  { id: 'documents', label: 'Dokumen' },
+  { id: 'documents', label: 'Quotation & Invoice' },
   { id: 'audit', label: 'Audit' },
 ]
 

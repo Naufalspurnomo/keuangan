@@ -249,7 +249,7 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
   </div>
 
   return <section className="project-documents-workspace" aria-busy={loading}>
-    <header className="project-documents-head"><div><p className="eyebrow">DOKUMEN PROYEK</p><h2>Sales Order, invoice, dan kuitansi</h2><p>Kelola dokumen komersial proyek dari satu tempat.</p></div><div className="project-document-create"><button type="button" className="secondary-button" onClick={() => create('invoice')} disabled={!writesEnabled}><FilePlus2 size={16} /> Buat invoice</button><button type="button" className="secondary-button" onClick={() => create('receipt')} disabled={!writesEnabled}><Plus size={16} /> Buat kuitansi</button></div></header>
+    <header className="project-documents-head"><div><p className="eyebrow">DOKUMEN PROYEK</p><h2>Quotation, invoice, dan kuitansi</h2><p>Template otomatis mengikuti identitas proyek, klien, perusahaan, issuer, dan dompet proyek ini.</p></div><div className="project-document-create"><button type="button" className="secondary-button" onClick={() => create('invoice')} disabled={!writesEnabled}><FilePlus2 size={16} /> Buat invoice</button><button type="button" className="secondary-button" onClick={() => create('receipt')} disabled={!writesEnabled}><Plus size={16} /> Buat kuitansi</button></div></header>
     {!writesEnabled && <p className="write-disabled-note">Perubahan dokumen belum diaktifkan.</p>}
     {error && <div role="alert" className="document-state-alert"><strong>{error}</strong><button type="button" className="secondary-button" onClick={() => void loadList()}><RefreshCw size={16} /> Coba lagi</button></div>}
     {notice && <p role="status" className="document-state-notice">{notice}</p>}

@@ -9,7 +9,7 @@ describe('canonical action registry', () => {
     expect(new Set(entries.map(([id]) => id)).size).toBe(entries.length)
     for (const [id, action] of entries) {
       expect(id).toMatch(/^[a-z]+(?:\.[a-z0-9-]+)+$/)
-      expect(action.owner satisfies OwnerRoute).toMatch(/^(dashboard|cashflow|wallets|projects|documents|office|debts|reports|shell)$/)
+      expect(action.owner satisfies OwnerRoute).toMatch(/^(dashboard|cashflow|wallets|projects|office|debts|reports|shell)$/)
       expect(action.label.trim()).not.toBe('')
       expect(action.kind).toMatch(/^(navigate|mutate|filter|export|preference)$/)
     }
