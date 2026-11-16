@@ -489,7 +489,10 @@ def run_restore_verification(
         source_fingerprint = _source_database_fingerprint(manifest)
         source_identity = _source_database_identity(manifest)
         target_identity = _read_database_identity(selected_runner, config, dsn)
-        if (source_identity is not None and target_identity == source_identity) or target_fingerprint == source_fingerprint:
+        if (
+            source_identity is not None
+            and target_identity[0] == source_identity[0]
+        ) or target_fingerprint == source_fingerprint:
             raise RestoreVerificationError("disposable database matches backup source")
 
         postgres_rows = _verify_component_inventory(extracted, manifest, "postgres")

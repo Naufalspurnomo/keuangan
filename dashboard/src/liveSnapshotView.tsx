@@ -191,7 +191,7 @@ export function LiveSnapshotBanner({ endpoint, loader = loadLiveSnapshot }: Live
   const refreshFailed = Boolean(state.error)
 
   return (
-    <section className={`live-snapshot live-snapshot--${refreshFailed ? 'error' : view.freshness}`} aria-label="Status data">
+    <section className={`live-snapshot live-snapshot--${refreshFailed ? 'refresh-error' : view.freshness}`} aria-label="Status data">
       {state.error && <div className="live-snapshot__refresh-error" role="alert">
         <strong>Data tidak terverifikasi</strong>
         <p>Pembaruan gagal: {state.error.message}. Angka di bawah adalah pembacaan terakhir dan tidak boleh dianggap terbaru.</p>

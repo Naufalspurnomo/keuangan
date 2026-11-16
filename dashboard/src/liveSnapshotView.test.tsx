@@ -134,6 +134,8 @@ describe('LiveSnapshotBanner', () => {
     expect(warning).toHaveTextContent('refresh offline')
     expect(screen.queryByText(/Segar ·/)).toBeNull()
     expect(screen.getAllByText(/pembacaan terakhir/i)).toHaveLength(2)
+    expect(screen.getByRole('region', { name: 'Status data' })).toHaveClass('live-snapshot--refresh-error')
+    expect(screen.getByRole('region', { name: 'Status data' })).not.toHaveClass('live-snapshot--error')
   })
 
   it('does not abort and restart a slow snapshot on each poll tick', async () => {

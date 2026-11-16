@@ -16,7 +16,7 @@ export interface CanonicalDebtCreateInput {
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-export function useModalDialog(onClose: () => void, active = true) {
+export function useModalDialog(onClose: () => void, active = true, dismissible = true) {
   const dialogRef = useRef<HTMLElement>(null)
   const openerRef = useRef<HTMLElement | null>(null)
   const wasActiveRef = useRef(false)
@@ -26,6 +26,8 @@ export function useModalDialog(onClose: () => void, active = true) {
   wasActiveRef.current = active
   const closeRef = useRef(onClose)
   closeRef.current = onClose
+  const dismissibleRef = useRef(dismissible)
+  dismissibleRef.current = dismissible
 
   useEffect(() => {
     if (!active) return
@@ -45,7 +47,7 @@ export function useModalDialog(onClose: () => void, active = true) {
     if (event.key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
-      closeRef.current()
+      if (dismissibleRef.current) closeRef.current()
       return
     }
     if (event.key !== 'Tab') return

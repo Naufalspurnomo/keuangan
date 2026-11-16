@@ -253,6 +253,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
       })
       .catch((error: unknown) => {
         if (sequence !== projectLoadSequence.current) return
+        setProjectCapabilities(NO_PROJECT_DOCUMENT_WRITES)
         setProjectApiError(error instanceof Error ? error.message : 'Data proyek belum tersedia.')
       })
       .finally(() => {
@@ -465,6 +466,9 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
         : projectApi.updateProject(projectModal!.id, draft, projectModal!.lock_version)
       const saved = await command.submit(projectSession)
       const current = await projectApi.getProject(saved.id)
+      projectLoadSequence.current += 1
+      activeProjectLoad.current = null
+      setProjectDataLoading(false)
       setProductionProjects((projects) => projects.some((project) => project.id === current.id)
         ? projects.map((project) => project.id === current.id ? current : project)
         : [current, ...projects])
@@ -483,6 +487,9 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
     try {
       const saved = await projectApi.setProjectStatus(project.id, status, project.lock_version).submit(projectSession)
       const current = await projectApi.getProject(saved.id)
+      projectLoadSequence.current += 1
+      activeProjectLoad.current = null
+      setProjectDataLoading(false)
       setProductionProjects((projects) => projects.map((item) => item.id === current.id ? current : item))
       setNotice('Status proyek diperbarui.')
     } catch (error) {

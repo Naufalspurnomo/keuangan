@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol, cast
 
 
 EXPORT_SCHEMA_VERSION = "canonical.finance.export.v1"
 _DRIFT_GATE_LOCK_ID = 764_341_986_015_202_611
+_WORKER_LOCK_ID = 764_341_986_015_202_612
 
 
 class RemoteExportDrift(RuntimeError):
@@ -265,6 +267,12 @@ class ExportWorker:
     def run_once(self, *, limit: int = 100) -> dict[str, int]:
         if not self._protected:
             raise RemoteExportDrift("canonical export requires a protected destination")
+        guard = getattr(self._outbox, "worker_guard", None)
+        context = guard() if callable(guard) else nullcontext()
+        with cast(AbstractContextManager[None], context):
+            return self._run_guarded(limit=limit)
+
+    def _run_guarded(self, *, limit: int) -> dict[str, int]:
         counts = {
             "claimed": 0,
             "written": 0,
@@ -366,6 +374,30 @@ class PostgresExportOutbox:
         import psycopg
 
         return psycopg.connect(self._dsn)
+
+    def worker_guard(self):
+        """Serialize the remote read/write/ack cycle across export workers."""
+        from contextlib import contextmanager
+
+        @contextmanager
+        def guard():
+            connection = self._connect()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_advisory_lock(%s)", (_WORKER_LOCK_ID,))
+                try:
+                    yield
+                finally:
+                    with connection.cursor() as cursor:
+                        cursor.execute("SELECT pg_advisory_unlock(%s)", (_WORKER_LOCK_ID,))
+                    connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+
+        return guard()
 
     @staticmethod
     def _row(values: tuple[Any, ...]) -> ClaimedExport:

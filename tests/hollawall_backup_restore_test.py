@@ -433,6 +433,34 @@ def test_restore_refuses_source_identity_reached_through_different_endpoint(tmp_
     assert not any(Path(command[0]).name == "pg_restore" for command, _env in tools.calls)
 
 
+def test_restore_refuses_a_sibling_database_on_the_source_cluster(tmp_path: Path) -> None:
+    class SourceClusterSiblingTools(FakeTools):
+        def __call__(self, command, *, env=None):
+            if Path(command[0]).name == "psql":
+                sql = command[command.index("--command") + 1]
+                if "hollawall-restore-target-identity" in sql:
+                    self.calls.append((list(command), dict(env or {})))
+                    return json.dumps({
+                        "system_identifier": SOURCE_SYSTEM_IDENTIFIER,
+                        "database": "unrelated_real_database",
+                    }) + "\n"
+            return super().__call__(command, env=env)
+
+    tools = SourceClusterSiblingTools()
+    archive = make_archive(tmp_path, tools)
+    tools.calls.clear()
+
+    with pytest.raises(hollawall_restore_verify.RestoreVerificationError, match="matches backup source"):
+        hollawall_restore_verify.run_restore_verification(
+            restore_config(archive),
+            verify=True,
+            runner=tools,
+            environ={"TEST_ARCHIVE_KEY": ARCHIVE_SECRET, "TEST_DISPOSABLE_DSN": DISPOSABLE_DSN},
+        )
+
+    assert not any(Path(command[0]).name == "pg_restore" for command, _env in tools.calls)
+
+
 def test_restore_verifies_manifest_sheets_presensi_and_disposable_pg_restore(tmp_path: Path) -> None:
     tools = FakeTools()
     archive = make_archive(tmp_path, tools)

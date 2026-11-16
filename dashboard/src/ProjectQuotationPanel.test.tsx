@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import ProjectQuotationPanel, { calculateInstallmentSchedule } from './ProjectQuotationPanel'
@@ -95,6 +95,12 @@ function api(items: ProjectQuotation[] = []) {
   }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((accept) => { resolve = accept })
+  return { promise, resolve }
+}
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
@@ -172,6 +178,31 @@ describe('ProjectQuotationPanel', () => {
       sales_order_id: salesOrder.id, sales_order_version: 7, dp_percent: 30, remaining_installments: 3,
     }, session))
     await waitFor(() => expect(applied).toHaveBeenCalledWith('22222222-2222-4222-8222-222222222222'))
+  })
+
+  it('does not dismiss a deal dialog with Escape while its write is in flight', async () => {
+    const subject = api([item])
+    const pending = deferred<Awaited<ReturnType<ProjectQuotationApi['deal']>>>()
+    vi.mocked(subject.deal).mockImplementationOnce(() => pending.promise)
+    render(<ProjectQuotationPanel project={project} salesOrder={salesOrder} session={session} api={subject} onApplied={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Tandai Deal versi 1' }))
+    const dialog = screen.getByRole('dialog', { name: 'Setup DP dan cicilan' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Konfirmasi Deal & Buat Draf DP' }))
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Mengonfirmasi…' })).toBeDisabled())
+
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    expect(screen.getByRole('dialog', { name: 'Setup DP dan cicilan' })).toBeTruthy()
+
+    await act(async () => {
+      pending.resolve({
+        quotation: { ...item, status: 'accepted' },
+        sales_order_id: salesOrder.id,
+        dp_invoice_id: '33333333-3333-4333-8333-333333333333',
+        installment_schedule: calculateInstallmentSchedule(item.amount, 30, 1),
+      })
+      await pending.promise
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Setup DP dan cicilan' })).toBeNull())
   })
 
   it('supports bounded custom DP and installment values', async () => {

@@ -294,7 +294,7 @@ function DealDialog({ item, busy, onCancel, onConfirm }: {
   onCancel: () => void
   onConfirm: (dpPercent: number, installments: number) => Promise<void>
 }) {
-  const dialog = useModalDialog(onCancel)
+  const dialog = useModalDialog(onCancel, true, !busy)
   const total = item.accepted_snapshot?.amount ?? item.amount
   const [dpChoice, setDpChoice] = useState('30')
   const [customDp, setCustomDp] = useState('35')
@@ -352,7 +352,7 @@ export default function ProjectQuotationPanel({ project, salesOrder, session, ap
   const [rejectItem, setRejectItem] = useState<ProjectQuotation | null>(null)
   const [rejectNote, setRejectNote] = useState('')
   const closeReject = () => { setRejectItem(null); setRejectNote('') }
-  const rejectDialog = useModalDialog(closeReject, Boolean(rejectItem))
+  const rejectDialog = useModalDialog(closeReject, Boolean(rejectItem), !busy)
 
   const load = async () => {
     setLoading(true); setError('')

@@ -20,6 +20,10 @@
   border-color: rgb(184 74 74 / 38%);
 }
 
+.live-snapshot--refresh-error {
+  border-color: rgb(184 74 74 / 38%);
+}
+
 .live-snapshot__pulse {
   width: 0.75rem;
   height: 0.75rem;

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 from copy import deepcopy
 
 import pytest
@@ -34,6 +35,9 @@ class FakeOutbox:
             self.status = "exporting"
             return [self.row]
         return []
+
+    def has_unresolved_drift(self) -> bool:
+        return self.status == "drifted"
 
     def acknowledge(self, row_id: str, claim_token: str, remote_locator: str) -> bool:
         assert row_id == self.row.id
@@ -153,6 +157,47 @@ def test_existing_drift_blocks_new_claims() -> None:
         "drifted": 0,
         "failed": 0,
     }
+
+
+def test_worker_guard_wraps_the_complete_remote_write_and_ack_cycle() -> None:
+    class GuardedOutbox(FakeOutbox):
+        def __init__(self, claimed: ClaimedExport) -> None:
+            super().__init__(claimed)
+            self.guard_active = False
+            self.events: list[str] = []
+
+        @contextmanager
+        def worker_guard(self):
+            self.guard_active = True
+            self.events.append("enter")
+            try:
+                yield
+            finally:
+                self.events.append("exit")
+                self.guard_active = False
+
+        def acknowledge(self, row_id: str, claim_token: str, remote_locator: str) -> bool:
+            assert self.guard_active
+            self.events.append("ack")
+            return super().acknowledge(row_id, claim_token, remote_locator)
+
+    outbox = GuardedOutbox(row())
+
+    class GuardedRemote(FakeRemote):
+        def read(self, ordinal: int):
+            assert outbox.guard_active
+            outbox.events.append("read")
+            return super().read(ordinal)
+
+        def write(self, ordinal: int, document):
+            assert outbox.guard_active
+            outbox.events.append("write")
+            super().write(ordinal, document)
+
+    result = ExportWorker(outbox=outbox, remote=GuardedRemote(), protected_destination=True).run_once()
+
+    assert result["exported"] == 1
+    assert outbox.events == ["enter", "read", "write", "read", "ack", "exit"]
 
 
 def test_new_drift_stops_the_rest_of_the_claimed_batch() -> None:
