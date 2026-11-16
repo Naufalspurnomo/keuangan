@@ -49,6 +49,12 @@ try {
         $delivery['lease_expires_at'] = gmdate('c', $now + PRESENSI_OUTBOX_LEASE_SECONDS);
         $event['whatsapp_delivery'] = $delivery;
         $dirty = true;
+        $latitude = $event['latitude'] ?? null;
+        $longitude = $event['longitude'] ?? null;
+        $coordinatesValid = (is_int($latitude) || is_float($latitude))
+            && is_finite((float) $latitude) && (float) $latitude >= -90 && (float) $latitude <= 90
+            && (is_int($longitude) || is_float($longitude))
+            && is_finite((float) $longitude) && (float) $longitude >= -180 && (float) $longitude <= 180;
         $claim = [
             'event_id' => (string) $event['id'],
             'lease_token' => $leaseToken,
@@ -58,6 +64,8 @@ try {
             'action' => (string) ($event['action'] ?? ''),
             'project_name' => (string) ($event['project_name'] ?? ''),
             'occurred_at' => (string) ($event['occurred_at'] ?? ''),
+            'latitude' => $coordinatesValid ? (float) $latitude : null,
+            'longitude' => $coordinatesValid ? (float) $longitude : null,
             'accuracy_m' => (float) ($event['accuracy_m'] ?? 0),
             'photo_mime' => 'image/jpeg',
             'photo_base64' => base64_encode($photo),

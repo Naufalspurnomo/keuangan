@@ -6,6 +6,10 @@
 
 Each accepted Check-in/Check-out is durable before WhatsApp delivery starts. The private JPEG and coordinates appear in the admin dashboard. A bounded outbox sends the same JPEG to the configured WhatsApp group. Delivery failures never remove the attendance record; the dashboard exposes `Menunggu`, `Terkirim`, `Gagal`, or `Perlu dicek` with attempt count.
 
+Location is evidence, not a project geofence. The server preserves the device coordinates and horizontal GPS accuracy. WhatsApp always includes a Google Maps link plus an explicit `Akurasi GPS: ±N m` label. The system does not infer that `±N m` means distance from a project site and does not reject attendance based on a project radius.
+
+Human-readable locality is optional. With `PRESENSI_GEOCODER_PROVIDER=nominatim`, the backend sends coordinates rounded to three decimal places (roughly 100 m) to the configured HTTPS Nominatim endpoint solely to obtain a short label such as `Tunjungan, Surabaya, Jawa Timur`. It never sends employee, project, event, photo, or exact six-decimal coordinates to the geocoder. PostgreSQL stores only the coarse location key, result label/outcome, and expiry; a shared limiter, positive cache, negative cache, and 429 backoff prevent per-process request bursts. WhatsApp attributes successful labels to `© OpenStreetMap contributors`. Set `PRESENSI_GEOCODER_PROVIDER=disabled` to prevent third-party lookup; coordinates and Maps remain available. If lookup, provider, schema, or PostgreSQL is unavailable, WhatsApp delivery continues with exact coordinates and Maps without a locality label.
+
 ## Private configuration
 
 1. Copy `docs/PRESENSI_CONFIG.example.php` outside `public_html` as `.hollawall-presensi.php`.
@@ -26,6 +30,8 @@ Configure the Koyeb service with owner-scoped secrets:
 - `PRESENSI_OUTBOX_SHARED_SECRET=<same private shared secret>`
 - `PRESENSI_WHATSAPP_GROUP_JID=<exact Presensi group JID ending @g.us>`
 - existing `WUZAPI_DOMAIN` and `WUZAPI_TOKEN`
+- `PRESENSI_GEOCODER_PROVIDER=nominatim` for coarse optional locality labels, or `disabled`
+- optional replacement `PRESENSI_GEOCODER_URL=<plain HTTPS reverse endpoint>`
 
 The authenticated catalog endpoint reads the same PostgreSQL project authority used by `/admin`. A project appears for check-in only while its canonical status is `active`. If the catalog or PostgreSQL is unavailable, check-in fails closed rather than falling back to a stale file list. An already-open attendance pair may still check out after its project closes so no employee remains stranded.
 
@@ -60,7 +66,9 @@ Runtime config, sessions, events, photos, PIN hashes, secrets, JIDs, and provide
 
 ## Atomic deployment
 
-Deploy the backend first and require `/api/health/release` to show the reviewed commit. Then deploy coupled Rumahweb admin/absen paths:
+The claim-v1 transition is mixed-version safe: a new worker sends legacy claims without coordinates using the explicit `Lokasi: tidak tersedia pada data lama` fallback, while an old worker ignores additive coordinate fields. Deploy the coupled Rumahweb admin/absen producer first when operating manually, verify its release identity, then deploy the backend consumer and require `/api/health/release` to show the reviewed commit. The automated release must preserve equivalent compatibility and exact revision readback.
+
+Deploy the coupled Rumahweb pair with:
 
 ```bash
 python scripts/deploy_rumahweb_presensi_atomic.py \
@@ -82,7 +90,7 @@ The deployer stages and byte-verifies both paths, activates them together, and r
 - Check-out requires the same project and closes the pair.
 - Anonymous admin data/photo endpoints return 401.
 - Authenticated dashboard shows both private photos, coordinates, and WhatsApp delivery status.
-- The configured WhatsApp Presensi group receives the same photo with employee, action, project, time, and accuracy caption.
+- The configured WhatsApp Presensi group receives the same photo with employee, action, project, time, short location when available, coordinates-backed Google Maps link, and explicit GPS accuracy.
 - Provider ambiguity creates `unknown`, never duplicate auto-send.
 - Public artifact hashes match the candidate manifest; desktop and mobile have no overflow, failed requests, or console errors.
 

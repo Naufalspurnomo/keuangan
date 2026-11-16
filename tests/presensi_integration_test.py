@@ -347,6 +347,8 @@ class PresensiIntegrationTests(unittest.TestCase):
             event = claim.json()["event"]
             self.assertEqual(event["employee_name"], "Pegawai 2")
             self.assertEqual(event["project_name"], "Griya Wellness Center")
+            self.assertEqual(event["latitude"], -7.354647)
+            self.assertEqual(event["longitude"], 112.782624)
 
     def test_open_checkin_can_checkout_after_project_is_deactivated(self) -> None:
         with self.server() as origin:
@@ -553,6 +555,47 @@ class PresensiIntegrationTests(unittest.TestCase):
             store = self.account_root / ".hollawall-presensi"
             self.assertFalse((store / "events.json").exists())
             self.assertEqual(list((store / "photos").glob("*")), [])
+
+    def test_outbox_claim_does_not_coerce_malformed_coordinates_to_null_island(self) -> None:
+        root = self.account_root / ".hollawall-presensi"
+        photos = root / "photos"
+        root.mkdir(mode=0o700)
+        photos.mkdir(mode=0o700)
+        event_id = "evt-0123456789abcdef01234567"
+        (photos / f"{event_id}.jpg").write_bytes(b"synthetic-jpeg")
+        (photos / f"{event_id}.jpg").chmod(0o600)
+        events_path = root / "events.json"
+        events_path.write_text(json.dumps([{
+            "id": event_id,
+            "employee_name": "Pegawai 1",
+            "action": "check_in",
+            "project_name": "Griya Wellness Center",
+            "occurred_at": "2026-11-05T08:00:00+00:00",
+            "latitude": "not-a-number",
+            "longitude": "",
+            "accuracy_m": 10,
+            "photo_name": f"{event_id}.jpg",
+            "whatsapp_delivery": {
+                "status": "pending",
+                "attempts": 0,
+                "next_retry_at": None,
+                "provider_message_id": None,
+                "last_error": None,
+                "lease_token_hash": None,
+                "lease_expires_at": None,
+            },
+        }]) + "\n", encoding="utf-8")
+        events_path.chmod(0o600)
+        with self.server() as origin:
+            response = requests.post(
+                origin + "/absen/api/outbox-claim.php",
+                headers={"X-Presensi-Secret": OUTBOX_SECRET},
+                timeout=5,
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            event = response.json()["event"]
+            self.assertIsNone(event["latitude"])
+            self.assertIsNone(event["longitude"])
 
     def test_legacy_event_without_coordinates_does_not_become_null_island(self) -> None:
         common = ROOT / "deploy" / "rumahweb-presensi" / "api" / "presensi-common.php"
