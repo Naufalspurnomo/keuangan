@@ -215,6 +215,7 @@ jobs:
             tests/canonical_financial_schema_test.py \
             tests/financial_export_postgres_race_test.py \
             tests/financial_transaction_idempotency_lock_test.py \
+            tests/dashboard_login_throttle_postgres_test.py \
             tests/presensi_geocoder_postgres_test.py \
             -o addopts=''
 

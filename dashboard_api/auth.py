@@ -201,11 +201,112 @@ def _login_throttle_keys(email: str, source: str) -> tuple[str, str]:
     )
 
 
+def _login_throttle_dsn() -> str:
+    configured = str(current_app.config.get("DASHBOARD_LOGIN_THROTTLE_DATABASE_URL") or "").strip()
+    return configured or str(
+        os.getenv("STATE_DATABASE_URL") or os.getenv("DATABASE_URL") or ""
+    ).strip()
+
+
+def _login_throttle_connect(dsn: str):
+    factory = current_app.config.get("DASHBOARD_LOGIN_THROTTLE_CONNECTION_FACTORY")
+    if callable(factory):
+        return factory(dsn)
+    import psycopg
+
+    return psycopg.connect(dsn)
+
+
+def _postgres_login_retry_after(keys: tuple[str, str], current: int) -> int:
+    connection = _login_throttle_connect(_login_throttle_dsn())
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT blocked_until FROM dashboard_login_throttle WHERE key_hash = ANY(%s)",
+                (list(keys),),
+            )
+            retry_after = max((int(row[0]) - current for row in cursor.fetchall()), default=0)
+            cursor.execute(
+                "DELETE FROM dashboard_login_throttle "
+                "WHERE key_hash = ANY(%s) AND blocked_until <= %s AND updated_at < %s",
+                (list(keys), current, current - 3600),
+            )
+        connection.commit()
+        return max(0, retry_after)
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def _postgres_record_login_result(
+    keys: tuple[str, str],
+    *,
+    success: bool,
+    current: int,
+    maximum: int,
+    block_seconds: int,
+) -> int:
+    connection = _login_throttle_connect(_login_throttle_dsn())
+    try:
+        with connection.cursor() as cursor:
+            if success:
+                cursor.execute(
+                    "DELETE FROM dashboard_login_throttle WHERE key_hash = ANY(%s)",
+                    (list(keys),),
+                )
+                connection.commit()
+                return 0
+            retry_after = 0
+            for key in sorted(keys):
+                cursor.execute(
+                    """
+                    INSERT INTO dashboard_login_throttle(key_hash, attempts, blocked_until, updated_at)
+                    VALUES (%s, 0, 0, %s)
+                    ON CONFLICT (key_hash) DO NOTHING
+                    """,
+                    (key, current),
+                )
+                cursor.execute(
+                    "SELECT attempts, blocked_until FROM dashboard_login_throttle "
+                    "WHERE key_hash = %s FOR UPDATE",
+                    (key,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise RuntimeError("shared login throttle row unavailable")
+                attempts, blocked_until = int(row[0]), int(row[1])
+                if blocked_until > current:
+                    retry_after = max(retry_after, blocked_until - current)
+                    continue
+                attempts += 1
+                blocked_until = current + block_seconds if attempts >= maximum else 0
+                cursor.execute(
+                    """
+                    UPDATE dashboard_login_throttle
+                    SET attempts = %s, blocked_until = %s, updated_at = %s
+                    WHERE key_hash = %s
+                    """,
+                    (0 if blocked_until else attempts, blocked_until, current, key),
+                )
+                retry_after = max(retry_after, blocked_until - current)
+        connection.commit()
+        return max(0, retry_after)
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def login_retry_after(email: str, source: str, *, now: int | None = None) -> int:
-    """Return process-local retry delay; shared-edge throttling remains the outer control."""
+    """Return restart-safe shared retry delay when PostgreSQL is configured."""
     current = int(time.time() if now is None else now)
-    lock, entries = _login_throttle_state()
     keys = _login_throttle_keys(email, source)
+    if _login_throttle_dsn():
+        return _postgres_login_retry_after(keys, current)
+    lock, entries = _login_throttle_state()
     with lock:
         retry_after = 0
         for key in keys:
@@ -223,8 +324,16 @@ def record_login_result(email: str, source: str, *, success: bool, now: int | No
     current = int(time.time() if now is None else now)
     maximum = max(2, int(current_app.config.get("DASHBOARD_LOGIN_RATE_MAX") or 5))
     block_seconds = max(1, int(current_app.config.get("DASHBOARD_LOGIN_RATE_BLOCK_SECONDS") or 60))
-    lock, entries = _login_throttle_state()
     keys = _login_throttle_keys(email, source)
+    if _login_throttle_dsn():
+        return _postgres_record_login_result(
+            keys,
+            success=success,
+            current=current,
+            maximum=maximum,
+            block_seconds=block_seconds,
+        )
+    lock, entries = _login_throttle_state()
     with lock:
         if success:
             for key in keys:
