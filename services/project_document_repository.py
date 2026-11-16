@@ -470,7 +470,7 @@ SELECT
             SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
             WHERE n.nspname = 'public'
               AND p.proname = 'reject_project_quotation_event_mutation'
-              AND MD5(p.prosrc) = '06e46fef2577f847a816569c78e6b5f3'
+              AND MD5(p.prosrc) = 'c2ba6a89b4e2cf84070a429b300f644d'
         )
     ) AS tables_ready,
     (
@@ -751,6 +751,7 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
             "008_project_quotation_handoffs.sql",
             "019_structured_quotations.sql",
             "020_quotation_invariants.sql",
+            "022_project_hard_delete.sql",
         )
     ]
     try:
@@ -2607,6 +2608,196 @@ class ProjectDocumentRepository:
         except Exception as exc:
             raise ProjectDocumentUnavailable(
                 f"Project document database unavailable: {type(exc).__name__}"
+            ) from exc
+
+    def delete_project(
+        self,
+        project_id: str,
+        *,
+        expected_version: int,
+        idempotency_key: str,
+        actor: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            uuid.UUID(str(project_id))
+        except (ValueError, TypeError) as exc:
+            raise ValueError("project_id must be a UUID") from exc
+        if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 1:
+            raise ValueError("expected_version must be a positive integer")
+        actor_json, actor_value = _actor(actor)
+        request = {"project_id": project_id, "expected_version": expected_version}
+        try:
+            with self._connect() as connection:
+                with connection.cursor() as cursor:
+                    key_hash, _, replay = self._claim(
+                        cursor, "project.delete", idempotency_key, request
+                    )
+                    if replay is not None:
+                        return replay
+                    cursor.execute(
+                        "SELECT lock_version FROM projects WHERE id = %s FOR UPDATE",
+                        (project_id,),
+                    )
+                    current = cursor.fetchone()
+                    if not current:
+                        raise ProjectDocumentNotFound("project not found")
+                    if int(current[0]) != expected_version:
+                        raise ProjectDocumentConflict("optimistic lock version conflict")
+
+                    cursor.execute(
+                        "SELECT set_config('hollawall.project_hard_delete_target', %s, true)",
+                        (project_id,),
+                    )
+                    optional_relations = {
+                        "invoice_payment_applications",
+                        "project_payment_application_events",
+                        "project_payment_authority_evidence",
+                        "project_quotation_idempotency_records",
+                    }
+                    cursor.execute(
+                        "SELECT relname FROM pg_class WHERE relnamespace = 'public'::regnamespace "
+                        "AND relname = ANY(%s)",
+                        (sorted(optional_relations),),
+                    )
+                    available_optional_relations = {str(row[0]) for row in cursor.fetchall()}
+                    cursor.execute(
+                        "CREATE TEMP TABLE project_delete_transactions ON COMMIT DROP AS "
+                        "SELECT id FROM financial_transactions WHERE project_id = %s",
+                        (project_id,),
+                    )
+                    cursor.execute(
+                        "CREATE TEMP TABLE project_delete_debts ON COMMIT DROP AS "
+                        "SELECT id FROM interwallet_debts WHERE project_id = %s",
+                        (project_id,),
+                    )
+                    cursor.execute(
+                        "DELETE FROM financial_export_outbox WHERE "
+                        "(aggregate_type = 'transaction' AND aggregate_id IN "
+                        "(SELECT id FROM project_delete_transactions)) OR "
+                        "(aggregate_type = 'debt' AND aggregate_id IN "
+                        "(SELECT id FROM project_delete_debts)) OR "
+                        "(aggregate_type = 'project_status' AND aggregate_id IN "
+                        "(SELECT id FROM project_status_events WHERE project_id = %s))",
+                        (project_id,),
+                    )
+                    cursor.execute(
+                        "DELETE FROM financial_migration_manifest WHERE canonical_project_id = %s "
+                        "OR canonical_transaction_id IN (SELECT id FROM project_delete_transactions) "
+                        "OR canonical_debt_id IN (SELECT id FROM project_delete_debts)",
+                        (project_id,),
+                    )
+                    cursor.execute(
+                        "DELETE FROM interwallet_debt_events WHERE debt_id IN "
+                        "(SELECT id FROM project_delete_debts) OR transaction_id IN "
+                        "(SELECT id FROM project_delete_transactions)"
+                    )
+                    cursor.execute(
+                        "DELETE FROM interwallet_debts WHERE id IN "
+                        "(SELECT id FROM project_delete_debts)"
+                    )
+                    cursor.execute(
+                        "DELETE FROM financial_postings WHERE transaction_id IN "
+                        "(SELECT id FROM project_delete_transactions)"
+                    )
+                    cursor.execute(
+                        "DELETE FROM financial_transactions WHERE id IN "
+                        "(SELECT id FROM project_delete_transactions)"
+                    )
+                    if "invoice_payment_applications" in available_optional_relations:
+                        if "project_payment_application_events" in available_optional_relations:
+                            cursor.execute(
+                                "DELETE FROM project_payment_application_events WHERE application_id IN "
+                                "(SELECT id FROM invoice_payment_applications WHERE invoice_id IN "
+                                "(SELECT id FROM project_documents WHERE project_id = %s))",
+                                (project_id,),
+                            )
+                        cursor.execute(
+                            "DELETE FROM invoice_payment_applications WHERE invoice_id IN "
+                            "(SELECT id FROM project_documents WHERE project_id = %s)",
+                            (project_id,),
+                        )
+                    if "project_payment_authority_evidence" in available_optional_relations:
+                        cursor.execute(
+                            "DELETE FROM project_payment_authority_evidence WHERE project_id = %s",
+                            (project_id,),
+                        )
+                    cursor.execute(
+                        "DELETE FROM project_transaction_evidence_events WHERE evidence_id IN "
+                        "(SELECT id FROM project_transaction_evidence WHERE project_id = %s)",
+                        (project_id,),
+                    )
+                    cursor.execute(
+                        "DELETE FROM project_transaction_evidence WHERE project_id = %s",
+                        (project_id,),
+                    )
+                    if "project_quotation_idempotency_records" in available_optional_relations:
+                        cursor.execute(
+                            "DELETE FROM project_quotation_idempotency_records WHERE quotation_id IN "
+                            "(SELECT id FROM project_quotation_handoffs WHERE project_id = %s)",
+                            (project_id,),
+                        )
+                    cursor.execute(
+                        "DELETE FROM project_quotation_events WHERE quotation_id IN "
+                        "(SELECT id FROM project_quotation_handoffs WHERE project_id = %s)",
+                        (project_id,),
+                    )
+                    cursor.execute(
+                        "DELETE FROM project_quotation_handoffs WHERE project_id = %s",
+                        (project_id,),
+                    )
+                    cursor.execute(
+                        "DELETE FROM project_document_artifacts WHERE document_id IN "
+                        "(SELECT id FROM project_documents WHERE project_id = %s)",
+                        (project_id,),
+                    )
+                    cursor.execute(
+                        "DELETE FROM project_document_allocations WHERE document_id IN "
+                        "(SELECT id FROM project_documents WHERE project_id = %s)",
+                        (project_id,),
+                    )
+                    cursor.execute(
+                        "DELETE FROM project_document_lines WHERE document_id IN "
+                        "(SELECT id FROM project_documents WHERE project_id = %s)",
+                        (project_id,),
+                    )
+                    cursor.execute(
+                        "DELETE FROM project_document_events WHERE project_id = %s",
+                        (project_id,),
+                    )
+                    cursor.execute(
+                        "DELETE FROM project_documents WHERE project_id = %s",
+                        (project_id,),
+                    )
+                    cursor.execute(
+                        "DELETE FROM project_status_events WHERE project_id = %s",
+                        (project_id,),
+                    )
+                    cursor.execute(
+                        "DELETE FROM canonical_project_identity_mappings WHERE project_id = %s",
+                        (project_id,),
+                    )
+                    cursor.execute(
+                        "DELETE FROM financial_ledger WHERE project_id = %s",
+                        (project_id,),
+                    )
+                    cursor.execute("DELETE FROM project_scopes WHERE project_id = %s", (project_id,))
+                    cursor.execute(
+                        "DELETE FROM projects WHERE id = %s AND lock_version = %s",
+                        (project_id, expected_version),
+                    )
+                    if cursor.rowcount != 1:
+                        raise ProjectDocumentConflict("project deletion conflicted")
+                    response = {
+                        "project_id": project_id,
+                        "deleted": True,
+                        "deleted_by": canonical_json_hash(actor_value),
+                    }
+                    return self._complete(cursor, key_hash, response)
+        except (ProjectDocumentError, ValueError, TypeError):
+            raise
+        except Exception as exc:
+            raise ProjectDocumentUnavailable(
+                f"Project delete unavailable: {type(exc).__name__}"
             ) from exc
 
     @staticmethod

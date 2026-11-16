@@ -558,7 +558,7 @@ def health_check():
             'schema_ready': bool(project_schema.get('ready')),
             'ready': project_schema_ready,
             'transaction_correction_reversal': False,
-            'hard_delete': False,
+            'hard_delete': project_document_writes_enabled,
         }
         review_writes_enabled = bool(inbox.get('review_writes_enabled'))
         review_schema_ready = (

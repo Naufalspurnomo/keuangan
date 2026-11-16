@@ -90,7 +90,7 @@ function api(overrides: Partial<ProjectDocumentApi> = {}): ProjectDocumentApi {
     createProject: vi.fn(),
     updateProject: vi.fn(),
     setProjectStatus: vi.fn(),
-    archiveProject: vi.fn(),
+    deleteProject: vi.fn(),
     listDocuments: vi.fn(async () => ({ documents: [draft, issued], capabilities: session.capabilities })),
     getPaymentSummary: vi.fn(async () => paymentSummary),
     getReceiptOptions: vi.fn(async () => ({

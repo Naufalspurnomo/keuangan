@@ -52,6 +52,7 @@ class _UpstreamHandler(http.server.BaseHTTPRequestHandler):
     do_GET = _handle
     do_POST = _handle
     do_PATCH = _handle
+    do_DELETE = _handle
 
     def log_message(self, format, *args):
         return
@@ -310,8 +311,8 @@ class RumahwebAdminProjectDocumentProxyTests(unittest.TestCase):
                 self.assertEqual(requests.post(endpoint, headers={**write, "If-Match": '"3"'}, json=update_body, timeout=5).status_code, 200)
                 status_body = {"action": "status", "project_id": PROJECT_ID, "idempotency_key": IDEMPOTENCY_KEY, "expected_version": 3, "status": "active"}
                 self.assertEqual(requests.post(endpoint, headers={**write, "If-Match": '"3"'}, json=status_body, timeout=5).status_code, 200)
-                archive_body = {"action": "archive", "project_id": PROJECT_ID, "idempotency_key": IDEMPOTENCY_KEY, "expected_version": 3}
-                self.assertEqual(requests.post(endpoint, headers={**write, "If-Match": '"3"'}, json=archive_body, timeout=5).status_code, 200)
+                delete_body = {"action": "delete", "project_id": PROJECT_ID, "idempotency_key": IDEMPOTENCY_KEY, "expected_version": 3}
+                self.assertEqual(requests.post(endpoint, headers={**write, "If-Match": '"3"'}, json=delete_body, timeout=5).status_code, 200)
                 self.assertEqual(requests.get(endpoint, headers=cookie, params={"action": "audit", "project_id": PROJECT_ID}, timeout=5).status_code, 200)
 
             self.assertEqual(
@@ -322,7 +323,7 @@ class RumahwebAdminProjectDocumentProxyTests(unittest.TestCase):
                     ("POST", "/api/dashboard/v1/projects"),
                     ("PATCH", f"/api/dashboard/v1/projects/{PROJECT_ID}"),
                     ("POST", f"/api/dashboard/v1/projects/{PROJECT_ID}/status"),
-                    ("POST", f"/api/dashboard/v1/projects/{PROJECT_ID}/archive"),
+                    ("DELETE", f"/api/dashboard/v1/projects/{PROJECT_ID}"),
                     ("GET", f"/api/dashboard/v1/projects/{PROJECT_ID}/audit"),
                 ],
             )

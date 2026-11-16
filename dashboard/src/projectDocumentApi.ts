@@ -132,6 +132,7 @@ function capabilitySet(value: unknown): ProjectDocumentCapabilities {
     documentWrites: writes,
     transactionCorrections: transactionLifecycle,
     transactionReversals: transactionLifecycle,
+    hardDelete: writes && source.hard_delete === true,
   }
 }
 
@@ -507,9 +508,15 @@ export function createProjectDocumentApi(options: ApiOptions = {}) {
       uuid(projectId)
       return command(projectsEndpoint, { action: 'status', project_id: projectId, status }, expectedVersion, 'projectWrites', normalizeProject)
     },
-    archiveProject(projectId: string, expectedVersion: number) {
-      uuid(projectId)
-      return command(projectsEndpoint, { action: 'archive', project_id: projectId }, expectedVersion, 'projectWrites', normalizeProject)
+    deleteProject(projectId: string, expectedVersion: number) {
+      const canonicalProjectId = uuid(projectId)
+      return command(projectsEndpoint, { action: 'delete', project_id: canonicalProjectId }, expectedVersion, 'projectWrites', (data) => {
+        const result = record(data)
+        if (!result || result.project_id !== canonicalProjectId || result.deleted !== true) {
+          throw new ProjectDocumentApiError('Konfirmasi penghapusan proyek dari server tidak valid.', { code: 'invalid_project_delete' })
+        }
+        return { projectId: canonicalProjectId, deleted: true as const }
+      })
     },
     async listDocuments(projectId: string): Promise<DocumentListResult> {
       const result = await read(query(documentsEndpoint, { action: 'list', project_id: uuid(projectId) }))

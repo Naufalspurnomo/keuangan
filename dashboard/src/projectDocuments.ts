@@ -17,6 +17,7 @@ export interface ProjectDocumentCapabilities {
   documentWrites: boolean
   transactionCorrections: boolean
   transactionReversals: boolean
+  hardDelete?: boolean
 }
 
 export const NO_PROJECT_DOCUMENT_WRITES: ProjectDocumentCapabilities = Object.freeze({
@@ -24,6 +25,7 @@ export const NO_PROJECT_DOCUMENT_WRITES: ProjectDocumentCapabilities = Object.fr
   documentWrites: false,
   transactionCorrections: false,
   transactionReversals: false,
+  hardDelete: false,
 })
 
 export interface ProjectDraft {

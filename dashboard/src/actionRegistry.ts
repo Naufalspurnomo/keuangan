@@ -30,7 +30,7 @@ export const ACTION_REGISTRY = {
   'projects.open': { owner: 'projects', kind: 'navigate', label: 'Buka detail proyek' },
   'projects.edit': { owner: 'projects', kind: 'mutate', label: 'Ubah proyek' },
   'projects.status-change': { owner: 'projects', kind: 'mutate', label: 'Ubah status proyek' },
-  'projects.archive': { owner: 'projects', kind: 'mutate', label: 'Arsipkan proyek' },
+  'projects.delete': { owner: 'projects', kind: 'mutate', label: 'Hapus proyek permanen' },
   'projects.year-filter': { owner: 'projects', kind: 'filter', label: 'Filter tahun proyek' },
   'projects.transaction-create': { owner: 'projects', kind: 'mutate', label: 'Catat transaksi proyek' },
   'projects.transaction-correct': { owner: 'projects', kind: 'mutate', label: 'Koreksi transaksi proyek' },
