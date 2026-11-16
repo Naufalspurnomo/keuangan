@@ -386,7 +386,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 page.get_by_role("button", name="Buka navigasi").click()
                 self.assertTrue(page.locator(".sidebar").evaluate("node => node.classList.contains('is-open')"))
                 navigation = page.get_by_role("navigation", name="Menu utama")
-                self.assertEqual(navigation.get_by_role("button").count(), 8)
+                self.assertEqual(navigation.get_by_role("button").count(), 7)
                 expect(navigation.get_by_role("button", name=re.compile(r"^Transaksi"))).to_have_count(0)
                 navigation.get_by_role("button", name=re.compile(r"^Proyek")).click()
                 page.get_by_role("heading", name="Umur dan status proyek").wait_for()
