@@ -1,4 +1,4 @@
-export type OwnerRoute = 'dashboard' | 'cashflow' | 'wallets' | 'projects' | 'office' | 'debts' | 'reports' | 'shell'
+export type OwnerRoute = 'dashboard' | 'cashflow' | 'wallets' | 'projects' | 'documents' | 'office' | 'debts' | 'reports' | 'shell'
 export type ActionKind = 'navigate' | 'mutate' | 'filter' | 'export' | 'preference'
 
 export interface RegisteredAction {
@@ -12,6 +12,7 @@ export const ACTION_REGISTRY = {
   'nav.cashflow': { owner: 'cashflow', kind: 'navigate', label: 'Buka Arus Kas' },
   'nav.wallets': { owner: 'wallets', kind: 'navigate', label: 'Buka Dompet' },
   'nav.projects': { owner: 'projects', kind: 'navigate', label: 'Buka Proyek' },
+  'nav.documents': { owner: 'documents', kind: 'navigate', label: 'Buka Quotation & Invoice' },
   'nav.office': { owner: 'office', kind: 'navigate', label: 'Buka Operasional Kantor' },
   'nav.debts': { owner: 'debts', kind: 'navigate', label: 'Buka Hutang' },
   'nav.reports': { owner: 'reports', kind: 'navigate', label: 'Buka Laporan' },
