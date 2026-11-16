@@ -26,20 +26,28 @@ const renderApp = () => render(<DemoApp />)
 const nav = (name: string) => fireEvent.click(within(screen.getByRole('navigation', { name: 'Menu utama' })).getByRole('button', { name: new RegExp(`^${name}`) }))
 
 describe('Hollawall demo finance workspace', () => {
-  it('renders the canonical shell with exactly seven owned navigation views', () => {
+  it('renders the canonical shell with eight owned navigation views', () => {
     renderApp()
     expect(screen.getByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })).toBeTruthy()
     expect(screen.getByText(/Data keuangan demo tersimpan di browser ini dan tidak terhubung ke buku besar produksi\. Data Presensi privat dibaca dari server\./)).toBeTruthy()
     const menu = screen.getByRole('navigation', { name: 'Menu utama' })
-    expect(within(menu).getAllByRole('button')).toHaveLength(7)
+    expect(within(menu).getAllByRole('button')).toHaveLength(8)
     for (const [label, id] of [
       ['Dashboard', 'nav.dashboard'], ['Arus Kas', 'nav.cashflow'], ['Dompet', 'nav.wallets'],
-      ['Proyek', 'nav.projects'], ['Operasional Kantor', 'nav.office'], ['Hutang', 'nav.debts'], ['Laporan', 'nav.reports'],
+      ['Proyek', 'nav.projects'], ['Quotation & Invoice', 'nav.documents'], ['Operasional Kantor', 'nav.office'], ['Hutang', 'nav.debts'], ['Laporan', 'nav.reports'],
     ] as const) {
       const item = within(menu).getByRole('button', { name: new RegExp(`^${label}`) })
       expect(item.getAttribute('data-action-id')).toBe(id)
     }
     expect(within(menu).queryByRole('button', { name: /Perlu Ditinjau/ })).toBeNull()
+  })
+
+  it('exposes quotation and invoice as a first-class navigation destination', () => {
+    renderApp()
+    nav('Quotation & Invoice')
+    expect(window.location.hash).toBe('#documents')
+    expect(screen.getByRole('heading', { name: 'Quotation & Invoice' })).toBeTruthy()
+    expect(screen.getByText(/Pilih proyek untuk membuat quotation, sales order, invoice, atau kuitansi/)).toBeTruthy()
   })
 
   it('keeps exports in Reports and preserves project context in the mobile breadcrumb', () => {
@@ -57,7 +65,7 @@ describe('Hollawall demo finance workspace', () => {
 
   it('registers visible action controls with a stable id and one owner route', () => {
     renderApp()
-    for (const label of ['Dashboard', 'Arus Kas', 'Dompet', 'Proyek', 'Operasional Kantor', 'Hutang', 'Laporan']) nav(label)
+    for (const label of ['Dashboard', 'Arus Kas', 'Dompet', 'Proyek', 'Quotation & Invoice', 'Operasional Kantor', 'Hutang', 'Laporan']) nav(label)
     const registered = [...document.querySelectorAll<HTMLElement>('[data-action-id]')]
     expect(registered.length).toBeGreaterThan(7)
     expect(registered.every((control) => Boolean(control.dataset.ownerRoute))).toBe(true)
