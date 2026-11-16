@@ -751,6 +751,7 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
             "008_project_quotation_handoffs.sql",
             "019_structured_quotations.sql",
             "020_quotation_invariants.sql",
+            "022_project_hard_delete.sql",
         )
     ]
     try:
