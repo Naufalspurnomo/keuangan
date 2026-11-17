@@ -62,6 +62,20 @@ def exists(ftp: FTP_TLS, path: str) -> bool:
         return False
 
 
+def locate_wordpress_root(ftp: FTP_TLS) -> str:
+    candidates = (
+        "",
+        "public_html",
+        "hollawall.com/public_html",
+        "domains/hollawall.com/public_html",
+        "www",
+    )
+    roots = [root for root in candidates if exists(ftp, f"{root + '/' if root else ''}wp-load.php")]
+    if len(roots) != 1:
+        raise RuntimeError(f"expected one WordPress document root, found {len(roots)}")
+    return roots[0]
+
+
 def php_single_quoted(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
@@ -209,7 +223,7 @@ def main() -> int:
     host = require_env("RW_FTP_HOST")
     user = require_env("RW_FTP_USER")
     password = require_env("RW_FTP_PASSWORD")
-    remote = safe_remote(args.remote)
+    endpoint = safe_remote(args.remote)
     if args.slug != DEFAULT_SLUG:
         raise RuntimeError("unexpected slug")
 
@@ -232,28 +246,31 @@ def main() -> int:
     runner = build_runner(token, source, target, args.slug)
     evidence: dict[str, object] = {
         "success": False,
-        "remote": remote,
         "slug": args.slug,
         "runner_sha256": hashlib.sha256(runner).hexdigest(),
         "runner_removed": False,
     }
     ftp = connect(host, user, password, args.port)
+    remote = ""
     try:
+        root = locate_wordpress_root(ftp)
+        remote = f"{root}/{endpoint}" if root else endpoint
+        evidence["wordpress_root_detected"] = True
+        evidence["remote"] = remote
         if exists(ftp, remote):
             raise RuntimeError(f"remote endpoint already exists: {remote}")
         ftp.storbinary(f"STOR {remote}", io.BytesIO(runner))
         ftp.sendcmd(f"SITE CHMOD 600 {remote}")
         if download(ftp, remote) != runner:
             raise RuntimeError("uploaded runner readback mismatch")
-        endpoint_url = "https://hollawall.com/" + remote
-        result = call_endpoint(endpoint_url, token)
+        result = call_endpoint("https://hollawall.com/" + endpoint, token)
         evidence.update(result)
         evidence["success"] = True
     finally:
         try:
-            if exists(ftp, remote):
+            if remote and exists(ftp, remote):
                 ftp.delete(remote)
-            evidence["runner_removed"] = not exists(ftp, remote)
+            evidence["runner_removed"] = bool(remote) and not exists(ftp, remote)
         finally:
             try:
                 ftp.quit()
