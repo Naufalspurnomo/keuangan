@@ -223,7 +223,9 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
 
   if (loading && !documents.length && !active) return <div className="project-detail-empty" role="status"><strong>Memuat dokumen…</strong><span>Mengambil daftar terbaru dari server.</span></div>
 
-  if (active) return <div className="project-documents-active" aria-busy={busy}>
+  if (active) {
+    const composing = !('status' in active) || active.status === 'draft'
+    return <div className={`project-documents-active${composing ? ' document-compose-shell' : ''}`} aria-busy={busy}>
     {error && <div role="alert" className="document-state-alert"><strong>{error}</strong>{retryCommand && <button type="button" className="secondary-button" onClick={retrySame} disabled={busy}>Ulangi permintaan yang sama</button>}</div>}
     {notice && <p role="status" className="document-state-notice">{notice}</p>}
     {'status' in active && active.status !== 'draft' ? <>
@@ -239,7 +241,7 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
       <ProjectDocumentPreview project={project} document={active} />
     </> : <>
       {!writesEnabled && <p className="write-disabled-note">Perubahan dokumen belum diaktifkan.</p>}
-      <ProjectDocumentComposer project={project} document={active} writesEnabled={writesEnabled} saving={busy} receiptOptions={receiptOptions} onSave={saveDraft} onClose={close} />
+      <ProjectDocumentComposer project={project} document={active} writesEnabled={writesEnabled} saving={busy} receiptOptions={receiptOptions} onSave={saveDraft} onClose={close} onOpenTransactions={() => onRouteChange({ tab: 'transactions', projectId: project.id })} />
       {'status' in active && <div className="document-issue-bar"><button type="button" className="primary-button" onClick={issue} disabled={!writesEnabled || busy}>Terbitkan dokumen</button></div>}
     </>}
     {voiding && <div className="modal-backdrop" role="presentation"><section ref={voidDialog.dialogRef} onKeyDown={voidDialog.onKeyDown} className="modal-card document-void-dialog" role="dialog" aria-modal="true" aria-label="Batalkan dokumen" tabIndex={-1}>
@@ -249,6 +251,7 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
       <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setVoiding(false)}>Kembali</button><button type="button" className="primary-button danger" onClick={confirmVoid}>Konfirmasi pembatalan</button></div>
     </section></div>}
   </div>
+  }
 
   return <section className="project-documents-workspace" aria-busy={loading}>
     <header className="project-documents-head"><div><p className="eyebrow">DOKUMEN PROYEK</p><h2>Quotation, invoice, dan kuitansi</h2><p>Template otomatis mengikuti identitas proyek, klien, perusahaan, issuer, dan dompet proyek ini.</p></div><div className="project-document-create"><button type="button" className="secondary-button" onClick={() => create('invoice')} disabled={!writesEnabled}><FilePlus2 size={16} /> Buat invoice</button><button type="button" className="secondary-button" onClick={() => create('receipt')} disabled={!writesEnabled}><Plus size={16} /> Buat kuitansi</button></div></header>

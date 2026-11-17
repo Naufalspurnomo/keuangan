@@ -73,7 +73,7 @@ export default function ProjectDocumentPreview({ project, document }: { project:
     </section>}
     <section className="document-preview-signatures" aria-label="Tanda tangan">
       <div><small>Disiapkan oleh</small><span /> <strong>{document.prepared_by || 'Hollawall'}</strong></div>
-      <div><small>Persetujuan klien</small><span /> <strong>{document.client_signatory || project.client_name}</strong></div>
+      <div><small>{document.type === 'receipt' ? 'Diterima oleh' : 'Persetujuan klien'}</small><span /> <strong>{document.client_signatory || project.client_name}</strong></div>
     </section>
     <footer><span>Hollawall · {project.id}</span><span>Halaman 1</span></footer>
   </article>

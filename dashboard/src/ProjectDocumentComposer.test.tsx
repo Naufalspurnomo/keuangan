@@ -66,6 +66,51 @@ describe('ProjectDocumentComposer', () => {
     expect(preview).toHaveTextContent('Rp100.000')
     expect(within(preview).getByText('Subtotal').nextElementSibling).toHaveTextContent('Rp100.000')
     expect(within(preview).getByText('Total').nextElementSibling).toHaveTextContent('Rp100.000')
+    expect(within(preview).getByText('Diterima oleh')).toBeTruthy()
+    expect(within(preview).queryByText('Persetujuan klien')).toBeNull()
+  })
+
+  it('blocks an empty receipt before showing a misleading Rp0 document', () => {
+    const draft = createEmptyDocumentDraft(project.id, 'receipt', '2026-11-03')
+    render(<ProjectDocumentComposer
+      project={project}
+      document={draft}
+      writesEnabled
+      receiptOptions={{ invoices: [], transactions: [] }}
+      onSave={vi.fn()}
+      onClose={vi.fn()}
+      onOpenTransactions={vi.fn()}
+    />)
+
+    expect(screen.getByRole('heading', { name: 'Kuitansi belum bisa dibuat' })).toBeTruthy()
+    expect(screen.getByText(/Nominal kuitansi selalu diambil dari transaksi pemasukan/)).toBeTruthy()
+    expect(screen.queryByRole('article', { name: 'Pratinjau A5 Kuitansi' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Simpan draf' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Buka transaksi proyek' })).toBeTruthy()
+  })
+
+  it('shows a receipt preview only after an income transaction is selected', () => {
+    const draft = createEmptyDocumentDraft(project.id, 'receipt', '2026-11-03')
+    const options = {
+      invoices: [],
+      transactions: [{
+        transaction_id: 'income-1',
+        source_key: 'income-1',
+        amount: 100_000,
+        available_amount: 100_000,
+        description: 'Transfer DP',
+        transaction_date: '2026-11-03',
+      }],
+    }
+    render(<ProjectDocumentComposer project={project} document={draft} writesEnabled receiptOptions={options} onSave={vi.fn()} onClose={vi.fn()} />)
+
+    expect(screen.getByRole('heading', { name: 'Pilih pembayaran untuk kuitansi' })).toBeTruthy()
+    expect(screen.queryByRole('article', { name: 'Pratinjau A5 Kuitansi' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Simpan draf' })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(screen.getByRole('article', { name: 'Pratinjau A5 Kuitansi' })).toHaveTextContent('Rp100.000')
+    expect(screen.getByRole('button', { name: 'Simpan draf' })).toBeEnabled()
   })
 
   it('locks invoice target and allocations after a receipt draft is created', () => {
