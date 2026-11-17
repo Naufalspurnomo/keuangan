@@ -154,6 +154,8 @@ export interface ProjectQuotation {
   template_key?: 'hojja' | 'hollawall' | 'texturin' | string
   template_version?: string
   payment_profile_key?: string
+  official_number?: string | null
+  issued_at?: string | null
   recipient_name?: string
   recipient_company?: string
   recipient_address?: string

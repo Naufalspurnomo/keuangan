@@ -148,6 +148,8 @@ function quotation(value: unknown): ProjectQuotation {
     template_key: text(item.template_key) || undefined,
     template_version: text(item.template_version) || undefined,
     payment_profile_key: text(item.payment_profile_key) || undefined,
+    official_number: nullableText(item.official_number),
+    issued_at: nullableText(item.issued_at),
     recipient_name: text(item.recipient_name),
     recipient_company: text(item.recipient_company),
     recipient_address: text(item.recipient_address),

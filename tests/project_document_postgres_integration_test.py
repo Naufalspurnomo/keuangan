@@ -5,7 +5,7 @@ import os
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -73,7 +73,7 @@ def dsn():
     canonical_extensions = [
         path.read_text(encoding="utf-8")
         for path in sorted(migration_root.glob("*.sql"))
-        if 9 <= int(path.name.split("_", 1)[0]) <= 24
+        if 9 <= int(path.name.split("_", 1)[0]) <= 25
     ]
     with psycopg.connect(selected, autocommit=True) as connection:
         with connection.cursor() as cursor:
@@ -2994,6 +2994,51 @@ def test_database_trigger_rejects_sent_rollback_and_legacy_acceptance(repository
                        WHERE id = %s""",
                     (sent["id"],),
                 )
+
+
+def test_sent_structured_quotation_gets_number_validity_and_byte_stable_artifact(repository):
+    created = project(repository, key="quotation-artifact-project-0001", quotation_required=True)
+    image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    quotation = repository.create_project_quotation(
+        created["project"]["id"],
+        values={
+            "template_key": "HOLLAWALL",
+            "template_version": "commercial-v3",
+            "payment_profile_key": "hollawall",
+            "project_image_url": image,
+            "lines": [{
+                "description": "Mural utama", "quantity": "6", "unit": "m²", "unit_price": 200_000,
+                "commercial_meta": {
+                    "pricing_mode": "area_rate", "billed_area_m2": "6", "area_rounding": "exact",
+                },
+            }],
+        },
+        idempotency_key="quotation-artifact-create-0001",
+        actor=ACTOR,
+    )
+    sent = repository.transition_project_quotation(
+        quotation["id"], status="sent", note="", expected_version=quotation["lock_version"],
+        idempotency_key="quotation-artifact-send-0001", actor=ACTOR,
+    )
+    first = repository.render_project_quotation(quotation["id"])
+    changed_renderer = ProjectDocumentRepository(
+        repository._dsn, now=lambda: FIXED_NOW + timedelta(days=30),
+        renderer=lambda _snapshot: (b"%PDF-1.7\nchanged renderer\n%%EOF\n", "changed/99"),
+        receipt_authority_reader=deterministic_receipt_authority,
+    )
+    second = changed_renderer.render_project_quotation(quotation["id"])
+    replay = repository.transition_project_quotation(
+        quotation["id"], status="sent", note="", expected_version=quotation["lock_version"],
+        idempotency_key="quotation-artifact-send-0001", actor=ACTOR,
+    )
+
+    assert sent["official_number"] == "QTN/HOLLAWALL/2027/000001"
+    assert sent["valid_until"] == "2027-01-08"
+    assert sent["issued_at"].startswith("2026-12-31")
+    assert replay["official_number"] == sent["official_number"]
+    assert first["bytes"] == second["bytes"]
+    assert first["sha256"] == second["sha256"]
+    assert second["renderer_version"] == "test-renderer/1"
 
 
 def test_structured_quotation_renders_selected_version_with_production_renderer(dsn):

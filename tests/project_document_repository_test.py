@@ -156,6 +156,19 @@ def test_brand_commercial_migration_is_additive_and_idempotent():
         assert fragment in sql
 
 
+def test_sent_quotation_artifact_migration_is_additive_and_immutable():
+    sql = (ROOT / "dashboard_api/migrations/025_quotation_artifacts.sql").read_text(encoding="utf-8")
+    for fragment in (
+        "ADD COLUMN IF NOT EXISTS official_number TEXT",
+        "ADD COLUMN IF NOT EXISTS issued_at TIMESTAMPTZ",
+        "CREATE TABLE IF NOT EXISTS project_quotation_number_counters",
+        "CREATE TABLE IF NOT EXISTS project_quotation_artifacts",
+        "UNIQUE INDEX IF NOT EXISTS uq_project_quotation_official_number",
+        "trg_project_quotation_artifacts_immutable",
+    ):
+        assert fragment in sql
+
+
 def test_repository_fails_closed_without_postgres_configuration(monkeypatch):
     monkeypatch.delenv("STATE_DATABASE_URL", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)

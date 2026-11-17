@@ -37,6 +37,7 @@ from services.project_document_models import (
     integer_rupiah,
 )
 from services.project_documents import calculate_document_totals
+from services.commercial_document_policy import commercial_policy
 
 
 JAKARTA = ZoneInfo("Asia/Jakarta")
@@ -73,7 +74,7 @@ _SELECT_QUOTATION = """
     recipient_name, recipient_company, recipient_address, recipient_contact, project_name,
     project_image_url, lines, discount_mode, discount_value, tax_percent,
     payment_terms, content_notes, accepted_snapshot, revision_of_id, dp_invoice_id,
-    installment_schedule, template_version, payment_profile_key
+    installment_schedule, template_version, payment_profile_key, official_number, issued_at
 """
 
 
@@ -365,9 +366,39 @@ SELECT
                 column_name || '|' || udt_name || '|' || is_nullable || '|' ||
                 COALESCE(column_default, '') || '|' || is_identity,
                 E'\n' ORDER BY ordinal_position
-            )) = '021b8faabd951e5a62b14c3ab7445119'
+            )) = 'eb60da2f88dd6be5250ada15de17ce9e'
             FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = 'project_quotation_handoffs'
+        )
+        AND (
+            SELECT MD5(STRING_AGG(
+                column_name || '|' || udt_name || '|' || is_nullable || '|' ||
+                COALESCE(column_default, '') || '|' || is_identity,
+                E'\n' ORDER BY ordinal_position
+            )) = 'b00cb16891a82cc9bc93474b95f2a691'
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'project_quotation_artifacts'
+        )
+        AND (
+            SELECT MD5(STRING_AGG(
+                column_name || '|' || udt_name || '|' || is_nullable || '|' ||
+                COALESCE(column_default, '') || '|' || is_identity,
+                E'\n' ORDER BY ordinal_position
+            )) = 'cfc0d5821c150370165b546672997946'
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'project_quotation_number_counters'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_trigger
+            WHERE tgname = 'trg_project_quotation_artifacts_immutable'
+              AND tgrelid = 'project_quotation_artifacts'::regclass
+              AND NOT tgisinternal
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND indexname = 'uq_project_quotation_official_number'
+              AND indexdef LIKE '%(official_number)%WHERE (official_number IS NOT NULL)'
         )
         AND (
             SELECT MD5(STRING_AGG(
@@ -481,7 +512,13 @@ SELECT
             SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
             WHERE n.nspname = 'public'
               AND p.proname = 'guard_project_quotation_transition'
-              AND MD5(p.prosrc) = 'be5b5468c257e3a5f1233b0dfa3a609e'
+              AND MD5(p.prosrc) = 'ea82001260190284b835e37a4624085b'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'public'
+              AND p.proname = 'reject_project_quotation_artifact_mutation'
+              AND MD5(p.prosrc) = '048b5b74c57f3ece2b9040d79c9225e6'
         )
         AND EXISTS (
             SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -770,6 +807,7 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
             "020_quotation_invariants.sql",
             "022_project_hard_delete.sql",
             "024_brand_commercial_identity.sql",
+            "025_quotation_artifacts.sql",
         )
     ]
     try:
@@ -1618,78 +1656,117 @@ class ProjectDocumentRepository:
                 f"Project quotation database unavailable: {type(exc).__name__}"
             ) from exc
 
-    def render_project_quotation(self, quotation_id: str) -> dict[str, Any]:
-        """Render the selected mutable quotation version without issuing a document."""
+    def _render_quotation_snapshot(
+        self,
+        cursor: Any,
+        quotation: Mapping[str, Any],
+        *,
+        instant: datetime,
+    ) -> tuple[dict[str, Any], bytes, str]:
         if self._renderer is None:
             raise ProjectDocumentUnavailable("document renderer is not configured")
+        if not quotation.get("lines") or not quotation.get("project_image_url"):
+            raise ProjectDocumentConflict("legacy Canva quotation has no structured PDF artifact")
+        cursor.execute(
+            "SELECT " + _SELECT_PROJECT + " FROM projects WHERE id = %s",  # nosec B608
+            (quotation["project_id"],),
+        )
+        project = _row_dict(cursor, _PROJECT_COLUMNS, cursor.fetchone())
+        if not project:
+            raise ProjectDocumentNotFound("quotation project not found")
+        issuer_columns = [
+            "issuer_key", "legal_name", "display_name", "number_code", "address",
+            "phone", "email", "tax_identity", "bank_details", "logo_path",
+            "profile_version", "created_at", "updated_at",
+        ]
+        cursor.execute(
+            "SELECT " + ", ".join(issuer_columns) +  # nosec B608
+            " FROM project_issuer_profiles WHERE issuer_key = %s",
+            (project["issuer_key"],),
+        )
+        issuer = _row_dict(cursor, issuer_columns, cursor.fetchone())
+        if not issuer:
+            raise ProjectDocumentNotFound("quotation issuer not found")
+        for field in ("created_by", "updated_by"):
+            project[field] = _safe_json_object(project.get(field))
+        project["name"] = quotation.get("project_name") or project.get("name")
+        project["client_name"] = quotation.get("recipient_name") or project.get("client_name")
+        project["client_company"] = quotation.get("recipient_company") or project.get("client_company")
+        project["client_address"] = quotation.get("recipient_address") or project.get("client_address")
+        project["client_contact"] = quotation.get("recipient_contact") or project.get("client_contact")
+        issue_date = instant.astimezone(JAKARTA).date()
+        document = {
+            "id": quotation["id"], "project_id": quotation["project_id"],
+            "issuer_key": project["issuer_key"], "document_type": "sales_order",
+            "status": quotation.get("status") or "draft",
+            "official_number": quotation.get("official_number") or f"QTN/{quotation['version']:03d}",
+            "issue_date": issue_date, "valid_until": quotation.get("valid_until"),
+            "template_key": quotation.get("template_key"),
+            "template_version": quotation.get("template_version"),
+            "payment_profile_key": quotation.get("payment_profile_key"),
+            "document_discount_amount": self._fixed_quotation_discount(quotation),
+            "document_discount_percent": str(quotation.get("discount_value") or 0)
+                if quotation.get("discount_mode") == "percent" else "0",
+            "tax_percent": str(quotation.get("tax_percent") or "0"),
+            "notes": quotation.get("content_notes"),
+            "payment_terms": quotation.get("payment_terms"),
+            "project_image_url": quotation.get("project_image_url"),
+        }
+        snapshot = _plain({
+            "schema_version": 2, "issued_at": instant,
+            "issuer": issuer, "project": project, "document": document,
+            "lines": quotation.get("lines") or [], "allocations": [],
+            "totals": self._quotation_totals(quotation),
+        })
+        rendered = self._renderer(snapshot)
+        if not isinstance(rendered, tuple) or len(rendered) != 2 or not isinstance(rendered[0], bytes):
+            raise ProjectDocumentUnavailable("document renderer must return (pdf_bytes, renderer_version)")
+        pdf, renderer_version = rendered
+        if not pdf.startswith(b"%PDF-"):
+            raise ProjectDocumentUnavailable("document renderer returned invalid PDF bytes")
+        return snapshot, pdf, str(renderer_version)
+
+    @staticmethod
+    def _quotation_artifact(cursor: Any, quotation_id: str) -> dict[str, Any] | None:
+        cursor.execute(
+            """SELECT byte_size, sha256, pdf_bytes, renderer_version, template_key
+               FROM project_quotation_artifacts WHERE quotation_id = %s""",
+            (quotation_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        byte_size, sha256, pdf, renderer_version, template_key = row
+        if not isinstance(pdf, bytes):
+            pdf = bytes(pdf)
+        if len(pdf) != int(byte_size) or hashlib.sha256(pdf).hexdigest() != str(sha256):
+            raise ProjectDocumentUnavailable("persisted quotation artifact integrity validation failed")
+        return {
+            "bytes": pdf, "byte_size": int(byte_size), "sha256": str(sha256),
+            "renderer_version": str(renderer_version), "template_key": str(template_key),
+        }
+
+    def render_project_quotation(self, quotation_id: str) -> dict[str, Any]:
+        """Return persisted bytes for sent quotations; render drafts on demand."""
         try:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
                     quotation = self._load_quotation(cursor, quotation_id)
-                    if not quotation.get("lines") or not quotation.get("project_image_url"):
-                        raise ProjectDocumentConflict(
-                            "legacy Canva quotation has no structured PDF artifact"
+                    artifact = self._quotation_artifact(cursor, quotation_id)
+                    if artifact is None:
+                        _, pdf, renderer_version = self._render_quotation_snapshot(
+                            cursor, quotation, instant=_instant(self._now()),
                         )
-                    cursor.execute(
-                        "SELECT " + _SELECT_PROJECT + " FROM projects WHERE id = %s",  # nosec B608
-                        (quotation["project_id"],),
+                        artifact = {
+                            "bytes": pdf, "byte_size": len(pdf),
+                            "sha256": hashlib.sha256(pdf).hexdigest(),
+                            "renderer_version": renderer_version,
+                            "template_key": str(quotation["template_key"]),
+                        }
+                    artifact["filename"] = (
+                        f"quotation-{str(artifact['template_key']).lower()}-v{quotation['version']}.pdf"
                     )
-                    project = _row_dict(cursor, _PROJECT_COLUMNS, cursor.fetchone())
-                    if not project:
-                        raise ProjectDocumentNotFound("quotation project not found")
-                    cursor.execute(
-                        """SELECT issuer_key, legal_name, display_name, number_code,
-                                  address, phone, email, tax_identity, bank_details,
-                                  logo_path, profile_version, created_at, updated_at
-                           FROM project_issuer_profiles WHERE issuer_key = %s""",
-                        (project["issuer_key"],),
-                    )
-                    issuer = _row_dict(cursor, [
-                        "issuer_key", "legal_name", "display_name", "number_code", "address",
-                        "phone", "email", "tax_identity", "bank_details", "logo_path",
-                        "profile_version", "created_at", "updated_at",
-                    ], cursor.fetchone())
-                    if not issuer:
-                        raise ProjectDocumentNotFound("quotation issuer not found")
-            for field in ("created_by", "updated_by"):
-                project[field] = _safe_json_object(project.get(field))
-            project["name"] = quotation.get("project_name") or project.get("name")
-            project["client_name"] = quotation.get("recipient_name") or project.get("client_name")
-            project["client_company"] = quotation.get("recipient_company") or project.get("client_company")
-            project["client_address"] = quotation.get("recipient_address") or project.get("client_address")
-            project["client_contact"] = quotation.get("recipient_contact") or project.get("client_contact")
-            document = {
-                "id": quotation["id"], "project_id": quotation["project_id"],
-                "issuer_key": project["issuer_key"], "document_type": "sales_order",
-                "status": "draft", "official_number": f"QTN/{quotation['version']:03d}",
-                "issue_date": _instant(self._now()).astimezone(JAKARTA).date(),
-                "valid_until": quotation.get("valid_until"),
-                "document_discount_amount": self._fixed_quotation_discount(quotation),
-                "document_discount_percent": str(quotation.get("discount_value") or 0)
-                    if quotation.get("discount_mode") == "percent" else "0",
-                "tax_percent": str(quotation.get("tax_percent") or "0"),
-                "notes": quotation.get("content_notes"),
-                "payment_terms": quotation.get("payment_terms"),
-                "project_image_url": quotation.get("project_image_url"),
-            }
-            snapshot = _plain({
-                "schema_version": 1, "issued_at": _instant(self._now()),
-                "issuer": issuer, "project": project, "document": document,
-                "lines": quotation.get("lines") or [], "allocations": [],
-                "totals": self._quotation_totals(quotation),
-            })
-            rendered = self._renderer(snapshot)
-            if not isinstance(rendered, tuple) or len(rendered) != 2 or not isinstance(rendered[0], bytes):
-                raise ProjectDocumentUnavailable("document renderer must return (pdf_bytes, renderer_version)")
-            pdf, renderer_version = rendered
-            if not pdf.startswith(b"%PDF-"):
-                raise ProjectDocumentUnavailable("document renderer returned invalid PDF bytes")
-            return {
-                "bytes": pdf, "byte_size": len(pdf),
-                "sha256": hashlib.sha256(pdf).hexdigest(),
-                "renderer_version": str(renderer_version),
-                "filename": f"quotation-{quotation['template_key'].lower()}-v{quotation['version']}.pdf",
-            }
+                    return artifact
         except ProjectDocumentError:
             raise
         except Exception as exc:
@@ -2137,39 +2214,90 @@ class ProjectDocumentRepository:
                     key_hash, _, replay = self._claim(cursor, "quotation.transition", idempotency_key, request)
                     if replay is not None:
                         return replay
-                    cursor.execute(
-                        """SELECT status, lock_version, project_id, lines,
-                                  template_key, template_version, payment_profile_key
-                           FROM project_quotation_handoffs WHERE id = %s FOR UPDATE""",
-                        (quotation_id,),
-                    )
-                    current = cursor.fetchone()
-                    if not current:
-                        raise ProjectDocumentNotFound("quotation not found")
-                    if int(current[1]) != expected_version:
+                    current = self._load_quotation(cursor, quotation_id, for_update=True)
+                    if int(current["lock_version"]) != expected_version:
                         raise ProjectDocumentConflict("quotation version is stale")
                     allowed = {"draft": {"sent"}, "sent": {"rejected", "revised"}}
-                    if target not in allowed.get(str(current[0]), set()):
+                    if target not in allowed.get(str(current["status"]), set()):
                         raise ProjectDocumentConflict("quotation status transition is not allowed")
-                    structured_lines = _safe_json_array(current[3])
+                    structured_lines = list(current.get("lines") or [])
+                    sent_at = _instant(self._now()) if target == "sent" else current.get("sent_at")
+                    official_number = current.get("official_number")
+                    issued_at = current.get("issued_at")
+                    valid_until = current.get("valid_until")
                     if target == "sent" and structured_lines:
-                        if not str(current[4] or "").strip() or str(current[5] or "") != "commercial-v3":
+                        if not str(current.get("template_key") or "").strip() or str(current.get("template_version") or "") != "commercial-v3":
                             raise ProjectDocumentConflict("quotation template identity is incomplete")
                         self._require_payment_profile(
                             cursor,
-                            project_id=str(current[2]),
-                            payment_profile_key=current[6],
+                            project_id=str(current["project_id"]),
+                            payment_profile_key=current.get("payment_profile_key"),
+                        )
+                        if not isinstance(sent_at, datetime):
+                            raise ProjectDocumentUnavailable("quotation sent timestamp allocation failed")
+                        instant = sent_at
+                        local_date = instant.astimezone(JAKARTA).date()
+                        template_key = str(current["template_key"]).upper()
+                        cursor.execute(
+                            """INSERT INTO project_quotation_number_counters (
+                                   template_key, calendar_year, last_value
+                               ) VALUES (%s, %s, 1)
+                               ON CONFLICT (template_key, calendar_year)
+                               DO UPDATE SET last_value = project_quotation_number_counters.last_value + 1,
+                                             updated_at = NOW()
+                               RETURNING last_value""",
+                            (template_key, local_date.year),
+                        )
+                        counter = cursor.fetchone()
+                        if not counter:
+                            raise ProjectDocumentUnavailable("quotation number allocation failed")
+                        sequence = int(counter[0])
+                        official_number = f"QTN/{template_key}/{local_date.year}/{sequence:06d}"
+                        issued_at = instant
+                        if not valid_until:
+                            days = int(commercial_policy(template_key)["default_validity_days"])
+                            valid_until = local_date + timedelta(days=days)
+                        render_input = {
+                            **current,
+                            "status": "sent",
+                            "official_number": official_number,
+                            "issued_at": issued_at,
+                            "valid_until": valid_until,
+                        }
+                        snapshot, pdf, renderer_version = self._render_quotation_snapshot(
+                            cursor, render_input, instant=instant,
+                        )
+                        snapshot_json, canonical_snapshot = _json(snapshot, label="quotation snapshot")
+                        pdf_hash = hashlib.sha256(pdf).hexdigest()
+                        cursor.execute(
+                            """INSERT INTO project_quotation_artifacts (
+                                   quotation_id, byte_size, sha256, pdf_bytes,
+                                   immutable_snapshot, snapshot_sha256, template_key,
+                                   template_version, renderer_version
+                               ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)""",
+                            (
+                                quotation_id, len(pdf), pdf_hash, pdf, snapshot_json,
+                                canonical_json_hash(canonical_snapshot), template_key,
+                                current["template_version"], renderer_version,
+                            ),
                         )
                     cursor.execute(
                         """UPDATE project_quotation_handoffs
                            SET status = %s,
                                negotiation_notes = CASE WHEN %s = '' THEN negotiation_notes ELSE %s END,
-                               sent_at = CASE WHEN %s = 'sent' THEN NOW() ELSE sent_at END,
+                               sent_at = CASE WHEN %s = 'sent' THEN %s ELSE sent_at END,
+                               issued_at = CASE WHEN %s = 'sent' THEN %s ELSE issued_at END,
+                               official_number = CASE WHEN %s = 'sent' THEN %s ELSE official_number END,
+                               valid_until = CASE WHEN %s = 'sent' THEN %s ELSE valid_until END,
                                decided_at = CASE WHEN %s IN ('accepted', 'rejected', 'revised') THEN NOW() ELSE decided_at END,
                                updated_by = %s::jsonb, lock_version = lock_version + 1
                            WHERE id = %s AND lock_version = %s
                            RETURNING """ + _SELECT_QUOTATION,  # nosec B608 -- internal column constant
-                        (target, note, note, target, target, actor_json, quotation_id, expected_version),
+                        (
+                            target, note, note, target, sent_at, target, issued_at,
+                            target, official_number, target, valid_until, target,
+                            actor_json, quotation_id, expected_version,
+                        ),
                     )
                     row = cursor.fetchone()
                     if not row:
