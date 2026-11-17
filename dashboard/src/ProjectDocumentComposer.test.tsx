@@ -34,7 +34,7 @@ describe('ProjectDocumentComposer', () => {
 
     fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Panel akustik' } })
     fireEvent.change(screen.getByLabelText('Harga satuan item 1'), { target: { value: '100000' } })
-    expect(screen.getByRole('status', { name: 'Total invoice' })).toHaveTextContent('Rp100.000')
+    expect(screen.getByLabelText('Total invoice')).toHaveTextContent('Rp100.000')
   })
 
   it('edits line items and renders a semantic A5 preview with calculated totals', () => {

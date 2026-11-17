@@ -148,7 +148,7 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
           </div>
         </section>
         <div className="document-save-bar">
-          <div role="status" aria-label={`Total ${typeName}`} className="document-live-total"><span>Total {typeName}</span><strong>{money}</strong></div>
+          <div aria-label={`Total ${typeName}`} className="document-live-total"><span>Total {typeName}</span><strong>{money}</strong></div>
           <div>{!writesEnabled && <span className="write-disabled-note">Penyimpanan dokumen belum diaktifkan.</span>}<button type="button" className="secondary-button" onClick={close}>Batal</button><button type="submit" className="primary-button" disabled={!writesEnabled || saving}>{saving ? 'Menyimpan…' : 'Simpan draf'}</button></div>
         </div>
       </form>
