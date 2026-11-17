@@ -37,6 +37,31 @@ describe('ProjectDocumentComposer', () => {
     expect(screen.getByLabelText('Total invoice')).toHaveTextContent('Rp100.000')
   })
 
+  it('keeps a 10000 unit price in its field and never moves it into notes', () => {
+    const draft = createEmptyDocumentDraft(project.id, 'invoice', '2026-11-03')
+    render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={vi.fn()} onClose={vi.fn()} />)
+
+    const price = screen.getByLabelText('Harga satuan item 1')
+    const notes = screen.getByLabelText('Catatan')
+    fireEvent.change(price, { target: { value: '10000' } })
+
+    expect(price).toHaveValue(10000)
+    expect(notes).toHaveValue('')
+    expect(screen.getByLabelText('Total invoice')).toHaveTextContent('Rp10.000')
+    expect(screen.getByRole('article', { name: 'Pratinjau A5 Invoice' })).toHaveTextContent('Rp10.000')
+  })
+
+  it('shows a calculation error instead of presenting invalid input as Rp0', () => {
+    const draft = createEmptyDocumentDraft(project.id, 'invoice', '2026-11-03')
+    render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={vi.fn()} onClose={vi.fn()} />)
+
+    fireEvent.change(screen.getByLabelText('Kuantitas item 1'), { target: { value: 'abc' } })
+
+    expect(screen.getByLabelText('Total invoice')).toHaveTextContent('Periksa nilai item')
+    expect(screen.queryByRole('article', { name: 'Pratinjau A5 Invoice' })).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Pratinjau perlu diperbaiki' })).toBeTruthy()
+  })
+
   it('edits line items and renders a semantic A5 preview with calculated totals', () => {
     const draft = createEmptyDocumentDraft(project.id, 'invoice', '2026-11-03')
     render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={vi.fn()} onClose={vi.fn()} />)
