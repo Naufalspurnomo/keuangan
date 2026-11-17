@@ -61,6 +61,13 @@ return [
     assert "'owner_email' => 'naufalspurnomo@gmail.com'" in updated
 
 
+def test_config_sync_requires_owner_scoped_proxy_token(monkeypatch):
+    module = load_module()
+    monkeypatch.delenv("HOLLAWALL_LIVE_API_PROXY_TOKEN", raising=False)
+    with pytest.raises(RuntimeError, match="HOLLAWALL_LIVE_API_PROXY_TOKEN"):
+        module.require_env("HOLLAWALL_LIVE_API_PROXY_TOKEN")
+
+
 def test_finance_config_sets_presensi_canonical_project_catalog() -> None:
     module = load_module()
     source = "<?php\nreturn [\n  'employees' => [],\n];\n"

@@ -401,6 +401,16 @@ def owner_identity() -> tuple[str, str] | None:
     if proxy_owner_authenticated():
         email = str(current_app.config.get("DASHBOARD_OWNER_EMAIL") or "owner@proxy.local").strip().casefold()
         return email, "owner"
+    if request.headers.get(ACTOR_ASSERTION_HEADER):
+        asserted = verify_upstream_actor_assertion()
+        owner_email = str(current_app.config.get("DASHBOARD_OWNER_EMAIL") or "").strip().casefold()
+        if (
+            asserted is not None
+            and asserted["role"] == "boss"
+            and owner_email
+            and hmac.compare_digest(asserted["email"], owner_email)
+        ):
+            return asserted["email"], "owner"
     email = session.get(SESSION_USER_KEY)
     role = session.get(SESSION_ROLE_KEY)
     if email and role:

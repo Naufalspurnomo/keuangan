@@ -35,6 +35,10 @@ class RumahwebAdminReleaseTests(unittest.TestCase):
         self.assertIn("X-Hollawall-Proxy-Token", proxy)
         self.assertIn("CURLOPT_CONNECTTIMEOUT => 12", proxy)
         self.assertIn("CURLOPT_TIMEOUT => 75", proxy)
+        self.assertIn("X-Hollawall-Actor-Assertion", proxy)
+        self.assertIn("dashboard_actor_assertion_secret", proxy)
+        self.assertIn("'method' => 'GET'", proxy)
+        self.assertLess(proxy.index("session_write_close();"), proxy.index("$curl = curl_init($upstream);"))
 
     def test_release_has_fail_closed_transaction_proxy(self) -> None:
         proxy = (RELEASE / "api" / "transactions.php").read_text(encoding="utf-8")
