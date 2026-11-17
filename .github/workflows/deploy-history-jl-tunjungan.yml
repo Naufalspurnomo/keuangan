@@ -1,0 +1,45 @@
+name: Deploy History of Jl. Tunjungan
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hollawall-history-jl-tunjungan
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Deploy bilingual project article
+        env:
+          RW_FTP_HOST: ${{ secrets.RUMAHWEB_FTP_HOST }}
+          RW_FTP_USER: ${{ secrets.RUMAHWEB_FTP_USER }}
+          RW_FTP_PASSWORD: ${{ secrets.RUMAHWEB_FTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          python scripts/deploy_history_jl_tunjungan.py --evidence /tmp/history-jl-tunjungan.json
+          python - <<'PY'
+          import json
+          evidence = json.load(open('/tmp/history-jl-tunjungan.json'))
+          assert evidence['success'] is True, evidence
+          assert evidence['runner_removed'] is True, evidence
+          assert evidence['status'] == 'publish', evidence
+          assert evidence['slug'] == 'history-of-jl-tunjungan', evidence
+          assert evidence['translation_count'] == 5, evidence
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: history-jl-tunjungan-${{ github.run_id }}
+          path: /tmp/history-jl-tunjungan.json
+          if-no-files-found: warn
+          retention-days: 30
