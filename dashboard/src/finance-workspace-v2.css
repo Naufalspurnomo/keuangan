@@ -164,6 +164,22 @@ html[data-theme='dark'] .year-command nav button.active { color: #0c2028; }
 
 .payment-summary-warning { margin: 0; padding: 10px 12px; border-left: 3px solid var(--warning, #b7791f); background: var(--surface-muted); color: var(--text-secondary); font-size: 12px; }
 
+.project-document-list { display: grid; gap: 10px; }
+.project-document-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 20px; padding: 16px 18px; border: 1px solid var(--border); background: var(--surface-raised); }
+.project-document-card > div:first-child { display: grid; grid-template-columns: auto auto minmax(160px, 1fr); align-items: center; gap: 5px 10px; min-width: 0; }
+.project-document-card > div:first-child > span:last-child { grid-column: 2 / -1; color: var(--text-secondary); font-size: 11px; }
+.project-document-card > div:first-child > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-document-card > div:last-child { display: flex; align-items: center; gap: 14px; }
+.project-document-card .document-status { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 8px; border: 1px solid var(--border); color: var(--text-secondary); font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.project-document-card small { color: var(--text-secondary); }
+
+@media (max-width: 620px) {
+  .project-document-card { grid-template-columns: 1fr; align-items: stretch; }
+  .project-document-card > div:first-child { grid-template-columns: auto minmax(0, 1fr); }
+  .project-document-card > div:first-child > strong, .project-document-card > div:first-child > span:last-child { grid-column: 1 / -1; }
+  .project-document-card > div:last-child { justify-content: space-between; }
+}
+
 
 .project-profitability { display: grid; gap: 16px; }
 .project-profitability-head, .project-evidence-list header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
