@@ -21,7 +21,7 @@ import urllib.request
 from ftplib import FTP_TLS
 from pathlib import PurePosixPath
 
-DEFAULT_ENDPOINT = ".hollawall-content-deploy.php"
+DEFAULT_ENDPOINT = "hollawall-content-deploy-20261117.php"
 DEFAULT_SLUG = "history-of-jl-tunjungan"
 
 
