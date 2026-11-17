@@ -4,6 +4,74 @@ import pytest
 
 from services.project_document_models import DocumentCalculationError
 from services.project_documents import ProjectDocumentService, calculate_document_totals
+from services.commercial_document_policy import (
+    commercial_policies,
+    commercial_policy,
+    normalize_commercial_line,
+)
+
+
+def test_commercial_policy_matches_cross_runtime_fixture():
+    import json
+    from pathlib import Path
+
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "commercial_document_policies.json").read_text()
+    )
+    assert commercial_policies() == fixture
+    assert commercial_policy("TEXTURIN-Bali") == fixture["texturin"]
+
+
+def test_commercial_line_semantics_are_server_authoritative():
+    holla = normalize_commercial_line(
+        {
+            "description": "Mural indoor kiri",
+            "pricing_mode": "area_rate",
+            "width": "3.1",
+            "height": "2.71",
+            "dimension_unit": "m",
+            "unit_price": 650_000,
+        },
+        commercial_policy("hollawall"),
+    )
+    assert holla["raw_area_m2"] == "8.401"
+    assert holla["billed_area_m2"] == "8.4"
+    assert holla["line_total"] == 5_460_000
+
+    texturin = normalize_commercial_line(
+        {
+            "description": "Lime Wash Paint",
+            "pricing_mode": "ppm_area",
+            "width": "5000",
+            "height": "2695",
+            "dimension_unit": "mm",
+            "unit_price": 250_000,
+        },
+        commercial_policy("texturin"),
+    )
+    assert texturin["raw_area_m2"] == "13.475"
+    assert texturin["billed_area_m2"] == "13.48"
+    assert texturin["line_total"] == 3_370_000
+
+
+def test_commercial_line_rejects_ambiguous_manual_override_and_excess_precision():
+    line = {
+        "description": "Wall",
+        "pricing_mode": "area_rate",
+        "width": "3",
+        "height": "2",
+        "dimension_unit": "m",
+        "unit_price": 100_000,
+        "area_rounding": "manual_override",
+        "billed_area_m2": "5.5",
+    }
+    with pytest.raises(DocumentCalculationError, match="override reason"):
+        normalize_commercial_line(line, commercial_policy("hollawall"))
+    with pytest.raises(DocumentCalculationError, match="four fractional digits"):
+        normalize_commercial_line(
+            {**line, "billed_area_m2": "5.12345", "area_override_reason": "Site measurement"},
+            commercial_policy("hollawall"),
+        )
 
 
 def test_calculate_document_totals_uses_decimal_half_up_integer_idr():

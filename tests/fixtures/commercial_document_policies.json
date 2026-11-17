@@ -1,0 +1,47 @@
+{
+  "hollawall": {
+    "template_key": "hollawall",
+    "template_version": "commercial-v3",
+    "pricing_mode": "area_rate",
+    "page_size": "A5",
+    "default_deposit_percent": 30,
+    "default_validity_days": 7,
+    "labels": {
+      "description": "DESCRIPTION",
+      "quantity": "AREA",
+      "unit_price": "HARGA/M²",
+      "line_total": "JUMLAH",
+      "deposit": "Down Payment"
+    }
+  },
+  "hojja": {
+    "template_key": "hojja",
+    "template_version": "commercial-v3",
+    "pricing_mode": "fixed_artwork",
+    "page_size": "A4",
+    "default_deposit_percent": 50,
+    "default_validity_days": 7,
+    "labels": {
+      "description": "Description",
+      "quantity": "Qty",
+      "unit_price": "Agreed price",
+      "line_total": "Total",
+      "deposit": "Total DP"
+    }
+  },
+  "texturin": {
+    "template_key": "texturin",
+    "template_version": "commercial-v3",
+    "pricing_mode": "ppm_area",
+    "page_size": "A4",
+    "default_deposit_percent": 30,
+    "default_validity_days": 14,
+    "labels": {
+      "description": "DESCRIPTION",
+      "quantity": "LUAS",
+      "unit_price": "PPM",
+      "line_total": "TOTAL",
+      "deposit": "Signature fee"
+    }
+  }
+}
