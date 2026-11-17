@@ -125,10 +125,10 @@ def build_runner(token: str, source: dict[str, str], target: dict[str, str], slu
     }
     image_url = f"https://hollawall.com/wp-content/uploads/hollawall-projects/{image_name}"
     content = (
-        "<section class=\"hollawall-project-story\">"
-        "<figure class=\"wp-block-image size-full\">"
+        "<figure class=\"wp-block-image size-full hollawall-project-artwork\">"
         f"<img src=\"{image_url}\" alt=\"{source['cover_alt']}\" width=\"1159\" height=\"846\" />"
         "</figure>"
+        "<section class=\"hollawall-project-story\">"
         f"<h2>{source['heading']}</h2>"
         f"<p>{source['body']}</p>"
         f"<p>{source['source_line']}</p>"
