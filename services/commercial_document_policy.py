@@ -10,7 +10,7 @@ from typing import Any, Mapping
 from services.project_document_models import DocumentCalculationError, integer_rupiah
 
 _POLICY_PATH = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "commercial_document_policies.json"
-_TEMPLATE_KEYS = ("hollawall", "hojja", "texturin")
+_TEMPLATE_KEYS = ("hollawall", "hojja", "texturin", "texturin-surabaya", "texturin-bali")
 _PRICING_MODES = {"area_rate", "ppm_area", "fixed_artwork", "fixed_fee", "legacy_generic"}
 _DIMENSION_FACTORS = {"m": Decimal("1"), "cm": Decimal("0.01"), "mm": Decimal("0.001")}
 _AREA_MODES = {"area_rate", "ppm_area"}
@@ -24,6 +24,10 @@ def _template_key(value: Any) -> str:
     text = str(value or "").strip().lower()
     if "hojja" in text:
         return "hojja"
+    if "bali" in text or text.startswith("tx bali"):
+        return "texturin-bali"
+    if "surabaya" in text or text.startswith("tx sby"):
+        return "texturin-surabaya"
     if "texturin" in text or text.startswith("tx "):
         return "texturin"
     return "hollawall"

@@ -1388,8 +1388,10 @@ class ProjectDocumentRepository:
             return "HOLLAWALL"
         if canonical == "HOJJA":
             return "HOJJA"
-        if canonical in {"TEXTURIN-Surabaya", "TEXTURIN-Bali"}:
-            return "TEXTURIN"
+        if canonical == "TEXTURIN-Surabaya":
+            return "TEXTURIN-SURABAYA"
+        if canonical == "TEXTURIN-Bali":
+            return "TEXTURIN-BALI"
         raise ValueError("project company has no supported quotation template")
 
     @staticmethod

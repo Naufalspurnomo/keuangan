@@ -40,7 +40,9 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-RENDERER_VERSION = "branded-commercial-v2"
+from services.commercial_document_policy import commercial_policy
+
+RENDERER_VERSION = "branded-commercial-v3"
 MAX_PROJECT_IMAGE_URL_CHARS = 196_608
 MAX_PROJECT_IMAGE_BYTES = 144 * 1024
 MAX_PROJECT_IMAGE_PIXELS = 16_000_000
@@ -55,9 +57,12 @@ _BRAND_LOGOS = {
     "hollawall": _ASSET_DIR / "hollawall-logo-reference.png",
     "hojja": _ASSET_DIR / "hojja-logo.png",
     "texturin": _ASSET_DIR / "texturin-logo.png",
+    "texturin-surabaya": _ASSET_DIR / "texturin-logo.png",
+    "texturin-bali": _ASSET_DIR / "texturin-logo.png",
 }
 _HOLLAWALL_FOOTER_ART = _ASSET_DIR / "hollawall-footer-art.png"
 _HOLLAWALL_FOOTER_LOGO = _ASSET_DIR / "hollawall-footer-logo.png"
+_HOLLAWALL_FOOTER_ART_DATA = _HOLLAWALL_FOOTER_ART.read_bytes() if _HOLLAWALL_FOOTER_ART.is_file() else b""
 
 _INK = colors.HexColor("#383838")
 _MUTED = colors.HexColor("#666666")
@@ -93,7 +98,7 @@ class BrandSpec:
 
 _BRANDS = {
     "hollawall": BrandSpec(
-        "hollawall", A5, 10 * mm, 10 * mm, 8 * mm, 13 * mm,
+        "hollawall", A5, 10 * mm, 10 * mm, 8 * mm, 39 * mm,
         "Hollawall Mural Studio", _HOLLA_CYAN, _INK, colors.white,
     ),
     "hojja": BrandSpec(
@@ -104,13 +109,27 @@ _BRANDS = {
         "texturin", A4, 13 * mm, 13 * mm, 14 * mm, 20 * mm,
         "texturin decorative finishes", _TEXTURIN_WARM, _INK, colors.white,
     ),
+    "texturin-surabaya": BrandSpec(
+        "texturin-surabaya", A4, 13 * mm, 13 * mm, 14 * mm, 20 * mm,
+        "texturin Surabaya · decorative finishes", _TEXTURIN_WARM, _INK, colors.white,
+    ),
+    "texturin-bali": BrandSpec(
+        "texturin-bali", A4, 18 * mm, 13 * mm, 14 * mm, 20 * mm,
+        "texturin Bali · decorative finishes", _TEXTURIN_WARM, _INK, colors.white,
+    ),
 }
+
+
+def _is_texturin(brand: BrandSpec) -> bool:
+    return brand.key.startswith("texturin")
 
 
 def _register_fonts(brand: BrandSpec) -> tuple[str, str]:
     families = {
         "hojja": ("OpenSauceOne", "OpenSauceOne-Bold", "OpenSauceOne-Regular.ttf", "OpenSauceOne-Bold.ttf"),
         "texturin": ("HankenGrotesk", "HankenGrotesk-Bold", "HankenGrotesk-Regular.ttf", "HankenGrotesk-Bold.ttf"),
+        "texturin-surabaya": ("HankenGrotesk", "HankenGrotesk-Bold", "HankenGrotesk-Regular.ttf", "HankenGrotesk-Bold.ttf"),
+        "texturin-bali": ("HankenGrotesk", "HankenGrotesk-Bold", "HankenGrotesk-Regular.ttf", "HankenGrotesk-Bold.ttf"),
         "hollawall": ("Roboto", "Roboto-Bold", "Roboto-Regular.ttf", "Roboto-Bold.ttf"),
     }
     regular_name, bold_name, regular_file, bold_file = families[brand.key]
@@ -148,6 +167,17 @@ def _normalize_identity(value: Any) -> str:
 def _brand_for(snapshot: Mapping[str, Any]) -> BrandSpec:
     project = _mapping(snapshot.get("project"))
     issuer = _mapping(snapshot.get("issuer"))
+    document = _mapping(snapshot.get("document"))
+    explicit = _normalize_identity(document.get("template_key"))
+    company = _normalize_identity(project.get("company"))
+    wallet = _normalize_identity(project.get("wallet"))
+    if "texturin bali" in explicit or "texturin bali" in company or "tx bali" in wallet:
+        return _BRANDS["texturin-bali"]
+    if (
+        "texturin surabaya" in explicit or "texturin surabaya" in company
+        or "textur sby" in company or "tx sby" in wallet
+    ):
+        return _BRANDS["texturin-surabaya"]
     candidates = " ".join(
         _normalize_identity(value)
         for value in (
@@ -259,8 +289,8 @@ def _styles(brand: BrandSpec) -> dict[str, ParagraphStyle]:
         ),
         "title": ParagraphStyle(
             f"{brand.key}-title", parent=base["Heading1"], fontName=bold,
-            fontSize=20 if brand.key == "hojja" else (18 if brand.key == "texturin" else 16),
-            leading=23 if brand.key == "hojja" else (21 if brand.key == "texturin" else 18),
+            fontSize=20 if brand.key == "hojja" else (18 if _is_texturin(brand) else 16),
+            leading=23 if brand.key == "hojja" else (21 if _is_texturin(brand) else 18),
             textColor=brand.ink, alignment=TA_LEFT,
         ),
         "right": ParagraphStyle(
@@ -430,7 +460,7 @@ def _metadata(
             [Paragraph("DATE", styles["label"]), Paragraph(_paragraph_text(document.get("issue_date")), styles["right"])],
             [Paragraph("LETTER ID", styles["label"]), Paragraph(_paragraph_text(document.get("official_number"), "DRAFT"), styles["right"])],
         ]
-    elif brand.key == "texturin":
+    elif _is_texturin(brand):
         number_label = "QUOTATION NO." if title == "QUOTATION" else "INVOICE NO."
         date_rows = [
             [Paragraph(number_label, styles["label"]), Paragraph(_paragraph_text(document.get("official_number"), "DRAFT"), styles["right"])],
@@ -446,7 +476,7 @@ def _metadata(
     if document.get("valid_until"):
         date_rows.append([Paragraph("VALID UNTIL", styles["label"]), Paragraph(_paragraph_text(document.get("valid_until")), styles["right"])])
 
-    if brand.key == "texturin":
+    if _is_texturin(brand):
         left_label_width, right_label_width = 20 * mm, 34 * mm
         widths = [102 * mm, 82 * mm]
     elif brand.key == "hojja":
@@ -537,7 +567,7 @@ def _items(
 
     table = Table(rows, colWidths=widths, repeatRows=1, splitByRow=1, splitInRow=1)
     header_background = _HOJJA_SAGE if brand.key == "hojja" else (
-        _TEXTURIN_WARM if brand.key == "texturin" else _HOLLA_LIGHT
+        _TEXTURIN_WARM if _is_texturin(brand) else _HOLLA_LIGHT
     )
     commands: list[tuple[Any, ...]] = [
         ("BACKGROUND", (0, 0), (-1, 0), header_background),
@@ -622,7 +652,7 @@ def _totals(
             ("BACKGROUND", (0, -1), (-1, -1), _HOJJA_SAGE),
             ("TEXTCOLOR", (0, -1), (-1, -1), colors.white),
         ])
-    elif brand.key == "texturin":
+    elif _is_texturin(brand):
         commands.append(("BACKGROUND", (0, -1), (-1, -1), _TEXTURIN_WARM))
     else:
         commands.append(("BACKGROUND", (0, -1), (-1, -1), _HOLLA_LIGHT))
@@ -639,7 +669,7 @@ def _notes_and_signatures(
     document = _mapping(snapshot.get("document"))
     issuer = _mapping(snapshot.get("issuer"))
     bank = _mapping(issuer.get("bank_details"))
-    heading = "Payment Information" if brand.key != "texturin" else "BANK DETAILS"
+    heading = "BANK DETAILS" if _is_texturin(brand) else "Payment Information"
     notes: list[Flowable] = [
         Paragraph(f"<b>{heading}</b>", styles["value_bold"]),
         Spacer(1, 1.5 * mm),
@@ -653,7 +683,7 @@ def _notes_and_signatures(
 
     prepared = _paragraph_text(document.get("prepared_by"), _text(issuer.get("display_name"), brand.identity))
     approved = _paragraph_text(document.get("client_signatory"), "Nama & tanda tangan")
-    if brand.key == "texturin":
+    if _is_texturin(brand):
         return notes
 
     if brand.key == "hollawall":
@@ -693,23 +723,86 @@ def _notes_and_signatures(
     return notes + [Spacer(1, 5 * mm), signatures]
 
 
+def _texturin_deposit(
+    snapshot: Mapping[str, Any],
+    brand: BrandSpec,
+    styles: Mapping[str, ParagraphStyle],
+) -> Flowable:
+    policy = commercial_policy(brand.key)
+    percent = int(policy.get("default_deposit_percent") or 0)
+    total = int(_mapping(snapshot.get("totals")).get("total") or 0)
+    amount = total * percent // 100
+    table = Table([
+        [
+            Paragraph(f"<b>SIGNATURE FEE ({percent}%)</b>", styles["value_bold"]),
+            Paragraph(f"<b>{_idr(amount)}</b>", styles["right_bold"]),
+        ],
+    ], colWidths=[52 * mm, 45 * mm], hAlign="RIGHT")
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), _TEXTURIN_WARM),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3 * mm),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.5 * mm),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5 * mm),
+    ]))
+    return table
+
+
+def _texturin_bali_total_and_bank(
+    snapshot: Mapping[str, Any],
+    styles: Mapping[str, ParagraphStyle],
+) -> list[Flowable]:
+    total = int(_mapping(snapshot.get("totals")).get("total") or 0)
+    bank = _mapping(_mapping(snapshot.get("issuer")).get("bank_details"))
+    total_table = Table([
+        [Paragraph("<b>TOTAL</b>", styles["value_bold"]), Paragraph(f"<b>{_idr(total)}</b>", styles["right_bold"])],
+    ], colWidths=[52 * mm, 48 * mm], hAlign="RIGHT")
+    total_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), _TEXTURIN_WARM),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3 * mm),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.5 * mm),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5 * mm),
+    ]))
+    bank_text = "<br/>".join(
+        _paragraph_text(bank.get(field))
+        for field in ("bank", "account_number", "account_name")
+    )
+    return [
+        total_table,
+        Spacer(1, 5 * mm),
+        Paragraph("<b>BANK DETAILS</b>", styles["value_bold"]),
+        Spacer(1, 1.5 * mm),
+        Paragraph(bank_text, styles["body"]),
+        Spacer(1, 44 * mm),
+        Paragraph("Best regards and thank you,<br/><b>Texturin Bali</b>", styles["right"]),
+    ]
+
+
 def _story(
     snapshot: Mapping[str, Any],
     brand: BrandSpec,
     logo_path: str | Path | None,
 ) -> list[Flowable]:
     styles = _styles(brand)
-    return [
+    leading = [
         *_brand_header(snapshot, brand, styles, logo_path),
         _metadata(snapshot, brand, styles),
         Spacer(1, 5 * mm if brand.key != "hollawall" else 3 * mm),
         _items(snapshot, brand, styles),
         *_project_image(snapshot, brand),
         Spacer(1, 7 * mm if brand.key != "hollawall" else 4 * mm),
+    ]
+    if brand.key == "texturin-bali":
+        return [*leading, *_texturin_bali_total_and_bank(snapshot, styles)]
+    trailing: list[Flowable] = [
         _totals(snapshot, brand, styles),
         Spacer(1, 6 * mm if brand.key != "hollawall" else 4 * mm),
-        *_notes_and_signatures(snapshot, brand, styles, logo_path),
     ]
+    if brand.key == "texturin-surabaya":
+        trailing.extend([_texturin_deposit(snapshot, brand, styles), Spacer(1, 4 * mm)])
+    trailing.extend(_notes_and_signatures(snapshot, brand, styles, logo_path))
+    return [*leading, *trailing]
 
 
 def _draw_brand_page(
@@ -725,15 +818,15 @@ def _draw_brand_page(
     canvas.rect(0, 0, page_width, page_height, fill=1, stroke=0)
 
     if brand.key == "hollawall":
-        if logo_path is not None and _HOLLAWALL_FOOTER_ART.is_file():
+        if _HOLLAWALL_FOOTER_ART_DATA:
             canvas.drawImage(
-                ImageReader(str(_HOLLAWALL_FOOTER_ART)), 1.5 * mm, 1.5 * mm,
-                width=47 * mm, height=10 * mm, mask="auto",
+                ImageReader(io.BytesIO(_HOLLAWALL_FOOTER_ART_DATA)), 0, 0,
+                width=page_width, height=page_width * 432 / 1917, mask="auto",
                 preserveAspectRatio=True, anchor="sw",
             )
         canvas.setStrokeColor(_HOLLA_CYAN)
         canvas.setLineWidth(0.8)
-        canvas.line(10 * mm, 10 * mm, page_width - 10 * mm, 10 * mm)
+        canvas.line(10 * mm, 36 * mm, page_width - 10 * mm, 36 * mm)
     elif brand.key == "hojja":
         canvas.setStrokeColor(_HOJJA_INK)
         canvas.setLineWidth(0.55)
@@ -763,7 +856,7 @@ def _draw_brand_page(
         canvas.restoreState()
 
     reference = _text(_mapping(snapshot.get("document")).get("official_number"), "DRAFT")
-    footer_y = 5 * mm if brand.key != "hojja" else 8 * mm
+    footer_y = 33.5 * mm if brand.key == "hollawall" else (8 * mm if brand.key == "hojja" else 5 * mm)
     footer_left = brand.left_margin
     canvas.setFillColor(brand.ink)
     canvas.setFont("Helvetica", 5.8)

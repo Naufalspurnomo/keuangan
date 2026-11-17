@@ -1,7 +1,7 @@
 import policiesFixture from '../../tests/fixtures/commercial_document_policies.json'
 import { ProjectDocumentValidationError } from './projectDocuments'
 
-export type TemplateKey = 'hollawall' | 'hojja' | 'texturin'
+export type TemplateKey = 'hollawall' | 'hojja' | 'texturin' | 'texturin-surabaya' | 'texturin-bali'
 export type PricingMode = 'area_rate' | 'ppm_area' | 'fixed_artwork' | 'fixed_fee' | 'legacy_generic'
 export type DimensionUnit = 'mm' | 'cm' | 'm'
 export type AreaRounding = 'exact' | 'half_up' | 'truncate' | 'manual_override'
@@ -37,7 +37,6 @@ export interface CommercialLineInput {
   area_override_reason?: string | null
   display_quantity?: string | null
   original_price?: number | null
-  [key: string]: unknown
 }
 
 export interface NormalizedCommercialLine extends CommercialLineInput {
@@ -52,6 +51,8 @@ export const commercialPolicies = policiesFixture as Record<TemplateKey, Commerc
 function canonicalTemplateKey(value: string): TemplateKey {
   const text = value.trim().toLowerCase()
   if (text.includes('hojja')) return 'hojja'
+  if (text.includes('bali') || text.includes('tx bali')) return 'texturin-bali'
+  if (text.includes('surabaya') || text.includes('tx sby')) return 'texturin-surabaya'
   if (text.includes('texturin') || text.startsWith('tx ')) return 'texturin'
   return 'hollawall'
 }
@@ -133,7 +134,7 @@ function lineTotal(quantity: Rational, unitPrice: number) {
   return Number(rounded)
 }
 
-export function normalizeCommercialLine(raw: CommercialLineInput, policy: CommercialPolicy): NormalizedCommercialLine {
+export function normalizeCommercialLine<T extends CommercialLineInput>(raw: T, policy: CommercialPolicy): NormalizedCommercialLine & T {
   const description = raw.description.trim()
   if (!description) throw new ProjectDocumentValidationError('Deskripsi item wajib diisi.')
   const pricingMode = raw.pricing_mode ?? 'legacy_generic'
@@ -141,9 +142,9 @@ export function normalizeCommercialLine(raw: CommercialLineInput, policy: Commer
     throw new ProjectDocumentValidationError('pricing_mode conflicts with template policy.')
   }
   const unitPrice = integerMoney(raw.unit_price, 'Harga')
-  const normalized: NormalizedCommercialLine = {
+  const normalized = {
     ...raw, description, pricing_mode: pricingMode, quantity: '', unit: '', unit_price: unitPrice, line_total: 0,
-  }
+  } as NormalizedCommercialLine & T
   let rawArea: Rational | null = null
   if (raw.width || raw.height) {
     if (!raw.width || !raw.height) throw new ProjectDocumentValidationError('width and height must be supplied together.')

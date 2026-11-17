@@ -43,5 +43,35 @@
       "line_total": "TOTAL",
       "deposit": "Signature fee"
     }
+  },
+  "texturin-surabaya": {
+    "template_key": "texturin-surabaya",
+    "template_version": "commercial-v3",
+    "pricing_mode": "ppm_area",
+    "page_size": "A4",
+    "default_deposit_percent": 30,
+    "default_validity_days": 14,
+    "labels": {
+      "description": "DESCRIPTION",
+      "quantity": "QTY/LUAS",
+      "unit_price": "PPM",
+      "line_total": "TOTAL",
+      "deposit": "Signature fee"
+    }
+  },
+  "texturin-bali": {
+    "template_key": "texturin-bali",
+    "template_version": "commercial-v3",
+    "pricing_mode": "ppm_area",
+    "page_size": "A4",
+    "default_deposit_percent": 30,
+    "default_validity_days": 14,
+    "labels": {
+      "description": "DESCRIPTION",
+      "quantity": "AREA (M²)",
+      "unit_price": "PPM",
+      "line_total": "TOTAL",
+      "deposit": "Signature fee"
+    }
   }
 }

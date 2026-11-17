@@ -33,7 +33,9 @@ describe('ProjectDocumentComposer', () => {
     expect(within(workflow).getByText('Ketentuan')).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Panel akustik' } })
-    fireEvent.change(screen.getByLabelText('Harga satuan item 1'), { target: { value: '100000' } })
+    fireEvent.change(screen.getByLabelText('Lebar item 1'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('Tinggi item 1'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('HARGA/M² item 1'), { target: { value: '100000' } })
     expect(screen.getByLabelText('Total invoice')).toHaveTextContent('Rp100.000')
   })
 
@@ -41,7 +43,10 @@ describe('ProjectDocumentComposer', () => {
     const draft = createEmptyDocumentDraft(project.id, 'invoice', '2026-11-03')
     render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={vi.fn()} onClose={vi.fn()} />)
 
-    const price = screen.getByLabelText('Harga satuan item 1')
+    fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Panel akustik' } })
+    fireEvent.change(screen.getByLabelText('Lebar item 1'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('Tinggi item 1'), { target: { value: '1' } })
+    const price = screen.getByLabelText('HARGA/M² item 1')
     const notes = screen.getByLabelText('Catatan')
     fireEvent.change(price, { target: { value: '10000' } })
 
@@ -55,7 +60,8 @@ describe('ProjectDocumentComposer', () => {
     const draft = createEmptyDocumentDraft(project.id, 'invoice', '2026-11-03')
     render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={vi.fn()} onClose={vi.fn()} />)
 
-    fireEvent.change(screen.getByLabelText('Kuantitas item 1'), { target: { value: 'abc' } })
+    fireEvent.change(screen.getByLabelText('Lebar item 1'), { target: { value: 'abc' } })
+    fireEvent.change(screen.getByLabelText('Tinggi item 1'), { target: { value: '1' } })
 
     expect(screen.getByLabelText('Total invoice')).toHaveTextContent('Periksa nilai item')
     expect(screen.queryByRole('article', { name: 'Pratinjau A5 Invoice' })).toBeNull()
@@ -67,8 +73,9 @@ describe('ProjectDocumentComposer', () => {
     render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={vi.fn()} onClose={vi.fn()} />)
 
     fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Panel akustik' } })
-    fireEvent.change(screen.getByLabelText('Kuantitas item 1'), { target: { value: '2.5' } })
-    fireEvent.change(screen.getByLabelText('Harga satuan item 1'), { target: { value: '100000' } })
+    fireEvent.change(screen.getByLabelText('Lebar item 1'), { target: { value: '2.5' } })
+    fireEvent.change(screen.getByLabelText('Tinggi item 1'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('HARGA/M² item 1'), { target: { value: '100000' } })
     fireEvent.change(screen.getByLabelText('Pajak persen'), { target: { value: '11' } })
 
     const preview = screen.getByRole('article', { name: 'Pratinjau A5 Invoice' })
@@ -76,7 +83,8 @@ describe('ProjectDocumentComposer', () => {
     expect(preview).toHaveTextContent('PT Marvell')
     expect(preview).toHaveTextContent('Panel akustik')
     expect(preview).toHaveTextContent('Rp277.500')
-    expect(preview.querySelector('table')).toBeTruthy()
+    expect(preview).toHaveAttribute('data-template', 'hollawall')
+    expect(preview).toHaveAttribute('data-page-size', 'A5')
     expect(screen.getByRole('button', { name: 'Simpan draf' })).toBeEnabled()
   })
 
@@ -166,6 +174,8 @@ describe('ProjectDocumentComposer', () => {
     render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={onSave} onClose={vi.fn()} />)
 
     fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Panel' } })
+    fireEvent.change(screen.getByLabelText('Lebar item 1'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('Tinggi item 1'), { target: { value: '1' } })
     fireEvent.change(screen.getByLabelText('Gambar proyek'), { target: { value: 'https://example.com/project.png' } })
     fireEvent.click(screen.getByRole('button', { name: 'Simpan draf' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('data PNG atau JPEG')

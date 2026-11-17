@@ -121,7 +121,7 @@ export interface ProjectQuotationAcceptedSnapshot {
 }
 
 export interface ProjectQuotationValues {
-  template_key?: 'hollawall' | 'hojja' | 'texturin' | string
+  template_key?: 'hollawall' | 'hojja' | 'texturin' | 'texturin-surabaya' | 'texturin-bali' | string
   template_version?: string
   payment_profile_key?: string
   recipient_name: string
@@ -151,7 +151,7 @@ export interface ProjectQuotation {
   status: 'draft' | 'sent' | 'revised' | 'accepted' | 'rejected'
   channel: 'whatsapp' | 'phone' | 'email' | 'meeting' | 'other'
   negotiation_notes: string | null
-  template_key?: 'hojja' | 'hollawall' | 'texturin' | string
+  template_key?: 'hojja' | 'hollawall' | 'texturin' | 'texturin-surabaya' | 'texturin-bali' | string
   template_version?: string
   payment_profile_key?: string
   official_number?: string | null
@@ -220,7 +220,7 @@ export interface ProjectDocumentDraft {
   prepared_by: string
   client_signatory: string
   project_image_url: string | null
-  template_key?: 'hollawall' | 'hojja' | 'texturin' | string
+  template_key?: 'hollawall' | 'hojja' | 'texturin' | 'texturin-surabaya' | 'texturin-bali' | string
   template_version?: string
   payment_profile_key?: string
   lines: DocumentLineInput[]

@@ -80,6 +80,11 @@ def reader(pdf: bytes) -> PdfReader:
     return PdfReader(io.BytesIO(pdf))
 
 
+def xobject_count(pdf: bytes) -> int:
+    resources = reader(pdf).pages[0]["/Resources"]
+    return len(resources["/XObject"].get_object()) if "/XObject" in resources else 0
+
+
 def text(pdf: bytes) -> str:
     return "\n".join(page.extract_text() or "" for page in reader(pdf).pages)
 
@@ -91,8 +96,8 @@ def text(pdf: bytes) -> str:
         ("HOLLA", "Hollawall", "sales_order", "QUOTATION", (419.53, 595.28), "Hollawall Mural Studio"),
         ("HOJJA", "HOJJA ArtHouse", "invoice", "INVOICE", (595.28, 841.89), "HOJJA ArtHouse"),
         ("HOJJA", "HOJJA ArtHouse", "sales_order", "QUOTATION", (595.28, 841.89), "HOJJA ArtHouse"),
-        ("TEXTURIN-Bali", "Texturin Bali", "invoice", "INVOICE", (595.28, 841.89), "texturin decorative finishes"),
-        ("TEXTURIN-Surabaya", "Texturin Surabaya", "sales_order", "QUOTATION", (595.28, 841.89), "texturin decorative finishes"),
+        ("TEXTURIN-Bali", "Texturin Bali", "invoice", "INVOICE", (595.28, 841.89), "texturin Bali · decorative finishes"),
+        ("TEXTURIN-Surabaya", "Texturin Surabaya", "sales_order", "QUOTATION", (595.28, 841.89), "texturin Surabaya · decorative finishes"),
     ],
 )
 def test_renderer_selects_brand_page_size_title_and_identity(
@@ -137,6 +142,31 @@ def test_renderer_preserves_reference_labels_and_brand_signoff(
     content = " ".join(text(render_project_document_pdf(value)).split())
     for label in expected_labels:
         assert label in content
+
+
+def test_texturin_surabaya_and_bali_have_distinct_pdf_contracts():
+    surabaya = snapshot()
+    surabaya["project"].update({"company": "TEXTURIN-Surabaya", "wallet": "TX SBY(216)"})
+    surabaya["document"].update({"document_type": "sales_order", "template_key": "TEXTURIN-SURABAYA"})
+    surabaya_pdf = render_project_document_pdf(surabaya)
+    surabaya_text = " ".join(text(surabaya_pdf).split())
+
+    bali = deepcopy(surabaya)
+    bali["project"].update({"company": "TEXTURIN-Bali", "wallet": "TX BALI(087)"})
+    bali["document"].update({"document_type": "invoice", "template_key": "TEXTURIN-BALI"})
+    bali_pdf = render_project_document_pdf(bali)
+    bali_text = " ".join(text(bali_pdf).split())
+
+    assert surabaya_pdf != bali_pdf
+    assert "texturin Surabaya · decorative finishes" in surabaya_text
+    assert "SIGNATURE FEE (30%)" in surabaya_text
+    assert "Rp 750.000" in surabaya_text
+    assert "Pembayaran melalui rekening resmi perusahaan." in surabaya_text
+    assert "texturin Bali · decorative finishes" in bali_text
+    assert "BANK DETAILS" in bali_text
+    assert "Best regards and thank you" in bali_text
+    assert "SIGNATURE FEE" not in bali_text
+    assert "Pembayaran melalui rekening resmi perusahaan." not in bali_text
 
 
 def test_renderer_produces_deterministic_a5_branded_pdf():
@@ -303,13 +333,12 @@ def test_renderer_embeds_valid_small_project_data_image_deterministically():
     value = snapshot()
     value["document"]["project_image_url"] = project_image_data_url()
 
+    baseline = render_project_document_pdf(snapshot(), logo_path=None)
     first = render_project_document_pdf(value, logo_path=None)
     second = render_project_document_pdf(deepcopy(value), logo_path=None)
 
     assert first == second
-    resources = reader(first).pages[0]["/Resources"]
-    assert "/XObject" in resources
-    assert len(resources["/XObject"].get_object()) == 1
+    assert xobject_count(first) == xobject_count(baseline) + 1
 
 
 @pytest.mark.parametrize(
@@ -330,6 +359,7 @@ def test_renderer_ignores_invalid_oversized_or_remote_project_images_without_io(
 ):
     value = snapshot()
     value["document"]["project_image_url"] = image_url
+    baseline = render_project_document_pdf(snapshot(), logo_path=None)
 
     def fail(*_args, **_kwargs):
         raise AssertionError("renderer attempted external image access")
@@ -340,4 +370,4 @@ def test_renderer_ignores_invalid_oversized_or_remote_project_images_without_io(
 
     assert first == second
     assert "Lobby Cempaka" in text(first)
-    assert "/XObject" not in reader(first).pages[0]["/Resources"]
+    assert xobject_count(first) == xobject_count(baseline)

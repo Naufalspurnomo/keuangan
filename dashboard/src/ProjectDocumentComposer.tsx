@@ -2,6 +2,8 @@ import { ArrowRight, Eye, Pencil, Plus, ReceiptText, Trash2, X } from 'lucide-re
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import ProjectDocumentPreview from './ProjectDocumentPreview'
+import { commercialPolicy, normalizeCommercialLine } from './commercialDocumentPolicy'
+import { projectTemplateKey } from './commercialDocumentViewModel'
 import {
   calculateDocumentTotals,
   createEmptyDocumentLine,
@@ -23,30 +25,38 @@ interface ProjectDocumentComposerProps {
   onClose: () => void
 }
 
-function draftFrom(document: ProjectDocumentDraft | ProjectDocumentRecord): ProjectDocumentDraft {
+function draftFrom(document: ProjectDocumentDraft | ProjectDocumentRecord, project: ProjectRecord): ProjectDocumentDraft {
   const { id, project_id, type, invoice_kind, applies_to_invoice_id, issue_date, due_date, valid_until, notes, payment_terms, prepared_by, client_signatory, project_image_url, lines, discount_mode, discount_value, tax_percent, allocations } = document
-  return { id, project_id, type, invoice_kind, applies_to_invoice_id, issue_date, due_date, valid_until, notes, payment_terms, prepared_by, client_signatory, project_image_url, lines: lines.map((line) => ({ ...line })), discount_mode, discount_value, tax_percent, allocations: allocations.map((allocation) => ({ ...allocation })) }
+  const policy = commercialPolicy(document.template_key || projectTemplateKey(project))
+  const commercialLines = lines.map((line) => {
+    if (id || type === 'receipt' || line.pricing_mode) return { ...line }
+    return policy.pricing_mode === 'fixed_artwork'
+      ? { ...line, quantity: '1', unit: 'artwork', pricing_mode: policy.pricing_mode, display_quantity: '1', width: '', height: '', dimension_unit: 'm' as const }
+      : { ...line, quantity: '', unit: 'm²', pricing_mode: policy.pricing_mode, width: '', height: '', dimension_unit: 'm' as const, billed_area_m2: '', area_rounding: 'half_up' as const }
+  })
+  return { id, project_id, type, invoice_kind, applies_to_invoice_id, issue_date, due_date, valid_until, notes, payment_terms, prepared_by, client_signatory, project_image_url, template_key: policy.template_key, template_version: document.template_version || policy.template_version, payment_profile_key: document.payment_profile_key || project.issuer_key, lines: commercialLines, discount_mode, discount_value, tax_percent, allocations: allocations.map((allocation) => ({ ...allocation })) }
 }
 
 export default function ProjectDocumentComposer({ project, document, writesEnabled, saving = false, receiptOptions = null, onSave, onClose, onOpenTransactions }: ProjectDocumentComposerProps) {
-  const [draft, setDraft] = useState(() => draftFrom(document))
+  const [draft, setDraft] = useState(() => draftFrom(document, project))
   const [view, setView] = useState<'edit' | 'preview'>('edit')
   const [dirty, setDirty] = useState(false)
   const [error, setError] = useState('')
   const alertRef = useRef<HTMLParagraphElement>(null)
 
   useEffect(() => {
-    setDraft(draftFrom(document))
+    setDraft(draftFrom(document, project))
     setDirty(false)
     setError('')
-  }, [document])
+  }, [document, project])
+  const policy = commercialPolicy(draft.template_key || projectTemplateKey(project))
 
   const change = <K extends keyof ProjectDocumentDraft>(key: K, value: ProjectDocumentDraft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }))
     setDirty(true)
     setError('')
   }
-  const changeLine = (index: number, key: keyof ProjectDocumentDraft['lines'][number], value: string | number) => {
+  const changeLine = (index: number, key: keyof ProjectDocumentDraft['lines'][number], value: string | number | null) => {
     change('lines', draft.lines.map((line, lineIndex) => lineIndex === index ? { ...line, [key]: value } : line))
   }
   const toggleAllocation = (sourceKey: string, enabled: boolean) => {
@@ -62,7 +72,9 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     try {
-      const clean = validateDocumentDraft(draft)
+      if (draft.project_image_url && !/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(draft.project_image_url)) throw new Error('Gambar proyek harus berupa data PNG atau JPEG.')
+      const commercial = draft.type === 'receipt' ? draft : { ...draft, lines: draft.lines.map((line) => normalizeCommercialLine(line, policy)) }
+      const clean = validateDocumentDraft(commercial)
       setError('')
       await onSave(clean)
       setDirty(false)
@@ -78,7 +90,11 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
   const typeName = draft.type === 'sales_order' ? 'sales order' : draft.type === 'invoice' ? 'invoice' : 'kuitansi'
   let total: number | null = null
   let calculationError = ''
-  try { total = calculateDocumentTotals(draft).total }
+  let previewDraft = draft
+  try {
+    previewDraft = draft.type === 'receipt' ? draft : { ...draft, lines: draft.lines.map((line) => normalizeCommercialLine(line, policy)) }
+    total = calculateDocumentTotals(previewDraft).total
+  }
   catch (reason) { calculationError = reason instanceof Error ? reason.message : 'Perhitungan dokumen tidak valid.' }
   const money = total === null ? '—' : new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(total).replace(/\s/g, '')
   const receiptIsNew = draft.type === 'receipt' && !document.id
@@ -128,13 +144,23 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
         {draft.type !== 'receipt' ? <fieldset className="document-lines document-form-section"><legend><span>2</span><div><strong>Item & harga</strong><small>Masukkan pekerjaan yang ditagihkan. Total dihitung otomatis.</small></div></legend>
           {draft.lines.map((line, index) => <div className="document-line" key={line.id}>
             <label className="line-description">Deskripsi item {index + 1}<input aria-label={`Deskripsi item ${index + 1}`} value={line.description} onChange={(event) => changeLine(index, 'description', event.target.value)} /></label>
-            <label>Kuantitas<input aria-label={`Kuantitas item ${index + 1}`} inputMode="decimal" value={line.quantity} onChange={(event) => changeLine(index, 'quantity', event.target.value)} /></label>
-            <label>Satuan<input aria-label={`Satuan item ${index + 1}`} value={line.unit} onChange={(event) => changeLine(index, 'unit', event.target.value)} /></label>
-            <label>Harga satuan<input aria-label={`Harga satuan item ${index + 1}`} type="number" min="0" step="1" value={line.unit_price} onChange={(event) => changeLine(index, 'unit_price', Number(event.target.value))} /></label>
+            {(!line.pricing_mode || line.pricing_mode === 'legacy_generic') ? <>
+              <label>Kuantitas<input aria-label={`Kuantitas item ${index + 1}`} inputMode="decimal" value={line.quantity} onChange={(event) => changeLine(index, 'quantity', event.target.value)} /></label>
+              <label>Satuan<input aria-label={`Satuan item ${index + 1}`} value={line.unit} onChange={(event) => changeLine(index, 'unit', event.target.value)} /></label>
+            </> : policy.pricing_mode === 'fixed_artwork' ? <>
+              <label>Jumlah artwork<input aria-label={`Jumlah artwork item ${index + 1}`} type="number" min="1" step="1" value={line.display_quantity ?? line.quantity} onChange={(event) => { changeLine(index, 'display_quantity', event.target.value); changeLine(index, 'quantity', event.target.value) }} /></label>
+              <label>Dimensi (m)<input aria-label={`Lebar item ${index + 1}`} inputMode="decimal" value={line.width ?? ''} onChange={(event) => changeLine(index, 'width', event.target.value)} placeholder="Lebar" /></label>
+              <label>Harga awal<input aria-label={`Harga awal item ${index + 1}`} type="number" min="0" step="1" value={line.original_price ?? ''} onChange={(event) => changeLine(index, 'original_price', event.target.value ? Number(event.target.value) : null)} /></label>
+            </> : <>
+              <label>Lebar (m)<input aria-label={`Lebar item ${index + 1}`} inputMode="decimal" value={line.width ?? ''} onChange={(event) => changeLine(index, 'width', event.target.value)} /></label>
+              <label>Tinggi (m)<input aria-label={`Tinggi item ${index + 1}`} inputMode="decimal" value={line.height ?? ''} onChange={(event) => changeLine(index, 'height', event.target.value)} /></label>
+              <label>Pembulatan<select aria-label={`Pembulatan luas item ${index + 1}`} value={line.area_rounding ?? 'half_up'} onChange={(event) => changeLine(index, 'area_rounding', event.target.value)}><option value="exact">Exact</option><option value="half_up">Half-up</option><option value="truncate">Potong</option><option value="manual_override">Override</option></select></label>
+            </>}
+            <label>{policy.labels.unit_price}<input aria-label={`${policy.labels.unit_price} item ${index + 1}`} type="number" min="0" step="1" value={line.unit_price} onChange={(event) => changeLine(index, 'unit_price', Number(event.target.value))} /></label>
             <label>Diskon %<input aria-label={`Diskon item ${index + 1}`} inputMode="decimal" value={line.discount_percent} onChange={(event) => changeLine(index, 'discount_percent', event.target.value)} /></label>
             <button type="button" className="icon-button danger" aria-label={`Hapus item ${index + 1}`} disabled={draft.lines.length === 1} onClick={() => change('lines', draft.lines.filter((_, lineIndex) => lineIndex !== index))}><Trash2 size={17} /></button>
           </div>)}
-          <button type="button" className="secondary-button" onClick={() => change('lines', [...draft.lines, createEmptyDocumentLine()])}><Plus size={16} /> Tambah item</button>
+          <button type="button" className="secondary-button" onClick={() => change('lines', [...draft.lines, draftFrom({ ...draft, id: null, lines: [createEmptyDocumentLine()] }, project).lines[0]])}><Plus size={16} /> Tambah item</button>
         </fieldset> : <section className="receipt-allocation-note document-form-section" aria-labelledby="receipt-allocation-heading"><div className="document-section-heading"><span>2</span><div><h3 id="receipt-allocation-heading">Pilih pembayaran untuk kuitansi</h3><p>Centang transaksi yang akan dibuktikan oleh kuitansi ini.</p></div></div>
           {document.id ? <>
             <p>Invoice tujuan dan transaksi dikunci setelah kuitansi dibuat. Untuk koreksi, batalkan kuitansi lalu buat kuitansi baru.</p>
@@ -172,7 +198,7 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
           <div>{!writesEnabled && <span className="write-disabled-note">Penyimpanan dokumen belum diaktifkan.</span>}<button type="button" className="secondary-button" onClick={close}>Batal</button><button type="submit" className="primary-button" disabled={!writesEnabled || saving || !receiptReady}>{saving ? 'Menyimpan…' : 'Simpan draf'}</button></div>
         </div>
       </form>
-      <aside className={`document-preview-pane${view === 'edit' ? ' mobile-hidden-panel' : ''}`} aria-label={`Pratinjau ${typeName}`}><div className="document-preview-label"><span>PRATINJAU LANGSUNG</span><small>{calculationError ? 'Periksa nilai item' : receiptReady ? 'Terbarui otomatis' : 'Menunggu pembayaran'}</small></div>{receiptReady && !calculationError ? <ProjectDocumentPreview project={project} document={draft} /> : <section className="document-preview-empty"><ReceiptText size={28} /><h3>{calculationError ? 'Pratinjau perlu diperbaiki' : 'Pratinjau belum tersedia'}</h3><p>{calculationError || 'Pilih pembayaran di sebelah kiri. Total dan isi kuitansi akan muncul otomatis.'}</p></section>}</aside>
+      <aside className={`document-preview-pane${view === 'edit' ? ' mobile-hidden-panel' : ''}`} aria-label={`Pratinjau ${typeName}`}><div className="document-preview-label"><span>PRATINJAU LANGSUNG · {policy.template_key.toUpperCase()}</span><small>{calculationError ? 'Periksa nilai item' : receiptReady ? `${policy.page_size} · terbarui otomatis` : 'Menunggu pembayaran'}</small></div>{receiptReady && !calculationError ? <ProjectDocumentPreview project={project} document={previewDraft} /> : <section className="document-preview-empty"><ReceiptText size={28} /><h3>{calculationError ? 'Pratinjau perlu diperbaiki' : 'Pratinjau belum tersedia'}</h3><p>{calculationError || 'Pilih pembayaran di sebelah kiri. Total dan isi kuitansi akan muncul otomatis.'}</p></section>}</aside>
     </div>
     </>}
   </section>

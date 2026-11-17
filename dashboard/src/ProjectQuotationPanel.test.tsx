@@ -41,7 +41,7 @@ const item: ProjectQuotation = {
   subject: 'Penawaran backdrop expo',
   valid_until: '2026-12-10',
   project_image_url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-  lines: [{ id: 'line-1', description: 'Backdrop', quantity: '1', unit: 'set', unit_price: 12_500_001, discount_percent: '0' }],
+  lines: [{ id: 'line-1', description: 'Backdrop', quantity: '1', unit: 'set', unit_price: 12_500_001, discount_percent: '0', pricing_mode: 'legacy_generic' }],
   discount_mode: 'none',
   discount_value: '0',
   tax_percent: '0',
@@ -118,7 +118,9 @@ describe('ProjectQuotationPanel', () => {
     expect(within(workflow).getByText('Ketentuan')).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Backdrop premium' } })
-    fireEvent.change(screen.getByLabelText('Harga satuan item 1'), { target: { value: '5000000' } })
+    fireEvent.change(screen.getByLabelText('Lebar item 1 (m)'), { target: { value: '2' } })
+    fireEvent.change(screen.getByLabelText('Tinggi item 1 (m)'), { target: { value: '0.5' } })
+    fireEvent.change(screen.getByLabelText('HARGA/M² item 1'), { target: { value: '5000000' } })
     expect(screen.getByRole('complementary', { name: 'Ringkasan quotation' })).toHaveTextContent(/Rp\s*5\.000\.000/)
   })
 
@@ -127,30 +129,33 @@ describe('ProjectQuotationPanel', () => {
     render(<ProjectQuotationPanel project={project} session={session} api={subject} onApplied={vi.fn()} />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Buat quotation' }))
-    expect(screen.getByLabelText('Template merek')).toHaveValue('HOLLAWALL')
+    expect(screen.getByLabelText('Template merek')).toHaveValue('HOLLAWALL · A5')
     expect(screen.getByLabelText('Nama penerima')).toHaveValue('Ibu Rani')
     expect(screen.queryByLabelText(/pilih.*merek/i)).toBeNull()
 
     fireEvent.change(screen.getByLabelText('Subjek'), { target: { value: 'Penawaran backdrop premium' } })
-    fireEvent.change(screen.getByLabelText('Berlaku sampai'), { target: { value: '2026-12-10' } })
+    expect(screen.getByLabelText('Berlaku sampai')).toHaveValue('Ditetapkan 7 hari dari tanggal kirim')
     fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Backdrop premium' } })
-    fireEvent.change(screen.getByLabelText('Kuantitas item 1'), { target: { value: '2' } })
-    fireEvent.change(screen.getByLabelText('Satuan item 1'), { target: { value: 'set' } })
-    fireEvent.change(screen.getByLabelText('Harga satuan item 1'), { target: { value: '5000000' } })
+    fireEvent.change(screen.getByLabelText('Lebar item 1 (m)'), { target: { value: '2' } })
+    fireEvent.change(screen.getByLabelText('Tinggi item 1 (m)'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('HARGA/M² item 1'), { target: { value: '5000000' } })
     fireEvent.change(screen.getByLabelText('Diskon item 1 (%)'), { target: { value: '10' } })
     fireEvent.change(screen.getByLabelText('Pajak (%)'), { target: { value: '11' } })
-    expect(screen.getByText(/Rp\s*9\.990\.000/)).toBeTruthy()
+    expect(screen.getAllByText(/Rp\s*9\.990\.000/)).toHaveLength(2)
 
     fireEvent.click(screen.getByRole('button', { name: 'Simpan draf' }))
     await waitFor(() => expect(subject.create).toHaveBeenCalledWith(project.id, expect.objectContaining({
       recipient_name: 'Ibu Rani',
       project_name: 'Backdrop Expo',
       subject: 'Penawaran backdrop premium',
-      valid_until: '2026-12-10',
-      lines: [expect.objectContaining({ description: 'Backdrop premium', quantity: '2', unit: 'set', unit_price: 5_000_000, discount_percent: '10' })],
+      valid_until: null,
+      template_key: 'hollawall',
+      template_version: 'commercial-v3',
+      payment_profile_key: 'hollawall',
+      lines: [expect.objectContaining({ description: 'Backdrop premium', pricing_mode: 'area_rate', width: '2', height: '1', quantity: '2', unit: 'm²', unit_price: 5_000_000, discount_percent: '10' })],
       tax_percent: '11',
     }), session))
-    expect(JSON.stringify(subject.create.mock.calls[0])).not.toContain('template_key')
+    expect(JSON.stringify(subject.create.mock.calls[0])).toContain('commercial-v3')
     expect(document.body.textContent).not.toMatch(/Quotation Canva|Link desain Canva/i)
   })
 
@@ -162,6 +167,7 @@ describe('ProjectQuotationPanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Edit versi 1' }))
     fireEvent.change(screen.getByLabelText('Subjek'), { target: { value: 'Draf diperbarui' } })
     fireEvent.click(screen.getByRole('button', { name: 'Simpan draf' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
     await waitFor(() => expect(subject.saveDraft).toHaveBeenCalledWith(draft, expect.objectContaining({ subject: 'Draf diperbarui' }), session))
 
     fireEvent.click(screen.getByRole('button', { name: 'Buat revisi versi 1' }))

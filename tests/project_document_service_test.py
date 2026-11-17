@@ -19,7 +19,9 @@ def test_commercial_policy_matches_cross_runtime_fixture():
         (Path(__file__).parent / "fixtures" / "commercial_document_policies.json").read_text()
     )
     assert commercial_policies() == fixture
-    assert commercial_policy("TEXTURIN-Bali") == fixture["texturin"]
+    assert commercial_policy("TEXTURIN-Bali") == fixture["texturin-bali"]
+    assert commercial_policy("TEXTURIN-Surabaya") == fixture["texturin-surabaya"]
+    assert commercial_policy("texturin") == fixture["texturin"]
 
 
 def test_commercial_line_semantics_are_server_authoritative():

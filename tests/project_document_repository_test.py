@@ -138,6 +138,19 @@ def test_document_identity_requires_canonical_template_and_issuer_profile():
         ProjectDocumentRepository._document_identity(
             {"template_key": "TEXTURIN"}, company="HOJJA", issuer_key="cv-holla-berkreasi",
         )
+    assert ProjectDocumentRepository._document_identity(
+        {"template_key": "TEXTURIN-SURABAYA"},
+        company="TEXTURIN-Surabaya", issuer_key="texturin-surabaya",
+    ) == ("TEXTURIN-SURABAYA", "commercial-v3", "texturin-surabaya")
+    assert ProjectDocumentRepository._document_identity(
+        {"template_key": "TEXTURIN-BALI"},
+        company="TEXTURIN-Bali", issuer_key="texturin-bali",
+    ) == ("TEXTURIN-BALI", "commercial-v3", "texturin-bali")
+    with pytest.raises(ValueError, match="template_key"):
+        ProjectDocumentRepository._document_identity(
+            {"template_key": "TEXTURIN-BALI"},
+            company="TEXTURIN-Surabaya", issuer_key="texturin-surabaya",
+        )
     with pytest.raises(ValueError, match="payment_profile_key"):
         ProjectDocumentRepository._document_identity(
             {"payment_profile_key": "unrelated"}, company="HOJJA", issuer_key="cv-holla-berkreasi",

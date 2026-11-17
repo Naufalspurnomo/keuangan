@@ -184,6 +184,85 @@ def project(
     return result
 
 
+def test_texturin_city_identity_survives_project_sales_order_and_quotation(repository):
+    image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    cases = (
+        ("surabaya", "TEXTURIN-Surabaya", "TX SBY(216)", "TEXTURIN-SURABAYA"),
+        ("bali", "TEXTURIN-Bali", "TX BALI(087)", "TEXTURIN-BALI"),
+    )
+    created_projects = {}
+    for suffix, company, wallet, template_key in cases:
+        profile = issuer(
+            repository,
+            issuer_key=f"texturin-{suffix}",
+            number_code=f"TX{suffix[0].upper()}",
+            key=f"texturin-{suffix}-issuer-0001",
+        )
+        created = repository.create_project_with_sales_order(
+            {
+                "name": f"Texture {suffix.title()}",
+                "client_name": "PT Client",
+                "client_company": "PT Client",
+                "issuer_key": profile["issuer_key"],
+                "wallet": wallet,
+                "company": company,
+                "status": "planned",
+                "start_date": "2026-11-17",
+            },
+            idempotency_key=f"texturin-{suffix}-project-0001",
+            actor=ACTOR,
+        )
+        created_projects[suffix] = created
+        assert created["sales_order"]["template_key"] == template_key
+        quotation = repository.create_project_quotation(
+            created["project"]["id"],
+            values={
+                "template_key": template_key,
+                "template_version": "commercial-v3",
+                "payment_profile_key": profile["issuer_key"],
+                "project_image_url": image,
+                "lines": [{
+                    "description": "Decorative finish",
+                    "quantity": "6",
+                    "unit": "m²",
+                    "unit_price": 200_000,
+                    "commercial_meta": {
+                        "pricing_mode": "area_rate",
+                        "billed_area_m2": "6",
+                        "area_rounding": "exact",
+                    },
+                }],
+            },
+            idempotency_key=f"texturin-{suffix}-quotation-0001",
+            actor=ACTOR,
+        )
+        assert quotation["template_key"] == template_key
+        assert quotation["payment_profile_key"] == profile["issuer_key"]
+
+    bali = created_projects["bali"]
+    with pytest.raises(ValueError, match="template_key"):
+        repository.create_project_quotation(
+            bali["project"]["id"],
+            values={
+                "template_key": "TEXTURIN-SURABAYA",
+                "project_image_url": image,
+                "lines": [{
+                    "description": "Wrong city override",
+                    "quantity": "1",
+                    "unit": "m²",
+                    "unit_price": 1,
+                    "commercial_meta": {
+                        "pricing_mode": "area_rate",
+                        "billed_area_m2": "1",
+                        "area_rounding": "exact",
+                    },
+                }],
+            },
+            idempotency_key="texturin-cross-city-rejected-0001",
+            actor=ACTOR,
+        )
+
+
 def test_project_creation_requires_durable_wallet_company_binding(repository, dsn):
     profile = issuer(repository, key="binding-required-issuer-0001")
     with pytest.raises(ValueError, match="wallet, and company are required"):
