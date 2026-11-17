@@ -123,8 +123,12 @@ def build_runner(token: str, source: dict[str, str], target: dict[str, str], slu
         source["source_line"]: target["source_line"],
         source["cover_alt"]: target["cover_alt"],
     }
+    image_url = f"https://hollawall.com/wp-content/uploads/hollawall-projects/{image_name}"
     content = (
         "<section class=\"hollawall-project-story\">"
+        "<figure class=\"wp-block-image size-full\">"
+        f"<img src=\"{image_url}\" alt=\"{source['cover_alt']}\" width=\"1159\" height=\"846\" />"
+        "</figure>"
         f"<h2>{source['heading']}</h2>"
         f"<p>{source['body']}</p>"
         f"<p>{source['source_line']}</p>"
@@ -144,10 +148,8 @@ else {{ http_response_code(500); echo json_encode(array('ok'=>false,'error'=>'wp
 
 $slug = {php_single_quoted(slug)};
 $existing = get_page_by_path($slug, OBJECT, 'project');
-if ($existing) {{ http_response_code(409); echo json_encode(array('ok'=>false,'error'=>'slug-exists','post_id'=>(int)$existing->ID)); exit; }}
-
 $content = {php_single_quoted(content)};
-$post_id = wp_insert_post(array(
+$post_payload = array(
     'post_type' => 'project',
     'post_status' => 'publish',
     'post_title' => {php_single_quoted(source['title'])},
@@ -155,13 +157,19 @@ $post_id = wp_insert_post(array(
     'post_content' => $content,
     'post_excerpt' => {php_single_quoted(excerpt)},
     'post_author' => 1,
-), true);
+);
+if ($existing) {{
+    $post_payload['ID'] = (int)$existing->ID;
+    $post_id = wp_update_post($post_payload, true);
+}} else {{
+    $post_id = wp_insert_post($post_payload, true);
+}}
 if (is_wp_error($post_id)) {{ http_response_code(500); echo json_encode(array('ok'=>false,'error'=>$post_id->get_error_message())); exit; }}
 
 $upload = wp_upload_dir();
 $image_path = $upload['basedir'] . '/hollawall-projects/' . {php_single_quoted(image_name)};
 $image_url = $upload['baseurl'] . '/hollawall-projects/' . {php_single_quoted(image_name)};
-if (!file_exists($image_path)) {{ wp_delete_post($post_id, true); http_response_code(500); echo json_encode(array('ok'=>false,'error'=>'uploaded-image-missing')); exit; }}
+if (!file_exists($image_path)) {{ if (!$existing) {{ wp_delete_post($post_id, true); }} http_response_code(500); echo json_encode(array('ok'=>false,'error'=>'uploaded-image-missing')); exit; }}
 $thumbnail_id = (int) attachment_url_to_postid($image_url);
 if ($thumbnail_id === 0) {{
     $filetype = wp_check_filetype(basename($image_path), null);
@@ -171,7 +179,7 @@ if ($thumbnail_id === 0) {{
         'post_content' => '',
         'post_status' => 'inherit',
     ), $image_path, $post_id, true);
-    if (is_wp_error($thumbnail_id)) {{ wp_delete_post($post_id, true); http_response_code(500); echo json_encode(array('ok'=>false,'error'=>$thumbnail_id->get_error_message())); exit; }}
+    if (is_wp_error($thumbnail_id)) {{ if (!$existing) {{ wp_delete_post($post_id, true); }} http_response_code(500); echo json_encode(array('ok'=>false,'error'=>$thumbnail_id->get_error_message())); exit; }}
     require_once ABSPATH . 'wp-admin/includes/image.php';
     $metadata = wp_generate_attachment_metadata($thumbnail_id, $image_path);
     wp_update_attachment_metadata($thumbnail_id, $metadata);
@@ -184,19 +192,19 @@ $settings = get_option('trp_settings', array());
 $default_language = !empty($settings['default-language']) ? (string)$settings['default-language'] : 'id_ID';
 $target_language = 'en_US';
 $languages = !empty($settings['translation-languages']) && is_array($settings['translation-languages']) ? $settings['translation-languages'] : array();
-if (!in_array($target_language, $languages, true)) {{ wp_delete_post($post_id, true); http_response_code(500); echo json_encode(array('ok'=>false,'error'=>'translatepress-en-us-not-configured')); exit; }}
+if (!in_array($target_language, $languages, true)) {{ if (!$existing) {{ wp_delete_post($post_id, true); }} http_response_code(500); echo json_encode(array('ok'=>false,'error'=>'translatepress-en-us-not-configured')); exit; }}
 
 $table = $wpdb->prefix . 'trp_dictionary_' . strtolower(str_replace('-', '_', $default_language)) . '_' . strtolower(str_replace('-', '_', $target_language));
 $table_like = $wpdb->esc_like($table);
 $table_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table_like));
-if ($table_exists !== $table) {{ wp_delete_post($post_id, true); http_response_code(500); echo json_encode(array('ok'=>false,'error'=>'translatepress-table-missing')); exit; }}
+if ($table_exists !== $table) {{ if (!$existing) {{ wp_delete_post($post_id, true); }} http_response_code(500); echo json_encode(array('ok'=>false,'error'=>'translatepress-table-missing')); exit; }}
 
 $created_ids = array();
 foreach ($translations as $original => $translated) {{
     $row = $wpdb->get_row($wpdb->prepare("SELECT id, translated, status, block_type FROM `$table` WHERE BINARY original = %s ORDER BY id ASC LIMIT 1", $original), ARRAY_A);
     if ($row) {{
         if ((string)$row['translated'] !== (string)$translated || (int)$row['status'] !== 2) {{
-            wp_delete_post($post_id, true);
+            if (!$existing) {{ wp_delete_post($post_id, true); }}
             http_response_code(409);
             echo json_encode(array('ok'=>false,'error'=>'translation-conflict','original'=>$original));
             exit;
@@ -206,7 +214,7 @@ foreach ($translations as $original => $translated) {{
     $ok = $wpdb->insert($table, array('original'=>$original,'translated'=>$translated,'status'=>2,'block_type'=>0), array('%s','%s','%d','%d'));
     if ($ok === false) {{
         foreach ($created_ids as $created_id) {{ $wpdb->delete($table, array('id'=>$created_id), array('%d')); }}
-        wp_delete_post($post_id, true);
+        if (!$existing) {{ wp_delete_post($post_id, true); }}
         http_response_code(500);
         echo json_encode(array('ok'=>false,'error'=>'translation-insert-failed'));
         exit;
@@ -220,7 +228,7 @@ $readback = get_post($post_id);
 $verified = $readback && $readback->post_status === 'publish' && $readback->post_name === $slug && $readback->post_title === {php_single_quoted(source['title'])} && strpos($readback->post_content, {php_single_quoted(source['body'])}) !== false;
 if (!$verified) {{
     foreach ($created_ids as $created_id) {{ $wpdb->delete($table, array('id'=>$created_id), array('%d')); }}
-    wp_delete_post($post_id, true);
+    if (!$existing) {{ wp_delete_post($post_id, true); }}
     http_response_code(500);
     echo json_encode(array('ok'=>false,'error'=>'post-readback-failed'));
     exit;
