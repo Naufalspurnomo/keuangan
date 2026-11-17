@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import ProjectDocumentPreview from './ProjectDocumentPreview'
 import {
+  calculateDocumentTotals,
   createEmptyDocumentLine,
   validateDocumentDraft,
   type ProjectDocumentDraft,
@@ -73,12 +74,21 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
     if (dirty && !window.confirm('Tutup penyusun dan buang perubahan yang belum disimpan?')) return
     onClose()
   }
+  const typeName = draft.type === 'sales_order' ? 'sales order' : draft.type === 'invoice' ? 'invoice' : 'kuitansi'
+  let total = 0
+  try { total = calculateDocumentTotals(draft).total } catch { total = 0 }
+  const money = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(total).replace(/\s/g, '')
 
-  return <section className="document-composer" aria-label="Penyusun dokumen">
+  return <section className="document-composer document-workspace" aria-label="Penyusun dokumen">
     <header className="document-composer-head">
-      <div><p className="eyebrow">PENYUSUN DOKUMEN</p><h2>{document.id ? 'Ubah draf' : 'Dokumen baru'}</h2></div>
+      <div><p className="eyebrow">DOKUMEN KOMERSIAL</p><h2>{document.id ? `Ubah ${typeName}` : `Buat ${typeName}`}</h2><p>Isi detail, susun item, lalu periksa hasil akhir sebelum menyimpan.</p></div>
       <button type="button" className="icon-button" aria-label="Tutup penyusun dokumen" onClick={close}><X size={20} /></button>
     </header>
+    <ol className="document-workflow" aria-label={`Alur pembuatan ${typeName}`}>
+      <li><span>1</span><strong>{draft.type === 'invoice' ? 'Detail invoice' : draft.type === 'receipt' ? 'Detail kuitansi' : 'Detail dokumen'}</strong></li>
+      <li><span>2</span><strong>{draft.type === 'receipt' ? 'Alokasi pembayaran' : 'Item & harga'}</strong></li>
+      <li><span>3</span><strong>Ketentuan</strong></li>
+    </ol>
     <div className="document-view-tabs" role="tablist" aria-label="Tampilan dokumen">
       <button type="button" role="tab" aria-selected={view === 'edit'} onClick={() => setView('edit')}><Pencil size={16} /> Edit</button>
       <button type="button" role="tab" aria-selected={view === 'preview'} onClick={() => setView('preview')}><Eye size={16} /> Pratinjau</button>
@@ -86,15 +96,18 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
     <div className="document-composer-layout">
       <form className={`document-editor${view === 'preview' ? ' mobile-hidden-panel' : ''}`} onSubmit={submit} noValidate>
         {error && <p ref={alertRef} tabIndex={-1} role="alert" className="form-error">{error}</p>}
-        <div className="document-field-grid">
+        <section className="document-form-section" aria-labelledby="document-detail-heading">
+          <div className="document-section-heading"><span>1</span><div><h3 id="document-detail-heading">Detail {typeName}</h3><p>Tanggal dan jenis tagihan yang terlihat pada dokumen.</p></div></div>
+          <div className="document-field-grid">
           <label>Jenis dokumen<input value={draft.type === 'sales_order' ? 'Sales Order' : draft.type === 'invoice' ? 'Invoice' : 'Kuitansi'} disabled /></label>
           {draft.type === 'invoice' && <label>Tahap invoice<select aria-label="Tahap invoice" value={draft.invoice_kind ?? 'DP'} onChange={(event) => change('invoice_kind', event.target.value as ProjectDocumentDraft['invoice_kind'])}><option value="DP">DP</option><option value="PROGRESS">Progress</option><option value="FINAL">Final</option></select></label>}
           <label>Tanggal dokumen<input type="date" value={draft.issue_date} onChange={(event) => change('issue_date', event.target.value)} /></label>
           {draft.type === 'invoice' && <label>Jatuh tempo<input type="date" value={draft.due_date ?? ''} onChange={(event) => change('due_date', event.target.value || null)} /></label>}
           {draft.type === 'sales_order' && <label>Berlaku sampai<input type="date" value={draft.valid_until ?? ''} onChange={(event) => change('valid_until', event.target.value || null)} /></label>}
-        </div>
+          </div>
+        </section>
 
-        {draft.type !== 'receipt' ? <fieldset className="document-lines"><legend>Item dokumen</legend>
+        {draft.type !== 'receipt' ? <fieldset className="document-lines document-form-section"><legend><span>2</span><div><strong>Item & harga</strong><small>Masukkan pekerjaan yang ditagihkan. Total dihitung otomatis.</small></div></legend>
           {draft.lines.map((line, index) => <div className="document-line" key={line.id}>
             <label className="line-description">Deskripsi item {index + 1}<input aria-label={`Deskripsi item ${index + 1}`} value={line.description} onChange={(event) => changeLine(index, 'description', event.target.value)} /></label>
             <label>Kuantitas<input aria-label={`Kuantitas item ${index + 1}`} inputMode="decimal" value={line.quantity} onChange={(event) => changeLine(index, 'quantity', event.target.value)} /></label>
@@ -117,7 +130,9 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
           </>}
         </section>}
 
-        <div className="document-field-grid">
+        <section className="document-form-section" aria-labelledby="document-terms-heading">
+          <div className="document-section-heading"><span>3</span><div><h3 id="document-terms-heading">Ketentuan & persetujuan</h3><p>Atur diskon, pajak, catatan, dan nama penanda tangan.</p></div></div>
+          <div className="document-field-grid">
           {draft.type !== 'receipt' && draft.invoice_kind !== 'FINAL' && <>
             <label>Diskon dokumen<select value={draft.discount_mode} onChange={(event) => change('discount_mode', event.target.value as ProjectDocumentDraft['discount_mode'])}><option value="none">Tanpa diskon</option><option value="fixed">Nominal</option><option value="percent">Persen</option></select></label>
             {draft.discount_mode !== 'none' && <label>Nilai diskon<input inputMode="decimal" value={draft.discount_value} onChange={(event) => change('discount_value', event.target.value)} /></label>}
@@ -126,15 +141,18 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
           <label>Disiapkan oleh<input value={draft.prepared_by} onChange={(event) => change('prepared_by', event.target.value)} /></label>
           <label>Penanda tangan klien<input value={draft.client_signatory} onChange={(event) => change('client_signatory', event.target.value)} /></label>
           <label>Gambar proyek<input aria-label="Gambar proyek" value={draft.project_image_url ?? ''} onChange={(event) => change('project_image_url', event.target.value || null)} placeholder="data:image/png;base64,…" /></label>
-        </div>
-        <label>Catatan<textarea aria-label="Catatan" value={draft.notes} onChange={(event) => change('notes', event.target.value)} /></label>
-        <label>Syarat pembayaran<textarea value={draft.payment_terms} onChange={(event) => change('payment_terms', event.target.value)} /></label>
+          </div>
+          <div className="document-text-grid">
+            <label>Catatan <span className="field-help">Informasi tambahan yang tampil di bawah total.</span><textarea aria-label="Catatan" value={draft.notes} onChange={(event) => change('notes', event.target.value)} /></label>
+            <label>Syarat pembayaran <span className="field-help">Contoh: DP 50%, pelunasan sebelum pengiriman.</span><textarea value={draft.payment_terms} onChange={(event) => change('payment_terms', event.target.value)} /></label>
+          </div>
+        </section>
         <div className="document-save-bar">
-          {!writesEnabled && <span className="write-disabled-note">Penyimpanan dokumen belum diaktifkan.</span>}
-          <button type="submit" className="primary-button" disabled={!writesEnabled || saving}>{saving ? 'Menyimpan…' : 'Simpan draf'}</button>
+          <div aria-label={`Total ${typeName}`} className="document-live-total"><span>Total {typeName}</span><strong>{money}</strong></div>
+          <div>{!writesEnabled && <span className="write-disabled-note">Penyimpanan dokumen belum diaktifkan.</span>}<button type="button" className="secondary-button" onClick={close}>Batal</button><button type="submit" className="primary-button" disabled={!writesEnabled || saving}>{saving ? 'Menyimpan…' : 'Simpan draf'}</button></div>
         </div>
       </form>
-      <div className={`document-preview-pane${view === 'edit' ? ' mobile-hidden-panel' : ''}`}><ProjectDocumentPreview project={project} document={draft} /></div>
+      <aside className={`document-preview-pane${view === 'edit' ? ' mobile-hidden-panel' : ''}`} aria-label={`Pratinjau ${typeName}`}><div className="document-preview-label"><span>PRATINJAU LANGSUNG</span><small>Terbarui otomatis</small></div><ProjectDocumentPreview project={project} document={draft} /></aside>
     </div>
   </section>
 }

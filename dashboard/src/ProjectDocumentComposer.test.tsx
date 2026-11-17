@@ -22,6 +22,21 @@ const project: ProjectRecord = {
 afterEach(cleanup)
 
 describe('ProjectDocumentComposer', () => {
+  it('presents invoice creation as a guided workflow with a live total', () => {
+    const draft = createEmptyDocumentDraft(project.id, 'invoice', '2026-11-03')
+    render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={vi.fn()} onClose={vi.fn()} />)
+
+    expect(screen.getByRole('heading', { name: 'Buat invoice' })).toBeTruthy()
+    const workflow = screen.getByRole('list', { name: 'Alur pembuatan invoice' })
+    expect(within(workflow).getByText('Detail invoice')).toBeTruthy()
+    expect(within(workflow).getByText('Item & harga')).toBeTruthy()
+    expect(within(workflow).getByText('Ketentuan')).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Panel akustik' } })
+    fireEvent.change(screen.getByLabelText('Harga satuan item 1'), { target: { value: '100000' } })
+    expect(screen.getByLabelText('Total invoice')).toHaveTextContent('Rp100.000')
+  })
+
   it('edits line items and renders a semantic A5 preview with calculated totals', () => {
     const draft = createEmptyDocumentDraft(project.id, 'invoice', '2026-11-03')
     render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={vi.fn()} onClose={vi.fn()} />)

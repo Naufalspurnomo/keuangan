@@ -107,6 +107,21 @@ afterEach(() => {
 })
 
 describe('ProjectQuotationPanel', () => {
+  it('guides quotation creation and keeps the live commercial summary visible', async () => {
+    render(<ProjectQuotationPanel project={project} session={session} api={api()} onApplied={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Buat quotation' }))
+
+    expect(screen.getByRole('heading', { name: 'Buat quotation' })).toBeTruthy()
+    const workflow = screen.getByRole('list', { name: 'Alur pembuatan quotation' })
+    expect(within(workflow).getByText('Klien & proyek')).toBeTruthy()
+    expect(within(workflow).getByText('Item & harga')).toBeTruthy()
+    expect(within(workflow).getByText('Ketentuan')).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Backdrop premium' } })
+    fireEvent.change(screen.getByLabelText('Harga satuan item 1'), { target: { value: '5000000' } })
+    expect(screen.getByRole('complementary', { name: 'Ringkasan quotation' })).toHaveTextContent(/Rp\s*5\.000\.000/)
+  })
+
   it('creates a structured draft from project-derived recipient data and automatic brand', async () => {
     const subject = api()
     render(<ProjectQuotationPanel project={project} session={session} api={subject} onApplied={vi.fn()} />)
