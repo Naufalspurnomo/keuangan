@@ -121,6 +121,9 @@ export interface ProjectQuotationAcceptedSnapshot {
 }
 
 export interface ProjectQuotationValues {
+  template_key?: 'hollawall' | 'hojja' | 'texturin' | string
+  template_version?: string
+  payment_profile_key?: string
   recipient_name: string
   recipient_company: string
   recipient_address: string
@@ -149,6 +152,8 @@ export interface ProjectQuotation {
   channel: 'whatsapp' | 'phone' | 'email' | 'meeting' | 'other'
   negotiation_notes: string | null
   template_key?: 'hojja' | 'hollawall' | 'texturin' | string
+  template_version?: string
+  payment_profile_key?: string
   recipient_name?: string
   recipient_company?: string
   recipient_address?: string
@@ -213,6 +218,9 @@ export interface ProjectDocumentDraft {
   prepared_by: string
   client_signatory: string
   project_image_url: string | null
+  template_key?: 'hollawall' | 'hojja' | 'texturin' | string
+  template_version?: string
+  payment_profile_key?: string
   lines: DocumentLineInput[]
   discount_mode: DocumentDiscountMode
   discount_value: string

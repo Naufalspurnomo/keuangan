@@ -60,6 +60,7 @@ _SELECT_DOCUMENT = """
     official_number, issue_date, due_date, valid_until,
     document_discount_amount, document_discount_percent, tax_percent,
     notes, payment_terms, prepared_by, client_signatory, project_image_url,
+    template_key, template_version, payment_profile_key,
     immutable_snapshot, snapshot_sha256,
     renderer_version, revision_of_id, superseded_by_id, void_reason,
     lock_version, issued_at, voided_at, superseded_at,
@@ -72,7 +73,7 @@ _SELECT_QUOTATION = """
     recipient_name, recipient_company, recipient_address, recipient_contact, project_name,
     project_image_url, lines, discount_mode, discount_value, tax_percent,
     payment_terms, content_notes, accepted_snapshot, revision_of_id, dp_invoice_id,
-    installment_schedule
+    installment_schedule, template_version, payment_profile_key
 """
 
 
@@ -278,7 +279,7 @@ SELECT
                 table_name || '|' || column_name || '|' || udt_name || '|' ||
                 is_nullable || '|' || COALESCE(column_default, '') || '|' || is_identity,
                 E'\n' ORDER BY table_name, column_name
-            )) = 'e8001bf02297e5dfd1392b198dafcbee'
+            )) = '554960263fb3c9ef58f7ad818f59019b'
             FROM information_schema.columns
             WHERE table_schema = 'public'
               AND table_name IN (
@@ -364,7 +365,7 @@ SELECT
                 column_name || '|' || udt_name || '|' || is_nullable || '|' ||
                 COALESCE(column_default, '') || '|' || is_identity,
                 E'\n' ORDER BY ordinal_position
-            )) = '1c0e81da67437c81355289eb2799142f'
+            )) = '021b8faabd951e5a62b14c3ab7445119'
             FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = 'project_quotation_handoffs'
         )
@@ -376,6 +377,22 @@ SELECT
             )) = 'e1ac00cf9c4df8329adb800e9fbe8e67'
             FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = 'project_quotation_events'
+        )
+        AND (
+            SELECT MD5(STRING_AGG(
+                column_name || '|' || udt_name || '|' || is_nullable || '|' ||
+                COALESCE(column_default, '') || '|' || is_identity,
+                E'\n' ORDER BY ordinal_position
+            )) = 'd15a45bf3e5c8290b7e5e7890b1e3536'
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'project_document_lines'
+        )
+        AND EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'chk_project_document_line_commercial_meta_object'
+              AND conrelid = 'project_document_lines'::regclass
+              AND pg_get_constraintdef(oid, TRUE) =
+                  'CHECK (jsonb_typeof(commercial_meta) = ''object''::text)'
         )
         AND EXISTS (
             SELECT 1 FROM pg_constraint
@@ -752,6 +769,7 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
             "019_structured_quotations.sql",
             "020_quotation_invariants.sql",
             "022_project_hard_delete.sql",
+            "024_brand_commercial_identity.sql",
         )
     ]
     try:
@@ -1121,6 +1139,14 @@ class ProjectDocumentRepository:
                             },
                         )
                     )
+                    template_key, template_version, payment_profile_key = self._document_identity(
+                        sales_order_values, company=company, issuer_key=issuer_key,
+                    )
+                    sales_order_values.update({
+                        "template_key": template_key,
+                        "template_version": template_version,
+                        "payment_profile_key": payment_profile_key,
+                    })
                     sales_order = self._insert_document(
                         cursor,
                         document_id=document_id,
@@ -1328,6 +1354,53 @@ class ProjectDocumentRepository:
             return "TEXTURIN"
         raise ValueError("project company has no supported quotation template")
 
+    @staticmethod
+    def _commercial_line_meta(line: Mapping[str, Any]) -> dict[str, Any]:
+        """Preserve only validated semantic metadata around the monetary spine."""
+        source = _safe_json_object(line.get("commercial_meta")) or {}
+        source.update({key: line[key] for key in (
+            "pricing_mode", "width", "height", "dimension_unit", "raw_area_m2",
+            "billed_area_m2", "area_rounding", "area_override_reason",
+            "display_quantity", "original_price", "asset_ref",
+        ) if key in line})
+        if not source:
+            return {}
+        pricing_mode = str(source.get("pricing_mode") or "").strip().lower()
+        if pricing_mode not in {"area_rate", "ppm_area", "fixed_artwork", "fixed_fee"}:
+            raise DocumentCalculationError("commercial_meta pricing_mode is invalid")
+        result: dict[str, Any] = {"pricing_mode": pricing_mode}
+        for field in ("width", "height", "raw_area_m2", "billed_area_m2", "display_quantity"):
+            value = source.get(field)
+            if value not in (None, ""):
+                parsed = decimal_value(
+                    value, field=f"commercial_meta {field}", minimum=Decimal("0"),
+                    maximum=QUANTITY_MAX, max_fractional_digits=4,
+                )
+                result[field] = format(parsed.normalize(), "f")
+        original_price = source.get("original_price")
+        if original_price not in (None, ""):
+            result["original_price"] = integer_rupiah(original_price, field="commercial_meta original_price")
+        dimension_unit = str(source.get("dimension_unit") or "").strip().lower()
+        if dimension_unit:
+            if dimension_unit not in {"m", "cm", "mm"}:
+                raise DocumentCalculationError("commercial_meta dimension_unit is invalid")
+            result["dimension_unit"] = dimension_unit
+        area_rounding = str(source.get("area_rounding") or "").strip().lower()
+        if area_rounding:
+            if area_rounding not in {"exact", "truncate", "half_up", "manual_override"}:
+                raise DocumentCalculationError("commercial_meta area_rounding is invalid")
+            result["area_rounding"] = area_rounding
+        for field in ("area_override_reason", "asset_ref"):
+            value = source.get(field)
+            if value not in (None, ""):
+                text = str(value).strip()
+                if len(text) > 2048:
+                    raise DocumentCalculationError(f"commercial_meta {field} is too long")
+                result[field] = text
+        if area_rounding == "manual_override" and not result.get("area_override_reason"):
+            raise DocumentCalculationError("commercial_meta area_override_reason is required")
+        return {"commercial_meta": result}
+
     @classmethod
     def _quotation_values(
         cls,
@@ -1340,6 +1413,12 @@ class ProjectDocumentRepository:
         requested_template = str(supplied.get("template_key") or template_key).strip().upper()
         if requested_template != template_key:
             raise ValueError("template_key must match the project company")
+        template_version = str(supplied.get("template_version") or "commercial-v3").strip()
+        if template_version != "commercial-v3":
+            raise ValueError("template_version is unsupported")
+        payment_profile_key = str(supplied.get("payment_profile_key") or "").strip()
+        if len(payment_profile_key) > 128:
+            raise ValueError("payment_profile_key is too long")
         channel = str(supplied.get("channel") or "whatsapp").strip().lower()
         if channel not in {"whatsapp", "phone", "email", "meeting", "other"}:
             raise ValueError("unsupported quotation channel")
@@ -1386,7 +1465,10 @@ class ProjectDocumentRepository:
                 document_discount_percent=discount_percent,
                 tax_percent=tax_percent,
             )
-            canonical_lines = totals["lines"]
+            canonical_lines = [
+                {**calculated, **cls._commercial_line_meta(source)}
+                for source, calculated in zip(lines, totals["lines"], strict=True)
+            ]
             amount = int(totals["total"])
             discount_value = discount_amount if discount_mode == "fixed" else (
                 str(decimal_value(discount_percent, field="quotation discount", maximum=PERCENT_MAX, max_fractional_digits=4))
@@ -1408,6 +1490,8 @@ class ProjectDocumentRepository:
             "channel": channel,
             "negotiation_notes": notes,
             "template_key": template_key,
+            "template_version": template_version,
+            "payment_profile_key": payment_profile_key or None,
             "recipient_name": recipient_name,
             "recipient_company": recipient_company,
             "recipient_address": recipient_address,
@@ -1433,6 +1517,8 @@ class ProjectDocumentRepository:
             "channel": quotation.get("channel"),
             "negotiation_notes": quotation.get("negotiation_notes"),
             "template_key": quotation.get("template_key"),
+            "template_version": quotation.get("template_version"),
+            "payment_profile_key": quotation.get("payment_profile_key"),
             "recipient_name": quotation.get("recipient_name"),
             "recipient_company": quotation.get("recipient_company"),
             "recipient_address": quotation.get("recipient_address"),
@@ -1494,12 +1580,12 @@ class ProjectDocumentRepository:
                    recipient_contact, project_name,
                    project_image_url, lines, discount_mode, discount_value,
                    tax_percent, payment_terms, content_notes, revision_of_id,
-                   created_by, updated_by
+                   template_version, payment_profile_key, created_by, updated_by
                ) VALUES (
                    %s, %s, %s, %s, %s, %s, NULLIF(%s, ''), %s, NULLIF(%s, ''), %s,
                    NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''),
                    %s, %s::jsonb, %s, %s, %s, NULLIF(%s, ''), NULLIF(%s, ''), %s,
-                   %s::jsonb, %s::jsonb
+                   %s, NULLIF(%s, ''), %s::jsonb, %s::jsonb
                ) RETURNING """ + _SELECT_QUOTATION,  # nosec B608 -- internal column constant
             (
                 quotation_id, project_id, version, values["canva_url"], values["amount"],
@@ -1509,7 +1595,8 @@ class ProjectDocumentRepository:
                 values["recipient_contact"], values["project_name"], values["project_image_url"],
                 json.dumps(values["lines"]), values["discount_mode"], values["discount_value"],
                 values["tax_percent"], values["payment_terms"], values["content_notes"],
-                revision_of_id, actor_json, actor_json,
+                revision_of_id, values["template_version"], values.get("payment_profile_key"),
+                actor_json, actor_json,
             ),
         )
         return ProjectDocumentRepository._quotation_metadata(cursor.fetchone()) or {}
@@ -1624,14 +1711,16 @@ class ProjectDocumentRepository:
                     if replay is not None:
                         return replay
                     cursor.execute(
-                        "SELECT status, company FROM projects WHERE id = %s FOR UPDATE", (project_id,)
+                        "SELECT status, company, issuer_key FROM projects WHERE id = %s FOR UPDATE", (project_id,)
                     )
                     project = cursor.fetchone()
                     if not project:
                         raise ProjectDocumentNotFound("project not found")
                     if str(project[0]) in {"completed", "cancelled"}:
                         raise ProjectDocumentConflict("quotation project must be open")
-                    prepared = self._quotation_values(values, company=str(project[1]))
+                    canonical_values = dict(values)
+                    canonical_values.setdefault("payment_profile_key", str(project[2]))
+                    prepared = self._quotation_values(canonical_values, company=str(project[1]))
                     cursor.execute(
                         """SELECT id, version, status FROM project_quotation_handoffs
                            WHERE project_id = %s ORDER BY version DESC LIMIT 1 FOR UPDATE""",
@@ -1696,6 +1785,7 @@ class ProjectDocumentRepository:
                         """UPDATE project_quotation_handoffs SET
                                canva_url = %s, amount = %s, channel = %s,
                                negotiation_notes = NULLIF(%s, ''), template_key = %s,
+                               template_version = %s, payment_profile_key = NULLIF(%s, ''),
                                subject = NULLIF(%s, ''), valid_until = %s, project_image_url = %s,
                                recipient_name = NULLIF(%s, ''), recipient_company = NULLIF(%s, ''),
                                recipient_address = NULLIF(%s, ''), recipient_contact = NULLIF(%s, ''),
@@ -1708,7 +1798,8 @@ class ProjectDocumentRepository:
                            RETURNING """ + _SELECT_QUOTATION,  # nosec B608
                         (
                             prepared["canva_url"], prepared["amount"], prepared["channel"],
-                            prepared["negotiation_notes"], prepared["template_key"], prepared["subject"],
+                            prepared["negotiation_notes"], prepared["template_key"],
+                            prepared["template_version"], prepared.get("payment_profile_key"), prepared["subject"],
                             prepared["valid_until"], prepared["project_image_url"], prepared["recipient_name"],
                             prepared["recipient_company"], prepared["recipient_address"],
                             prepared["recipient_contact"], prepared["project_name"], json.dumps(prepared["lines"]),
@@ -1851,7 +1942,7 @@ class ProjectDocumentRepository:
                             "Deal requires structured lines and project image"
                         )
                     cursor.execute(
-                        "SELECT issuer_key, status FROM projects WHERE id = %s FOR UPDATE",
+                        "SELECT issuer_key, status, company FROM projects WHERE id = %s FOR UPDATE",
                         (quotation["project_id"],),
                     )
                     project = cursor.fetchone()
@@ -1882,6 +1973,8 @@ class ProjectDocumentRepository:
                                document_discount_percent = %s, tax_percent = %s,
                                notes = NULLIF(%s, ''), payment_terms = NULLIF(%s, ''),
                                client_signatory = NULL, project_image_url = %s,
+                               template_key = %s, template_version = %s,
+                               payment_profile_key = %s,
                                updated_by = %s::jsonb, lock_version = lock_version + 1,
                                updated_at = NOW()
                            WHERE id = %s AND status = 'draft' AND lock_version = %s""",
@@ -1889,6 +1982,8 @@ class ProjectDocumentRepository:
                             quotation["valid_until"], discount_amount, discount_percent,
                             quotation["tax_percent"], quotation["content_notes"],
                             quotation["payment_terms"], quotation["project_image_url"],
+                            quotation["template_key"], quotation.get("template_version") or "commercial-v3",
+                            quotation.get("payment_profile_key") or str(project[0]),
                             actor_json, sales_order_id, expected_document_version,
                         ),
                     )
@@ -1910,6 +2005,9 @@ class ProjectDocumentRepository:
                         "payment_terms": quotation["payment_terms"],
                         "notes": f"DP {rate}% — {quotation.get('subject') or 'Quotation'}",
                         "document_discount_amount": 0, "document_discount_percent": "0", "tax_percent": "0",
+                        "template_key": quotation["template_key"],
+                        "template_version": quotation.get("template_version") or "commercial-v3",
+                        "payment_profile_key": quotation.get("payment_profile_key") or str(project[0]),
                     }))
                     self._insert_document(
                         cursor, document_id=dp_invoice_id, project_id=str(quotation["project_id"]),
@@ -1994,6 +2092,32 @@ class ProjectDocumentRepository:
                 f"Project quotation database unavailable: {type(exc).__name__}"
             ) from exc
 
+    @staticmethod
+    def _require_payment_profile(
+        cursor: Any, *, project_id: str, payment_profile_key: Any,
+    ) -> dict[str, Any]:
+        selected = str(payment_profile_key or "").strip()
+        if not selected:
+            raise ProjectDocumentConflict("payment profile is required before send or issue")
+        cursor.execute(
+            """SELECT p.issuer_key, i.bank_details
+               FROM projects p
+               JOIN project_issuer_profiles i ON i.issuer_key = p.issuer_key
+               WHERE p.id = %s""",
+            (project_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise ProjectDocumentConflict("project issuer profile is missing")
+        issuer_key, raw_bank = str(row[0]), row[1]
+        if selected != issuer_key:
+            raise ProjectDocumentConflict("payment profile does not match the project issuer")
+        bank = _safe_json_object(raw_bank) or {}
+        required = ("bank", "account_number", "account_name")
+        if any(not str(bank.get(field) or "").strip() for field in required):
+            raise ProjectDocumentConflict("payment profile bank details are incomplete")
+        return bank
+
     def transition_project_quotation(
         self, quotation_id: str, *, status: str, note: str, expected_version: int,
         idempotency_key: str, actor: Mapping[str, Any],
@@ -2014,7 +2138,9 @@ class ProjectDocumentRepository:
                     if replay is not None:
                         return replay
                     cursor.execute(
-                        "SELECT status, lock_version FROM project_quotation_handoffs WHERE id = %s FOR UPDATE",
+                        """SELECT status, lock_version, project_id, lines,
+                                  template_key, template_version, payment_profile_key
+                           FROM project_quotation_handoffs WHERE id = %s FOR UPDATE""",
                         (quotation_id,),
                     )
                     current = cursor.fetchone()
@@ -2025,6 +2151,15 @@ class ProjectDocumentRepository:
                     allowed = {"draft": {"sent"}, "sent": {"rejected", "revised"}}
                     if target not in allowed.get(str(current[0]), set()):
                         raise ProjectDocumentConflict("quotation status transition is not allowed")
+                    structured_lines = _safe_json_array(current[3])
+                    if target == "sent" and structured_lines:
+                        if not str(current[4] or "").strip() or str(current[5] or "") != "commercial-v3":
+                            raise ProjectDocumentConflict("quotation template identity is incomplete")
+                        self._require_payment_profile(
+                            cursor,
+                            project_id=str(current[2]),
+                            payment_profile_key=current[6],
+                        )
                     cursor.execute(
                         """UPDATE project_quotation_handoffs
                            SET status = %s,
@@ -2846,6 +2981,22 @@ class ProjectDocumentRepository:
             )
         return prepared
 
+    @classmethod
+    def _document_identity(
+        cls, values: Mapping[str, Any], *, company: str, issuer_key: str,
+    ) -> tuple[str, str, str]:
+        template_key = cls._quotation_template(company)
+        requested_template = str(values.get("template_key") or template_key).strip().upper()
+        if requested_template != template_key:
+            raise ValueError("template_key must match the project company")
+        template_version = str(values.get("template_version") or "commercial-v3").strip()
+        if template_version != "commercial-v3":
+            raise ValueError("template_version is unsupported")
+        payment_profile_key = str(values.get("payment_profile_key") or issuer_key).strip()
+        if payment_profile_key != issuer_key:
+            raise ValueError("payment_profile_key must match the project issuer profile")
+        return template_key, template_version, payment_profile_key
+
     @staticmethod
     def _insert_document(
         cursor: Any,
@@ -2868,10 +3019,12 @@ class ProjectDocumentRepository:
                 applies_to_invoice_id, issue_date, due_date, valid_until,
                 document_discount_amount, document_discount_percent, tax_percent,
                 notes, payment_terms, prepared_by, client_signatory,
-                project_image_url, revision_of_id, created_by, updated_by
+                project_image_url, template_key, template_version, payment_profile_key,
+                revision_of_id, created_by, updated_by
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, NULLIF(%s, ''), NULLIF(%s, ''),
+                NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''),
                 NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''), %s,
                 %s::jsonb, %s::jsonb
             ) RETURNING """ + _SELECT_DOCUMENT,  # nosec B608 -- selected columns are module constants
@@ -2887,6 +3040,9 @@ class ProjectDocumentRepository:
                 str(values.get("prepared_by") or "").strip(),
                 str(values.get("client_signatory") or "").strip(),
                 project_image_url,
+                str(values.get("template_key") or "").strip(),
+                str(values.get("template_version") or "").strip(),
+                str(values.get("payment_profile_key") or "").strip(),
                 revision_of_id, actor_json, actor_json,
             ),
         )
@@ -3008,7 +3164,7 @@ class ProjectDocumentRepository:
                     if replay is not None:
                         return replay
                     cursor.execute(
-                        "SELECT issuer_key, status FROM projects WHERE id = %s FOR UPDATE",
+                        "SELECT issuer_key, status, company FROM projects WHERE id = %s FOR UPDATE",
                         (project_id,),
                     )
                     project = cursor.fetchone()
@@ -3079,6 +3235,14 @@ class ProjectDocumentRepository:
                     prepared = self._numeric_document_values(
                         self._with_document_defaults("invoice", command)
                     )
+                    template_key, template_version, payment_profile_key = self._document_identity(
+                        prepared, company=str(project[2]), issuer_key=str(project[0]),
+                    )
+                    prepared.update({
+                        "template_key": template_key,
+                        "template_version": template_version,
+                        "payment_profile_key": payment_profile_key,
+                    })
                     document = self._insert_document(
                         cursor,
                         document_id=document_id,
@@ -3222,6 +3386,16 @@ class ProjectDocumentRepository:
                     prepared_values = self._numeric_document_values(
                         self._with_document_defaults("receipt", canonical_values)
                     )
+                    template_key, template_version, payment_profile_key = self._document_identity(
+                        prepared_values,
+                        company=str(project["company"]),
+                        issuer_key=str(project["issuer_key"]),
+                    )
+                    prepared_values.update({
+                        "template_key": template_key,
+                        "template_version": template_version,
+                        "payment_profile_key": payment_profile_key,
+                    })
                     document = self._insert_document(
                         cursor,
                         document_id=document_id,
@@ -3324,7 +3498,7 @@ class ProjectDocumentRepository:
                     if replay is not None:
                         return replay
                     cursor.execute(
-                        "SELECT issuer_key, status FROM projects WHERE id = %s FOR UPDATE",
+                        "SELECT issuer_key, status, company FROM projects WHERE id = %s FOR UPDATE",
                         (project_id,),
                     )
                     project = cursor.fetchone()
@@ -3337,6 +3511,14 @@ class ProjectDocumentRepository:
                     prepared_values = self._numeric_document_values(
                         self._with_document_defaults(document_type, values)
                     )
+                    template_key, template_version, payment_profile_key = self._document_identity(
+                        prepared_values, company=str(project[2]), issuer_key=str(project[0]),
+                    )
+                    prepared_values.update({
+                        "template_key": template_key,
+                        "template_version": template_version,
+                        "payment_profile_key": payment_profile_key,
+                    })
                     document = self._insert_document(
                         cursor,
                         document_id=document_id,
@@ -3417,9 +3599,11 @@ class ProjectDocumentRepository:
             raise DocumentCalculationError(
                 f"line {position} is outside supported numeric bounds"
             ) from exc
+        commercial_meta = ProjectDocumentRepository._commercial_line_meta(line).get("commercial_meta", {})
         return (
             str(uuid.uuid4()), position, description, str(quantity), unit,
             unit_price, str(discount_percent), gross, discount, line_total,
+            json.dumps(commercial_meta, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
         )
 
     @classmethod
@@ -3438,8 +3622,8 @@ class ProjectDocumentRepository:
                 INSERT INTO project_document_lines (
                     id, document_id, position, description, quantity, unit,
                     unit_price, line_discount_percent, line_gross,
-                    line_discount, line_total
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    line_discount, line_total, commercial_meta
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
                 """,
                 (values[0], document_id, *values[1:]),
             )
@@ -3449,16 +3633,21 @@ class ProjectDocumentRepository:
         columns = [
             "id", "position", "description", "quantity", "unit", "unit_price",
             "line_discount_percent", "line_gross", "line_discount", "line_total",
+            "commercial_meta",
         ]
         cursor.execute(
             """
             SELECT id, position, description, quantity, unit, unit_price,
-                   line_discount_percent, line_gross, line_discount, line_total
+                   line_discount_percent, line_gross, line_discount, line_total,
+                   commercial_meta
             FROM project_document_lines WHERE document_id = %s ORDER BY position
             """,
             (document_id,),
         )
-        return [_row_dict(cursor, columns, row) or {} for row in cursor.fetchall()]
+        lines = [_row_dict(cursor, columns, row) or {} for row in cursor.fetchall()]
+        for line in lines:
+            line["commercial_meta"] = _safe_json_object(line.get("commercial_meta")) or {}
+        return lines
 
     @staticmethod
     def _load_allocations(cursor: Any, document_id: str) -> list[dict[str, Any]]:
@@ -4549,6 +4738,16 @@ class ProjectDocumentRepository:
                         cursor,
                         document,
                         project_issuer_key=str(project["issuer_key"]),
+                    )
+                    if (
+                        not str(document.get("template_key") or "").strip()
+                        or str(document.get("template_version") or "") != "commercial-v3"
+                    ):
+                        raise ProjectDocumentConflict("document template identity is incomplete")
+                    self._require_payment_profile(
+                        cursor,
+                        project_id=str(document["project_id"]),
+                        payment_profile_key=document.get("payment_profile_key"),
                     )
                     year = instant.astimezone(JAKARTA).year
                     cursor.execute(

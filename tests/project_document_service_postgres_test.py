@@ -46,6 +46,10 @@ def repository():
             "007_project_transaction_evidence.sql",
             "008_project_quotation_handoffs.sql",
         )
+    ] + [
+        path.read_text(encoding="utf-8")
+        for path in sorted(migration_root.glob("*.sql"))
+        if 9 <= int(path.name.split("_", 1)[0]) <= 24
     ]
     with psycopg.connect(dsn, autocommit=True) as connection:
         with connection.cursor() as cursor:
@@ -95,6 +99,11 @@ def repository():
         display_name="Hollawall",
         number_code="HW",
         address="Surabaya",
+        bank_details={
+            "bank": "TEST BANK",
+            "account_number": "TEST-0001",
+            "account_name": "Test Issuer",
+        },
         actor=ACTOR,
         expected_version=0,
         idempotency_key="service-issuer-create-0001",

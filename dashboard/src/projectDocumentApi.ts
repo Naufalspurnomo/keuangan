@@ -12,6 +12,7 @@ import {
   type ReceiptAllocation,
   type ReceiptOptions,
 } from './projectDocuments'
+import { COMMERCIAL_META_FIELDS } from './commercialDocumentPolicy'
 import { normalizeCanonicalPair } from './transactionMappings'
 
 export const PROJECTS_ENDPOINT = '/admin/api/projects.php'
@@ -211,6 +212,7 @@ function normalizeProject(value: unknown): ProjectRecord {
 
 function normalizeLine(value: unknown, index: number): DocumentLineInput {
   const item = record(value) ?? {}
+  const commercialMeta = record(item.commercial_meta) ?? {}
   return {
     id: text(item.id) || `line-${index + 1}`,
     description: text(item.description),
@@ -218,6 +220,9 @@ function normalizeLine(value: unknown, index: number): DocumentLineInput {
     unit: text(item.unit) || 'unit',
     unit_price: Number(item.unit_price) || 0,
     discount_percent: text(item.line_discount_percent ?? item.discount_percent) || '0',
+    ...Object.fromEntries(COMMERCIAL_META_FIELDS.flatMap((field) => (
+      commercialMeta[field] === undefined ? [] : [[field, commercialMeta[field]]]
+    ))),
   }
 }
 
@@ -326,6 +331,9 @@ function normalizeDocument(value: unknown): ProjectDocumentRecord {
     prepared_by: text(item.prepared_by),
     client_signatory: text(item.client_signatory),
     project_image_url: nullableText(item.project_image_url),
+    template_key: text(item.template_key) || undefined,
+    template_version: text(item.template_version) || undefined,
+    payment_profile_key: text(item.payment_profile_key) || undefined,
     lines,
     allocations,
     discount_mode: fixedDiscount ? 'fixed' : Number(percentDiscount) ? 'percent' : 'none',
@@ -394,6 +402,9 @@ function documentValues(document: ProjectDocumentDraft) {
     prepared_by: document.prepared_by,
     client_signatory: document.client_signatory,
     project_image_url: document.project_image_url,
+    template_key: document.template_key,
+    template_version: document.template_version,
+    payment_profile_key: document.payment_profile_key,
   }
   if (document.type === 'receipt' || (document.type === 'invoice' && document.invoice_kind === 'FINAL')) {
     return metadata
@@ -405,13 +416,20 @@ function documentValues(document: ProjectDocumentDraft) {
     document_discount_amount: fixed,
     document_discount_percent: percentage,
     tax_percent: document.tax_percent,
-    lines: document.lines.map((line) => ({
-      description: line.description,
-      quantity: line.quantity,
-      unit: line.unit,
-      unit_price: line.unit_price,
-      line_discount_percent: line.discount_percent,
-    })),
+    lines: document.lines.map((line) => {
+      const commercial_meta = Object.fromEntries(COMMERCIAL_META_FIELDS.flatMap((field) => {
+        const value = line[field as keyof typeof line]
+        return value === undefined ? [] : [[field, value]]
+      }))
+      return {
+        description: line.description,
+        quantity: line.quantity,
+        unit: line.unit,
+        unit_price: line.unit_price,
+        line_discount_percent: line.discount_percent,
+        ...(Object.keys(commercial_meta).length ? { commercial_meta } : {}),
+      }
+    }),
   }
 }
 

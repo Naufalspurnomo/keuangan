@@ -5,6 +5,7 @@ import type {
   ProjectQuotationValues,
   QuotationInstallment,
 } from './projectDocuments'
+import { COMMERCIAL_META_FIELDS } from './commercialDocumentPolicy'
 
 const DEFAULT_PROXY_ENDPOINT = DOCUMENTS_ENDPOINT
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -84,6 +85,14 @@ function decimalText(value: unknown, fallback = '0') {
   return typeof value === 'string' || typeof value === 'number' ? String(value) : fallback
 }
 
+function normalizedCommercialMeta(item: Record<string, unknown>) {
+  const nested = record(item.commercial_meta) ?? {}
+  return Object.fromEntries(COMMERCIAL_META_FIELDS.flatMap((field) => {
+    const selected = nested[field] ?? item[field]
+    return selected === undefined ? [] : [[field, selected]]
+  }))
+}
+
 function normalizeLine(value: unknown, index: number) {
   const item = record(value) ?? {}
   return {
@@ -93,6 +102,7 @@ function normalizeLine(value: unknown, index: number) {
     unit: text(item.unit) || 'unit',
     unit_price: Number(item.unit_price) || 0,
     discount_percent: decimalText(item.discount_percent ?? item.line_discount_percent),
+    ...normalizedCommercialMeta(item),
   }
 }
 
@@ -136,6 +146,8 @@ function quotation(value: unknown): ProjectQuotation {
       : 'other',
     negotiation_notes: nullableText(item.negotiation_notes),
     template_key: text(item.template_key) || undefined,
+    template_version: text(item.template_version) || undefined,
+    payment_profile_key: text(item.payment_profile_key) || undefined,
     recipient_name: text(item.recipient_name),
     recipient_company: text(item.recipient_company),
     recipient_address: text(item.recipient_address),

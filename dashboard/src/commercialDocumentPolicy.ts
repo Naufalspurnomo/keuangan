@@ -6,6 +6,12 @@ export type PricingMode = 'area_rate' | 'ppm_area' | 'fixed_artwork' | 'fixed_fe
 export type DimensionUnit = 'mm' | 'cm' | 'm'
 export type AreaRounding = 'exact' | 'half_up' | 'truncate' | 'manual_override'
 
+export const COMMERCIAL_META_FIELDS = [
+  'pricing_mode', 'width', 'height', 'dimension_unit', 'raw_area_m2',
+  'billed_area_m2', 'area_rounding', 'area_override_reason',
+  'display_quantity', 'original_price', 'asset_ref',
+] as const
+
 export interface CommercialPolicy {
   template_key: TemplateKey
   template_version: string

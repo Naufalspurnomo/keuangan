@@ -1,4 +1,5 @@
 import inspect
+import json
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -7,6 +8,7 @@ import pytest
 
 from services.project_document_models import MAX_RECEIPT_ALLOCATIONS
 from services.project_document_repository import (
+    ProjectDocumentConflict,
     ProjectDocumentRepository,
     ProjectDocumentUnavailable,
     canonical_json_hash,
@@ -90,8 +92,68 @@ def test_canonical_json_hash_is_order_independent_and_rejects_non_json_values():
 
     assert first == second
     assert len(first) == 64
-    with pytest.raises(TypeError, match="JSON"):
-        canonical_json_hash({"bad": object()})
+    with pytest.raises(TypeError, match="only JSON values"):
+        canonical_json_hash({"bad": float("nan")})
+
+
+def test_commercial_line_metadata_is_validated_and_preserved():
+    line = {
+        "commercial_meta": {
+            "pricing_mode": "area_rate",
+            "width": "2.5000",
+            "height": "4",
+            "dimension_unit": "m",
+            "raw_area_m2": "10",
+            "billed_area_m2": "10",
+            "area_rounding": "manual_override",
+            "area_override_reason": "site measurement",
+            "asset_ref": "asset://mural-1",
+        }
+    }
+    assert ProjectDocumentRepository._commercial_line_meta(line) == {
+        "commercial_meta": {
+            "pricing_mode": "area_rate",
+            "width": "2.5",
+            "height": "4",
+            "dimension_unit": "m",
+            "raw_area_m2": "10",
+            "billed_area_m2": "10",
+            "area_rounding": "manual_override",
+            "area_override_reason": "site measurement",
+            "asset_ref": "asset://mural-1",
+        }
+    }
+    assert ProjectDocumentRepository._commercial_line_meta({}) == {}
+    with pytest.raises(Exception, match="area_override_reason"):
+        ProjectDocumentRepository._commercial_line_meta({
+            "pricing_mode": "area_rate", "area_rounding": "manual_override",
+        })
+
+
+def test_document_identity_requires_canonical_template_and_issuer_profile():
+    assert ProjectDocumentRepository._document_identity(
+        {}, company="HOJJA", issuer_key="cv-holla-berkreasi",
+    ) == ("HOJJA", "commercial-v3", "cv-holla-berkreasi")
+    with pytest.raises(ValueError, match="template_key"):
+        ProjectDocumentRepository._document_identity(
+            {"template_key": "TEXTURIN"}, company="HOJJA", issuer_key="cv-holla-berkreasi",
+        )
+    with pytest.raises(ValueError, match="payment_profile_key"):
+        ProjectDocumentRepository._document_identity(
+            {"payment_profile_key": "unrelated"}, company="HOJJA", issuer_key="cv-holla-berkreasi",
+        )
+
+
+def test_brand_commercial_migration_is_additive_and_idempotent():
+    sql = (ROOT / "dashboard_api/migrations/024_brand_commercial_identity.sql").read_text(encoding="utf-8")
+    for fragment in (
+        "ADD COLUMN IF NOT EXISTS template_version TEXT",
+        "ADD COLUMN IF NOT EXISTS payment_profile_key TEXT",
+        "ADD COLUMN IF NOT EXISTS template_key TEXT",
+        "ADD COLUMN IF NOT EXISTS commercial_meta JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "chk_project_document_line_commercial_meta_object",
+    ):
+        assert fragment in sql
 
 
 def test_repository_fails_closed_without_postgres_configuration(monkeypatch):

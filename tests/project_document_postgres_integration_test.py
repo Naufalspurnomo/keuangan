@@ -73,7 +73,7 @@ def dsn():
     canonical_extensions = [
         path.read_text(encoding="utf-8")
         for path in sorted(migration_root.glob("*.sql"))
-        if 9 <= int(path.name.split("_", 1)[0]) <= 22
+        if 9 <= int(path.name.split("_", 1)[0]) <= 24
     ]
     with psycopg.connect(selected, autocommit=True) as connection:
         with connection.cursor() as cursor:
@@ -136,6 +136,11 @@ def issuer(repository, *, issuer_key="hollawall", number_code="HW", key=None):
         display_name="Hollawall",
         number_code=number_code,
         address="Surabaya",
+        bank_details={
+            "bank": "TEST BANK",
+            "account_number": "TEST-0001",
+            "account_name": "Test Issuer",
+        },
         actor=ACTOR,
         expected_version=0,
         idempotency_key=key or f"issuer-create-{issuer_key}-0001",
@@ -2728,6 +2733,40 @@ def test_canva_quotation_revision_preserves_history_and_requires_valid_url(repos
     assert history[1]["amount"] == 10_000_000
 
 
+def test_structured_quotation_send_requires_complete_payment_profile(repository):
+    import psycopg
+
+    created = project(repository, key="payment-gate-project-0001", quotation_required=True)
+    project_id = created["project"]["id"]
+    image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    quotation = repository.create_project_quotation(
+        project_id,
+        values={
+            "template_key": "HOLLAWALL", "template_version": "commercial-v3",
+            "payment_profile_key": "hollawall", "project_image_url": image,
+            "lines": [{
+                "description": "Mural", "quantity": "6", "unit": "m²", "unit_price": 200_000,
+                "commercial_meta": {
+                    "pricing_mode": "area_rate", "billed_area_m2": "6",
+                    "area_rounding": "exact",
+                },
+            }],
+        },
+        idempotency_key="payment-gate-quotation-0001",
+        actor=ACTOR,
+    )
+    with psycopg.connect(repository._dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE project_issuer_profiles SET bank_details = '{}'::jsonb WHERE issuer_key = 'hollawall'"
+            )
+    with pytest.raises(ProjectDocumentConflict, match="bank details are incomplete"):
+        repository.transition_project_quotation(
+            quotation["id"], status="sent", note="", expected_version=quotation["lock_version"],
+            idempotency_key="payment-gate-send-0001", actor=ACTOR,
+        )
+
+
 def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(repository):
     created = project(repository, key="structured-quotation-project-0001", quotation_required=True)
     project_id = created["project"]["id"]
@@ -2738,14 +2777,21 @@ def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(reposit
         project_id,
         values={
             "template_key": "HOLLAWALL",
+            "template_version": "commercial-v3",
+            "payment_profile_key": "hollawall",
             "subject": "Backdrop peluncuran",
             "valid_until": "2026-12-15",
             "project_image_url": image,
             "lines": [{
                 "description": "Backdrop utama",
-                "quantity": "1",
-                "unit": "proyek",
-                "unit_price": 900_000,
+                "quantity": "6",
+                "unit": "m²",
+                "unit_price": 150_000,
+                "commercial_meta": {
+                    "pricing_mode": "area_rate", "width": "3", "height": "2",
+                    "dimension_unit": "m", "raw_area_m2": "6", "billed_area_m2": "6",
+                    "area_rounding": "exact", "asset_ref": "asset://backdrop-main",
+                },
             }],
             "discount_mode": "none",
             "tax_percent": "0",
@@ -2765,9 +2811,14 @@ def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(reposit
             "subject": "Backdrop peluncuran — revisi internal",
             "lines": [{
                 "description": "Backdrop utama final",
-                "quantity": "1",
-                "unit": "proyek",
-                "unit_price": 1_000_002,
+                "quantity": "6",
+                "unit": "m²",
+                "unit_price": 166_667,
+                "commercial_meta": {
+                    "pricing_mode": "area_rate", "width": "3", "height": "2",
+                    "dimension_unit": "m", "raw_area_m2": "6", "billed_area_m2": "6",
+                    "area_rounding": "exact", "asset_ref": "asset://backdrop-main",
+                },
             }],
         },
         expected_version=first["lock_version"],
@@ -2812,8 +2863,18 @@ def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(reposit
     assert deal["quotation"]["status"] == "accepted"
     assert deal["quotation"]["accepted_snapshot"]["amount"] == 1_000_002
     assert deal["sales_order"]["lines"][0]["description"] == "Backdrop utama final"
+    assert deal["sales_order"]["template_key"] == "HOLLAWALL"
+    assert deal["sales_order"]["template_version"] == "commercial-v3"
+    assert deal["sales_order"]["payment_profile_key"] == "hollawall"
+    assert deal["sales_order"]["lines"][0]["commercial_meta"] == {
+        "pricing_mode": "area_rate", "width": "3", "height": "2",
+        "dimension_unit": "m", "raw_area_m2": "6", "billed_area_m2": "6",
+        "area_rounding": "exact", "asset_ref": "asset://backdrop-main",
+    }
     assert repository._calculate_totals(deal["sales_order"])["total"] == 1_000_002
     assert deal["dp_invoice"]["invoice_kind"] == "DP"
+    assert deal["dp_invoice"]["template_key"] == "HOLLAWALL"
+    assert deal["dp_invoice"]["payment_profile_key"] == "hollawall"
     assert repository._calculate_totals(deal["dp_invoice"])["total"] == 250_001
     schedule = deal["installment_schedule"]
     assert [item["amount"] for item in schedule] == [250_001, 250_001, 250_000, 250_000]
