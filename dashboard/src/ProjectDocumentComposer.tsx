@@ -1,4 +1,4 @@
-import { Eye, Pencil, Plus, Trash2, X } from 'lucide-react'
+import { ArrowRight, Eye, Pencil, Plus, ReceiptText, Trash2, X } from 'lucide-react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import ProjectDocumentPreview from './ProjectDocumentPreview'
@@ -18,6 +18,7 @@ interface ProjectDocumentComposerProps {
   writesEnabled: boolean
   saving?: boolean
   receiptOptions?: ReceiptOptions | null
+  onOpenTransactions?: () => void
   onSave: (document: ProjectDocumentDraft) => void | Promise<void>
   onClose: () => void
 }
@@ -27,7 +28,7 @@ function draftFrom(document: ProjectDocumentDraft | ProjectDocumentRecord): Proj
   return { id, project_id, type, invoice_kind, applies_to_invoice_id, issue_date, due_date, valid_until, notes, payment_terms, prepared_by, client_signatory, project_image_url, lines: lines.map((line) => ({ ...line })), discount_mode, discount_value, tax_percent, allocations: allocations.map((allocation) => ({ ...allocation })) }
 }
 
-export default function ProjectDocumentComposer({ project, document, writesEnabled, saving = false, receiptOptions = null, onSave, onClose }: ProjectDocumentComposerProps) {
+export default function ProjectDocumentComposer({ project, document, writesEnabled, saving = false, receiptOptions = null, onSave, onClose, onOpenTransactions }: ProjectDocumentComposerProps) {
   const [draft, setDraft] = useState(() => draftFrom(document))
   const [view, setView] = useState<'edit' | 'preview'>('edit')
   const [dirty, setDirty] = useState(false)
@@ -78,17 +79,32 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
   let total = 0
   try { total = calculateDocumentTotals(draft).total } catch { total = 0 }
   const money = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(total).replace(/\s/g, '')
+  const receiptIsNew = draft.type === 'receipt' && !document.id
+  const hasReceiptSources = Boolean(receiptOptions?.transactions.length || draft.allocations.length)
+  const receiptReady = !receiptIsNew || draft.allocations.length > 0
+  const subtitle = draft.type === 'receipt'
+    ? 'Pilih pembayaran yang sudah tercatat. Nominal kuitansi diambil otomatis dari transaksi.'
+    : 'Lengkapi informasi dokumen, susun item, lalu periksa hasil akhirnya.'
+  const termsTitle = draft.type === 'receipt' ? 'Pihak terkait & keterangan' : 'Ketentuan & persetujuan'
+  const termsHelp = draft.type === 'receipt'
+    ? 'Pastikan nama penyusun, penerima, dan keterangan pembayaran sudah benar.'
+    : 'Atur diskon, pajak, catatan, dan pihak yang menyetujui dokumen.'
 
   return <section className="document-composer document-workspace" aria-label="Penyusun dokumen">
     <header className="document-composer-head">
-      <div><p className="eyebrow">DOKUMEN KOMERSIAL</p><h2>{document.id ? `Ubah ${typeName}` : `Buat ${typeName}`}</h2><p>Isi detail, susun item, lalu periksa hasil akhir sebelum menyimpan.</p></div>
+      <div><p className="eyebrow">DOKUMEN KOMERSIAL</p><h2>{document.id ? `Ubah ${typeName}` : `Buat ${typeName}`}</h2><p>{subtitle}</p><div className="document-context"><span>{project.name}</span><span>{project.client_name}</span></div></div>
       <button type="button" className="icon-button" aria-label="Tutup penyusun dokumen" onClick={close}><X size={20} /></button>
     </header>
     <ol className="document-workflow" aria-label={`Alur pembuatan ${typeName}`}>
       <li><span>1</span><strong>{draft.type === 'invoice' ? 'Detail invoice' : draft.type === 'receipt' ? 'Detail kuitansi' : 'Detail dokumen'}</strong></li>
       <li><span>2</span><strong>{draft.type === 'receipt' ? 'Alokasi pembayaran' : 'Item & harga'}</strong></li>
-      <li><span>3</span><strong>Ketentuan</strong></li>
+      <li><span>3</span><strong>{draft.type === 'receipt' ? 'Keterangan' : 'Ketentuan'}</strong></li>
     </ol>
+    {receiptIsNew && !hasReceiptSources ? <section className="receipt-blocked-state" aria-labelledby="receipt-blocked-title">
+      <span className="receipt-blocked-icon"><ReceiptText size={28} /></span>
+      <div><p className="eyebrow">PEMBAYARAN BELUM TERSEDIA</p><h3 id="receipt-blocked-title">Kuitansi belum bisa dibuat</h3><p>Catat pemasukan proyek terlebih dahulu. Nominal kuitansi selalu diambil dari transaksi pemasukan terverifikasi, bukan dari catatan atau input manual.</p></div>
+      <div className="receipt-blocked-actions"><button type="button" className="secondary-button" onClick={close}>Kembali</button>{onOpenTransactions && <button type="button" className="primary-button" onClick={onOpenTransactions}>Buka transaksi proyek <ArrowRight size={16} /></button>}</div>
+    </section> : <>
     <div className="document-view-tabs" role="tablist" aria-label="Tampilan dokumen">
       <button type="button" role="tab" aria-selected={view === 'edit'} onClick={() => setView('edit')}><Pencil size={16} /> Edit</button>
       <button type="button" role="tab" aria-selected={view === 'preview'} onClick={() => setView('preview')}><Eye size={16} /> Pratinjau</button>
@@ -99,7 +115,7 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
         <section className="document-form-section" aria-labelledby="document-detail-heading">
           <div className="document-section-heading"><span>1</span><div><h3 id="document-detail-heading">Detail {typeName}</h3><p>Tanggal dan jenis tagihan yang terlihat pada dokumen.</p></div></div>
           <div className="document-field-grid">
-          <label>Jenis dokumen<input value={draft.type === 'sales_order' ? 'Sales Order' : draft.type === 'invoice' ? 'Invoice' : 'Kuitansi'} disabled /></label>
+          <div className="document-type-summary"><small>Jenis dokumen</small><strong>{draft.type === 'sales_order' ? 'Sales Order' : draft.type === 'invoice' ? 'Invoice' : 'Kuitansi'}</strong></div>
           {draft.type === 'invoice' && <label>Tahap invoice<select aria-label="Tahap invoice" value={draft.invoice_kind ?? 'DP'} onChange={(event) => change('invoice_kind', event.target.value as ProjectDocumentDraft['invoice_kind'])}><option value="DP">DP</option><option value="PROGRESS">Progress</option><option value="FINAL">Final</option></select></label>}
           <label>Tanggal dokumen<input type="date" value={draft.issue_date} onChange={(event) => change('issue_date', event.target.value)} /></label>
           {draft.type === 'invoice' && <label>Jatuh tempo<input type="date" value={draft.due_date ?? ''} onChange={(event) => change('due_date', event.target.value || null)} /></label>}
@@ -117,43 +133,46 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
             <button type="button" className="icon-button danger" aria-label={`Hapus item ${index + 1}`} disabled={draft.lines.length === 1} onClick={() => change('lines', draft.lines.filter((_, lineIndex) => lineIndex !== index))}><Trash2 size={17} /></button>
           </div>)}
           <button type="button" className="secondary-button" onClick={() => change('lines', [...draft.lines, createEmptyDocumentLine()])}><Plus size={16} /> Tambah item</button>
-        </fieldset> : <section className="receipt-allocation-note"><strong>Alokasi pembayaran</strong>
+        </fieldset> : <section className="receipt-allocation-note document-form-section" aria-labelledby="receipt-allocation-heading"><div className="document-section-heading"><span>2</span><div><h3 id="receipt-allocation-heading">Pilih pembayaran untuk kuitansi</h3><p>Centang transaksi yang akan dibuktikan oleh kuitansi ini.</p></div></div>
           {document.id ? <>
             <p>Invoice tujuan dan transaksi dikunci setelah kuitansi dibuat. Untuk koreksi, batalkan kuitansi lalu buat kuitansi baru.</p>
             <div className="receipt-candidates">{draft.allocations.map((allocation) => <div key={allocation.source_key}><span>{allocation.transaction_date || 'Tanpa tanggal'} · {allocation.description}</span><strong>{allocation.amount.toLocaleString('id-ID')}</strong></div>)}</div>
           </> : <>
-            <label>Invoice tujuan<select aria-label="Invoice tujuan" value={draft.applies_to_invoice_id ?? ''} onChange={(event) => change('applies_to_invoice_id', event.target.value || null)}><option value="">Belum dialokasikan ke invoice</option>{receiptOptions?.invoices.map((invoice) => <option key={invoice.invoice_id} value={invoice.invoice_id}>{invoice.invoice_kind} · {invoice.official_number} · sisa {invoice.outstanding.toLocaleString('id-ID')}</option>)}</select></label>
-            {!receiptOptions?.transactions.length ? <p>Belum ada transaksi pemasukan proyek yang tersedia.</p> : <div className="receipt-candidates">{receiptOptions.transactions.map((candidate) => {
+            <label className="receipt-invoice-target">Hubungkan ke invoice <span className="field-help">Opsional. Pilih invoice bila pembayaran ini khusus untuk tagihan tertentu.</span><select aria-label="Invoice tujuan" value={draft.applies_to_invoice_id ?? ''} onChange={(event) => change('applies_to_invoice_id', event.target.value || null)}><option value="">Tidak dihubungkan ke invoice</option>{receiptOptions?.invoices.map((invoice) => <option key={invoice.invoice_id} value={invoice.invoice_id}>{invoice.invoice_kind} · {invoice.official_number} · sisa {invoice.outstanding.toLocaleString('id-ID')}</option>)}</select></label>
+            <div className="receipt-candidates">{receiptOptions?.transactions.map((candidate) => {
               const selected = draft.allocations.find((item) => item.source_key === candidate.source_key)
-              return <label key={candidate.source_key}><span><input type="checkbox" checked={Boolean(selected)} onChange={(event) => toggleAllocation(candidate.source_key, event.target.checked)} /> {candidate.transaction_date || 'Tanpa tanggal'} · {candidate.description}</span><input aria-label={`Nominal ${candidate.description}`} type="number" min="1" max={candidate.available_amount} disabled={!selected} value={selected?.amount ?? candidate.available_amount ?? candidate.amount} onChange={(event) => changeAllocationAmount(candidate.source_key, Number(event.target.value))} /></label>
-            })}</div>}
+              const amount = candidate.available_amount ?? candidate.amount
+              return <label key={candidate.source_key} className={`receipt-candidate${selected ? ' selected' : ''}`}><span className="receipt-candidate-check"><input type="checkbox" checked={Boolean(selected)} onChange={(event) => toggleAllocation(candidate.source_key, event.target.checked)} /><span><strong>{candidate.description}</strong><small>{candidate.transaction_date || 'Tanpa tanggal'} · tersedia {amount.toLocaleString('id-ID')}</small></span></span><span className="receipt-candidate-amount"><small>Nominal kuitansi</small><input aria-label={`Nominal ${candidate.description}`} type="number" min="1" max={candidate.available_amount} disabled={!selected} value={selected?.amount ?? amount} onChange={(event) => changeAllocationAmount(candidate.source_key, Number(event.target.value))} /></span></label>
+            })}</div>
+            {!draft.allocations.length && <p className="receipt-selection-hint" role="status">Pilih minimal satu pembayaran untuk mengaktifkan pratinjau dan penyimpanan.</p>}
           </>}
         </section>}
 
         <section className="document-form-section" aria-labelledby="document-terms-heading">
-          <div className="document-section-heading"><span>3</span><div><h3 id="document-terms-heading">Ketentuan & persetujuan</h3><p>Atur diskon, pajak, catatan, dan nama penanda tangan.</p></div></div>
+          <div className="document-section-heading"><span>3</span><div><h3 id="document-terms-heading">{termsTitle}</h3><p>{termsHelp}</p></div></div>
           <div className="document-field-grid">
           {draft.type !== 'receipt' && draft.invoice_kind !== 'FINAL' && <>
             <label>Diskon dokumen<select value={draft.discount_mode} onChange={(event) => change('discount_mode', event.target.value as ProjectDocumentDraft['discount_mode'])}><option value="none">Tanpa diskon</option><option value="fixed">Nominal</option><option value="percent">Persen</option></select></label>
             {draft.discount_mode !== 'none' && <label>Nilai diskon<input inputMode="decimal" value={draft.discount_value} onChange={(event) => change('discount_value', event.target.value)} /></label>}
             <label>Pajak persen<input aria-label="Pajak persen" inputMode="decimal" value={draft.tax_percent} onChange={(event) => change('tax_percent', event.target.value)} /></label>
           </>}
-          <label>Disiapkan oleh<input value={draft.prepared_by} onChange={(event) => change('prepared_by', event.target.value)} /></label>
-          <label>Penanda tangan klien<input value={draft.client_signatory} onChange={(event) => change('client_signatory', event.target.value)} /></label>
-          <label>Gambar proyek<input aria-label="Gambar proyek" value={draft.project_image_url ?? ''} onChange={(event) => change('project_image_url', event.target.value || null)} placeholder="data:image/png;base64,…" /></label>
+          <label>Disiapkan oleh <span className="field-help">Nama tim Hollawall yang membuat dokumen.</span><input value={draft.prepared_by} onChange={(event) => change('prepared_by', event.target.value)} placeholder="Nama penyusun" /></label>
+          <label>{draft.type === 'receipt' ? 'Diterima oleh' : 'Penanda tangan klien'} <span className="field-help">Nama pihak klien yang menerima atau menyetujui.</span><input value={draft.client_signatory} onChange={(event) => change('client_signatory', event.target.value)} placeholder="Nama pihak klien" /></label>
           </div>
           <div className="document-text-grid">
-            <label>Catatan <span className="field-help">Informasi tambahan yang tampil di bawah total.</span><textarea aria-label="Catatan" value={draft.notes} onChange={(event) => change('notes', event.target.value)} /></label>
-            <label>Syarat pembayaran <span className="field-help">Contoh: DP 50%, pelunasan sebelum pengiriman.</span><textarea value={draft.payment_terms} onChange={(event) => change('payment_terms', event.target.value)} /></label>
+            <label>{draft.type === 'receipt' ? 'Keterangan pembayaran' : 'Catatan'} <span className="field-help">{draft.type === 'receipt' ? 'Contoh: Pelunasan termin pertama.' : 'Informasi tambahan yang tampil di bawah total.'}</span><textarea aria-label="Catatan" value={draft.notes} onChange={(event) => change('notes', event.target.value)} placeholder={draft.type === 'receipt' ? 'Tulis keterangan bila diperlukan' : 'Tulis catatan bila diperlukan'} /></label>
+            {draft.type !== 'receipt' && <label>Syarat pembayaran <span className="field-help">Contoh: DP 50%, pelunasan sebelum pengiriman.</span><textarea value={draft.payment_terms} onChange={(event) => change('payment_terms', event.target.value)} placeholder="Tulis ketentuan pembayaran" /></label>}
           </div>
+          {draft.type !== 'receipt' && <details className="document-optional"><summary>Tambahkan gambar proyek</summary><label>Data gambar <span className="field-help">Opsional. Gunakan data PNG atau JPEG.</span><input aria-label="Gambar proyek" value={draft.project_image_url ?? ''} onChange={(event) => change('project_image_url', event.target.value || null)} placeholder="data:image/png;base64,…" /></label></details>}
         </section>
         <div className="document-save-bar">
-          <div aria-label={`Total ${typeName}`} className="document-live-total"><span>Total {typeName}</span><strong>{money}</strong></div>
-          <div>{!writesEnabled && <span className="write-disabled-note">Penyimpanan dokumen belum diaktifkan.</span>}<button type="button" className="secondary-button" onClick={close}>Batal</button><button type="submit" className="primary-button" disabled={!writesEnabled || saving}>{saving ? 'Menyimpan…' : 'Simpan draf'}</button></div>
+          <div aria-label={`Total ${typeName}`} className="document-live-total"><span>{draft.type === 'receipt' && !receiptReady ? 'Pembayaran belum dipilih' : `Total ${typeName}`}</span><strong>{draft.type === 'receipt' && !receiptReady ? '—' : money}</strong></div>
+          <div>{!writesEnabled && <span className="write-disabled-note">Penyimpanan dokumen belum diaktifkan.</span>}<button type="button" className="secondary-button" onClick={close}>Batal</button><button type="submit" className="primary-button" disabled={!writesEnabled || saving || !receiptReady}>{saving ? 'Menyimpan…' : 'Simpan draf'}</button></div>
         </div>
       </form>
-      <aside className={`document-preview-pane${view === 'edit' ? ' mobile-hidden-panel' : ''}`} aria-label={`Pratinjau ${typeName}`}><div className="document-preview-label"><span>PRATINJAU LANGSUNG</span><small>Terbarui otomatis</small></div><ProjectDocumentPreview project={project} document={draft} /></aside>
+      <aside className={`document-preview-pane${view === 'edit' ? ' mobile-hidden-panel' : ''}`} aria-label={`Pratinjau ${typeName}`}><div className="document-preview-label"><span>PRATINJAU LANGSUNG</span><small>{receiptReady ? 'Terbarui otomatis' : 'Menunggu pembayaran'}</small></div>{receiptReady ? <ProjectDocumentPreview project={project} document={draft} /> : <section className="document-preview-empty"><ReceiptText size={28} /><h3>Pratinjau belum tersedia</h3><p>Pilih pembayaran di sebelah kiri. Total dan isi kuitansi akan muncul otomatis.</p></section>}</aside>
     </div>
+    </>}
   </section>
 }
 

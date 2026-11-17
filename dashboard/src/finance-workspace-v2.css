@@ -282,23 +282,33 @@ html[data-theme='dark'] .year-command nav button.active { color: #0c2028; }
   .quotation-save-bar button { flex: 1; }
 }
 
-/* Commercial document composer */
-.document-workspace { display: grid; gap: 18px; width: min(1440px, 100%); margin: 0 auto; padding: 22px; color: var(--text); }
-.document-composer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
-.document-composer-head h2 { margin: 2px 0 5px; font-size: clamp(24px, 3vw, 34px); letter-spacing: -.035em; }
-.document-composer-head p { margin: 0; color: var(--text-secondary); }
+/* Commercial document composer — focused, ledger-like work surface. */
+.document-compose-shell { width: 100%; margin: 0; padding: 0; }
+.document-workspace { display: grid; gap: 20px; width: 100%; margin: 0; padding: 0; color: var(--text); }
+.document-composer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 24px 28px 0; }
+.document-composer-head > div:first-child { display: grid; gap: 4px; max-width: 720px; }
+.document-composer-head > .icon-button { width: 44px; min-width: 44px; height: 44px; }
+.document-composer-head h2 { margin: 0; font-size: clamp(26px, 3vw, 38px); line-height: 1.08; letter-spacing: -.04em; }
+.document-composer-head p { margin: 0; color: var(--text-secondary); line-height: 1.55; }
+.document-context { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.document-context span { padding: 5px 9px; border: 1px solid var(--border); background: var(--surface-muted); color: var(--text-secondary); font-size: 11px; font-weight: 700; }
 .document-view-tabs { display: none; gap: 6px; padding: 4px; border: 1px solid var(--border); background: var(--surface-muted); }
 .document-view-tabs button { display: flex; flex: 1; align-items: center; justify-content: center; gap: 7px; min-height: 44px; border: 0; background: transparent; color: var(--text-secondary); }
 .document-view-tabs button[aria-selected="true"] { background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-soft); }
-.document-composer-layout { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(390px, .95fr); gap: 22px; align-items: start; }
+.document-workspace > .document-workflow, .document-workspace > .document-view-tabs, .document-workspace > .document-composer-layout { margin-inline: 28px; }
+.document-composer-layout { display: grid; grid-template-columns: minmax(580px, 1.08fr) minmax(420px, .92fr); gap: 28px; align-items: start; padding-bottom: 30px; }
 .document-editor { display: grid; gap: 16px; min-width: 0; }
-.document-form-section { min-width: 0; margin: 0; padding: 18px; border: 1px solid var(--border); background: var(--surface-raised); }
+.document-form-section { min-width: 0; margin: 0; padding: 22px; border: 1px solid var(--border); background: var(--surface-raised); }
 .document-section-heading, .document-lines > legend { display: flex; align-items: center; gap: 12px; margin: 0 0 16px; padding: 0; color: var(--text); }
 .document-section-heading > span, .document-lines > legend > span { display: grid; flex: 0 0 30px; width: 30px; height: 30px; place-items: center; border-radius: 50%; background: var(--brand); color: #fff; font-size: 12px; font-weight: 800; }
 .document-section-heading h3, .document-lines > legend strong { margin: 0; font-size: 15px; }
 .document-section-heading p, .document-lines > legend small { display: block; margin: 2px 0 0; color: var(--text-secondary); font-size: 11px; font-weight: 450; }
 .document-field-grid, .document-text-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .document-form-section label { display: grid; gap: 6px; min-width: 0; color: var(--text-secondary); font-size: 12px; font-weight: 650; }
+.document-form-section input, .document-form-section select, .document-form-section textarea { width: 100%; min-width: 0; }
+.document-type-summary { display: grid; align-content: center; gap: 4px; min-height: 64px; padding: 10px 12px; border-left: 3px solid var(--brand); background: var(--surface-muted); }
+.document-type-summary small { color: var(--text-secondary); font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.document-type-summary strong { font-size: 15px; }
 .document-text-grid { margin-top: 14px; }
 .document-text-grid textarea { min-height: 96px; }
 .document-lines { display: grid; gap: 12px; }
@@ -354,6 +364,32 @@ html[data-theme='dark'] .year-command nav button.active { color: #0c2028; }
 .document-receipt-copy p { margin: 0; color: #555d66; font-size: 11px; line-height: 1.6; }
 .document-receipt-copy > strong { font-size: 28px; }
 
+.receipt-blocked-state { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 20px; min-height: 260px; margin: 0 28px 30px; padding: clamp(24px, 5vw, 52px); border: 1px solid var(--border); border-left: 4px solid var(--brand); background: var(--surface-raised); }
+.receipt-blocked-state h3 { margin: 4px 0 8px; font-size: clamp(22px, 3vw, 32px); letter-spacing: -.035em; }
+.receipt-blocked-state p { max-width: 650px; margin: 0; color: var(--text-secondary); line-height: 1.6; }
+.receipt-blocked-icon { display: grid; width: 56px; height: 56px; place-items: center; background: var(--surface-muted); color: var(--brand); }
+.receipt-blocked-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.receipt-blocked-actions button { min-height: 44px; }
+.receipt-allocation-note { gap: 18px; padding: 22px; }
+.receipt-invoice-target { max-width: 100%; }
+.receipt-candidates { gap: 10px; border: 0; background: transparent; }
+.receipt-candidates > .receipt-candidate { grid-template-columns: minmax(0, 1fr) minmax(170px, 210px); padding: 14px 16px; border: 1px solid var(--border); background: var(--surface-muted); transition: border-color .15s ease, background-color .15s ease; }
+.receipt-candidates > .receipt-candidate.selected { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 5%, var(--surface-raised)); }
+.receipt-candidate-check { display: grid !important; grid-template-columns: auto minmax(0, 1fr); gap: 12px !important; }
+.receipt-candidate-check input { width: 18px; height: 18px; margin: 2px 0 0; }
+.receipt-candidate-check > span, .receipt-candidate-amount { display: grid !important; gap: 3px !important; }
+.receipt-candidate-check strong { color: var(--text); font-size: 13px; }
+.receipt-candidate-check small, .receipt-candidate-amount small { color: var(--text-secondary); font-size: 10px; font-weight: 500; }
+.receipt-candidate-amount input { text-align: right; }
+.receipt-selection-hint { margin: 0; padding: 11px 13px; border-left: 3px solid var(--brand); background: var(--surface-muted); color: var(--text-secondary); font-size: 12px; }
+.document-preview-empty { display: grid; min-height: 430px; place-content: center; justify-items: center; padding: 40px; border: 1px dashed var(--border); background: var(--surface-raised); color: var(--text-secondary); text-align: center; }
+.document-preview-empty h3 { margin: 14px 0 5px; color: var(--text); font-size: 18px; }
+.document-preview-empty p { max-width: 320px; margin: 0; line-height: 1.55; }
+.document-optional { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px; }
+.document-optional summary { cursor: pointer; color: var(--text); font-size: 12px; font-weight: 700; }
+.document-optional label { margin-top: 12px; }
+.quotation-panel button, .quotation-editor button { min-height: 44px; }
+
 @media (max-width: 1120px) {
   .document-composer-layout { grid-template-columns: 1fr; }
   .document-view-tabs { display: flex; }
@@ -362,11 +398,19 @@ html[data-theme='dark'] .year-command nav button.active { color: #0c2028; }
   .mobile-hidden-panel { display: none; }
 }
 @media (max-width: 760px) {
-  .document-workspace { padding: 14px; }
+  .document-composer-head { padding: 18px 16px 0; }
+  .document-workspace > .document-workflow, .document-workspace > .document-view-tabs, .document-workspace > .document-composer-layout { margin-inline: 16px; }
+  .document-workflow { grid-template-columns: 1fr; }
+  .document-workflow li + li { border-top: 1px solid var(--border); border-left: 0; }
   .document-field-grid, .document-text-grid, .document-line { grid-template-columns: 1fr; }
   .document-line .line-description { grid-column: auto; }
   .document-line .icon-button { width: 100%; }
   .document-save-bar { align-items: stretch; flex-direction: column; }
   .document-save-bar > div:last-child { width: 100%; }
   .document-save-bar button { flex: 1; min-height: 44px; }
+  .receipt-blocked-state { grid-template-columns: 1fr; margin: 0 16px 20px; padding: 24px 20px; }
+  .receipt-blocked-actions { align-items: stretch; flex-direction: column-reverse; }
+  .receipt-blocked-actions button { width: 100%; }
+  .receipt-candidates > .receipt-candidate { grid-template-columns: 1fr; }
+  .document-preview-empty { min-height: 300px; }
 }
