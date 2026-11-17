@@ -419,6 +419,7 @@ describe('production live source mode', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Muat ulang proyek' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Pembaruan proyek gagal')
+    expect(screen.getByRole('alert')).toHaveTextContent('bukan sumber terbaru yang otoritatif')
     expect(screen.queryByRole('button', { name: 'Buat proyek' })).toBeNull()
     expect(screen.queryByRole('button', { name: /Hapus permanen/ })).toBeNull()
   })

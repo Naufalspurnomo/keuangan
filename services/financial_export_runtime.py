@@ -193,6 +193,20 @@ def run_export_loop(
     """Drain the outbox until stopped; transient batch failures do not kill it."""
     while not stop_event.is_set():
         try:
+            if worker.has_unresolved_drift():
+                result = worker.recover_verified_drift()
+                if on_result is not None:
+                    on_result(result)
+                if not result.get("recovery_verified"):
+                    if result.get("examined", 0):
+                        secure_log("INFO", f"Financial export recovery: {result}")
+                    if stop_event.is_set():
+                        break
+                    if sleep is None:
+                        stop_event.wait(interval_seconds)
+                    else:
+                        sleep(interval_seconds)
+                    continue
             result = worker.run_once(limit=batch_limit)
             if (
                 worker.has_unresolved_drift() is False

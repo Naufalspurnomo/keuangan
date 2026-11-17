@@ -60,9 +60,12 @@ jobs:
             esac
           done
 
-      - name: Check backend health and release provenance
+      - name: Check backend health, snapshot, and release provenance
         env:
           EXPECTED_RELEASE_SHA: ${{ github.sha }}
+          DASHBOARD_ACTOR_ASSERTION_SECRET: ${{ secrets.HOLLAWALL_DASHBOARD_ACTOR_ASSERTION_SECRET }}
+          DASHBOARD_ACTOR_ASSERTION_AUDIENCE: hollawall-finance-api
+          HOLLAWALL_OWNER_EMAIL: ${{ vars.HOLLAWALL_OWNER_EMAIL }}
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --max-time 20 \
@@ -76,12 +79,52 @@ jobs:
             -w 'release_http=%{http_code}\n' \
             "$BACKEND_ORIGIN/api/health/release"
           python - <<'PY'
+          import base64
+          import hashlib
+          import hmac
+          import json
+          import os
+          import secrets
+          import time
+          from pathlib import Path
+
+          now = int(time.time())
+          claims = {
+              'actor_id': os.environ['HOLLAWALL_OWNER_EMAIL'].strip().casefold(),
+              'email': os.environ['HOLLAWALL_OWNER_EMAIL'].strip().casefold(),
+              'role': 'boss',
+              'aud': os.environ['DASHBOARD_ACTOR_ASSERTION_AUDIENCE'],
+              'iat': now,
+              'exp': now + 60,
+              'method': 'GET',
+              'path': '/api/dashboard/v1/snapshot',
+              'body_sha256': hashlib.sha256(b'').hexdigest(),
+              'nonce': secrets.token_hex(16),
+          }
+          encode = lambda value: base64.urlsafe_b64encode(value).decode().rstrip('=')
+          encoded = encode(json.dumps(claims, separators=(',', ':')).encode())
+          signature = encode(hmac.new(
+              os.environ['DASHBOARD_ACTOR_ASSERTION_SECRET'].encode(),
+              encoded.encode(),
+              hashlib.sha256,
+          ).digest())
+          Path('/tmp/snapshot-assertion').write_text(encoded + '.' + signature)
+          PY
+          curl --fail --silent --show-error --max-time 30 \
+            --proto '=https' --tlsv1.2 \
+            -H "X-Hollawall-Actor-Assertion: $(</tmp/snapshot-assertion)" \
+            -o /tmp/snapshot.json \
+            -w 'snapshot_http=%{http_code}\n' \
+            "$BACKEND_ORIGIN/api/dashboard/v1/snapshot"
+          rm -f /tmp/snapshot-assertion
+          python - <<'PY'
           import json
           import os
           from pathlib import Path
 
           payload = json.loads(Path('/tmp/health.json').read_text())
           release = json.loads(Path('/tmp/release.json').read_text())
+          snapshot = json.loads(Path('/tmp/snapshot.json').read_text())
           expected = os.environ['EXPECTED_RELEASE_SHA'].strip().lower()
           actual = str(release.get('release_sha') or '').strip().lower()
           assert expected and actual == expected, {'expected': expected, 'actual': actual}
@@ -99,6 +142,10 @@ jobs:
           assert provider.get('reachable') is True, payload
           assert provider.get('connected') is True, payload
           assert provider.get('logged_in') is True, payload
+          assert snapshot.get('version') == 'dashboard.snapshot.v1', snapshot
+          assert isinstance(snapshot.get('meta'), dict), snapshot
+          assert isinstance(snapshot.get('transactions'), list), snapshot
+          assert isinstance(snapshot.get('wallets'), list), snapshot
           print('production_acceptance=ok')
           PY
 

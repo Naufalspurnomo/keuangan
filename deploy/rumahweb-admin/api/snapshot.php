@@ -15,6 +15,36 @@ function json_error(int $status, string $code, string $message): void
     exit;
 }
 
+function base64url(string $value): string
+{
+    return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
+}
+
+function actor_assertion(array $config, string $path, string $actor): string
+{
+    $secret = (string) ($config['dashboard_actor_assertion_secret'] ?? '');
+    $audience = (string) ($config['dashboard_actor_assertion_audience'] ?? '');
+    $email = strtolower(trim((string) ($config['owner_email'] ?? '')));
+    if (strlen($secret) < 32 || $audience === '' || $email === '') {
+        json_error(503, 'actor_assertion_unavailable', 'Snapshot unavailable.');
+    }
+    $now = time();
+    $claims = [
+        'actor_id' => $actor,
+        'email' => $email,
+        'role' => 'boss',
+        'aud' => $audience,
+        'method' => 'GET',
+        'path' => $path,
+        'body_sha256' => hash('sha256', ''),
+        'nonce' => bin2hex(random_bytes(16)),
+        'iat' => $now,
+        'exp' => $now + 60,
+    ];
+    $encoded = base64url((string) json_encode($claims, JSON_UNESCAPED_SLASHES));
+    return $encoded . '.' . base64url(hash_hmac('sha256', $encoded, $secret, true));
+}
+
 header('X-Robots-Tag: noindex, nofollow, noarchive');
 header('X-Content-Type-Options: nosniff');
 header('Cache-Control: no-store, private');
@@ -92,6 +122,14 @@ if (strpos($upstream, 'https://') !== 0 || $token === '') {
 // call sharing the same PHP session cookie.
 session_write_close();
 
+$upstreamPath = (string) (parse_url($upstream, PHP_URL_PATH) ?: '');
+$actor = strtolower(trim((string) $_SESSION['hollawall_admin_user']));
+$headers = [
+    'Accept: application/json',
+    'X-Hollawall-Proxy-Token: ' . $token,
+    'X-Hollawall-Actor-Assertion: ' . actor_assertion($config, $upstreamPath, $actor),
+];
+
 $curl = curl_init($upstream);
 curl_setopt_array($curl, [
     CURLOPT_RETURNTRANSFER => true,
@@ -101,7 +139,7 @@ curl_setopt_array($curl, [
     // Google Sheets data. Keep the read window aligned with the bounded write
     // proxies so a healthy upstream is not misreported as unavailable.
     CURLOPT_TIMEOUT => 75,
-    CURLOPT_HTTPHEADER => ['Accept: application/json', 'X-Hollawall-Proxy-Token: ' . $token],
+    CURLOPT_HTTPHEADER => $headers,
     CURLOPT_SSL_VERIFYPEER => true,
     CURLOPT_SSL_VERIFYHOST => 2,
 ]);

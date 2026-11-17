@@ -144,6 +144,7 @@ jobs:
           RW_FTP_USER: ${{ secrets.RUMAHWEB_FTP_USER }}
           RW_FTP_PASSWORD: ${{ secrets.RUMAHWEB_FTP_PASSWORD }}
           DASHBOARD_ACTOR_ASSERTION_SECRET: ${{ secrets.HOLLAWALL_DASHBOARD_ACTOR_ASSERTION_SECRET }}
+          HOLLAWALL_LIVE_API_PROXY_TOKEN: ${{ secrets.HOLLAWALL_LIVE_API_PROXY_TOKEN }}
           HOLLAWALL_OWNER_EMAIL: ${{ vars.HOLLAWALL_OWNER_EMAIL }}
         run: |
           set -euo pipefail

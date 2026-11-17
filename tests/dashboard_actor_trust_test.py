@@ -10,6 +10,7 @@ from flask import Flask
 from dashboard_api.auth import (
     actor_identity,
     build_upstream_actor_assertion,
+    owner_identity,
     verify_upstream_actor_assertion,
 )
 
@@ -170,6 +171,73 @@ def test_admin_and_boss_remain_distinct_principals():
     assert identities[0]["role"] == "boss"
     assert identities[1]["id"] == "admin-17"
     assert identities[1]["role"] == "admin"
+
+
+def test_signed_get_assertion_authenticates_owner_read_without_proxy_token():
+    app = make_app(DASHBOARD_OWNER_EMAIL="owner@example.com")
+    now = int(time.time())
+    token = build_upstream_actor_assertion(
+        {
+            "actor_id": "owner@example.com",
+            "email": "owner@example.com",
+            "role": "boss",
+            "aud": "hollawall-finance-api",
+            "iat": now,
+            "exp": now + 60,
+            "method": "GET",
+            "path": "/api/dashboard/v1/snapshot",
+            "body_sha256": hashlib.sha256(b"").hexdigest(),
+            "nonce": "snapshot-read-nonce-0001",
+        },
+        SECRET,
+    )
+
+    with app.test_request_context(
+        "/api/dashboard/v1/snapshot",
+        method="GET",
+        headers={"X-Hollawall-Actor-Assertion": token},
+    ):
+        assert owner_identity() == ("owner@example.com", "owner")
+
+
+def test_invalid_get_assertion_does_not_authenticate_owner_read():
+    app = make_app(DASHBOARD_OWNER_EMAIL="owner@example.com")
+    with app.test_request_context(
+        "/api/dashboard/v1/snapshot",
+        method="GET",
+        headers={"X-Hollawall-Actor-Assertion": "invalid"},
+    ):
+        assert owner_identity() is None
+
+
+def test_admin_or_wrong_email_assertion_cannot_become_owner():
+    app = make_app(DASHBOARD_OWNER_EMAIL="owner@example.com")
+    now = int(time.time())
+    for role, email, nonce in (
+        ("admin", "owner@example.com", "admin-snapshot-nonce-0001"),
+        ("boss", "other@example.com", "other-snapshot-nonce-0001"),
+    ):
+        token = build_upstream_actor_assertion(
+            {
+                "actor_id": email,
+                "email": email,
+                "role": role,
+                "aud": "hollawall-finance-api",
+                "iat": now,
+                "exp": now + 60,
+                "method": "GET",
+                "path": "/api/dashboard/v1/snapshot",
+                "body_sha256": hashlib.sha256(b"").hexdigest(),
+                "nonce": nonce,
+            },
+            SECRET,
+        )
+        with app.test_request_context(
+            "/api/dashboard/v1/snapshot",
+            method="GET",
+            headers={"X-Hollawall-Actor-Assertion": token},
+        ):
+            assert owner_identity() is None
 
 
 def test_compiled_proxy_secret_default_is_absent():

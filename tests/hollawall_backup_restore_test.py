@@ -149,6 +149,14 @@ def source_tree(tmp_path: Path) -> tuple[Path, Path]:
     return sheets, presensi
 
 
+def test_schema_inventory_covers_database_invariants() -> None:
+    sql = hollawall_backup.SCHEMA_INVENTORY_SQL
+    for catalog in ("pg_constraint", "pg_index", "pg_sequences", "pg_proc", "pg_trigger"):
+        assert catalog in sql
+    assert "is_nullable" in sql
+    assert "column_default" in sql
+
+
 def backup_config(tmp_path: Path, sheets: Path, presensi: Path, **overrides: object) -> hollawall_backup.BackupConfig:
     values: dict[str, object] = {
         "output_dir": tmp_path / "backups",
@@ -273,7 +281,7 @@ def test_backup_manifest_records_cutoff_schema_migration_and_application_hashes(
             '{"column_name":"id","data_type":"uuid","table_name":"projects"}',
         ]),
     }
-    assert contract["migration_version"] == "022_project_hard_delete"
+    assert contract["migration_version"] == "023_dashboard_login_throttle"
     assert contract["application"] == {
         table: {"total": len(rows), "sha256": rows_sha256(rows)}
         for table, rows in CONTRACT_ROWS.items()

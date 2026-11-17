@@ -159,6 +159,36 @@ def test_existing_drift_blocks_new_claims() -> None:
     }
 
 
+def test_recovery_only_clears_drift_after_exact_remote_readback() -> None:
+    claimed = row()
+
+    class RecoverableOutbox(FakeOutbox):
+        def drifted_rows(self):
+            return [self.row] if self.status == "drifted" else []
+
+        def resolve_drift(self, row_id: str, remote_locator: str) -> bool:
+            assert row_id == self.row.id
+            assert remote_locator.endswith(self.row.document["row_sha256"])
+            self.status = "exported"
+            return True
+
+    outbox = RecoverableOutbox(claimed)
+    outbox.status = "drifted"
+    remote = FakeRemote()
+    worker = ExportWorker(outbox=outbox, remote=remote, protected_destination=True)
+
+    assert worker.recover_verified_drift() == {
+        "examined": 1, "recovered": 0, "remaining": 1, "recovery_verified": False,
+    }
+    assert outbox.status == "drifted"
+
+    remote.rows[claimed.export_ordinal] = claimed.document
+    assert worker.recover_verified_drift() == {
+        "examined": 1, "recovered": 1, "remaining": 0, "recovery_verified": True,
+    }
+    assert outbox.status == "exported"
+
+
 def test_worker_guard_wraps_the_complete_remote_write_and_ack_cycle() -> None:
     class GuardedOutbox(FakeOutbox):
         def __init__(self, claimed: ClaimedExport) -> None:

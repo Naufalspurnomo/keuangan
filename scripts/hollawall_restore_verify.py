@@ -367,10 +367,8 @@ def _restored_schema_sha256(runner: CommandRunner, config: RestoreVerifyConfig, 
             "--command",
             "BEGIN TRANSACTION READ ONLY;\n"
             "/* hollawall-restore-schema */\n"
-            "SELECT jsonb_build_object("
-            "'table_name', table_name, 'column_name', column_name, 'data_type', data_type)::text "
-            "FROM information_schema.columns WHERE table_schema = 'public' "
-            "ORDER BY table_name, ordinal_position;\nROLLBACK",
+            + backup.SCHEMA_INVENTORY_SQL
+            + ";\nROLLBACK",
         ],
         env=backup.libpq_env(dsn),
     )

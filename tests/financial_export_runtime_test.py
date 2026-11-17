@@ -208,6 +208,34 @@ def test_export_loop_marks_recovery_only_after_persistent_drift_is_clear() -> No
     ]
 
 
+def test_export_loop_attempts_verified_recovery_before_normal_drain() -> None:
+    stop = threading.Event()
+    results: list[dict[str, object]] = []
+
+    class Worker:
+        def has_unresolved_drift(self) -> bool:
+            return True
+
+        def recover_verified_drift(self):
+            stop.set()
+            return {"examined": 1, "recovered": 0, "remaining": 1, "recovery_verified": False}
+
+        def run_once(self, *, limit: int):
+            raise AssertionError("normal drain must remain blocked while drift exists")
+
+    runtime.run_export_loop(
+        Worker(),
+        stop_event=stop,
+        interval_seconds=12,
+        batch_limit=9,
+        on_result=results.append,
+    )
+
+    assert results == [
+        {"examined": 1, "recovered": 0, "remaining": 1, "recovery_verified": False}
+    ]
+
+
 def test_financial_export_health_reports_runtime_state_without_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STATE_DATABASE_URL", "postgresql://secret.example/db")
     monkeypatch.setenv("GOOGLE_SHEETS_ID", "sheet-workbook-123")

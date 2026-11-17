@@ -86,6 +86,10 @@ class ExportOutbox(Protocol):
 
     def mark_drifted(self, row_id: str, claim_token: str, error: str) -> bool: ...
 
+    def drifted_rows(self) -> list[ClaimedExport]: ...
+
+    def resolve_drift(self, row_id: str, remote_locator: str) -> bool: ...
+
 
 class RemoteExport(Protocol):
     def read(self, ordinal: int) -> Mapping[str, Any] | None: ...
@@ -321,6 +325,25 @@ class ExportWorker:
         probe = getattr(self._outbox, "has_unresolved_drift", None)
         return bool(probe()) if callable(probe) else False
 
+    def recover_verified_drift(self) -> dict[str, int | bool]:
+        """Clear only drift rows whose protected remote readback is exact."""
+        rows = self._outbox.drifted_rows()
+        recovered = 0
+        for row in rows:
+            observed = self._remote.read(row.export_ordinal)
+            if observed is None or _canonical_json(dict(observed)) != _canonical_json(row.document):
+                continue
+            locator = f"row:{row.export_ordinal}:sha256:{row.document['row_sha256']}"
+            if self._outbox.resolve_drift(row.id, locator):
+                recovered += 1
+        remaining = len(rows) - recovered
+        return {
+            "examined": len(rows),
+            "recovered": recovered,
+            "remaining": remaining,
+            "recovery_verified": remaining == 0,
+        }
+
 
 class PostgresExportOutbox:
     """Token-guarded claim/ack boundary for financial_export_outbox."""
@@ -453,6 +476,55 @@ class PostgresExportOutbox:
                 row = cursor.fetchone()
             connection.commit()
             return bool(row and row[0])
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def drifted_rows(self) -> list[ClaimedExport]:
+        connection = self._connect()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, export_ordinal, export_key, aggregate_type,
+                           aggregate_id, aggregate_version, payload,
+                           payload_sha256, created_at
+                    FROM financial_export_outbox
+                    WHERE status = 'drifted'
+                    ORDER BY export_ordinal
+                    """
+                )
+                rows = [
+                    self._row((*tuple(values), "00000000-0000-0000-0000-000000000000"))
+                    for values in cursor.fetchall()
+                ]
+            connection.commit()
+            return rows
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def resolve_drift(self, row_id: str, remote_locator: str) -> bool:
+        connection = self._connect()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_xact_lock(%s)", (_DRIFT_GATE_LOCK_ID,))
+                cursor.execute(
+                    """
+                    UPDATE financial_export_outbox
+                    SET status = 'exported', exported_at = now(),
+                        remote_locator = %s, last_error = NULL, updated_at = now()
+                    WHERE id = %s AND status = 'drifted'
+                    """,
+                    (remote_locator, row_id),
+                )
+                changed = cursor.rowcount == 1
+            connection.commit()
+            return changed
         except Exception:
             connection.rollback()
             raise
