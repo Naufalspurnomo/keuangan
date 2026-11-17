@@ -76,9 +76,11 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
     onClose()
   }
   const typeName = draft.type === 'sales_order' ? 'sales order' : draft.type === 'invoice' ? 'invoice' : 'kuitansi'
-  let total = 0
-  try { total = calculateDocumentTotals(draft).total } catch { total = 0 }
-  const money = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(total).replace(/\s/g, '')
+  let total: number | null = null
+  let calculationError = ''
+  try { total = calculateDocumentTotals(draft).total }
+  catch (reason) { calculationError = reason instanceof Error ? reason.message : 'Perhitungan dokumen tidak valid.' }
+  const money = total === null ? '—' : new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(total).replace(/\s/g, '')
   const receiptIsNew = draft.type === 'receipt' && !document.id
   const hasReceiptSources = Boolean(receiptOptions?.transactions.length || draft.allocations.length)
   const receiptReady = !receiptIsNew || draft.allocations.length > 0
@@ -166,11 +168,11 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
           {draft.type !== 'receipt' && <details className="document-optional"><summary>Tambahkan gambar proyek</summary><label>Data gambar <span className="field-help">Opsional. Gunakan data PNG atau JPEG.</span><input aria-label="Gambar proyek" value={draft.project_image_url ?? ''} onChange={(event) => change('project_image_url', event.target.value || null)} placeholder="data:image/png;base64,…" /></label></details>}
         </section>
         <div className="document-save-bar">
-          <div aria-label={`Total ${typeName}`} className="document-live-total"><span>{draft.type === 'receipt' && !receiptReady ? 'Pembayaran belum dipilih' : `Total ${typeName}`}</span><strong>{draft.type === 'receipt' && !receiptReady ? '—' : money}</strong></div>
+          <div aria-label={`Total ${typeName}`} className="document-live-total"><span>{draft.type === 'receipt' && !receiptReady ? 'Pembayaran belum dipilih' : calculationError ? 'Periksa nilai item' : `Total ${typeName}`}</span><strong>{draft.type === 'receipt' && !receiptReady ? '—' : calculationError ? '—' : money}</strong>{calculationError && <small>{calculationError}</small>}</div>
           <div>{!writesEnabled && <span className="write-disabled-note">Penyimpanan dokumen belum diaktifkan.</span>}<button type="button" className="secondary-button" onClick={close}>Batal</button><button type="submit" className="primary-button" disabled={!writesEnabled || saving || !receiptReady}>{saving ? 'Menyimpan…' : 'Simpan draf'}</button></div>
         </div>
       </form>
-      <aside className={`document-preview-pane${view === 'edit' ? ' mobile-hidden-panel' : ''}`} aria-label={`Pratinjau ${typeName}`}><div className="document-preview-label"><span>PRATINJAU LANGSUNG</span><small>{receiptReady ? 'Terbarui otomatis' : 'Menunggu pembayaran'}</small></div>{receiptReady ? <ProjectDocumentPreview project={project} document={draft} /> : <section className="document-preview-empty"><ReceiptText size={28} /><h3>Pratinjau belum tersedia</h3><p>Pilih pembayaran di sebelah kiri. Total dan isi kuitansi akan muncul otomatis.</p></section>}</aside>
+      <aside className={`document-preview-pane${view === 'edit' ? ' mobile-hidden-panel' : ''}`} aria-label={`Pratinjau ${typeName}`}><div className="document-preview-label"><span>PRATINJAU LANGSUNG</span><small>{calculationError ? 'Periksa nilai item' : receiptReady ? 'Terbarui otomatis' : 'Menunggu pembayaran'}</small></div>{receiptReady && !calculationError ? <ProjectDocumentPreview project={project} document={draft} /> : <section className="document-preview-empty"><ReceiptText size={28} /><h3>{calculationError ? 'Pratinjau perlu diperbaiki' : 'Pratinjau belum tersedia'}</h3><p>{calculationError || 'Pilih pembayaran di sebelah kiri. Total dan isi kuitansi akan muncul otomatis.'}</p></section>}</aside>
     </div>
     </>}
   </section>
