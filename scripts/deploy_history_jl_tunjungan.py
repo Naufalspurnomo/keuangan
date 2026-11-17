@@ -224,6 +224,17 @@ foreach ($translations as $original => $translated) {{
 
 clean_post_cache($post_id);
 if (function_exists('wp_cache_flush')) {{ wp_cache_flush(); }}
+if (function_exists('wp_cache_clear_cache')) {{ wp_cache_clear_cache(); }}
+if (function_exists('wpo_cache_flush')) {{ wpo_cache_flush(); }}
+if (defined('WPO_CACHE_DIR') && is_dir(WPO_CACHE_DIR)) {{
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator(WPO_CACHE_DIR, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+    foreach ($iterator as $item) {{
+        if ($item->isDir()) {{ @rmdir($item->getPathname()); }} else {{ @unlink($item->getPathname()); }}
+    }}
+}}
 $readback = get_post($post_id);
 $verified = $readback && $readback->post_status === 'publish' && $readback->post_name === $slug && $readback->post_title === {php_single_quoted(source['title'])} && strpos($readback->post_content, {php_single_quoted(source['body'])}) !== false;
 if (!$verified) {{
