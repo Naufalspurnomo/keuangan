@@ -2,7 +2,7 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,6 +82,31 @@ class PresensiAtomicDeployTests(unittest.TestCase):
         self.assertIn("public_html/absen", ftp.directories)
         self.assertIn("public_html/admin.__prev_20261031T170000Z", ftp.directories)
         self.assertIn("public_html/absen.__prev_20261031T170000Z", ftp.directories)
+
+    def test_activation_reuses_verified_staging_evidence_without_full_live_reread(self) -> None:
+        ftp = FakeFTP({"public_html/admin", "public_html/absen"})
+
+        def exists(ftp, path):
+            return path in ftp.directories
+
+        def prepare(ftp, prepared):
+            ftp.directories.add(prepared.staging)
+            return {"ok": True, "expected": len(prepared.manifest), "matched": len(prepared.manifest)}
+
+        with patch.multiple(
+            self.module,
+            exists=exists,
+            prepare_release=prepare,
+            readback=Mock(side_effect=TimeoutError("live reread must not run")),
+            remove_tree=lambda ftp, path: ftp.directories.discard(path),
+        ):
+            result = self.module.deploy_pair(ftp, self.specs, "candidate", "20261031T170000Z")
+
+        self.assertTrue(result["success"])
+        for name in ("admin", "absen"):
+            final = result["releases"][name]["final_readback"]
+            self.assertTrue(final["ok"])
+            self.assertEqual(final["verification"], "staged-bytes-plus-atomic-rename")
 
     def test_second_activation_failure_restores_both_live_paths(self) -> None:
         ftp = FakeFTP(
