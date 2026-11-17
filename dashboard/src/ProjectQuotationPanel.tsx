@@ -228,11 +228,14 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
     } catch (reason) { setError(messageFrom(reason)) }
   }
 
-  return <form className="quotation-editor" onSubmit={submit} aria-label={state.mode === 'create' ? 'Quotation baru' : 'Editor quotation'}>
+  const editorTitle = state.mode === 'revise' ? `Revisi dari versi ${state.source?.version}` : state.mode === 'edit' ? `Edit versi ${state.source?.version}` : 'Buat quotation'
+  return <form className="quotation-editor quotation-workspace" onSubmit={submit} aria-label={state.mode === 'create' ? 'Quotation baru' : 'Editor quotation'}>
     <header>
-      <div><span className="eyebrow">Editor terstruktur</span><h4>{state.mode === 'revise' ? `Revisi dari versi ${state.source?.version}` : state.mode === 'edit' ? `Edit versi ${state.source?.version}` : 'Quotation baru'}</h4></div>
+      <div><span className="eyebrow">DOKUMEN KOMERSIAL</span><h4>{editorTitle}</h4><p>Susun penawaran yang siap dikirim tanpa berpindah halaman.</p></div>
       <label className="quotation-brand-field">Template merek<input value={brandFor(project)} readOnly aria-readonly="true" /></label>
     </header>
+    <ol className="document-workflow" aria-label="Alur pembuatan quotation"><li><span>1</span><strong>Klien & proyek</strong></li><li><span>2</span><strong>Item & harga</strong></li><li><span>3</span><strong>Ketentuan</strong></li></ol>
+    <div className="quotation-editor-layout"><div className="quotation-editor-main">
     <fieldset disabled={busy}>
       <legend>Data penerima dan proyek</legend>
       <div className="quotation-field-grid">
@@ -273,17 +276,21 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
         <label className="wide">Ketentuan pembayaran<textarea value={values.payment_terms} onChange={(event) => field('payment_terms', event.target.value)} /></label>
         <label className="wide">Catatan quotation<textarea value={values.content_notes} onChange={(event) => field('content_notes', event.target.value)} /></label>
       </div>
-      <dl className="quotation-totals" aria-label="Total quotation">
-        <div><dt>Subtotal</dt><dd>{calculation.value ? IDR.format(calculation.value.totals.subtotal) : '—'}</dd></div>
-        <div><dt>Diskon dokumen</dt><dd>{calculation.value ? IDR.format(calculation.value.totals.document_discount) : '—'}</dd></div>
-        <div><dt>Pajak</dt><dd>{calculation.value ? IDR.format(calculation.value.totals.tax) : '—'}</dd></div>
-        <div className="grand-total"><dt>Total</dt><dd>{calculation.value ? IDR.format(calculation.value.totals.total) : '—'}</dd></div>
-      </dl>
     </fieldset>
     {(error || calculation.error) && <p className="document-state-alert" role="alert">{error || calculation.error}</p>}
-    <footer className="quotation-actions">
-      <button type="button" className="secondary" onClick={onCancel}>Batal</button>
-      <button type="submit" disabled={busy}>{busy ? 'Menyimpan…' : state.mode === 'revise' ? 'Simpan sebagai revisi' : 'Simpan draf'}</button>
+    </div>
+    <aside className="quotation-summary" aria-label="Ringkasan quotation">
+      <div><span className="eyebrow">RINGKASAN NILAI</span><strong>{calculation.value ? IDR.format(calculation.value.totals.total) : '—'}</strong><small>Total quotation</small></div>
+      <dl className="quotation-totals" aria-label="Total quotation">
+        <div><dt>Subtotal</dt><dd>{calculation.value ? IDR.format(calculation.value.totals.subtotal) : '—'}</dd></div>
+        <div><dt>Diskon</dt><dd>{calculation.value ? `− ${IDR.format(calculation.value.totals.document_discount)}` : '—'}</dd></div>
+        <div><dt>Pajak</dt><dd>{calculation.value ? IDR.format(calculation.value.totals.tax) : '—'}</dd></div>
+      </dl>
+      <p>Nilai berubah otomatis saat item, diskon, atau pajak diedit.</p>
+    </aside></div>
+    <footer className="quotation-actions quotation-save-bar">
+      <span>{state.mode === 'revise' ? 'Versi sebelumnya tetap tersimpan.' : 'Simpan sekarang, kirim setelah diperiksa.'}</span>
+      <div><button type="button" className="secondary" onClick={onCancel}>Batal</button><button type="submit" disabled={busy}>{busy ? 'Menyimpan…' : state.mode === 'revise' ? 'Simpan sebagai revisi' : 'Simpan draf'}</button></div>
     </footer>
   </form>
 }
