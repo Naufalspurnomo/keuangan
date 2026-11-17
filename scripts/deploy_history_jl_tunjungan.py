@@ -121,7 +121,6 @@ def build_runner(token: str, source: dict[str, str], target: dict[str, str], slu
         source["heading"]: target["heading"],
         source["body"]: target["body"],
         source["source_line"]: target["source_line"],
-        source["excerpt"]: target["excerpt"],
         source["cover_alt"]: target["cover_alt"],
     }
     image_url = f"https://hollawall.com/wp-content/uploads/hollawall-projects/{image_name}"
