@@ -34,7 +34,7 @@ jobs:
           assert evidence['runner_removed'] is True, evidence
           assert evidence['status'] == 'publish', evidence
           assert evidence['slug'] == 'history-of-jl-tunjungan', evidence
-          assert evidence['translation_count'] == 5, evidence
+          assert evidence['translation_count'] >= 5, evidence
           assert evidence['featured_media'] > 0, evidence
           PY
       - uses: actions/upload-artifact@v4

@@ -308,7 +308,7 @@ def main() -> int:
         "heading": "HISTORY OF JL. TUNJUNGAN",
         "body": "Since 1888, Jalan Tunjungan has developed into one of Surabaya’s major commercial and shopping districts. Its growth was supported by a tram network connecting the area with Krian, Wonokromo, and Jembatan Merah. Rows of shops, shopping establishments, and hotels transformed Tunjungan into a prominent shopping street, reflecting Surabaya’s economic vitality and urban development during the colonial era. After experiencing a decline in commercial activity during the 1990s, Jalan Tunjungan was brought back to life through urban revitalization. Today, it is a heritage tourism destination and a vibrant public space featuring culinary attractions, cafés, and various arts and cultural activities. Historic buildings such as Siola, along with the district’s old shophouses, form an important part of Tunjungan’s identity as one of Surabaya’s icons of history and urban lifestyle.",
         "source_line": "Source: #CeritaMuralTunjungan",
-        "excerpt": "Surabaya City Government X Hollawall",
+        "excerpt": "Pemkot Surabaya X Hollawall",
         "cover_alt": "Historical illustration of Jalan Tunjungan featuring a tram, horse-drawn carriages, and Surabaya heritage buildings",
     }
 
