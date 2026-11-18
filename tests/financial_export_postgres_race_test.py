@@ -20,7 +20,7 @@ from services.financial_transaction_repository import (
     FinancialRepositoryConflict,
     PostgresFinancialTransactionRepository,
 )
-from services.financial_schema import apply_financial_migrations, load_financial_migrations
+from services.financial_schema import apply_financial_migrations, load_production_bootstrap_migrations
 
 
 DSN = os.getenv("FINANCIAL_EXPORT_TEST_DATABASE_URL", "")
@@ -32,6 +32,14 @@ def _connection():
     import psycopg
 
     return psycopg.connect(DSN)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _canonical_schema():
+    apply_financial_migrations(
+        DSN,
+        migrations=load_production_bootstrap_migrations(ROOT / "dashboard_api" / "migrations"),
+    )
 
 
 def _seed_rows(count: int) -> list[str]:
@@ -64,12 +72,6 @@ def _seed_rows(count: int) -> list[str]:
 
 
 def test_two_workers_claim_disjoint_rows_and_stale_tokens_cannot_ack():
-    with _connection() as connection, connection.cursor() as cursor:
-        cursor.execute("CREATE TABLE IF NOT EXISTS projects (id UUID PRIMARY KEY)")
-    apply_financial_migrations(
-        DSN,
-        migrations=load_financial_migrations(ROOT / "dashboard_api" / "migrations"),
-    )
     expected_ids = set(_seed_rows(20))
     barrier = threading.Barrier(2)
 
@@ -154,10 +156,6 @@ def test_finance_authority_latch_is_one_way_and_fences_legacy_writers():
 
 
 def test_transaction_idempotency_is_atomic_across_real_postgres_connections():
-    apply_financial_migrations(
-        DSN,
-        migrations=load_financial_migrations(ROOT / "dashboard_api" / "migrations"),
-    )
     with _connection() as connection, connection.cursor() as cursor:
         cursor.execute(
             """

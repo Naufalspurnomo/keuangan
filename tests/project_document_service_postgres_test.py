@@ -49,7 +49,7 @@ def repository():
     ] + [
         path.read_text(encoding="utf-8")
         for path in sorted(migration_root.glob("*.sql"))
-        if 9 <= int(path.name.split("_", 1)[0]) <= 25
+        if 9 <= int(path.name.split("_", 1)[0]) <= 26
     ]
     with psycopg.connect(dsn, autocommit=True) as connection:
         with connection.cursor() as cursor:

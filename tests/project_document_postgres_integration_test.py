@@ -73,7 +73,7 @@ def dsn():
     canonical_extensions = [
         path.read_text(encoding="utf-8")
         for path in sorted(migration_root.glob("*.sql"))
-        if 9 <= int(path.name.split("_", 1)[0]) <= 25
+        if 9 <= int(path.name.split("_", 1)[0]) <= 26
     ]
     with psycopg.connect(selected, autocommit=True) as connection:
         with connection.cursor() as cursor:
@@ -2930,7 +2930,7 @@ def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(reposit
     )
     deal = repository.deal_project_quotation(
         revision_sent["id"],
-        dp_percent=25,
+        dp_percent=30,
         remaining_installments=3,
         expected_version=revision_sent["lock_version"],
         expected_document_id=sales_order["id"],
@@ -2954,15 +2954,15 @@ def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(reposit
     assert deal["dp_invoice"]["invoice_kind"] == "DP"
     assert deal["dp_invoice"]["template_key"] == "HOLLAWALL"
     assert deal["dp_invoice"]["payment_profile_key"] == "hollawall"
-    assert repository._calculate_totals(deal["dp_invoice"])["total"] == 250_001
+    assert repository._calculate_totals(deal["dp_invoice"])["total"] == 300_001
     schedule = deal["installment_schedule"]
-    assert [item["amount"] for item in schedule] == [250_001, 250_001, 250_000, 250_000]
+    assert [item["amount"] for item in schedule] == [300_001, 233_334, 233_334, 233_333]
     assert sum(item["amount"] for item in schedule) == 1_000_002
     assert schedule[0]["invoice_id"] == deal["dp_invoice"]["id"]
 
     with pytest.raises(ProjectDocumentConflict, match="already been dealt"):
         repository.deal_project_quotation(
-            revision_sent["id"], dp_percent=25, remaining_installments=1,
+            revision_sent["id"], dp_percent=30, remaining_installments=1,
             expected_version=deal["quotation"]["lock_version"],
             expected_document_id=deal["sales_order"]["id"],
             expected_document_version=deal["sales_order"]["lock_version"],
