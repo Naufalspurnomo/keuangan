@@ -88,7 +88,7 @@ def test_structured_quotation_accepts_cached_frontend_line_discount_key():
     assert result["lines"][0]["line_discount_percent"] == "5"
 
 
-def test_schema_compatibility_restores_hard_delete_gate_before_later_migrations(monkeypatch):
+def test_schema_compatibility_restores_all_hard_delete_gates_before_later_migrations(monkeypatch):
     executed: list[str] = []
 
     class Cursor:
@@ -123,6 +123,7 @@ def test_schema_compatibility_restores_hard_delete_gate_before_later_migrations(
         repository_module.ensure_project_document_schema("postgresql://isolated-test")
 
     assert "RAISE EXCEPTION 'project document events are append-only'" in executed[0]
+    assert "project documents cannot be hard deleted" in executed[1]
     assert "OLD.project_id = hollawall_project_hard_delete_target()" in executed[1]
 
 

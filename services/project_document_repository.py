@@ -799,10 +799,10 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
         (migration_root / name).read_text(encoding="utf-8")
         for name in (
             "003_project_documents.sql",
-            # Migration 003 is intentionally idempotent but carries the legacy
-            # append-only trigger. Restore the hard-delete gate immediately so
-            # a later compatibility migration failure cannot leave it downgraded.
-            "027_project_event_hard_delete_gate.sql",
+            # Migration 003 is intentionally idempotent but carries legacy
+            # delete triggers. Restore every hard-delete gate immediately so a
+            # later compatibility migration failure cannot leave them downgraded.
+            "022_project_hard_delete.sql",
             "005_canonical_project_transactions.sql",
             "006_invoice_payment_applications.sql",
             "007_project_transaction_evidence.sql",
