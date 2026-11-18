@@ -263,6 +263,54 @@ def test_texturin_city_identity_survives_project_sales_order_and_quotation(repos
         )
 
 
+def test_texturin_identity_migration_corrects_legacy_draft_with_immutability_trigger_active(
+    repository, dsn,
+):
+    created = repository.create_project_with_sales_order(
+        {
+            "name": "Legacy Texturin Surabaya",
+            "client_name": "PT Client",
+            "issuer_key": issuer(
+                repository,
+                issuer_key="texturin-legacy-surabaya",
+                number_code="TXL",
+                key="texturin-legacy-surabaya-issuer-0001",
+            )["issuer_key"],
+            "wallet": "TX SBY(216)",
+            "company": "TEXTURIN-Surabaya",
+            "status": "planned",
+            "start_date": "2026-11-17",
+        },
+        idempotency_key="texturin-legacy-surabaya-project-0001",
+        actor=ACTOR,
+    )
+
+    import psycopg
+
+    migration = (
+        Path(__file__).parents[1]
+        / "dashboard_api/migrations/026_texturin_template_identity.sql"
+    ).read_text(encoding="utf-8")
+    with psycopg.connect(dsn, autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "ALTER TABLE project_documents DISABLE TRIGGER trg_project_document_immutable"
+            )
+            cursor.execute(
+                "UPDATE project_documents SET template_key = 'TEXTURIN' WHERE id = %s",
+                (created["sales_order"]["id"],),
+            )
+            cursor.execute(
+                "ALTER TABLE project_documents ENABLE TRIGGER trg_project_document_immutable"
+            )
+            cursor.execute(migration)
+            cursor.execute(
+                "SELECT template_key FROM project_documents WHERE id = %s",
+                (created["sales_order"]["id"],),
+            )
+            assert cursor.fetchone() == ("TEXTURIN-SURABAYA",)
+
+
 def test_project_creation_requires_durable_wallet_company_binding(repository, dsn):
     profile = issuer(repository, key="binding-required-issuer-0001")
     with pytest.raises(ValueError, match="wallet, and company are required"):
