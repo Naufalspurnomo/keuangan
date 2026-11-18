@@ -17,7 +17,7 @@ const values: ProjectQuotationValues = {
   project_name: 'Backdrop Expo', subject: 'Penawaran backdrop', valid_until: '2026-12-10',
   project_image_url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   lines: [{ id: 'line-1', description: 'Backdrop', quantity: '1', unit: 'set', unit_price: 10_000_000, discount_percent: '0' }],
-  discount_mode: 'none', discount_value: '0', tax_percent: '0', payment_terms: '', content_notes: '', amount: 10_000_000,
+  discount_mode: 'none', discount_value: '0', tax_percent: '0', deposit_percent: 30, payment_terms: '', content_notes: '', amount: 10_000_000,
 }
 const wireValues = {
   ...values,

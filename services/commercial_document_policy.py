@@ -9,7 +9,7 @@ from typing import Any, Mapping
 
 from services.project_document_models import DocumentCalculationError, integer_rupiah
 
-_POLICY_PATH = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "commercial_document_policies.json"
+_POLICY_PATH = Path(__file__).resolve().parents[1] / "config" / "commercial_document_policies.json"
 _TEMPLATE_KEYS = ("hollawall", "hojja", "texturin", "texturin-surabaya", "texturin-bali")
 _PRICING_MODES = {"area_rate", "ppm_area", "fixed_artwork", "fixed_fee", "legacy_generic"}
 _DIMENSION_FACTORS = {"m": Decimal("1"), "cm": Decimal("0.01"), "mm": Decimal("0.001")}

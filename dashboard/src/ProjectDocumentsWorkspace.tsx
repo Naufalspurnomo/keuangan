@@ -58,6 +58,7 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
 
   const writesEnabled = session.capabilities.documentWrites
   const today = new Date().toISOString().slice(0, 10)
+  const preparingReceipt = route.type === 'receipt' && loading && !active
 
   const loadList = useCallback(async () => {
     setLoading(true)
@@ -145,6 +146,7 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
       replaceDocument(result)
       if (after) await after(result)
       else await authoritativeReadback(result.id)
+      return true
     } catch (reason) {
       const flags = errorFlags(reason)
       if (flags.stale) {
@@ -159,6 +161,7 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
           setRetryAfter(() => after ? () => after(active as ProjectDocumentRecord) : null)
         }
       } else setError(flags.message)
+      return false
     } finally {
       setBusy(false)
     }
@@ -167,7 +170,7 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
   const saveDraft = async (draft: ProjectDocumentDraft) => {
     const record = active && 'status' in active ? active : null
     const command = record ? api.updateDocument(record.id, draft, record.lock_version) : api.createDocument(draft)
-    await execute(command, async (saved) => {
+    return execute(command, async (saved) => {
       await authoritativeReadback(saved.id)
       onRouteChange({ tab: 'documents', projectId: project.id, document: saved.id })
     })
@@ -254,10 +257,11 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
   }
 
   return <section className="project-documents-workspace" aria-busy={loading}>
-    <header className="project-documents-head"><div><p className="eyebrow">DOKUMEN PROYEK</p><h2>Quotation, invoice, dan kuitansi</h2><p>Template otomatis mengikuti identitas proyek, klien, perusahaan, issuer, dan dompet proyek ini.</p></div><div className="project-document-create"><button type="button" className="secondary-button" onClick={() => create('invoice')} disabled={!writesEnabled}><FilePlus2 size={16} /> Buat invoice</button><button type="button" className="secondary-button" onClick={() => create('receipt')} disabled={!writesEnabled}><Plus size={16} /> Buat kuitansi</button></div></header>
+    <header className="project-documents-head"><div><p className="eyebrow">DOKUMEN PROYEK</p><h2>Quotation, invoice, dan kuitansi</h2><p>Template otomatis mengikuti identitas proyek, klien, perusahaan, issuer, dan dompet proyek ini.</p></div><div className="project-document-create"><button type="button" className="secondary-button" onClick={() => create('invoice')} disabled={!writesEnabled || loading}><FilePlus2 size={16} /> Buat invoice</button><button type="button" className="secondary-button" onClick={() => create('receipt')} disabled={!writesEnabled || loading}>{preparingReceipt ? <RefreshCw className="is-spinning" size={16} /> : <Plus size={16} />} {preparingReceipt ? 'Menyiapkan kuitansi…' : 'Buat kuitansi'}</button></div></header>
     {!writesEnabled && <p className="write-disabled-note">Perubahan dokumen belum diaktifkan.</p>}
     {error && <div role="alert" className="document-state-alert"><strong>{error}</strong><button type="button" className="secondary-button" onClick={() => void loadList()}><RefreshCw size={16} /> Coba lagi</button></div>}
     {notice && <p role="status" className="document-state-notice">{notice}</p>}
+    {preparingReceipt && <p role="status" className="document-state-notice"><strong>Menyiapkan kuitansi…</strong> Memeriksa invoice dan transaksi pemasukan yang tersedia.</p>}
     <ProjectQuotationPanel
       project={project}
       salesOrder={documents.find((document) => document.type === 'sales_order' && document.status === 'draft')}

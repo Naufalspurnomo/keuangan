@@ -50,7 +50,7 @@ import { useLiveSnapshot } from './liveSnapshotView'
 import { createCanonicalTransactionMutation, createTransactionWriteAttempt, jakartaToday, loadTransactionWriteSession, sameTransactionPayload, type RecordedTransaction, type TransactionWriteAttempt, type TransactionWritePayload, type TransactionWriteSession } from './transactionApi'
 import { useFinanceWorkspace } from './useFinanceWorkspace'
 import hollawallLogo from './assets/hollawall-logo.png'
-import { createProjectDocumentApi, type ProjectDocumentApi, type ProjectDocumentSession } from './projectDocumentApi'
+import { createProjectDocumentApi, type ProjectDocumentApi, type ProjectDocumentCommand, type ProjectDocumentSession } from './projectDocumentApi'
 import { createInboxReviewApi, type InboxReviewApi } from './inboxReviewApi'
 import { canonicalDebtIdentity } from './debtRegistry'
 import { normalizeCanonicalPair } from './transactionMappings'
@@ -220,6 +220,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
   const previousMobile = useRef(mobile)
   const pendingScroll = useRef<number | null>(null)
   const activeProjectLoad = useRef<Promise<void> | null>(null)
+  const pendingProjectSave = useRef<{ signature: string; command: ProjectDocumentCommand<ProjectRecord>; creating: boolean; savedId?: string } | null>(null)
   const projectLoadSequence = useRef(0)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const mainRef = useRef<HTMLElement>(null)
@@ -248,6 +249,12 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
         if (sequence !== projectLoadSequence.current) return
         const projects = result.projects.filter((project) => !project.archived_at)
         setProductionProjects(projects)
+        const pending = pendingProjectSave.current
+        if (pending?.savedId && projects.some((project) => project.id === pending.savedId)) {
+          pendingProjectSave.current = null
+          setProjectModal(null)
+          setNotice(pending.creating ? 'Proyek tersimpan dan berhasil dipulihkan.' : 'Perubahan proyek tersimpan dan berhasil dipulihkan.')
+        }
         setProjectCapabilities(result.capabilities)
         setProjectApiAvailable(true)
       })
@@ -461,11 +468,20 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
     setProjectBusy(true)
     try {
       const creating = projectModal === 'create'
-      const command = creating
+      const signature = JSON.stringify({ creating, projectId: creating ? null : projectModal!.id, version: creating ? null : projectModal!.lock_version, draft })
+      if (pendingProjectSave.current && pendingProjectSave.current.signature !== signature) {
+        throw new Error('Hasil penyimpanan sebelumnya belum pasti. Ulangi data yang sama atau muat ulang proyek sebelum mengubah isian.')
+      }
+      const command = pendingProjectSave.current?.command ?? (creating
         ? projectApi.createProject(draft)
-        : projectApi.updateProject(projectModal!.id, draft, projectModal!.lock_version)
-      const saved = await command.submit(projectSession)
-      const current = await projectApi.getProject(saved.id)
+        : projectApi.updateProject(projectModal!.id, draft, projectModal!.lock_version))
+      pendingProjectSave.current ??= { signature, command, creating }
+      if (!pendingProjectSave.current.savedId) {
+        const saved = await command.submit(projectSession)
+        pendingProjectSave.current.savedId = saved.id
+      }
+      const current = await projectApi.getProject(pendingProjectSave.current.savedId)
+      pendingProjectSave.current = null
       projectLoadSequence.current += 1
       activeProjectLoad.current = null
       setProjectDataLoading(false)
@@ -476,11 +492,12 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
       if (creating) openProjectDetail(current.id)
       setNotice(creating ? 'Proyek aktif dibuat. Lanjutkan dengan mencatat transaksi proyek.' : 'Proyek diperbarui.')
     } catch (error) {
+      if (!pendingProjectSave.current?.savedId && !(error instanceof Error && 'uncertain' in error && error.uncertain)) pendingProjectSave.current = null
       throw error instanceof Error ? error : new Error('Proyek belum dapat disimpan.')
     } finally { setProjectBusy(false) }
   }
   const changeProductionProjectStatusById = async (projectId: string, status: ProductionProjectStatus) => {
-    if (!projectApi) return
+    if (!projectApi || projectBusy) return
     const project = productionProjects.find((item) => item.id === projectId)
     if (!project) return
     setProjectBusy(true)
@@ -618,6 +635,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
               readOnly={!projectCapabilities.hardDelete}
               canAdd={projectCapabilities.projectWrites}
               destructiveActionLabel="Hapus permanen"
+              busy={projectBusy}
             />
             : active === 'projects' && readOnly ? <section className="application-state application-state-error" role="alert"><div><p className="eyebrow">DATA PROYEK</p><h2>Data proyek belum tersedia</h2><p>{projectApiError || 'Layanan proyek belum siap. Data snapshot tidak dipakai sebagai pengganti.'}</p><button className="primary-button" onClick={() => void loadProductionProjects()}>Coba lagi</button></div></section>
               : active === 'projects' && selectedProject ? <ProjectTransactionsWorkspace workspace={finance.workspace} project={selectedProject} onBack={backToProjects} onAdd={(project) => setModal({ kind: 'transaction', projectId: project.id })} onEdit={(value) => setModal({ kind: 'transaction', value, projectId: selectedProject.id })} onDelete={(value) => confirmDelete('transaksi', () => finance.removeTransaction(value.id))} onComplete={completeProjectNow} onReactivate={reactivateProject} readOnly={false} canCreateTransactions />

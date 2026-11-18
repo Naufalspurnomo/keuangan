@@ -361,6 +361,49 @@ describe('production live source mode', () => {
     expect(createBody).toMatchObject({ action: 'create', values: { name: created.name, wallet: 'TX SBY(216)', company: 'TEXTURIN-Surabaya', status: 'active' } })
   }, 30_000)
 
+  it('retries only project readback after create succeeds with a lost response path', async () => {
+    const createdId = '223e4567-e89b-42d3-a456-426614174002'
+    const created = {
+      id: createdId, name: 'Proyek Readback Aman', client_name: 'Klien Aman',
+      client_company: '', client_address: '', client_contact: '', issuer_key: 'hollawall',
+      wallet: 'CV HB(101)', company: 'HOLLA', status: 'active', start_date: '2026-11-11',
+      completion_date: null, contract_notes: '', lock_version: 1, archived_at: null,
+      created_at: '2026-11-11T00:00:00Z', updated_at: '2026-11-11T00:00:00Z',
+    }
+    let posts = 0
+    let reads = 0
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/admin/api/write-session.php') return writeSessionResponse()
+      if (url.startsWith('/admin/api/projects.php?action=list')) return writableProductionProjectsResponse()
+      if (url === `/admin/api/projects.php?action=get&project_id=${createdId}`) {
+        reads += 1
+        if (reads === 1) return new Response(JSON.stringify({ error: { code: 'upstream_unavailable', message: 'Readback proyek terputus.' } }), { status: 503, headers: { 'content-type': 'application/json' } })
+        return new Response(JSON.stringify({ api_version: 'dashboard.v1', data: created, meta: { capabilities: { project_document_writes_enabled: true } } }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url === '/admin/api/projects.php' && init?.method === 'POST') {
+        posts += 1
+        return new Response(JSON.stringify({ api_version: 'dashboard.v1', data: { project: created }, meta: { capabilities: { project_document_writes_enabled: true } } }), { status: 201, headers: { 'content-type': 'application/json' } })
+      }
+      return liveResponse()
+    })
+    vi.stubGlobal('fetch', request)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })
+    fireEvent.click(navigation().getByRole('button', { name: 'Proyek' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Buat proyek' }))
+    fireEvent.change(screen.getByLabelText('Nama proyek'), { target: { value: created.name } })
+    fireEvent.change(screen.getByLabelText('Nama klien'), { target: { value: created.client_name } })
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan proyek' }))
+
+    await screen.findByText('Readback proyek terputus.')
+    expect(posts).toBe(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan proyek' }))
+    await screen.findByRole('heading', { name: created.name })
+    expect(posts).toBe(1)
+    expect(reads).toBe(2)
+  }, 30_000)
+
   it('keeps a newer project mutation when an older background refresh resolves later', async () => {
     const staleRefresh = deferred<Response>()
     const original = await productionProjectsResponse().json() as { data: { items: Array<Record<string, unknown>> } }

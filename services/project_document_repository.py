@@ -74,7 +74,8 @@ _SELECT_QUOTATION = """
     recipient_name, recipient_company, recipient_address, recipient_contact, project_name,
     project_image_url, lines, discount_mode, discount_value, tax_percent,
     payment_terms, content_notes, accepted_snapshot, revision_of_id, dp_invoice_id,
-    installment_schedule, template_version, payment_profile_key, official_number, issued_at
+    installment_schedule, template_version, payment_profile_key, official_number, issued_at,
+    deposit_percent
 """
 
 
@@ -366,7 +367,7 @@ SELECT
                 column_name || '|' || udt_name || '|' || is_nullable || '|' ||
                 COALESCE(column_default, '') || '|' || is_identity,
                 E'\n' ORDER BY ordinal_position
-            )) = 'eb60da2f88dd6be5250ada15de17ce9e'
+            )) = 'e6307118178f46fd15b2aac8e677fa2b'
             FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = 'project_quotation_handoffs'
         )
@@ -512,7 +513,7 @@ SELECT
             SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
             WHERE n.nspname = 'public'
               AND p.proname = 'guard_project_quotation_transition'
-              AND MD5(p.prosrc) = 'ea82001260190284b835e37a4624085b'
+              AND MD5(p.prosrc) = '10a36a8120601ac440e33216cc690b64'
         )
         AND EXISTS (
             SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -814,6 +815,7 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
             "025_quotation_artifacts.sql",
             "026_texturin_template_identity.sql",
             "027_project_event_hard_delete_gate.sql",
+            "028_quotation_deposit_percent.sql",
         )
     ]
     try:
@@ -1335,25 +1337,63 @@ class ProjectDocumentRepository:
                         raise ProjectDocumentNotFound("project not found")
                     cursor.execute(
                         """
-                        SELECT ledger.source_key, ledger.transaction_date, ledger.amount,
-                               COALESCE(NULLIF(ledger.description, ''), NULLIF(ledger.project, ''), 'Pemasukan proyek'),
-                               COALESCE(SUM(allocation.amount), 0)
-                        FROM financial_ledger ledger
-                        LEFT JOIN (
-                            project_document_allocations allocation
-                            JOIN project_documents receipt
-                              ON receipt.id = allocation.document_id
-                             AND receipt.status <> 'void'
-                        ) ON allocation.ledger_source_key = ledger.source_key
-                        WHERE ledger.project_id = %s
-                          AND ledger.transaction_type = 'Pemasukan'
-                          AND ledger.is_valid = TRUE
-                        GROUP BY ledger.source_key, ledger.transaction_date, ledger.amount,
-                                 ledger.description, ledger.project
-                        HAVING ledger.amount - COALESCE(SUM(allocation.amount), 0) > 0
-                        ORDER BY ledger.transaction_date DESC NULLS LAST, ledger.source_key
+                        WITH receipt_allocations AS (
+                            SELECT allocation.ledger_source_key, SUM(allocation.amount) AS amount
+                            FROM project_document_allocations allocation
+                            JOIN project_documents receipt ON receipt.id = allocation.document_id
+                            WHERE receipt.status <> 'void'
+                            GROUP BY allocation.ledger_source_key
+                        ), candidates AS (
+                            SELECT ledger.source_key,
+                                   ledger.transaction_date,
+                                   ledger.amount,
+                                   COALESCE(NULLIF(ledger.description, ''), NULLIF(ledger.project, ''), 'Pemasukan proyek') AS description
+                            FROM financial_ledger ledger
+                            WHERE ledger.project_id = %s
+                              AND ledger.transaction_type = 'Pemasukan'
+                              AND ledger.is_valid = TRUE
+                              AND NOT (ledger.payload ? 'canonical_transaction_id')
+                            UNION ALL
+                            SELECT 'canonical:' || chain.root_id::text,
+                                   (finance_transaction.occurred_at AT TIME ZONE 'Asia/Jakarta')::date,
+                                   finance_transaction.amount,
+                                   finance_transaction.description
+                            FROM (
+                                WITH RECURSIVE transaction_chain AS (
+                                    SELECT root.id AS root_id, root.id AS transaction_id
+                                    FROM financial_transactions root
+                                    WHERE root.project_id = %s
+                                      AND root.revision_of_id IS NULL
+                                      AND root.reversal_of_id IS NULL
+                                    UNION ALL
+                                    SELECT chain.root_id, successor.id
+                                    FROM transaction_chain chain
+                                    JOIN financial_transactions successor
+                                      ON successor.revision_of_id = chain.transaction_id
+                                      OR successor.reversal_of_id = chain.transaction_id
+                                )
+                                SELECT transaction_chain.root_id, transaction_chain.transaction_id
+                                FROM transaction_chain
+                                WHERE NOT EXISTS (
+                                    SELECT 1 FROM financial_transactions successor
+                                    WHERE successor.revision_of_id = transaction_chain.transaction_id
+                                       OR successor.reversal_of_id = transaction_chain.transaction_id
+                                )
+                            ) chain
+                            JOIN financial_transactions finance_transaction
+                              ON finance_transaction.id = chain.transaction_id
+                            WHERE finance_transaction.transaction_type = 'inflow'
+                              AND finance_transaction.status <> 'reversal'
+                        )
+                        SELECT candidate.source_key, candidate.transaction_date, candidate.amount,
+                               candidate.description, COALESCE(allocation.amount, 0)
+                        FROM candidates candidate
+                        LEFT JOIN receipt_allocations allocation
+                          ON allocation.ledger_source_key = candidate.source_key
+                        WHERE candidate.amount - COALESCE(allocation.amount, 0) > 0
+                        ORDER BY candidate.transaction_date DESC NULLS LAST, candidate.source_key
                         """,
-                        (project_id,),
+                        (project_id, project_id),
                     )
                     return [
                         {
@@ -1385,6 +1425,9 @@ class ProjectDocumentRepository:
             result[field] = _safe_json_array(result.get(field))
         for field in ("sales_order_id", "revision_of_id", "dp_invoice_id"):
             result[field] = str(result[field]) if result.get(field) else None
+        if result.get("deposit_percent") is not None:
+            exact_deposit = Decimal(str(result["deposit_percent"]))
+            result["deposit_percent"] = int(exact_deposit)
         return result
 
     @staticmethod
@@ -1463,9 +1506,8 @@ class ProjectDocumentRepository:
 
     @classmethod
     def _validate_deposit_terms(
-        cls, template_key: Any, payment_terms: Any, content_notes: Any,
+        cls, expected: Decimal, payment_terms: Any, content_notes: Any,
     ) -> None:
-        expected = Decimal(cls._deposit_percent(template_key))
         text = "\n".join(str(value or "") for value in (payment_terms, content_notes))
         patterns = (
             r"(?i)\b(?:dp|down\s*payment|deposit|uang\s*muka|signature\s*fee)\s*(?:sebesar\s*)?(\d+(?:[.,]\d+)?)\s*%",
@@ -1477,18 +1519,18 @@ class ProjectDocumentRepository:
             for match in re.findall(pattern, text)
         }
         if any(value != expected for value in declared):
-            raise ValueError("deposit percentage conflicts with template policy")
+            raise ValueError("deposit percentage conflicts with quotation terms")
 
     @classmethod
-    def _validate_deal_deposit(cls, template_key: Any, value: Any) -> Decimal:
+    def _validate_deal_deposit(cls, expected_value: Any, value: Any) -> Decimal:
         rate = decimal_value(
             value, field="DP percent", minimum=Decimal("0.0001"),
             maximum=Decimal("99.9999"), max_fractional_digits=4,
         )
-        expected = Decimal(cls._deposit_percent(template_key))
+        expected = Decimal(str(expected_value))
         if rate != expected:
             raise ProjectDocumentConflict(
-                f"DP percent must match sent quotation template policy ({expected}%)"
+                f"DP percent must match sent quotation ({expected}%)"
             )
         return rate
 
@@ -1522,7 +1564,12 @@ class ProjectDocumentRepository:
         project_name = str(supplied.get("project_name") or "").strip()
         payment_terms = str(supplied.get("payment_terms") or "").strip()
         content_notes = str(supplied.get("content_notes") or "").strip()
-        cls._validate_deposit_terms(template_key, payment_terms, content_notes)
+        deposit_percent = decimal_value(
+            supplied.get("deposit_percent", cls._deposit_percent(template_key)),
+            field="DP percent", minimum=Decimal("1"),
+            maximum=Decimal("99"), max_fractional_digits=0,
+        )
+        cls._validate_deposit_terms(deposit_percent, payment_terms, content_notes)
         if any(len(value) > 10_000 for value in (
             notes, subject, recipient_name, recipient_company, recipient_address,
             recipient_contact, project_name, payment_terms, content_notes,
@@ -1606,6 +1653,7 @@ class ProjectDocumentRepository:
             "discount_mode": discount_mode,
             "discount_value": discount_value,
             "tax_percent": tax_percent,
+            "deposit_percent": str(deposit_percent),
             "payment_terms": payment_terms,
             "content_notes": content_notes,
         }
@@ -1633,6 +1681,7 @@ class ProjectDocumentRepository:
             "discount_mode": quotation.get("discount_mode"),
             "discount_value": quotation.get("discount_value"),
             "tax_percent": quotation.get("tax_percent"),
+            "deposit_percent": quotation.get("deposit_percent"),
             "payment_terms": quotation.get("payment_terms"),
             "content_notes": quotation.get("content_notes"),
         }
@@ -1681,12 +1730,12 @@ class ProjectDocumentRepository:
                    recipient_name, recipient_company, recipient_address,
                    recipient_contact, project_name,
                    project_image_url, lines, discount_mode, discount_value,
-                   tax_percent, payment_terms, content_notes, revision_of_id,
+                   tax_percent, deposit_percent, payment_terms, content_notes, revision_of_id,
                    template_version, payment_profile_key, created_by, updated_by
                ) VALUES (
                    %s, %s, %s, %s, %s, %s, NULLIF(%s, ''), %s, NULLIF(%s, ''), %s,
                    NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''), NULLIF(%s, ''),
-                   %s, %s::jsonb, %s, %s, %s, NULLIF(%s, ''), NULLIF(%s, ''), %s,
+                   %s, %s::jsonb, %s, %s, %s, %s, NULLIF(%s, ''), NULLIF(%s, ''), %s,
                    %s, NULLIF(%s, ''), %s::jsonb, %s::jsonb
                ) RETURNING """ + _SELECT_QUOTATION,  # nosec B608 -- internal column constant
             (
@@ -1696,7 +1745,8 @@ class ProjectDocumentRepository:
                 values["recipient_company"], values["recipient_address"],
                 values["recipient_contact"], values["project_name"], values["project_image_url"],
                 json.dumps(values["lines"]), values["discount_mode"], values["discount_value"],
-                values["tax_percent"], values["payment_terms"], values["content_notes"],
+                values["tax_percent"], values["deposit_percent"],
+                values["payment_terms"], values["content_notes"],
                 revision_of_id, values["template_version"], values.get("payment_profile_key"),
                 actor_json, actor_json,
             ),
@@ -1772,6 +1822,7 @@ class ProjectDocumentRepository:
             "document_discount_percent": str(quotation.get("discount_value") or 0)
                 if quotation.get("discount_mode") == "percent" else "0",
             "tax_percent": str(quotation.get("tax_percent") or "0"),
+            "deposit_percent": str(quotation.get("deposit_percent")),
             "notes": quotation.get("content_notes"),
             "payment_terms": quotation.get("payment_terms"),
             "project_image_url": quotation.get("project_image_url"),
@@ -1932,7 +1983,8 @@ class ProjectDocumentRepository:
                                recipient_address = NULLIF(%s, ''), recipient_contact = NULLIF(%s, ''),
                                project_name = NULLIF(%s, ''),
                                lines = %s::jsonb, discount_mode = %s, discount_value = %s,
-                               tax_percent = %s, payment_terms = NULLIF(%s, ''),
+                               tax_percent = %s, deposit_percent = %s,
+                               payment_terms = NULLIF(%s, ''),
                                content_notes = NULLIF(%s, ''), updated_by = %s::jsonb,
                                lock_version = lock_version + 1
                            WHERE id = %s AND lock_version = %s
@@ -1945,6 +1997,7 @@ class ProjectDocumentRepository:
                             prepared["recipient_company"], prepared["recipient_address"],
                             prepared["recipient_contact"], prepared["project_name"], json.dumps(prepared["lines"]),
                             prepared["discount_mode"], prepared["discount_value"], prepared["tax_percent"],
+                            prepared["deposit_percent"],
                             prepared["payment_terms"], prepared["content_notes"], actor_json,
                             quotation_id, expected_version,
                         ),
@@ -2038,8 +2091,8 @@ class ProjectDocumentRepository:
         idempotency_key: str, actor: Mapping[str, Any],
     ) -> dict[str, Any]:
         supplied_rate = decimal_value(
-            dp_percent, field="DP percent", minimum=Decimal("0.0001"),
-            maximum=Decimal("99.9999"), max_fractional_digits=4,
+            dp_percent, field="DP percent", minimum=Decimal("1"),
+            maximum=Decimal("99"), max_fractional_digits=0,
         )
         count_value = remaining_installments
         if isinstance(count_value, bool):
@@ -2083,7 +2136,7 @@ class ProjectDocumentRepository:
                             "Deal requires structured lines and project image"
                         )
                     rate = self._validate_deal_deposit(
-                        quotation.get("template_key"), supplied_rate,
+                        quotation.get("deposit_percent"), supplied_rate,
                     )
                     cursor.execute(
                         "SELECT issuer_key, status, company FROM projects WHERE id = %s FOR UPDATE",
@@ -2186,6 +2239,7 @@ class ProjectDocumentRepository:
                         "lines": quotation["lines"], "discount_mode": quotation["discount_mode"],
                         "discount_value": quotation["discount_value"],
                         "tax_percent": quotation["tax_percent"],
+                        "deposit_percent": str(rate),
                         "payment_terms": quotation.get("payment_terms"),
                         "content_notes": quotation.get("content_notes"),
                         "project_image_url": quotation.get("project_image_url"),
@@ -2896,12 +2950,34 @@ class ProjectDocumentRepository:
                         raise ProjectDocumentNotFound("project not found")
                     next_wallet = str(supplied.get("wallet", current_project[1]))
                     next_company = str(supplied.get("company", current_project[2]))
-                    binding_changed = "wallet" in supplied or "company" in supplied
+                    binding_changed = (
+                        ("wallet" in supplied and next_wallet != str(current_project[1]))
+                        or ("company" in supplied and next_company != str(current_project[2]))
+                    )
                     binding_valid = is_canonical_wallet_company_pair(next_wallet, next_company) if binding_changed else bool(
                         normalize_wallet_company_pair(next_wallet, next_company)
                     )
                     if not binding_valid:
                         raise ValueError("wallet and company pair is unsupported")
+                    if binding_changed:
+                        cursor.execute(
+                            """SELECT EXISTS(
+                                   SELECT 1 FROM project_quotation_handoffs WHERE project_id = %s
+                                   UNION ALL
+                                   SELECT 1 FROM project_documents
+                                   WHERE project_id = %s
+                                     AND (document_type <> 'sales_order' OR status <> 'draft')
+                                   UNION ALL
+                                   SELECT 1 FROM financial_ledger WHERE project_id = %s
+                                   UNION ALL
+                                   SELECT 1 FROM financial_transactions WHERE project_id = %s
+                               )""",
+                            (project_id, project_id, project_id, project_id),
+                        )
+                        if bool(cursor.fetchone()[0]):
+                            raise ProjectDocumentConflict(
+                                "wallet and company are immutable after commercial or financial activity"
+                            )
                     if (
                         "issuer_key" in supplied
                         and str(supplied["issuer_key"]) != str(current_project[0])
@@ -3365,9 +3441,14 @@ class ProjectDocumentRepository:
                     project = cursor.fetchone()
                     if not project:
                         raise ProjectDocumentNotFound("project not found")
-                    if str(project[1]) not in {"planned", "active"}:
+                    project_status = str(project[1])
+                    if project_status == "cancelled":
                         raise ProjectDocumentConflict(
-                            "invoices require a planned or active project"
+                            "invoices cannot be created for a cancelled project"
+                        )
+                    if project_status == "completed" and invoice_kind != "FINAL":
+                        raise ProjectDocumentConflict(
+                            "completed projects only allow a FINAL settlement invoice"
                         )
                     commercial = self._locked_commercial_state(
                         cursor,
@@ -4029,11 +4110,74 @@ class ProjectDocumentRepository:
             "transaction_date", "amount", "transaction_type", "company", "wallet",
             "project", "project_id", "category", "description", "is_valid", "payload",
         ]
-        cursor.execute(
-            "SELECT " + ", ".join(columns) + " FROM financial_ledger WHERE source_key = %s" +  # nosec B608 -- columns and lock suffix are internal constants
-            (" FOR UPDATE" if for_update else ""),
-            (source_key,),
-        )
+        if source_key.startswith("canonical:"):
+            try:
+                transaction_id = str(uuid.UUID(source_key.removeprefix("canonical:")))
+            except ValueError as exc:
+                raise ProjectDocumentConflict("receipt allocation source is invalid") from exc
+            cursor.execute(
+                """
+                WITH RECURSIVE transaction_chain AS (
+                    SELECT root.id AS root_id, root.id AS transaction_id
+                    FROM financial_transactions root
+                    WHERE root.id = %s
+                      AND root.revision_of_id IS NULL
+                      AND root.reversal_of_id IS NULL
+                    UNION ALL
+                    SELECT chain.root_id, successor.id
+                    FROM transaction_chain chain
+                    JOIN financial_transactions successor
+                      ON successor.revision_of_id = chain.transaction_id
+                      OR successor.reversal_of_id = chain.transaction_id
+                )
+                SELECT 'canonical:' || chain.root_id::text,
+                       wallet.display_name,
+                       1,
+                       'pemasukan',
+                       finance_transaction.source_reference,
+                       (finance_transaction.occurred_at AT TIME ZONE 'Asia/Jakarta')::date,
+                       finance_transaction.amount,
+                       'Pemasukan',
+                       project.company,
+                       wallet.display_name,
+                       project.name,
+                       finance_transaction.project_id,
+                       finance_transaction.category,
+                       finance_transaction.description,
+                       TRUE,
+                       jsonb_build_object(
+                           'cash_authority', 'postgresql',
+                           'canonical_transaction_id', finance_transaction.id::text,
+                           'transaction_version', finance_transaction.version,
+                           'transaction_status', finance_transaction.status
+                       )
+                FROM transaction_chain chain
+                JOIN financial_transactions finance_transaction
+                  ON finance_transaction.id = chain.transaction_id
+                JOIN projects project ON project.id = finance_transaction.project_id
+                JOIN financial_postings posting
+                  ON posting.transaction_id = finance_transaction.id
+                 AND posting.wallet_id IS NOT NULL
+                 AND posting.business_unit_id IS NOT NULL
+                JOIN wallets wallet ON wallet.id = posting.wallet_id
+                WHERE finance_transaction.transaction_type = 'inflow'
+                  AND finance_transaction.status <> 'reversal'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM financial_transactions successor
+                      WHERE successor.revision_of_id = finance_transaction.id
+                         OR successor.reversal_of_id = finance_transaction.id
+                  )
+                ORDER BY posting.id
+                LIMIT 1
+                """ + (" FOR UPDATE OF finance_transaction" if for_update else ""),
+                (transaction_id,),
+            )
+        else:
+            cursor.execute(
+                "SELECT " + ", ".join(columns) + " FROM financial_ledger WHERE source_key = %s" +  # nosec B608 -- columns and lock suffix are internal constants
+                (" FOR UPDATE" if for_update else ""),
+                (source_key,),
+            )
         row = _row_dict(cursor, columns, cursor.fetchone())
         if not row:
             raise ProjectDocumentConflict("receipt allocation source no longer exists")
@@ -4175,6 +4319,25 @@ class ProjectDocumentRepository:
         *,
         stage: str,
     ) -> dict[str, Any]:
+        payload = _safe_json_object(ledger.get("payload")) or {}
+        if payload.get("cash_authority") == "postgresql":
+            canonical_id = str(payload.get("canonical_transaction_id") or "")
+            if not canonical_id:
+                raise ProjectDocumentConflict("canonical receipt source has invalid evidence")
+            return {
+                "schema_version": 1,
+                "adapter_version": "postgresql-canonical-finance/1",
+                "verification_stage": stage,
+                "verified_at": _instant(self._now()).isoformat(),
+                "source_key": str(ledger.get("source_key") or ""),
+                "canonical_transaction_id": canonical_id,
+                "transaction_version": int(payload.get("transaction_version") or 0),
+                "direction": "Pemasukan",
+                "amount": int(ledger.get("amount") or 0),
+                "project_id": str(project.get("id") or ""),
+                "wallet": str(project.get("wallet") or ""),
+                "company": str(project.get("company") or ""),
+            }
         if self._receipt_authority_reader is None:
             raise ProjectDocumentUnavailable(
                 "receipt authority reader is not configured"
@@ -4447,6 +4610,8 @@ class ProjectDocumentRepository:
                 "wallet",
                 "company",
                 "raw_cells_sha256",
+                "canonical_transaction_id",
+                "transaction_version",
             ):
                 if issue_authority.get(field) != draft_authority.get(field):
                     raise ProjectDocumentConflict(

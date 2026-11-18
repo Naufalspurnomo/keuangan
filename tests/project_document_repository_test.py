@@ -217,17 +217,17 @@ def test_commercial_line_metadata_preserves_eight_digit_raw_measurement_precisio
     assert result["commercial_meta"]["billed_area_m2"] == "3.2317"
 
 
-def test_deal_deposit_must_match_template_and_terms_cannot_contradict_policy():
+def test_deal_deposit_must_match_quotation_and_terms_cannot_contradict_it():
     assert ProjectDocumentRepository._deposit_percent("HOJJA") == 50
     ProjectDocumentRepository._validate_deposit_terms(
-        "HOJJA", "DP 50% sebelum produksi.", "",
+        50, "DP 50% sebelum produksi.", "",
     )
     with pytest.raises(ValueError, match="deposit percentage conflicts"):
         ProjectDocumentRepository._validate_deposit_terms(
-            "HOJJA", "DP 30% sebelum produksi.", "",
+            50, "DP 30% sebelum produksi.", "",
         )
     with pytest.raises(Exception, match="must match sent quotation"):
-        ProjectDocumentRepository._validate_deal_deposit("HOJJA", "30")
+        ProjectDocumentRepository._validate_deal_deposit(50, "30")
 
 
 def test_document_identity_requires_canonical_template_and_issuer_profile():

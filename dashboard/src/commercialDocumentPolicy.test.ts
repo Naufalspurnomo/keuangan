@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import fixture from '../../tests/fixtures/commercial_document_policies.json'
+import fixture from '../../config/commercial_document_policies.json'
 import { commercialPolicies, commercialPolicy, normalizeCommercialLine } from './commercialDocumentPolicy'
 
 describe('commercial document policy', () => {

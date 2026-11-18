@@ -154,6 +154,31 @@ describe('ProjectDocumentsWorkspace', () => {
     expect(onRouteChange).toHaveBeenCalledWith(expect.objectContaining({ document: draft.id }))
   })
 
+  it('shows receipt loading immediately and blocks duplicate clicks while options load', async () => {
+    const options = deferred<Awaited<ReturnType<ProjectDocumentApi['getReceiptOptions']>>>()
+    const subject = api({ getReceiptOptions: vi.fn(() => options.promise) })
+    const onRouteChange = vi.fn()
+    const { rerender } = render(
+      <ProjectDocumentsWorkspace project={project} api={subject} session={session} route={{ tab: 'documents' }} onRouteChange={onRouteChange} />,
+    )
+    await screen.findByText('INV/HW/2026/000001')
+
+    const receiptButton = screen.getByRole('button', { name: 'Buat kuitansi' })
+    fireEvent.click(receiptButton)
+    expect(onRouteChange).toHaveBeenCalledTimes(1)
+
+    rerender(
+      <ProjectDocumentsWorkspace project={project} api={subject} session={session} route={{ tab: 'documents', type: 'receipt' }} onRouteChange={onRouteChange} />,
+    )
+    expect(screen.getByRole('button', { name: 'Menyiapkan kuitansi…' })).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveTextContent('Menyiapkan kuitansi')
+    fireEvent.click(screen.getByRole('button', { name: 'Menyiapkan kuitansi…' }))
+    expect(onRouteChange).toHaveBeenCalledTimes(1)
+
+    options.resolve({ invoices: paymentSummary.invoices, transactions: [] })
+    expect(await screen.findByText('Kuitansi belum bisa dibuat')).toBeTruthy()
+  })
+
   it('lets admin target an invoice and allocate an available project payment', async () => {
     const subject = api()
     render(<ProjectDocumentsWorkspace project={project} api={subject} session={session} route={{ tab: 'documents', type: 'receipt' }} onRouteChange={vi.fn()} />)

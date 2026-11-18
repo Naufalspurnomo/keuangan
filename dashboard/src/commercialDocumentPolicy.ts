@@ -1,4 +1,4 @@
-import policiesFixture from '../../tests/fixtures/commercial_document_policies.json'
+import policiesFixture from '../../config/commercial_document_policies.json'
 import { ProjectDocumentValidationError } from './projectDocuments'
 
 export type TemplateKey = 'hollawall' | 'hojja' | 'texturin' | 'texturin-surabaya' | 'texturin-bali'
