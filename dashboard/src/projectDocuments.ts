@@ -11,6 +11,23 @@ export type ProjectDocumentStatus = typeof DOCUMENT_STATUSES[number]
 export type InvoiceKind = typeof INVOICE_KINDS[number]
 export type ProjectDetailTab = 'overview' | 'transactions' | 'debts' | 'profitability' | 'presensi' | 'documents' | 'audit'
 export type DocumentDiscountMode = 'none' | 'fixed' | 'percent'
+export type CommercialPricingMode = 'area_rate' | 'ppm_area' | 'fixed_artwork' | 'fixed_fee' | 'legacy_generic'
+export type CommercialDimensionUnit = 'mm' | 'cm' | 'm'
+export type CommercialAreaRounding = 'exact' | 'half_up' | 'truncate' | 'manual_override'
+
+export interface CommercialLineMeta {
+  pricing_mode?: CommercialPricingMode
+  width?: string | null
+  height?: string | null
+  dimension_unit?: CommercialDimensionUnit | null
+  raw_area_m2?: string | null
+  billed_area_m2?: string | null
+  area_rounding?: CommercialAreaRounding | null
+  area_override_reason?: string | null
+  display_quantity?: string | null
+  original_price?: number | null
+  asset_ref?: string | null
+}
 
 export interface ProjectDocumentCapabilities {
   projectWrites: boolean
@@ -52,7 +69,7 @@ export interface ProjectRecord extends ProjectDraft {
   updated_at: string
 }
 
-export interface DocumentLineInput {
+export interface DocumentLineInput extends CommercialLineMeta {
   id: string
   description: string
   quantity: string
@@ -104,6 +121,9 @@ export interface ProjectQuotationAcceptedSnapshot {
 }
 
 export interface ProjectQuotationValues {
+  template_key?: 'hollawall' | 'hojja' | 'texturin' | 'texturin-surabaya' | 'texturin-bali' | string
+  template_version?: string
+  payment_profile_key?: string
   recipient_name: string
   recipient_company: string
   recipient_address: string
@@ -131,7 +151,11 @@ export interface ProjectQuotation {
   status: 'draft' | 'sent' | 'revised' | 'accepted' | 'rejected'
   channel: 'whatsapp' | 'phone' | 'email' | 'meeting' | 'other'
   negotiation_notes: string | null
-  template_key?: 'hojja' | 'hollawall' | 'texturin' | string
+  template_key?: 'hojja' | 'hollawall' | 'texturin' | 'texturin-surabaya' | 'texturin-bali' | string
+  template_version?: string
+  payment_profile_key?: string
+  official_number?: string | null
+  issued_at?: string | null
   recipient_name?: string
   recipient_company?: string
   recipient_address?: string
@@ -196,6 +220,9 @@ export interface ProjectDocumentDraft {
   prepared_by: string
   client_signatory: string
   project_image_url: string | null
+  template_key?: 'hollawall' | 'hojja' | 'texturin' | 'texturin-surabaya' | 'texturin-bali' | string
+  template_version?: string
+  payment_profile_key?: string
   lines: DocumentLineInput[]
   discount_mode: DocumentDiscountMode
   discount_value: string
@@ -361,7 +388,7 @@ interface Decimal {
 
 function decimal(value: string, label: string): Decimal {
   const normalized = value.trim().replace(',', '.')
-  if (!/^\d+(?:\.\d{1,6})?$/.test(normalized)) throw new ProjectDocumentValidationError(`${label} tidak valid.`)
+  if (!/^\d+(?:\.\d{1,4})?$/.test(normalized)) throw new ProjectDocumentValidationError(`${label} tidak valid.`)
   const [whole, fraction = ''] = normalized.split('.')
   const scale = 10n ** BigInt(fraction.length)
   return { numerator: BigInt(`${whole}${fraction}`), scale }

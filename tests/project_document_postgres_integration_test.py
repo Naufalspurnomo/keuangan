@@ -5,7 +5,7 @@ import os
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -73,7 +73,7 @@ def dsn():
     canonical_extensions = [
         path.read_text(encoding="utf-8")
         for path in sorted(migration_root.glob("*.sql"))
-        if 9 <= int(path.name.split("_", 1)[0]) <= 22
+        if 9 <= int(path.name.split("_", 1)[0]) <= 26
     ]
     with psycopg.connect(selected, autocommit=True) as connection:
         with connection.cursor() as cursor:
@@ -136,6 +136,11 @@ def issuer(repository, *, issuer_key="hollawall", number_code="HW", key=None):
         display_name="Hollawall",
         number_code=number_code,
         address="Surabaya",
+        bank_details={
+            "bank": "TEST BANK",
+            "account_number": "TEST-0001",
+            "account_name": "Test Issuer",
+        },
         actor=ACTOR,
         expected_version=0,
         idempotency_key=key or f"issuer-create-{issuer_key}-0001",
@@ -177,6 +182,85 @@ def project(
                     (result["project"]["id"],),
                 )
     return result
+
+
+def test_texturin_city_identity_survives_project_sales_order_and_quotation(repository):
+    image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    cases = (
+        ("surabaya", "TEXTURIN-Surabaya", "TX SBY(216)", "TEXTURIN-SURABAYA"),
+        ("bali", "TEXTURIN-Bali", "TX BALI(087)", "TEXTURIN-BALI"),
+    )
+    created_projects = {}
+    for suffix, company, wallet, template_key in cases:
+        profile = issuer(
+            repository,
+            issuer_key=f"texturin-{suffix}",
+            number_code=f"TX{suffix[0].upper()}",
+            key=f"texturin-{suffix}-issuer-0001",
+        )
+        created = repository.create_project_with_sales_order(
+            {
+                "name": f"Texture {suffix.title()}",
+                "client_name": "PT Client",
+                "client_company": "PT Client",
+                "issuer_key": profile["issuer_key"],
+                "wallet": wallet,
+                "company": company,
+                "status": "planned",
+                "start_date": "2026-11-17",
+            },
+            idempotency_key=f"texturin-{suffix}-project-0001",
+            actor=ACTOR,
+        )
+        created_projects[suffix] = created
+        assert created["sales_order"]["template_key"] == template_key
+        quotation = repository.create_project_quotation(
+            created["project"]["id"],
+            values={
+                "template_key": template_key,
+                "template_version": "commercial-v3",
+                "payment_profile_key": profile["issuer_key"],
+                "project_image_url": image,
+                "lines": [{
+                    "description": "Decorative finish",
+                    "quantity": "6",
+                    "unit": "m²",
+                    "unit_price": 200_000,
+                    "commercial_meta": {
+                        "pricing_mode": "area_rate",
+                        "billed_area_m2": "6",
+                        "area_rounding": "exact",
+                    },
+                }],
+            },
+            idempotency_key=f"texturin-{suffix}-quotation-0001",
+            actor=ACTOR,
+        )
+        assert quotation["template_key"] == template_key
+        assert quotation["payment_profile_key"] == profile["issuer_key"]
+
+    bali = created_projects["bali"]
+    with pytest.raises(ValueError, match="template_key"):
+        repository.create_project_quotation(
+            bali["project"]["id"],
+            values={
+                "template_key": "TEXTURIN-SURABAYA",
+                "project_image_url": image,
+                "lines": [{
+                    "description": "Wrong city override",
+                    "quantity": "1",
+                    "unit": "m²",
+                    "unit_price": 1,
+                    "commercial_meta": {
+                        "pricing_mode": "area_rate",
+                        "billed_area_m2": "1",
+                        "area_rounding": "exact",
+                    },
+                }],
+            },
+            idempotency_key="texturin-cross-city-rejected-0001",
+            actor=ACTOR,
+        )
 
 
 def test_project_creation_requires_durable_wallet_company_binding(repository, dsn):
@@ -2728,6 +2812,40 @@ def test_canva_quotation_revision_preserves_history_and_requires_valid_url(repos
     assert history[1]["amount"] == 10_000_000
 
 
+def test_structured_quotation_send_requires_complete_payment_profile(repository):
+    import psycopg
+
+    created = project(repository, key="payment-gate-project-0001", quotation_required=True)
+    project_id = created["project"]["id"]
+    image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    quotation = repository.create_project_quotation(
+        project_id,
+        values={
+            "template_key": "HOLLAWALL", "template_version": "commercial-v3",
+            "payment_profile_key": "hollawall", "project_image_url": image,
+            "lines": [{
+                "description": "Mural", "quantity": "6", "unit": "m²", "unit_price": 200_000,
+                "commercial_meta": {
+                    "pricing_mode": "area_rate", "billed_area_m2": "6",
+                    "area_rounding": "exact",
+                },
+            }],
+        },
+        idempotency_key="payment-gate-quotation-0001",
+        actor=ACTOR,
+    )
+    with psycopg.connect(repository._dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE project_issuer_profiles SET bank_details = '{}'::jsonb WHERE issuer_key = 'hollawall'"
+            )
+    with pytest.raises(ProjectDocumentConflict, match="bank details are incomplete"):
+        repository.transition_project_quotation(
+            quotation["id"], status="sent", note="", expected_version=quotation["lock_version"],
+            idempotency_key="payment-gate-send-0001", actor=ACTOR,
+        )
+
+
 def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(repository):
     created = project(repository, key="structured-quotation-project-0001", quotation_required=True)
     project_id = created["project"]["id"]
@@ -2738,14 +2856,21 @@ def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(reposit
         project_id,
         values={
             "template_key": "HOLLAWALL",
+            "template_version": "commercial-v3",
+            "payment_profile_key": "hollawall",
             "subject": "Backdrop peluncuran",
             "valid_until": "2026-12-15",
             "project_image_url": image,
             "lines": [{
                 "description": "Backdrop utama",
-                "quantity": "1",
-                "unit": "proyek",
-                "unit_price": 900_000,
+                "quantity": "6",
+                "unit": "m²",
+                "unit_price": 150_000,
+                "commercial_meta": {
+                    "pricing_mode": "area_rate", "width": "3", "height": "2",
+                    "dimension_unit": "m", "raw_area_m2": "6", "billed_area_m2": "6",
+                    "area_rounding": "exact", "asset_ref": "asset://backdrop-main",
+                },
             }],
             "discount_mode": "none",
             "tax_percent": "0",
@@ -2765,9 +2890,14 @@ def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(reposit
             "subject": "Backdrop peluncuran — revisi internal",
             "lines": [{
                 "description": "Backdrop utama final",
-                "quantity": "1",
-                "unit": "proyek",
-                "unit_price": 1_000_002,
+                "quantity": "6",
+                "unit": "m²",
+                "unit_price": 166_667,
+                "commercial_meta": {
+                    "pricing_mode": "area_rate", "width": "3", "height": "2",
+                    "dimension_unit": "m", "raw_area_m2": "6", "billed_area_m2": "6",
+                    "area_rounding": "exact", "asset_ref": "asset://backdrop-main",
+                },
             }],
         },
         expected_version=first["lock_version"],
@@ -2800,7 +2930,7 @@ def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(reposit
     )
     deal = repository.deal_project_quotation(
         revision_sent["id"],
-        dp_percent=25,
+        dp_percent=30,
         remaining_installments=3,
         expected_version=revision_sent["lock_version"],
         expected_document_id=sales_order["id"],
@@ -2812,17 +2942,27 @@ def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(reposit
     assert deal["quotation"]["status"] == "accepted"
     assert deal["quotation"]["accepted_snapshot"]["amount"] == 1_000_002
     assert deal["sales_order"]["lines"][0]["description"] == "Backdrop utama final"
+    assert deal["sales_order"]["template_key"] == "HOLLAWALL"
+    assert deal["sales_order"]["template_version"] == "commercial-v3"
+    assert deal["sales_order"]["payment_profile_key"] == "hollawall"
+    assert deal["sales_order"]["lines"][0]["commercial_meta"] == {
+        "pricing_mode": "area_rate", "width": "3", "height": "2",
+        "dimension_unit": "m", "raw_area_m2": "6", "billed_area_m2": "6",
+        "area_rounding": "exact", "asset_ref": "asset://backdrop-main",
+    }
     assert repository._calculate_totals(deal["sales_order"])["total"] == 1_000_002
     assert deal["dp_invoice"]["invoice_kind"] == "DP"
-    assert repository._calculate_totals(deal["dp_invoice"])["total"] == 250_001
+    assert deal["dp_invoice"]["template_key"] == "HOLLAWALL"
+    assert deal["dp_invoice"]["payment_profile_key"] == "hollawall"
+    assert repository._calculate_totals(deal["dp_invoice"])["total"] == 300_001
     schedule = deal["installment_schedule"]
-    assert [item["amount"] for item in schedule] == [250_001, 250_001, 250_000, 250_000]
+    assert [item["amount"] for item in schedule] == [300_001, 233_334, 233_334, 233_333]
     assert sum(item["amount"] for item in schedule) == 1_000_002
     assert schedule[0]["invoice_id"] == deal["dp_invoice"]["id"]
 
     with pytest.raises(ProjectDocumentConflict, match="already been dealt"):
         repository.deal_project_quotation(
-            revision_sent["id"], dp_percent=25, remaining_installments=1,
+            revision_sent["id"], dp_percent=30, remaining_installments=1,
             expected_version=deal["quotation"]["lock_version"],
             expected_document_id=deal["sales_order"]["id"],
             expected_document_version=deal["sales_order"]["lock_version"],
@@ -2933,6 +3073,51 @@ def test_database_trigger_rejects_sent_rollback_and_legacy_acceptance(repository
                        WHERE id = %s""",
                     (sent["id"],),
                 )
+
+
+def test_sent_structured_quotation_gets_number_validity_and_byte_stable_artifact(repository):
+    created = project(repository, key="quotation-artifact-project-0001", quotation_required=True)
+    image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    quotation = repository.create_project_quotation(
+        created["project"]["id"],
+        values={
+            "template_key": "HOLLAWALL",
+            "template_version": "commercial-v3",
+            "payment_profile_key": "hollawall",
+            "project_image_url": image,
+            "lines": [{
+                "description": "Mural utama", "quantity": "6", "unit": "m²", "unit_price": 200_000,
+                "commercial_meta": {
+                    "pricing_mode": "area_rate", "billed_area_m2": "6", "area_rounding": "exact",
+                },
+            }],
+        },
+        idempotency_key="quotation-artifact-create-0001",
+        actor=ACTOR,
+    )
+    sent = repository.transition_project_quotation(
+        quotation["id"], status="sent", note="", expected_version=quotation["lock_version"],
+        idempotency_key="quotation-artifact-send-0001", actor=ACTOR,
+    )
+    first = repository.render_project_quotation(quotation["id"])
+    changed_renderer = ProjectDocumentRepository(
+        repository._dsn, now=lambda: FIXED_NOW + timedelta(days=30),
+        renderer=lambda _snapshot: (b"%PDF-1.7\nchanged renderer\n%%EOF\n", "changed/99"),
+        receipt_authority_reader=deterministic_receipt_authority,
+    )
+    second = changed_renderer.render_project_quotation(quotation["id"])
+    replay = repository.transition_project_quotation(
+        quotation["id"], status="sent", note="", expected_version=quotation["lock_version"],
+        idempotency_key="quotation-artifact-send-0001", actor=ACTOR,
+    )
+
+    assert sent["official_number"] == "QTN/HOLLAWALL/2027/000001"
+    assert sent["valid_until"] == "2027-01-08"
+    assert sent["issued_at"].startswith("2026-12-31")
+    assert replay["official_number"] == sent["official_number"]
+    assert first["bytes"] == second["bytes"]
+    assert first["sha256"] == second["sha256"]
+    assert second["renderer_version"] == "test-renderer/1"
 
 
 def test_structured_quotation_renders_selected_version_with_production_renderer(dsn):

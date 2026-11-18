@@ -64,6 +64,9 @@ const document = {
   tax_percent: '0',
   notes: '',
   payment_terms: '',
+  template_key: 'texturin',
+  template_version: 'commercial-v3',
+  payment_profile_key: 'cv-holla-berkreasi',
   revision_of_id: null,
   superseded_by_id: null,
   void_reason: null,
@@ -146,6 +149,44 @@ describe('project/document API', () => {
     expect(await api.getProject(project.id)).toMatchObject({ id: project.id, started_on: project.started_on })
     expect((await api.listDocuments(project.id)).documents[0]).toMatchObject({ id: document.id, type: 'invoice', number: null, lock_version: 4 })
     expect(await api.getDocument(document.id)).toMatchObject({ id: document.id, type: 'invoice' })
+  })
+
+  it('round-trips document identity and relational commercial_meta without flattening loss', async () => {
+    const structured = {
+      ...document,
+      lines: [{
+        id: 'line-db', description: 'Dinding utama', quantity: '6', unit: 'm²', unit_price: 200_000,
+        line_discount_percent: '0',
+        commercial_meta: {
+          pricing_mode: 'ppm_area', width: '3', height: '2', dimension_unit: 'm',
+          raw_area_m2: '6', billed_area_m2: '6', area_rounding: 'half_up',
+          area_override_reason: null, display_quantity: null, original_price: null,
+          asset_ref: 'asset://diagram-1',
+        },
+      }],
+    }
+    const request = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => json({
+      api_version: 'dashboard.v1', data: structured, meta,
+    }))
+    const api = createProjectDocumentApi({ request, keyFactory: () => 'idem-key-1234567890' })
+
+    const loaded = await api.getDocument(document.id)
+    expect(loaded).toMatchObject({
+      template_key: 'texturin', template_version: 'commercial-v3', payment_profile_key: 'cv-holla-berkreasi',
+      lines: [expect.objectContaining({
+        pricing_mode: 'ppm_area', width: '3', billed_area_m2: '6', asset_ref: 'asset://diagram-1',
+      })],
+    })
+    await api.updateDocument(document.id, loaded, 4).submit(session)
+    const body = JSON.parse(String(request.mock.calls[1][1]?.body)) as { changes: Record<string, unknown> }
+    expect(body.changes).toMatchObject({
+      template_key: 'texturin', template_version: 'commercial-v3', payment_profile_key: 'cv-holla-berkreasi',
+      lines: [expect.objectContaining({
+        commercial_meta: expect.objectContaining({
+          pricing_mode: 'ppm_area', width: '3', billed_area_m2: '6', asset_ref: 'asset://diagram-1',
+        }),
+      })],
+    })
   })
 
   it('normalizes authoritative payment reads and rejects non-integer money', async () => {

@@ -12,6 +12,7 @@ const session = {
   capabilities: { projectWrites: true, documentWrites: true, transactionCorrections: false, transactionReversals: false },
 }
 const values: ProjectQuotationValues = {
+  template_key: 'hollawall', template_version: 'commercial-v3', payment_profile_key: 'cv-holla-berkreasi',
   recipient_name: 'Ibu Rani', recipient_company: 'PT Klien', recipient_address: 'Surabaya', recipient_contact: '0812',
   project_name: 'Backdrop Expo', subject: 'Penawaran backdrop', valid_until: '2026-12-10', project_image_url: null,
   lines: [{ id: 'line-1', description: 'Backdrop', quantity: '1', unit: 'set', unit_price: 10_000_000, discount_percent: '0' }],
@@ -50,6 +51,36 @@ describe('projectQuotationApi production proxy contract', () => {
     await expect(api.list(projectId)).resolves.toEqual([expect.objectContaining({ id: quotationId })])
     expect(request).toHaveBeenCalledWith(`/admin/api/documents.php?action=quotations&project_id=${projectId}`, {
       credentials: 'same-origin', cache: 'no-store', redirect: 'error', headers: { Accept: 'application/json' },
+    })
+  })
+
+  it('preserves explicit render/payment identity and commercial line metadata on read and save', async () => {
+    const commercialLine = {
+      ...values.lines[0],
+      commercial_meta: {
+        pricing_mode: 'area_rate', width: '2.5', height: '4', dimension_unit: 'm',
+        raw_area_m2: '10', billed_area_m2: '10', area_rounding: 'half_up',
+        area_override_reason: null, display_quantity: null, original_price: null,
+        asset_ref: 'asset://mural-1',
+      },
+    }
+    const stored = { ...quotation, ...values, lines: [commercialLine] }
+    request.mockResolvedValueOnce(response({ items: [stored] })).mockResolvedValueOnce(response(stored))
+
+    const [loaded] = await api.list(projectId)
+    expect(loaded).toMatchObject({
+      template_key: 'hollawall',
+      template_version: 'commercial-v3',
+      payment_profile_key: 'cv-holla-berkreasi',
+      lines: [expect.objectContaining({
+        pricing_mode: 'area_rate', width: '2.5', billed_area_m2: '10', asset_ref: 'asset://mural-1',
+      })],
+    })
+    await api.saveDraft(quotation, { ...values, lines: [loaded.lines![0]] }, session)
+    const body = JSON.parse(String(request.mock.calls[1][1]?.body)) as { changes: ProjectQuotationValues }
+    expect(body.changes).toMatchObject({
+      template_key: 'hollawall', template_version: 'commercial-v3', payment_profile_key: 'cv-holla-berkreasi',
+      lines: [expect.objectContaining({ pricing_mode: 'area_rate', width: '2.5', asset_ref: 'asset://mural-1' })],
     })
   })
 

@@ -1,4 +1,5 @@
 import inspect
+import json
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -7,6 +8,7 @@ import pytest
 
 from services.project_document_models import MAX_RECEIPT_ALLOCATIONS
 from services.project_document_repository import (
+    ProjectDocumentConflict,
     ProjectDocumentRepository,
     ProjectDocumentUnavailable,
     canonical_json_hash,
@@ -90,8 +92,129 @@ def test_canonical_json_hash_is_order_independent_and_rejects_non_json_values():
 
     assert first == second
     assert len(first) == 64
-    with pytest.raises(TypeError, match="JSON"):
-        canonical_json_hash({"bad": object()})
+    with pytest.raises(TypeError, match="only JSON values"):
+        canonical_json_hash({"bad": float("nan")})
+
+
+def test_commercial_line_metadata_is_validated_and_preserved():
+    line = {
+        "commercial_meta": {
+            "pricing_mode": "area_rate",
+            "width": "2.5000",
+            "height": "4",
+            "dimension_unit": "m",
+            "raw_area_m2": "10",
+            "billed_area_m2": "10",
+            "area_rounding": "manual_override",
+            "area_override_reason": "site measurement",
+            "asset_ref": "asset://mural-1",
+        }
+    }
+    assert ProjectDocumentRepository._commercial_line_meta(line) == {
+        "commercial_meta": {
+            "pricing_mode": "area_rate",
+            "width": "2.5",
+            "height": "4",
+            "dimension_unit": "m",
+            "raw_area_m2": "10",
+            "billed_area_m2": "10",
+            "area_rounding": "manual_override",
+            "area_override_reason": "site measurement",
+            "asset_ref": "asset://mural-1",
+        }
+    }
+    assert ProjectDocumentRepository._commercial_line_meta({}) == {}
+    with pytest.raises(Exception, match="area_override_reason"):
+        ProjectDocumentRepository._commercial_line_meta({
+            "pricing_mode": "area_rate", "area_rounding": "manual_override",
+        })
+
+
+def test_commercial_line_metadata_preserves_eight_digit_raw_measurement_precision():
+    result = ProjectDocumentRepository._commercial_line_meta({
+        "pricing_mode": "area_rate",
+        "width": "1.12345678",
+        "height": "2.87654321",
+        "dimension_unit": "m",
+        "raw_area_m2": "3.23167197",
+        "billed_area_m2": "3.2317",
+        "area_rounding": "exact",
+    })
+
+    assert result["commercial_meta"]["width"] == "1.12345678"
+    assert result["commercial_meta"]["height"] == "2.87654321"
+    assert result["commercial_meta"]["raw_area_m2"] == "3.23167197"
+    assert result["commercial_meta"]["billed_area_m2"] == "3.2317"
+
+
+def test_deal_deposit_must_match_template_and_terms_cannot_contradict_policy():
+    assert ProjectDocumentRepository._deposit_percent("HOJJA") == 50
+    ProjectDocumentRepository._validate_deposit_terms(
+        "HOJJA", "DP 50% sebelum produksi.", "",
+    )
+    with pytest.raises(ValueError, match="deposit percentage conflicts"):
+        ProjectDocumentRepository._validate_deposit_terms(
+            "HOJJA", "DP 30% sebelum produksi.", "",
+        )
+    with pytest.raises(Exception, match="must match sent quotation"):
+        ProjectDocumentRepository._validate_deal_deposit("HOJJA", "30")
+
+
+def test_document_identity_requires_canonical_template_and_issuer_profile():
+    assert ProjectDocumentRepository._document_identity(
+        {}, company="HOJJA", issuer_key="cv-holla-berkreasi",
+    ) == ("HOJJA", "commercial-v3", "cv-holla-berkreasi")
+    with pytest.raises(ValueError, match="template_key"):
+        ProjectDocumentRepository._document_identity(
+            {"template_key": "TEXTURIN"}, company="HOJJA", issuer_key="cv-holla-berkreasi",
+        )
+    assert ProjectDocumentRepository._document_identity(
+        {"template_key": "TEXTURIN-SURABAYA"},
+        company="TEXTURIN-Surabaya", issuer_key="texturin-surabaya",
+    ) == ("TEXTURIN-SURABAYA", "commercial-v3", "texturin-surabaya")
+    assert ProjectDocumentRepository._document_identity(
+        {"template_key": "TEXTURIN-BALI"},
+        company="TEXTURIN-Bali", issuer_key="texturin-bali",
+    ) == ("TEXTURIN-BALI", "commercial-v3", "texturin-bali")
+    with pytest.raises(ValueError, match="template_key"):
+        ProjectDocumentRepository._document_identity(
+            {"template_key": "TEXTURIN-BALI"},
+            company="TEXTURIN-Surabaya", issuer_key="texturin-surabaya",
+        )
+    with pytest.raises(ValueError, match="payment_profile_key"):
+        ProjectDocumentRepository._document_identity(
+            {"payment_profile_key": "unrelated"}, company="HOJJA", issuer_key="cv-holla-berkreasi",
+        )
+
+
+def test_brand_commercial_migration_is_additive_and_idempotent():
+    sql = (ROOT / "dashboard_api/migrations/024_brand_commercial_identity.sql").read_text(encoding="utf-8")
+    for fragment in (
+        "ADD COLUMN IF NOT EXISTS template_version TEXT",
+        "ADD COLUMN IF NOT EXISTS payment_profile_key TEXT",
+        "ADD COLUMN IF NOT EXISTS template_key TEXT",
+        "ADD COLUMN IF NOT EXISTS commercial_meta JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "chk_project_document_line_commercial_meta_object",
+    ):
+        assert fragment in sql
+    assert "WHEN 'TEXTURIN-Surabaya' THEN 'TEXTURIN-SURABAYA'" in sql
+    assert "WHEN 'TEXTURIN-Bali' THEN 'TEXTURIN-BALI'" in sql
+    correction = (ROOT / "dashboard_api/migrations/026_texturin_template_identity.sql").read_text(encoding="utf-8")
+    assert "TEXTURIN-SURABAYA" in correction
+    assert "TEXTURIN-BALI" in correction
+
+
+def test_sent_quotation_artifact_migration_is_additive_and_immutable():
+    sql = (ROOT / "dashboard_api/migrations/025_quotation_artifacts.sql").read_text(encoding="utf-8")
+    for fragment in (
+        "ADD COLUMN IF NOT EXISTS official_number TEXT",
+        "ADD COLUMN IF NOT EXISTS issued_at TIMESTAMPTZ",
+        "CREATE TABLE IF NOT EXISTS project_quotation_number_counters",
+        "CREATE TABLE IF NOT EXISTS project_quotation_artifacts",
+        "UNIQUE INDEX IF NOT EXISTS uq_project_quotation_official_number",
+        "trg_project_quotation_artifacts_immutable",
+    ):
+        assert fragment in sql
 
 
 def test_repository_fails_closed_without_postgres_configuration(monkeypatch):

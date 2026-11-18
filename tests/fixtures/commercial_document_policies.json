@@ -1,0 +1,82 @@
+{
+  "hollawall": {
+    "template_key": "hollawall",
+    "template_version": "commercial-v3",
+    "pricing_mode": "area_rate",
+    "page_size": "A5",
+    "default_deposit_percent": 30,
+    "default_validity_days": 7,
+    "labels": {
+      "description": "DESCRIPTION",
+      "quantity": "AREA",
+      "unit_price": "HARGA/M²",
+      "line_total": "JUMLAH",
+      "deposit": "Down Payment"
+    }
+  },
+  "hojja": {
+    "template_key": "hojja",
+    "template_version": "commercial-v3",
+    "pricing_mode": "fixed_artwork",
+    "page_size": "A4",
+    "default_deposit_percent": 50,
+    "default_validity_days": 7,
+    "labels": {
+      "description": "Description",
+      "quantity": "Qty",
+      "unit_price": "Agreed price",
+      "line_total": "Total",
+      "deposit": "Total DP"
+    }
+  },
+  "texturin": {
+    "template_key": "texturin",
+    "template_version": "commercial-v3",
+    "pricing_mode": "ppm_area",
+    "page_size": "A4",
+    "default_deposit_percent": 30,
+    "default_validity_days": 14,
+    "labels": {
+      "description": "DESCRIPTION",
+      "quantity": "LUAS",
+      "unit_price": "PPM",
+      "line_total": "TOTAL",
+      "deposit": "Signature fee"
+    }
+  },
+  "texturin-surabaya": {
+    "template_key": "texturin-surabaya",
+    "template_version": "commercial-v3",
+    "pricing_mode": "ppm_area",
+    "page_size": "A4",
+    "default_deposit_percent": 30,
+    "default_validity_days": 14,
+    "default_terms": [
+      "Pengecatan dilakukan pada bidang tembok/plafon yang siap dicat. Perbaikan tambahan dikenakan biaya sesuai kondisi lapangan dan ditagihkan di akhir pekerjaan. Kami tidak bertanggung jawab atas ketidaksempurnaan akibat kondisi dasar bidang atau pekerjaan sebelumnya.",
+      "Hasil aplikasi ditargetkan 80% sesuai sampel karena proses handmade. Revisi setelah pekerjaan selesai dikenakan biaya tambahan.",
+      "Persetujuan penawaran disertai pembayaran signature fee sebesar 30% dari total biaya. Tanda terima diberikan setelah pembayaran diterima. Penawaran berlaku 2 minggu sejak diterbitkan."
+    ],
+    "labels": {
+      "description": "DESCRIPTION",
+      "quantity": "QTY/LUAS",
+      "unit_price": "PPM",
+      "line_total": "TOTAL",
+      "deposit": "Signature fee"
+    }
+  },
+  "texturin-bali": {
+    "template_key": "texturin-bali",
+    "template_version": "commercial-v3",
+    "pricing_mode": "ppm_area",
+    "page_size": "A4",
+    "default_deposit_percent": 30,
+    "default_validity_days": 14,
+    "labels": {
+      "description": "DESCRIPTION",
+      "quantity": "AREA (M²)",
+      "unit_price": "PPM",
+      "line_total": "TOTAL",
+      "deposit": "Signature fee"
+    }
+  }
+}
