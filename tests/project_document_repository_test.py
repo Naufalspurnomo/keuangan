@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from services.project_document_models import MAX_RECEIPT_ALLOCATIONS
+import services.project_document_repository as repository_module
 from services.project_document_repository import (
     ProjectDocumentConflict,
     ProjectDocumentRepository,
@@ -85,6 +86,44 @@ def test_structured_quotation_accepts_cached_frontend_line_discount_key():
 
     assert result["amount"] == 95_000
     assert result["lines"][0]["line_discount_percent"] == "5"
+
+
+def test_schema_compatibility_restores_hard_delete_gate_before_later_migrations(monkeypatch):
+    executed: list[str] = []
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, sql, _params=None):
+            executed.append(str(sql))
+            if len(executed) == 3:
+                raise RuntimeError("later migration failed")
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def cursor(self):
+            return Cursor()
+
+    monkeypatch.setattr(
+        repository_module,
+        "_default_connection_factory",
+        lambda _dsn: Connection(),
+    )
+
+    with pytest.raises(ProjectDocumentUnavailable, match="Project document migration unavailable"):
+        repository_module.ensure_project_document_schema("postgresql://isolated-test")
+
+    assert "RAISE EXCEPTION 'project document events are append-only'" in executed[0]
+    assert "OLD.project_id = hollawall_project_hard_delete_target()" in executed[1]
 
 
 def test_receipt_allocation_count_is_bounded_before_io():
