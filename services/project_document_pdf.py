@@ -1018,7 +1018,7 @@ def _draw_master_receipt(
     document = _mapping(snapshot.get("document"))
     totals = _mapping(snapshot.get("totals"))
     payer = project.get("client_name") or project.get("client_company") or "klien"
-    receiver = document.get("client_signatory") or _mapping(snapshot.get("issuer")).get("display_name") or brand.identity
+    receiver = document.get("client_signatory") or project.get("client_name") or _mapping(snapshot.get("issuer")).get("display_name") or brand.identity
     _canvas_paragraph(
         canvas, brand,
         f"Telah diterima dari {payer} untuk pembayaran proyek {project.get('name') or '—'}.",

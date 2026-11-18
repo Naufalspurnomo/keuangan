@@ -214,6 +214,9 @@ def test_receipt_pdf_is_an_acknowledgement_not_an_invoice_or_deposit_request():
     assert "RECEIPT" in content
     assert "Telah diterima dari" in content
     assert "Rp 2.500.000" in content
+    assert "Diterima oleh" in content
+    assert "Bapak Arif" in content
+    assert "Diterima oleh Bapak Arif" in content
     assert "Produksi wall branding area lobby" not in content
     assert "Down Payment" not in content
     assert "Total DP" not in content
