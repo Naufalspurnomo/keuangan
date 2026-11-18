@@ -311,6 +311,83 @@ def test_texturin_identity_migration_corrects_legacy_draft_with_immutability_tri
             assert cursor.fetchone() == ("TEXTURIN-SURABAYA",)
 
 
+def test_brand_identity_migration_upgrades_schema_23_documents_with_trigger_active(dsn):
+    """Production schema 23 already has the document immutability trigger."""
+    import psycopg
+
+    migration = (
+        Path(__file__).parents[1]
+        / "dashboard_api/migrations/024_brand_commercial_identity.sql"
+    ).read_text(encoding="utf-8")
+    project_id = str(uuid.uuid4())
+    document_id = str(uuid.uuid4())
+
+    with psycopg.connect(dsn, autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
+            cursor.execute(
+                """
+                CREATE TABLE projects (
+                    id UUID PRIMARY KEY,
+                    company TEXT NOT NULL,
+                    issuer_key TEXT NOT NULL
+                );
+                CREATE TABLE project_quotation_handoffs (
+                    id UUID PRIMARY KEY,
+                    project_id UUID NOT NULL REFERENCES projects(id)
+                );
+                CREATE TABLE project_documents (
+                    id UUID PRIMARY KEY,
+                    project_id UUID NOT NULL REFERENCES projects(id),
+                    status TEXT NOT NULL
+                );
+                CREATE TABLE project_document_lines (
+                    id UUID PRIMARY KEY,
+                    document_id UUID NOT NULL REFERENCES project_documents(id)
+                );
+                CREATE FUNCTION prevent_project_document_mutation()
+                RETURNS TRIGGER LANGUAGE plpgsql AS $$
+                BEGIN
+                    RAISE EXCEPTION 'invalid draft project document mutation';
+                END;
+                $$;
+                CREATE TRIGGER trg_project_document_immutable
+                BEFORE UPDATE ON project_documents
+                FOR EACH ROW EXECUTE FUNCTION prevent_project_document_mutation();
+                """
+            )
+            cursor.execute(
+                "INSERT INTO projects(id, company, issuer_key) VALUES (%s, %s, %s)",
+                (project_id, "TEXTURIN-Surabaya", "texturin-surabaya"),
+            )
+            cursor.execute(
+                "INSERT INTO project_documents(id, project_id, status) VALUES (%s, %s, 'draft')",
+                (document_id, project_id),
+            )
+            cursor.execute(migration)
+            cursor.execute(
+                """
+                SELECT template_key, template_version, payment_profile_key
+                FROM project_documents WHERE id = %s
+                """,
+                (document_id,),
+            )
+            assert cursor.fetchone() == (
+                "TEXTURIN-SURABAYA",
+                "commercial-v3",
+                "texturin-surabaya",
+            )
+            cursor.execute(
+                """
+                SELECT tgenabled
+                FROM pg_trigger
+                WHERE tgrelid = 'project_documents'::regclass
+                  AND tgname = 'trg_project_document_immutable'
+                """
+            )
+            assert cursor.fetchone() == ("O",)
+
+
 def test_project_creation_requires_durable_wallet_company_binding(repository, dsn):
     profile = issuer(repository, key="binding-required-issuer-0001")
     with pytest.raises(ValueError, match="wallet, and company are required"):

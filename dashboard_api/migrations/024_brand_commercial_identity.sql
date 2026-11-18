@@ -18,6 +18,13 @@ ALTER TABLE project_document_lines
     ADD CONSTRAINT chk_project_document_line_commercial_meta_object
     CHECK (jsonb_typeof(commercial_meta) = 'object');
 
+-- Existing draft/issued documents predate these identity columns. The runtime
+-- transition trigger intentionally rejects arbitrary row-shape changes, so
+-- suspend only that trigger while backfilling the newly added metadata. The
+-- transaction restores it automatically if any statement fails.
+ALTER TABLE project_documents
+    DISABLE TRIGGER trg_project_document_immutable;
+
 UPDATE project_quotation_handoffs q
 SET template_version = COALESCE(q.template_version, 'commercial-v3'),
     payment_profile_key = COALESCE(q.payment_profile_key, p.issuer_key)
@@ -39,5 +46,8 @@ FROM projects p
 WHERE p.id = d.project_id
   AND p.company IN ('HOLLA', 'HOJJA', 'TEXTURIN-Surabaya', 'TEXTURIN-Bali')
   AND (d.template_key IS NULL OR d.template_version IS NULL OR d.payment_profile_key IS NULL);
+
+ALTER TABLE project_documents
+    ENABLE TRIGGER trg_project_document_immutable;
 
 COMMIT;
