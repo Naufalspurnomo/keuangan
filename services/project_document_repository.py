@@ -4169,7 +4169,8 @@ class ProjectDocumentRepository:
                   )
                 ORDER BY posting.id
                 LIMIT 1
-                """ + (" FOR UPDATE OF finance_transaction" if for_update else ""),
+                FOR UPDATE OF finance_transaction
+                """,
                 (transaction_id,),
             )
         else:
