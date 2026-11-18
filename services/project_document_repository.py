@@ -1546,15 +1546,25 @@ class ProjectDocumentRepository:
         if lines is not None:
             if not image:
                 raise ValueError("structured quotation requires project_image_url")
+            calculation_lines = [
+                {
+                    **line,
+                    "line_discount_percent": line.get(
+                        "line_discount_percent", line.get("discount_percent", 0)
+                    ),
+                }
+                if isinstance(line, Mapping) else line
+                for line in lines
+            ]
             totals = calculate_document_totals(
-                lines,
+                calculation_lines,
                 document_discount_amount=discount_amount,
                 document_discount_percent=discount_percent,
                 tax_percent=tax_percent,
             )
             canonical_lines = [
                 {**calculated, **cls._commercial_line_meta(source)}
-                for source, calculated in zip(lines, totals["lines"], strict=True)
+                for source, calculated in zip(calculation_lines, totals["lines"], strict=True)
             ]
             amount = int(totals["total"])
             discount_value = discount_amount if discount_mode == "fixed" else (

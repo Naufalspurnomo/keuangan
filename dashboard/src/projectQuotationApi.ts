@@ -106,6 +106,16 @@ function normalizeLine(value: unknown, index: number) {
   }
 }
 
+function wireValues(values: ProjectQuotationValues) {
+  return {
+    ...values,
+    lines: values.lines.map(({ discount_percent, ...line }) => ({
+      ...line,
+      line_discount_percent: discount_percent,
+    })),
+  }
+}
+
 function normalizeInstallment(value: unknown, index: number): QuotationInstallment {
   const item = record(value)
   const amount = item?.amount
@@ -245,16 +255,16 @@ export function createProjectQuotationApi(options: ProjectQuotationApiOptions = 
     },
     async create(projectId: string, values: ProjectQuotationValues, session: ProjectDocumentSession) {
       if (!UUID.test(projectId)) throw new Error('Project ID tidak valid.')
-      return quotation(await write('create_quotation', { project_id: projectId, values }, session, '*'))
+      return quotation(await write('create_quotation', { project_id: projectId, values: wireValues(values) }, session, '*'))
     },
     async saveDraft(item: ProjectQuotation, values: ProjectQuotationValues, session: ProjectDocumentSession) {
       return quotation(await write('update_quotation', {
-        quotation_id: item.id, expected_version: item.lock_version, changes: values,
+        quotation_id: item.id, expected_version: item.lock_version, changes: wireValues(values),
       }, session, item.lock_version))
     },
     async revise(item: ProjectQuotation, values: ProjectQuotationValues, session: ProjectDocumentSession) {
       return quotation(await write('revise_quotation', {
-        quotation_id: item.id, expected_version: item.lock_version, changes: values,
+        quotation_id: item.id, expected_version: item.lock_version, changes: wireValues(values),
       }, session, item.lock_version))
     },
     async transition(item: ProjectQuotation, status: 'sent' | 'rejected', note: string, session: ProjectDocumentSession) {

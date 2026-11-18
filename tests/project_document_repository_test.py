@@ -57,6 +57,36 @@ def test_migration_defines_exact_schema_and_database_guards():
     assert "credit_note" not in sql
 
 
+def test_structured_quotation_accepts_cached_frontend_line_discount_key():
+    values = {
+        "template_key": "hollawall",
+        "template_version": "commercial-v3",
+        "payment_profile_key": "hollawall",
+        "recipient_name": "QA",
+        "project_name": "QA",
+        "subject": "QA",
+        "project_image_url": (
+            "data:image/png;base64,"
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        ),
+        "lines": [{
+            "description": "QA mural",
+            "quantity": "1",
+            "unit": "m²",
+            "unit_price": 100_000,
+            "discount_percent": "5",
+        }],
+        "discount_mode": "none",
+        "discount_value": "0",
+        "tax_percent": "0",
+    }
+
+    result = ProjectDocumentRepository._quotation_values(values, company="HOLLA")
+
+    assert result["amount"] == 95_000
+    assert result["lines"][0]["line_discount_percent"] == "5"
+
+
 def test_receipt_allocation_count_is_bounded_before_io():
     allocations = [
         {"ledger_source_key": f"sheet:income:{index}", "amount": 1}
