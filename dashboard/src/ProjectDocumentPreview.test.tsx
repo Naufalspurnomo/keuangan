@@ -111,4 +111,56 @@ describe('ProjectDocumentPreview brand renderers', () => {
     expect(page.querySelector('.texturin-terms')).toBeNull()
     expect(page.querySelector('.texturin-deposit')).toBeNull()
   })
+
+  it('shows every Hojja billed artwork when a document has three lines', () => {
+    const project = { ...baseProject, issuer_key: 'hojja', company: 'HOJJA' }
+    const document = documentFor(project, 'hojja', {
+      id: 'line-1', description: 'Artwork one', quantity: '1', unit: 'artwork', unit_price: 1_000_000, discount_percent: '0', pricing_mode: 'fixed_artwork',
+    })
+    document.lines = [
+      document.lines[0],
+      { ...document.lines[0], id: 'line-2', description: 'Artwork two' },
+      { ...document.lines[0], id: 'line-3', description: 'Artwork three' },
+    ]
+
+    render(<ProjectDocumentPreview project={project} document={document} title="Quotation" />)
+
+    const page = screen.getByRole('article', { name: 'Pratinjau A4 Quotation' })
+    expect(page).toHaveTextContent('Artwork one')
+    expect(page).toHaveTextContent('Artwork two')
+    expect(page).toHaveTextContent('Artwork three')
+  })
+
+  it('shows invoice tax and due date without quotation-validity language', () => {
+    const document = documentFor(baseProject, 'hollawall', {
+      id: 'line-tax', description: 'Mural', quantity: '', unit: 'm²', unit_price: 100_000, discount_percent: '0',
+      pricing_mode: 'area_rate', width: '2', height: '1', dimension_unit: 'm', area_rounding: 'exact',
+    })
+    document.tax_percent = '11'
+    document.due_date = '2026-11-10'
+
+    render(<ProjectDocumentPreview project={baseProject} document={document} title="Invoice" />)
+
+    const page = screen.getByRole('article', { name: 'Pratinjau A5 Invoice' })
+    expect(page).toHaveTextContent('Jatuh tempo')
+    expect(page).toHaveTextContent('10 November 2026')
+    expect(page).toHaveTextContent('Pajak 11%')
+    expect(page).toHaveTextContent('Rp22.000')
+    expect(page).not.toHaveTextContent('Penawaran berlaku')
+  })
+
+  it('renders a receipt as acknowledgement without line items, totals breakdown, or deposit request', () => {
+    const document = documentFor(baseProject, 'hollawall', {
+      id: 'line-receipt', description: 'Pembayaran proyek', quantity: '1', unit: 'unit', unit_price: 200_000, discount_percent: '0', pricing_mode: 'legacy_generic',
+    })
+    document.type = 'receipt'
+
+    render(<ProjectDocumentPreview project={baseProject} document={document} title="Receipt" />)
+
+    const page = screen.getByRole('article', { name: 'Pratinjau A5 Receipt' })
+    expect(page).toHaveTextContent('Telah diterima dari')
+    expect(page).not.toHaveTextContent('Pembayaran proyek')
+    expect(page.querySelector('.live-totals')).toBeNull()
+    expect(page.querySelector('.live-deposit')).toBeNull()
+  })
 })

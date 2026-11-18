@@ -130,6 +130,36 @@ def test_commercial_line_metadata_is_validated_and_preserved():
         })
 
 
+def test_commercial_line_metadata_preserves_eight_digit_raw_measurement_precision():
+    result = ProjectDocumentRepository._commercial_line_meta({
+        "pricing_mode": "area_rate",
+        "width": "1.12345678",
+        "height": "2.87654321",
+        "dimension_unit": "m",
+        "raw_area_m2": "3.23167197",
+        "billed_area_m2": "3.2317",
+        "area_rounding": "exact",
+    })
+
+    assert result["commercial_meta"]["width"] == "1.12345678"
+    assert result["commercial_meta"]["height"] == "2.87654321"
+    assert result["commercial_meta"]["raw_area_m2"] == "3.23167197"
+    assert result["commercial_meta"]["billed_area_m2"] == "3.2317"
+
+
+def test_deal_deposit_must_match_template_and_terms_cannot_contradict_policy():
+    assert ProjectDocumentRepository._deposit_percent("HOJJA") == 50
+    ProjectDocumentRepository._validate_deposit_terms(
+        "HOJJA", "DP 50% sebelum produksi.", "",
+    )
+    with pytest.raises(ValueError, match="deposit percentage conflicts"):
+        ProjectDocumentRepository._validate_deposit_terms(
+            "HOJJA", "DP 30% sebelum produksi.", "",
+        )
+    with pytest.raises(Exception, match="must match sent quotation"):
+        ProjectDocumentRepository._validate_deal_deposit("HOJJA", "30")
+
+
 def test_document_identity_requires_canonical_template_and_issuer_profile():
     assert ProjectDocumentRepository._document_identity(
         {}, company="HOJJA", issuer_key="cv-holla-berkreasi",
@@ -167,6 +197,11 @@ def test_brand_commercial_migration_is_additive_and_idempotent():
         "chk_project_document_line_commercial_meta_object",
     ):
         assert fragment in sql
+    assert "WHEN 'TEXTURIN-Surabaya' THEN 'TEXTURIN-SURABAYA'" in sql
+    assert "WHEN 'TEXTURIN-Bali' THEN 'TEXTURIN-BALI'" in sql
+    correction = (ROOT / "dashboard_api/migrations/026_texturin_template_identity.sql").read_text(encoding="utf-8")
+    assert "TEXTURIN-SURABAYA" in correction
+    assert "TEXTURIN-BALI" in correction
 
 
 def test_sent_quotation_artifact_migration_is_additive_and_immutable():

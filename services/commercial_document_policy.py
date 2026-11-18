@@ -119,6 +119,18 @@ def normalize_commercial_line(raw: Mapping[str, Any], policy: Mapping[str, Any])
         normalized.update({"area_rounding": rounding, "billed_area_m2": _text(billed), "quantity": _text(billed), "unit": "m²"})
         quantity = billed
     elif mode == "fixed_artwork":
+        try:
+            line_discount = Decimal(str(
+                line.get("line_discount_percent", line.get("discount_percent", "0")) or "0"
+            ))
+        except (DecimalException, ValueError) as exc:
+            raise DocumentCalculationError("line_discount_percent is invalid") from exc
+        if not line_discount.is_finite() or line_discount < 0:
+            raise DocumentCalculationError("line_discount_percent is invalid")
+        if line_discount != 0:
+            raise DocumentCalculationError(
+                "an agreed artwork price cannot receive a second line discount"
+            )
         quantity = _decimal(line.get("display_quantity", line.get("quantity", "1")), field="display_quantity", max_fractional_digits=4)
         if quantity != quantity.to_integral_value():
             raise DocumentCalculationError("display_quantity must be a whole artwork count")

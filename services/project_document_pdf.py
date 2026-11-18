@@ -28,6 +28,7 @@ from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfgen import canvas as pdfcanvas
 from reportlab.platypus import (
     BaseDocTemplate,
     Flowable,
@@ -42,7 +43,7 @@ from reportlab.platypus import (
 
 from services.commercial_document_policy import commercial_policy
 
-RENDERER_VERSION = "branded-commercial-v3"
+RENDERER_VERSION = "branded-commercial-v4"
 MAX_PROJECT_IMAGE_URL_CHARS = 196_608
 MAX_PROJECT_IMAGE_BYTES = 144 * 1024
 MAX_PROJECT_IMAGE_PIXELS = 16_000_000
@@ -63,6 +64,17 @@ _BRAND_LOGOS = {
 _HOLLAWALL_FOOTER_ART = _ASSET_DIR / "hollawall-footer-art.png"
 _HOLLAWALL_FOOTER_LOGO = _ASSET_DIR / "hollawall-footer-logo.png"
 _HOLLAWALL_FOOTER_ART_DATA = _HOLLAWALL_FOOTER_ART.read_bytes() if _HOLLAWALL_FOOTER_ART.is_file() else b""
+_MASTER_ART = {
+    key: path.read_bytes()
+    for key, path in {
+        "hollawall": _ASSET_DIR / "hollawall-master.png",
+        "hojja": _ASSET_DIR / "hojja-master.png",
+        "texturin": _ASSET_DIR / "texturin-surabaya-master.png",
+        "texturin-surabaya": _ASSET_DIR / "texturin-surabaya-master.png",
+        "texturin-bali": _ASSET_DIR / "texturin-bali-master.png",
+    }.items()
+    if path.is_file()
+}
 
 _INK = colors.HexColor("#383838")
 _MUTED = colors.HexColor("#666666")
@@ -870,6 +882,424 @@ def _draw_brand_page(
     canvas.restoreState()
 
 
+def _canvas_text(
+    canvas: Any,
+    brand: BrandSpec,
+    text: Any,
+    x: float,
+    top: float,
+    *,
+    size: float,
+    bold: bool = False,
+    right: bool = False,
+    color: colors.Color | None = None,
+) -> None:
+    regular, bold_font = _register_fonts(brand)
+    canvas.setFont(bold_font if bold else regular, size)
+    canvas.setFillColor(color or brand.ink)
+    y = brand.page_size[1] * (1 - top)
+    value = _text(text)
+    if right:
+        canvas.drawRightString(brand.page_size[0] * x, y, value)
+    else:
+        canvas.drawString(brand.page_size[0] * x, y, value)
+
+
+def _canvas_paragraph(
+    canvas: Any,
+    brand: BrandSpec,
+    text: Any,
+    x: float,
+    top: float,
+    width: float,
+    *,
+    size: float,
+    leading: float | None = None,
+    italic: bool = False,
+) -> None:
+    regular, _ = _register_fonts(brand)
+    style = ParagraphStyle(
+        f"master-{brand.key}-{x}-{top}",
+        fontName=regular,
+        fontSize=size,
+        leading=leading or size * 1.3,
+        textColor=brand.ink,
+        alignment=TA_LEFT,
+    )
+    value = _paragraph_text(text).replace("\n", "<br/>")
+    paragraph = Paragraph(f"<i>{value}</i>" if italic else value, style)
+    available = brand.page_size[0] * width
+    _, height = paragraph.wrap(available, brand.page_size[1])
+    paragraph.drawOn(
+        canvas,
+        brand.page_size[0] * x,
+        brand.page_size[1] * (1 - top) - height,
+    )
+
+
+def _draw_master_watermark(canvas: Any, snapshot: Mapping[str, Any], brand: BrandSpec) -> None:
+    status = str(_mapping(snapshot.get("document")).get("status") or "draft").lower()
+    watermark = _STATUS_WATERMARKS.get(status)
+    if not watermark:
+        return
+    canvas.saveState()
+    canvas.setFillColor(colors.Color(0.45, 0.48, 0.52, alpha=0.16))
+    canvas.setFont("Helvetica-Bold", 36 if brand.page_size == A4 else 28)
+    canvas.translate(brand.page_size[0] * .72, brand.page_size[1] * .45)
+    canvas.rotate(38)
+    canvas.drawCentredString(0, 0, watermark)
+    canvas.restoreState()
+
+
+def _draw_master_footer(canvas: Any, snapshot: Mapping[str, Any], brand: BrandSpec) -> None:
+    document = _mapping(snapshot.get("document"))
+    reference = _text(document.get("official_number"), "DRAFT")
+    _canvas_text(canvas, brand, f"{brand.identity} · {reference}", .065, .982, size=5)
+    _canvas_text(canvas, brand, "Halaman 1 / 1", .94, .982, size=5, right=True)
+
+
+def _draw_master_project_image(
+    canvas: Any,
+    snapshot: Mapping[str, Any],
+    brand: BrandSpec,
+    x: float,
+    top: float,
+    width: float,
+    height: float,
+) -> None:
+    stream = _project_image_stream(_mapping(snapshot.get("document")).get("project_image_url"))
+    if stream is None:
+        return
+    canvas.drawImage(
+        ImageReader(stream),
+        brand.page_size[0] * x,
+        brand.page_size[1] * (1 - top - height),
+        width=brand.page_size[0] * width,
+        height=brand.page_size[1] * height,
+        preserveAspectRatio=True,
+        anchor="c",
+        mask="auto",
+    )
+
+
+def _master_lines(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return [_mapping(value) for value in snapshot.get("lines") or []]
+
+
+def _master_document_type(snapshot: Mapping[str, Any]) -> str:
+    return str(_mapping(snapshot.get("document")).get("document_type") or "").strip().lower()
+
+
+def _master_is_receipt(snapshot: Mapping[str, Any]) -> bool:
+    return _master_document_type(snapshot) == "receipt"
+
+
+def _master_is_invoice(snapshot: Mapping[str, Any]) -> bool:
+    return _master_document_type(snapshot) == "invoice"
+
+
+def _master_has_deposit(snapshot: Mapping[str, Any]) -> bool:
+    document = _mapping(snapshot.get("document"))
+    return (
+        _master_document_type(snapshot) in {"quotation", "sales_order"}
+        or str(document.get("invoice_kind") or "").upper() == "DP"
+    )
+
+
+def _master_tax_label(snapshot: Mapping[str, Any]) -> str:
+    tax_percent = _mapping(snapshot.get("document")).get("tax_percent")
+    return f"Pajak {_text(tax_percent)}%" if tax_percent not in (None, "", "0", 0, "0.0") else "Pajak"
+
+
+def _draw_master_receipt(
+    canvas: Any, snapshot: Mapping[str, Any], brand: BrandSpec, *, x: float, top: float, width: float,
+) -> None:
+    project = _mapping(snapshot.get("project"))
+    document = _mapping(snapshot.get("document"))
+    totals = _mapping(snapshot.get("totals"))
+    payer = project.get("client_name") or project.get("client_company") or "klien"
+    receiver = document.get("client_signatory") or _mapping(snapshot.get("issuer")).get("display_name") or brand.identity
+    _canvas_paragraph(
+        canvas, brand,
+        f"Telah diterima dari {payer} untuk pembayaran proyek {project.get('name') or '—'}.",
+        x, top, width, size=7.5, leading=10,
+    )
+    _canvas_text(canvas, brand, _idr(totals.get("total")), x, top + .085, size=12, bold=True)
+    _canvas_text(canvas, brand, "Diterima oleh", x, top + .13, size=6.3)
+    _canvas_text(canvas, brand, receiver, x, top + .153, size=7.1, bold=True)
+
+
+def _draw_hollawall_master(canvas: Any, snapshot: Mapping[str, Any], brand: BrandSpec) -> None:
+    project = _mapping(snapshot.get("project"))
+    document = _mapping(snapshot.get("document"))
+    issuer = _mapping(snapshot.get("issuer"))
+    totals = _mapping(snapshot.get("totals"))
+    title = _document_title(snapshot)
+    _canvas_text(canvas, brand, issuer.get("legal_name"), .66, .045, size=6.1, bold=True, color=_HOLLA_CYAN)
+    _canvas_text(canvas, brand, issuer.get("address"), .66, .062, size=5.4, color=_HOLLA_CYAN)
+    _canvas_text(canvas, brand, issuer.get("phone"), .66, .079, size=5.4, color=_HOLLA_CYAN)
+    _canvas_text(canvas, brand, issuer.get("email"), .66, .096, size=5.4, color=_HOLLA_CYAN)
+    _canvas_text(canvas, brand, title, .072, .195, size=15, bold=True)
+    _canvas_text(canvas, brand, "To", .072, .232, size=6)
+    _canvas_text(canvas, brand, project.get("client_company") or project.get("client_name"), .13, .232, size=6, bold=True)
+    _canvas_text(canvas, brand, "Project", .072, .251, size=6)
+    _canvas_text(canvas, brand, project.get("name"), .15, .251, size=6, bold=True)
+    _canvas_text(canvas, brand, "Tanggal", .64, .232, size=6)
+    _canvas_text(canvas, brand, document.get("issue_date"), .73, .232, size=6)
+    _canvas_text(canvas, brand, "Letter No.", .64, .251, size=6)
+    _canvas_text(canvas, brand, document.get("official_number"), .73, .251, size=6)
+    if _master_is_invoice(snapshot):
+        _canvas_text(canvas, brand, "DUE DATE", .64, .270, size=6)
+        _canvas_text(canvas, brand, document.get("due_date"), .73, .270, size=6)
+    if _master_is_receipt(snapshot):
+        _draw_master_receipt(canvas, snapshot, brand, x=.14, top=.36, width=.72)
+        return
+    for index, line in enumerate(_master_lines(snapshot)[:4]):
+        top = .325 + index * .025
+        _canvas_text(canvas, brand, f"{index + 1}.", .072, top, size=5.8)
+        _canvas_text(canvas, brand, line.get("description"), .135, top, size=5.8)
+        _canvas_text(canvas, brand, f"{_text(line.get('quantity'))} {_text(line.get('unit'), '')}", .625, top, size=5.8, right=True)
+        _canvas_text(canvas, brand, _idr(line.get("unit_price")), .79, top, size=5.8, right=True)
+        _canvas_text(canvas, brand, _idr(line.get("line_total")), .93, top, size=5.8, right=True)
+    _draw_master_project_image(canvas, snapshot, brand, .13, .365, .58, .10)
+    _canvas_text(canvas, brand, "Subtotal", .70, .535, size=5.8)
+    _canvas_text(canvas, brand, _idr(totals.get("subtotal")), .93, .535, size=5.8, right=True)
+    discount = int(totals.get("document_discount") or 0)
+    _canvas_text(canvas, brand, "Diskon", .70, .555, size=5.8, color=_DISCOUNT)
+    _canvas_text(canvas, brand, _idr(discount), .93, .555, size=5.8, right=True, color=_DISCOUNT)
+    tax = int(totals.get("tax") or 0)
+    total_top = .575
+    if tax:
+        _canvas_text(canvas, brand, _master_tax_label(snapshot), .70, total_top, size=5.8)
+        _canvas_text(canvas, brand, _idr(tax), .93, total_top, size=5.8, right=True)
+        total_top += .020
+    _canvas_text(canvas, brand, "TOTAL", .70, total_top, size=6.2, bold=True)
+    _canvas_text(canvas, brand, _idr(totals.get("total")), .93, total_top, size=6.2, bold=True, right=True)
+    policy = commercial_policy(brand.key)
+    percent = int(policy.get("default_deposit_percent") or 0)
+    if _master_has_deposit(snapshot):
+        deposit = int(totals.get("total") or 0) * percent // 100
+        _canvas_text(canvas, brand, f"{policy['labels']['deposit']} {percent}%", .66, total_top + .030, size=5.5, bold=True)
+        _canvas_text(canvas, brand, _idr(deposit), .93, total_top + .030, size=5.5, bold=True, right=True)
+    default_terms = (
+        "Pembayaran sesuai tanggal jatuh tempo yang tercantum."
+        if _master_is_invoice(snapshot) else
+        f"Jika penawaran disetujui, pembayaran awal {percent}% mengurangi saldo proyek. Penawaran berlaku {policy['default_validity_days']} hari sejak diterbitkan."
+    )
+    _canvas_paragraph(canvas, brand, document.get("payment_terms") or default_terms, .14, .70, .76, size=5.5, leading=7)
+    bank = _mapping(issuer.get("bank_details"))
+    _canvas_text(canvas, brand, f"{_text(bank.get('bank'))} · {_text(bank.get('account_number'))} · {_text(bank.get('account_name'))}", .14, .77, size=5.5, bold=True)
+    _canvas_text(canvas, brand, "Best regards and thank you,", .68, .865, size=5.5)
+    _canvas_text(canvas, brand, issuer.get("display_name"), .68, .89, size=8, bold=True, color=_HOLLA_CYAN)
+
+
+def _draw_hojja_master(canvas: Any, snapshot: Mapping[str, Any], brand: BrandSpec) -> None:
+    project = _mapping(snapshot.get("project"))
+    document = _mapping(snapshot.get("document"))
+    issuer = _mapping(snapshot.get("issuer"))
+    totals = _mapping(snapshot.get("totals"))
+    _canvas_text(canvas, brand, _document_title(snapshot).title(), .145, .105, size=20, bold=True)
+    _canvas_text(canvas, brand, "To", .145, .16, size=7, bold=True)
+    _canvas_text(canvas, brand, project.get("client_company") or project.get("client_name"), .235, .16, size=7)
+    _canvas_text(canvas, brand, "Project", .145, .185, size=7, bold=True)
+    _canvas_text(canvas, brand, project.get("name"), .235, .185, size=7)
+    _canvas_text(canvas, brand, "Date", .66, .16, size=7, bold=True)
+    _canvas_text(canvas, brand, document.get("issue_date"), .88, .16, size=7, right=True)
+    _canvas_text(canvas, brand, "Letter ID", .66, .185, size=7, bold=True)
+    _canvas_text(canvas, brand, document.get("official_number"), .88, .185, size=7, right=True)
+    if _master_is_invoice(snapshot):
+        _canvas_text(canvas, brand, "DUE DATE", .66, .210, size=7, bold=True)
+        _canvas_text(canvas, brand, document.get("due_date"), .88, .210, size=7, right=True)
+    if _master_is_receipt(snapshot):
+        _draw_master_receipt(canvas, snapshot, brand, x=.15, top=.29, width=.72)
+        return
+    lines = _master_lines(snapshot)[:3]
+    for index, line in enumerate(lines):
+        top = .275 + index * .080
+        meta = _mapping(line.get("commercial_meta"))
+        _canvas_text(canvas, brand, line.get("description"), .15, top, size=7.2)
+        width = meta.get("width")
+        height = meta.get("height")
+        if width and height:
+            _canvas_text(canvas, brand, f"({_text(width)} × {_text(height)} {_text(meta.get('dimension_unit'), 'm')})", .15, top + .022, size=6.4)
+        if _master_has_deposit(snapshot):
+            _canvas_text(canvas, brand, f"DP {commercial_policy(brand.key)['default_deposit_percent']}%", .15, top + .047, size=6.4)
+        _canvas_text(canvas, brand, meta.get("display_quantity") or line.get("quantity"), .67, top, size=7.2, right=True)
+        original = meta.get("original_price")
+        if original:
+            _canvas_text(canvas, brand, f"Harga awal {_idr(original)}", .89, top, size=6.1, right=True)
+        _canvas_text(canvas, brand, f"Harga sepakat {_idr(line.get('line_total'))}", .89, top + .026, size=6.1, bold=True, right=True)
+    if len(lines) == 1:
+        _draw_master_project_image(canvas, snapshot, brand, .15, .37, .31, .12)
+    subtotal = int(totals.get("subtotal") or 0)
+    discount = int(totals.get("document_discount") or 0)
+    tax = int(totals.get("tax") or 0)
+    summary_top = .525
+    _canvas_text(canvas, brand, "Subtotal", .57, summary_top, size=6.2)
+    _canvas_text(canvas, brand, _idr(subtotal), .89, summary_top, size=6.2, right=True)
+    if discount:
+        summary_top += .021
+        _canvas_text(canvas, brand, "Diskon", .57, summary_top, size=6.2, color=_DISCOUNT)
+        _canvas_text(canvas, brand, _idr(discount), .89, summary_top, size=6.2, right=True, color=_DISCOUNT)
+    if tax:
+        summary_top += .021
+        _canvas_text(canvas, brand, _master_tax_label(snapshot), .57, summary_top, size=6.2)
+        _canvas_text(canvas, brand, _idr(tax), .89, summary_top, size=6.2, right=True)
+    summary_top += .025
+    _canvas_text(canvas, brand, "TOTAL", .57, summary_top, size=7, bold=True)
+    _canvas_text(canvas, brand, _idr(totals.get("total")), .89, summary_top, size=7, bold=True, right=True)
+    percent = int(commercial_policy(brand.key).get("default_deposit_percent") or 0)
+    if _master_has_deposit(snapshot):
+        deposit = int(totals.get("total") or 0) * percent // 100
+        summary_top += .031
+        _canvas_text(canvas, brand, "Total DP :", .57, summary_top, size=7, bold=True)
+        _canvas_text(canvas, brand, _idr(deposit), .89, summary_top, size=7, bold=True, right=True)
+    _canvas_text(canvas, brand, "Payment Information:", .15, .65, size=7, bold=True)
+    default_terms = "Pembayaran sesuai tanggal jatuh tempo yang tercantum." if _master_is_invoice(snapshot) else "Revisions beyond the agreed scope may be subject to additional charges."
+    _canvas_paragraph(canvas, brand, document.get("payment_terms") or default_terms, .15, .68, .72, size=6.5, leading=8)
+    bank = _mapping(issuer.get("bank_details"))
+    _canvas_text(canvas, brand, f"{_text(bank.get('bank'))} · {_text(bank.get('account_number'))} · {_text(bank.get('account_name'))}", .15, .77, size=6.3)
+
+
+def _draw_texturin_master(canvas: Any, snapshot: Mapping[str, Any], brand: BrandSpec) -> None:
+    project = _mapping(snapshot.get("project"))
+    document = _mapping(snapshot.get("document"))
+    issuer = _mapping(snapshot.get("issuer"))
+    totals = _mapping(snapshot.get("totals"))
+    title = _document_title(snapshot).title()
+    _canvas_text(canvas, brand, title, .068, .17 if brand.key == "texturin-bali" else .155, size=18, bold=True)
+    meta_top = .218 if brand.key == "texturin-bali" else .198
+    _canvas_text(canvas, brand, "TO", .068, meta_top, size=6.5, bold=True)
+    _canvas_text(canvas, brand, project.get("client_company") or project.get("client_name"), .16, meta_top, size=6.5)
+    _canvas_text(canvas, brand, "PROJECT", .068, meta_top + .022, size=6.5, bold=True)
+    _canvas_text(canvas, brand, project.get("name"), .16, meta_top + .022, size=6.5)
+    _canvas_text(canvas, brand, "NO.", .67, meta_top, size=6.5, bold=True)
+    _canvas_text(canvas, brand, document.get("official_number"), .94, meta_top, size=6.5, right=True)
+    _canvas_text(canvas, brand, "DATE", .67, meta_top + .022, size=6.5, bold=True)
+    _canvas_text(canvas, brand, document.get("issue_date"), .94, meta_top + .022, size=6.5, right=True)
+    if _master_is_invoice(snapshot):
+        _canvas_text(canvas, brand, "DUE DATE", .67, meta_top + .044, size=6.5, bold=True)
+        _canvas_text(canvas, brand, document.get("due_date"), .94, meta_top + .044, size=6.5, right=True)
+    if _master_is_receipt(snapshot):
+        _draw_master_receipt(canvas, snapshot, brand, x=.12, top=.35, width=.74)
+        return
+    lines_top = .327 if brand.key == "texturin-bali" else .285
+    for index, line in enumerate(_master_lines(snapshot)[:3]):
+        top = lines_top + index * .035
+        _canvas_text(canvas, brand, index + 1, .075, top, size=6.5)
+        _canvas_text(canvas, brand, line.get("description"), .15, top, size=6.5)
+        _canvas_text(canvas, brand, _idr(line.get("unit_price")), .61, top, size=6.5, right=True)
+        _canvas_text(canvas, brand, f"{_text(line.get('quantity'))} {_text(line.get('unit'), '')}", .78, top, size=6.5, right=True)
+        _canvas_text(canvas, brand, _idr(line.get("line_total")), .94, top, size=6.5, right=True)
+    summary_top = .49 if brand.key == "texturin-bali" else .53
+    summary_left = .70 if brand.key == "texturin-bali" else .68
+    _canvas_text(canvas, brand, "Subtotal", summary_left, summary_top, size=6.5)
+    _canvas_text(canvas, brand, _idr(totals.get("subtotal")), .94, summary_top, size=6.5, right=True)
+    discount = int(totals.get("document_discount") or 0)
+    if discount:
+        summary_top += .022
+        _canvas_text(canvas, brand, "Diskon", summary_left, summary_top, size=6.5, color=_DISCOUNT)
+        _canvas_text(canvas, brand, _idr(discount), .94, summary_top, size=6.5, color=_DISCOUNT, right=True)
+    tax = int(totals.get("tax") or 0)
+    if tax:
+        summary_top += .022
+        _canvas_text(canvas, brand, _master_tax_label(snapshot), summary_left, summary_top, size=6.5)
+        _canvas_text(canvas, brand, _idr(tax), .94, summary_top, size=6.5, right=True)
+    summary_top += .033
+    _canvas_text(canvas, brand, "TOTAL", summary_left, summary_top, size=7, bold=True)
+    _canvas_text(canvas, brand, _idr(totals.get("total")), .94, summary_top, size=7, bold=True, right=True)
+    policy = commercial_policy(brand.key)
+    percent = int(policy.get("default_deposit_percent") or 0)
+    if brand.key != "texturin-bali" and _master_has_deposit(snapshot):
+        deposit = int(totals.get("total") or 0) * percent // 100
+        _canvas_text(canvas, brand, f"SIGNATURE FEE ({percent}%)", .55, summary_top + .030, size=6.3, bold=True)
+        _canvas_text(canvas, brand, _idr(deposit), .94, summary_top + .030, size=6.3, bold=True, right=True)
+    if brand.key != "texturin-bali":
+        terms = [] if _master_is_invoice(snapshot) else [*policy.get("default_terms", [])]
+        terms.extend(_text(value) for value in (document.get("payment_terms"), document.get("notes")) if _text(value))
+        if not terms:
+            terms = ["Pembayaran sesuai tanggal jatuh tempo yang tercantum."]
+        _canvas_paragraph(canvas, brand, "\n\n".join(terms), .068, .65, .80, size=5.8, leading=7.2, italic=True)
+    bank = _mapping(issuer.get("bank_details"))
+    bank_top = .60 if brand.key == "texturin-bali" else .865
+    _canvas_text(canvas, brand, "BANK DETAILS", .068, bank_top, size=6.3, bold=True)
+    _canvas_text(canvas, brand, f"{_text(bank.get('bank'))} · {_text(bank.get('account_number'))}", .068, bank_top + .022, size=6.1)
+    _canvas_text(canvas, brand, bank.get("account_name"), .068, bank_top + .044, size=6.1)
+    _canvas_text(canvas, brand, "THANK YOU", .83, .90, size=6, bold=True)
+    _canvas_text(canvas, brand, issuer.get("display_name"), .94, .94, size=9, right=True)
+
+
+def _searchable_extra_values(snapshot: Mapping[str, Any]) -> list[str]:
+    """Return snapshot fields not already painted visibly on the master."""
+    project = _mapping(snapshot.get("project"))
+    document = _mapping(snapshot.get("document"))
+    values: list[Any] = [
+        project.get("client_contact"),
+        project.get("client_address"),
+        document.get("due_date"),
+        document.get("valid_until"),
+        document.get("notes"),
+        document.get("prepared_by"),
+        document.get("client_signatory"),
+    ]
+    if project.get("client_company"):
+        values.append(project.get("client_name"))
+    return [str(value) for value in values if value is not None and str(value).strip()]
+
+
+def _draw_searchable_snapshot_layer(canvas: Any, snapshot: Mapping[str, Any], brand: BrandSpec) -> None:
+    """Embed non-visual snapshot semantics without changing the canonical master."""
+    static_labels = {
+        "hollawall": "INVOICE QUOTATION TANGGAL LETTER NO. TOTAL DP Best regards",
+        "hojja": "INVOICE QUOTATION DATE LETTER ID Total DP Payment Information",
+        "texturin": "INVOICE QUOTATION QUOTATION NO. PPM QTY/LUAS BANK DETAILS THANK YOU",
+        "texturin-surabaya": "INVOICE QUOTATION QUOTATION NO. PPM QTY/LUAS BANK DETAILS SIGNATURE FEE THANK YOU",
+        "texturin-bali": "INVOICE QUOTATION QUOTATION NO. PPM QTY/LUAS AREA (M²) BANK DETAILS THANK YOU",
+    }[brand.key]
+    values = [brand.identity, static_labels, *_searchable_extra_values(snapshot)]
+    text = canvas.beginText(0, 0)
+    text.setFont("Helvetica", 1)
+    text.setTextRenderMode(3)
+    text.setLeading(1)
+    for value in values:
+        text.textLine(value.replace("\r", " ").replace("\n", " "))
+    canvas.drawText(text)
+
+
+def _build_master_pdf(snapshot: Mapping[str, Any], brand: BrandSpec) -> bytes:
+    target = io.BytesIO()
+    document = _mapping(snapshot.get("document"))
+    canvas = pdfcanvas.Canvas(
+        target,
+        pagesize=brand.page_size,
+        pageCompression=1,
+        invariant=1,
+    )
+    canvas.setTitle(_text(document.get("official_number"), f"{brand.identity} Draft"))
+    canvas.setAuthor(brand.identity)
+    canvas.setCreator(RENDERER_VERSION)
+    canvas.setSubject("Project commercial document")
+    master = _MASTER_ART.get(brand.key)
+    if master:
+        canvas.drawImage(
+            ImageReader(io.BytesIO(master)), 0, 0,
+            width=brand.page_size[0], height=brand.page_size[1],
+            preserveAspectRatio=False, mask="auto",
+        )
+    if brand.key == "hollawall":
+        _draw_hollawall_master(canvas, snapshot, brand)
+    elif brand.key == "hojja":
+        _draw_hojja_master(canvas, snapshot, brand)
+    else:
+        _draw_texturin_master(canvas, snapshot, brand)
+    _draw_master_watermark(canvas, snapshot, brand)
+    _draw_master_footer(canvas, snapshot, brand)
+    _draw_searchable_snapshot_layer(canvas, snapshot, brand)
+    canvas.showPage()
+    canvas.save()
+    return target.getvalue()
+
+
 def _build_pdf(
     snapshot: Mapping[str, Any],
     brand: BrandSpec,
@@ -916,6 +1346,8 @@ def render_project_document_pdf(
     if not isinstance(snapshot, Mapping):
         raise TypeError("snapshot must be a mapping")
     brand = _brand_for(snapshot)
+    if brand.key in _MASTER_ART and len(_master_lines(snapshot)) <= 3:
+        return _build_master_pdf(snapshot, brand)
     first_pass = _build_pdf(snapshot, brand, logo_path, None)
     total_pages = _page_count(first_pass)
     return _build_pdf(snapshot, brand, logo_path, total_pages)

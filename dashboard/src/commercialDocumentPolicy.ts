@@ -19,6 +19,7 @@ export interface CommercialPolicy {
   page_size: 'A4' | 'A5'
   default_deposit_percent: number
   default_validity_days: number
+  default_terms?: string[]
   labels: { description: string; quantity: string; unit_price: string; line_total: string; deposit: string }
 }
 
@@ -37,6 +38,8 @@ export interface CommercialLineInput {
   area_override_reason?: string | null
   display_quantity?: string | null
   original_price?: number | null
+  discount_percent?: string | number | null
+  line_discount_percent?: string | number | null
 }
 
 export interface NormalizedCommercialLine extends CommercialLineInput {
@@ -175,6 +178,10 @@ export function normalizeCommercialLine<T extends CommercialLineInput>(raw: T, p
     normalized.unit = 'm²'
     moneyQuantity = billed
   } else if (pricingMode === 'fixed_artwork') {
+    const lineDiscount = Number(raw.line_discount_percent ?? raw.discount_percent ?? 0)
+    if (!Number.isFinite(lineDiscount) || lineDiscount !== 0) {
+      throw new ProjectDocumentValidationError('An agreed artwork price cannot receive a second line discount.')
+    }
     moneyQuantity = rational(raw.display_quantity ?? raw.quantity ?? '1', 'display_quantity', 4)
     if (moneyQuantity.numerator % moneyQuantity.scale) throw new ProjectDocumentValidationError('display_quantity must be a whole artwork count.')
     if (raw.original_price != null) {

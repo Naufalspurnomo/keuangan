@@ -56,6 +56,18 @@ def test_commercial_line_semantics_are_server_authoritative():
     assert texturin["line_total"] == 3_370_000
 
 
+def test_fixed_artwork_agreed_price_cannot_receive_a_second_line_discount():
+    with pytest.raises(DocumentCalculationError, match="agreed artwork price"):
+        normalize_commercial_line({
+            "description": "Custom painting",
+            "pricing_mode": "fixed_artwork",
+            "quantity": "1",
+            "original_price": 3_500_000,
+            "unit_price": 3_100_000,
+            "line_discount_percent": "10",
+        }, commercial_policy("hojja"))
+
+
 def test_commercial_line_rejects_ambiguous_manual_override_and_excess_precision():
     line = {
         "description": "Wall",

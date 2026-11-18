@@ -30,8 +30,8 @@ UPDATE project_documents d
 SET template_key = COALESCE(d.template_key, CASE p.company
         WHEN 'HOLLA' THEN 'HOLLAWALL'
         WHEN 'HOJJA' THEN 'HOJJA'
-        WHEN 'TEXTURIN-Surabaya' THEN 'TEXTURIN'
-        WHEN 'TEXTURIN-Bali' THEN 'TEXTURIN'
+        WHEN 'TEXTURIN-Surabaya' THEN 'TEXTURIN-SURABAYA'
+        WHEN 'TEXTURIN-Bali' THEN 'TEXTURIN-BALI'
     END),
     template_version = COALESCE(d.template_version, 'commercial-v3'),
     payment_profile_key = COALESCE(d.payment_profile_key, p.issuer_key)

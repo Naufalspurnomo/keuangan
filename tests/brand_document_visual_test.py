@@ -68,8 +68,10 @@ def test_brand_document_pages_have_distinct_geometry_and_no_overflow():
           height: node.getBoundingClientRect().height,
           overflowY: node.scrollHeight - node.clientHeight,
           overflowStyle: getComputedStyle(node).overflow,
-          background: getComputedStyle(node).backgroundColor,
-        }))""")
+          master: node.querySelector('.commercial-template-master')?.currentSrc,
+          masterWidth: node.querySelector('.commercial-template-master')?.naturalWidth,
+          masterHeight: node.querySelector('.commercial-template-master')?.naturalHeight,
+          }))""")
         assert [(item["template"], item["pageSize"]) for item in metrics] == [
             ("hollawall", "A5"), ("hojja", "A4"),
             ("texturin-surabaya", "A4"), ("texturin-bali", "A4")
@@ -77,9 +79,13 @@ def test_brand_document_pages_have_distinct_geometry_and_no_overflow():
         assert all(item["overflowStyle"] == "hidden" and item["overflowY"] <= 1 for item in metrics)
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
         assert metrics[0]["height"] / metrics[0]["width"] > metrics[1]["height"] / metrics[1]["width"]
-        assert len({item["background"] for item in metrics}) >= 2
+        assert len({item["master"] for item in metrics}) == 4
+        assert all(item["masterWidth"] > 0 and item["masterHeight"] > 0 for item in metrics)
         assert console_errors == []
         page.screenshot(path=str(ARTIFACTS / "desktop-1440x1100.png"), full_page=False)
+        page.set_viewport_size({"width": 2800, "height": 1200})
+        for index, template in enumerate(("hollawall", "hojja", "texturin-surabaya", "texturin-bali")):
+            pages.nth(index).screenshot(path=str(ARTIFACTS / f"{template}-native.png"))
 
         mobile = browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=1)
         mobile.goto(url, wait_until="networkidle")

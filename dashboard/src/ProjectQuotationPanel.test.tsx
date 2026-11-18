@@ -183,10 +183,11 @@ describe('ProjectQuotationPanel', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Tandai Deal versi 1' }))
     const dialog = screen.getByRole('dialog', { name: 'Setup DP dan cicilan' })
-    fireEvent.click(within(dialog).getByRole('radio', { name: 'DP 30%' }))
+    expect(within(dialog).getByText(/mengikuti quotation terkirim/)).toHaveTextContent('DP 30%')
+    expect(within(dialog).queryByRole('radio', { name: /DP/ })).toBeNull()
     fireEvent.click(within(dialog).getByRole('radio', { name: '3 kali pelunasan' }))
 
-    expect(within(dialog).getByText(/DP 30%/).parentElement).toHaveTextContent('Rp3.750.000')
+    expect(within(dialog).getAllByText(/DP 30%/).at(-1)?.parentElement).toHaveTextContent('Rp3.750.000')
     expect(within(dialog).getByText('Pelunasan 1').parentElement).toHaveTextContent('Rp2.916.667')
     expect(within(dialog).getByText('Pelunasan 2').parentElement).toHaveTextContent('Rp2.916.667')
     expect(within(dialog).getByText('Pelunasan 3').parentElement).toHaveTextContent('Rp2.916.667')
@@ -226,14 +227,14 @@ describe('ProjectQuotationPanel', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Setup DP dan cicilan' })).toBeNull())
   })
 
-  it('supports bounded custom DP and installment values', async () => {
+  it('locks DP to the sent quotation while keeping installments bounded', async () => {
     const subject = api([item])
     render(<ProjectQuotationPanel project={project} salesOrder={salesOrder} session={session} api={subject} onApplied={vi.fn()} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Tandai Deal versi 1' }))
     const dialog = screen.getByRole('dialog', { name: 'Setup DP dan cicilan' })
 
-    fireEvent.click(within(dialog).getByRole('radio', { name: 'DP kustom' }))
-    fireEvent.change(within(dialog).getByLabelText('Persentase DP kustom'), { target: { value: '35' } })
+    expect(within(dialog).getByText(/mengikuti quotation terkirim/)).toHaveTextContent('DP 30%')
+    expect(within(dialog).queryByText('DP kustom')).toBeNull()
     fireEvent.click(within(dialog).getByRole('radio', { name: 'Jumlah pelunasan kustom' }))
     fireEvent.change(within(dialog).getAllByLabelText('Jumlah pelunasan kustom').at(-1)!, { target: { value: '25' } })
     expect(within(dialog).getByRole('alert')).toHaveTextContent('maksimal 24')

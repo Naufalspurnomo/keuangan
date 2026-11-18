@@ -29,6 +29,10 @@ describe('commercial document policy', () => {
       pricing_mode: 'fixed_artwork', raw_area_m2: '3.08', display_quantity: '2',
       quantity: '2', unit: 'artwork', original_price: 3_500_000, line_total: 6_200_000,
     })
+    expect(() => normalizeCommercialLine({
+      description: 'Custom painting', pricing_mode: 'fixed_artwork', quantity: '1',
+      original_price: 3_500_000, unit_price: 3_100_000, discount_percent: '10',
+    } as Parameters<typeof normalizeCommercialLine>[0], commercialPolicy('hojja'))).toThrow('agreed artwork price')
   })
 
   it('uses Texturin PPM times half-up billed area, never the erroneous sample total', () => {

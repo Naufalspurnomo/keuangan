@@ -808,6 +808,7 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
             "022_project_hard_delete.sql",
             "024_brand_commercial_identity.sql",
             "025_quotation_artifacts.sql",
+            "026_texturin_template_identity.sql",
         )
     ]
     try:
@@ -1412,14 +1413,24 @@ class ProjectDocumentRepository:
         for field in ("width", "height", "raw_area_m2", "billed_area_m2", "display_quantity"):
             value = source.get(field)
             if value not in (None, ""):
+                precision = 8 if field in {"width", "height", "raw_area_m2"} else 4
                 parsed = decimal_value(
                     value, field=f"commercial_meta {field}", minimum=Decimal("0"),
-                    maximum=QUANTITY_MAX, max_fractional_digits=4,
+                    maximum=QUANTITY_MAX, max_fractional_digits=precision,
                 )
                 result[field] = format(parsed.normalize(), "f")
         original_price = source.get("original_price")
         if original_price not in (None, ""):
             result["original_price"] = integer_rupiah(original_price, field="commercial_meta original_price")
+        if pricing_mode == "fixed_artwork":
+            line_discount = decimal_value(
+                line.get("line_discount_percent", line.get("discount_percent", 0)) or 0,
+                field="line discount", maximum=PERCENT_MAX, max_fractional_digits=4,
+            )
+            if line_discount != 0:
+                raise DocumentCalculationError(
+                    "an agreed artwork price cannot receive a second line discount"
+                )
         dimension_unit = str(source.get("dimension_unit") or "").strip().lower()
         if dimension_unit:
             if dimension_unit not in {"m", "cm", "mm"}:
@@ -1440,6 +1451,41 @@ class ProjectDocumentRepository:
         if area_rounding == "manual_override" and not result.get("area_override_reason"):
             raise DocumentCalculationError("commercial_meta area_override_reason is required")
         return {"commercial_meta": result}
+
+    @staticmethod
+    def _deposit_percent(template_key: Any) -> int:
+        return int(commercial_policy(template_key).get("default_deposit_percent") or 0)
+
+    @classmethod
+    def _validate_deposit_terms(
+        cls, template_key: Any, payment_terms: Any, content_notes: Any,
+    ) -> None:
+        expected = Decimal(cls._deposit_percent(template_key))
+        text = "\n".join(str(value or "") for value in (payment_terms, content_notes))
+        patterns = (
+            r"(?i)\b(?:dp|down\s*payment|deposit|uang\s*muka|signature\s*fee)\s*(?:sebesar\s*)?(\d+(?:[.,]\d+)?)\s*%",
+            r"(?i)(\d+(?:[.,]\d+)?)\s*%\s*(?:dp|down\s*payment|deposit|uang\s*muka|signature\s*fee)\b",
+        )
+        declared = {
+            Decimal(match.replace(",", "."))
+            for pattern in patterns
+            for match in re.findall(pattern, text)
+        }
+        if any(value != expected for value in declared):
+            raise ValueError("deposit percentage conflicts with template policy")
+
+    @classmethod
+    def _validate_deal_deposit(cls, template_key: Any, value: Any) -> Decimal:
+        rate = decimal_value(
+            value, field="DP percent", minimum=Decimal("0.0001"),
+            maximum=Decimal("99.9999"), max_fractional_digits=4,
+        )
+        expected = Decimal(cls._deposit_percent(template_key))
+        if rate != expected:
+            raise ProjectDocumentConflict(
+                f"DP percent must match sent quotation template policy ({expected}%)"
+            )
+        return rate
 
     @classmethod
     def _quotation_values(
@@ -1471,6 +1517,7 @@ class ProjectDocumentRepository:
         project_name = str(supplied.get("project_name") or "").strip()
         payment_terms = str(supplied.get("payment_terms") or "").strip()
         content_notes = str(supplied.get("content_notes") or "").strip()
+        cls._validate_deposit_terms(template_key, payment_terms, content_notes)
         if any(len(value) > 10_000 for value in (
             notes, subject, recipient_name, recipient_company, recipient_address,
             recipient_contact, project_name, payment_terms, content_notes,
@@ -1975,7 +2022,7 @@ class ProjectDocumentRepository:
         expected_version: int, expected_document_id: str, expected_document_version: int,
         idempotency_key: str, actor: Mapping[str, Any],
     ) -> dict[str, Any]:
-        rate = decimal_value(
+        supplied_rate = decimal_value(
             dp_percent, field="DP percent", minimum=Decimal("0.0001"),
             maximum=Decimal("99.9999"), max_fractional_digits=4,
         )
@@ -1990,7 +2037,7 @@ class ProjectDocumentRepository:
             raise ValueError("remaining installments must be between 1 and 24")
         actor_json, _ = _actor(actor)
         request = {
-            "quotation_id": quotation_id, "dp_percent": str(rate),
+            "quotation_id": quotation_id, "dp_percent": str(supplied_rate),
             "remaining_installments": count, "expected_version": expected_version,
             "expected_document_id": expected_document_id,
             "expected_document_version": expected_document_version,
@@ -2020,6 +2067,9 @@ class ProjectDocumentRepository:
                         raise ProjectDocumentConflict(
                             "Deal requires structured lines and project image"
                         )
+                    rate = self._validate_deal_deposit(
+                        quotation.get("template_key"), supplied_rate,
+                    )
                     cursor.execute(
                         "SELECT issuer_key, status, company FROM projects WHERE id = %s FOR UPDATE",
                         (quotation["project_id"],),

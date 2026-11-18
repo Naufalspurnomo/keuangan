@@ -97,8 +97,9 @@ describe('ProjectDocumentComposer', () => {
 
     const preview = screen.getByRole('article', { name: 'Pratinjau A5 Kuitansi' })
     expect(preview).toHaveTextContent('Rp100.000')
-    expect(within(preview).getByText('Subtotal').nextElementSibling).toHaveTextContent('Rp100.000')
-    expect(within(preview).getByText('Total').nextElementSibling).toHaveTextContent('Rp100.000')
+    expect(within(preview).queryByText('Subtotal')).toBeNull()
+    expect(within(preview).queryByText('Total')).toBeNull()
+    expect(within(preview).getByText('Telah diterima dari', { exact: false })).toBeTruthy()
     expect(within(preview).getByText('Diterima oleh')).toBeTruthy()
     expect(within(preview).queryByText('Persetujuan klien')).toBeNull()
   })

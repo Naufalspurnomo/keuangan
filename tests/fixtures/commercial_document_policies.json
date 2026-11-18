@@ -51,6 +51,11 @@
     "page_size": "A4",
     "default_deposit_percent": 30,
     "default_validity_days": 14,
+    "default_terms": [
+      "Pengecatan dilakukan pada bidang tembok/plafon yang siap dicat. Perbaikan tambahan dikenakan biaya sesuai kondisi lapangan dan ditagihkan di akhir pekerjaan. Kami tidak bertanggung jawab atas ketidaksempurnaan akibat kondisi dasar bidang atau pekerjaan sebelumnya.",
+      "Hasil aplikasi ditargetkan 80% sesuai sampel karena proses handmade. Revisi setelah pekerjaan selesai dikenakan biaya tambahan.",
+      "Persetujuan penawaran disertai pembayaran signature fee sebesar 30% dari total biaya. Tanda terima diberikan setelah pembayaran diterima. Penawaran berlaku 2 minggu sejak diterbitkan."
+    ],
     "labels": {
       "description": "DESCRIPTION",
       "quantity": "QTY/LUAS",

@@ -323,13 +323,10 @@ function DealDialog({ item, busy, onCancel, onConfirm }: {
 }) {
   const dialog = useModalDialog(onCancel, true, !busy)
   const total = item.accepted_snapshot?.amount ?? item.amount
-  const defaultDp = String(commercialPolicy(item.template_key || 'hollawall').default_deposit_percent)
-  const [dpChoice, setDpChoice] = useState(defaultDp)
-  const [customDp, setCustomDp] = useState('35')
+  const dp = commercialPolicy(item.template_key || 'hollawall').default_deposit_percent
   const [countChoice, setCountChoice] = useState('1')
   const [customCount, setCustomCount] = useState('4')
   const [error, setError] = useState('')
-  const dp = Number(dpChoice === 'custom' ? customDp : dpChoice)
   const installments = Number(countChoice === 'custom' ? customCount : countChoice)
   let schedule: QuotationInstallment[] = []
   let scheduleError = ''
@@ -344,8 +341,7 @@ function DealDialog({ item, busy, onCancel, onConfirm }: {
     <section ref={dialog.dialogRef} onKeyDown={dialog.onKeyDown} className="modal-card quotation-deal-dialog" role="dialog" aria-modal="true" aria-labelledby="deal-dialog-title" tabIndex={-1}>
       <header><div><span className="eyebrow">Kunci versi {item.version}</span><h2 id="deal-dialog-title">Setup DP dan cicilan</h2><p>Nilai deal {IDR.format(total)}. Konfirmasi membuat Sales Order, draf invoice DP, dan jadwal tagihan.</p></div></header>
       <div className="modal-body">
-        <fieldset className="quotation-choice-group"><legend>Persentase DP</legend>{['30', '40', '50'].map((value) => <label key={value}><input type="radio" name="dp-choice" value={value} aria-label={`DP ${value}%`} checked={dpChoice === value} onChange={() => setDpChoice(value)} />{value}%</label>)}<label><input type="radio" name="dp-choice" value="custom" checked={dpChoice === 'custom'} onChange={() => setDpChoice('custom')} />DP kustom</label></fieldset>
-        {dpChoice === 'custom' && <label>Persentase DP kustom<input type="number" min="0.01" max="99.99" step="0.01" value={customDp} onChange={(event) => setCustomDp(event.target.value)} /></label>}
+        <fieldset className="quotation-choice-group"><legend>Persentase DP</legend><p><strong>DP {dp}%</strong> mengikuti quotation terkirim dan tidak dapat diubah saat Deal.</p></fieldset>
         <fieldset className="quotation-choice-group"><legend>Jumlah pelunasan</legend>{['1', '2', '3'].map((value) => <label key={value}><input type="radio" name="count-choice" value={value} checked={countChoice === value} onChange={() => setCountChoice(value)} />{value} kali pelunasan</label>)}<label><input type="radio" name="count-choice" value="custom" checked={countChoice === 'custom'} onChange={() => setCountChoice('custom')} />Jumlah pelunasan kustom</label></fieldset>
         {countChoice === 'custom' && <label>Jumlah pelunasan kustom<input type="number" min="1" max={MAX_INSTALLMENTS} step="1" value={customCount} onChange={(event) => setCustomCount(event.target.value)} /></label>}
         {schedule.length > 0 && <div className="installment-preview">

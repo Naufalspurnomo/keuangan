@@ -161,12 +161,62 @@ def test_texturin_surabaya_and_bali_have_distinct_pdf_contracts():
     assert "texturin Surabaya · decorative finishes" in surabaya_text
     assert "SIGNATURE FEE (30%)" in surabaya_text
     assert "Rp 750.000" in surabaya_text
+    assert "Pengecatan dilakukan pada bidang tembok/plafon yang siap dicat." in surabaya_text
+    assert "Hasil aplikasi ditargetkan 80% sesuai sampel karena proses handmade." in surabaya_text
+    assert "Persetujuan penawaran disertai pembayaran signature fee sebesar 30%" in surabaya_text
     assert "Pembayaran melalui rekening resmi perusahaan." in surabaya_text
     assert "texturin Bali · decorative finishes" in bali_text
     assert "BANK DETAILS" in bali_text
-    assert "Best regards and thank you" in bali_text
+    assert "THANK YOU" in bali_text
     assert "SIGNATURE FEE" not in bali_text
+    assert "Pengecatan dilakukan pada bidang tembok/plafon yang siap dicat." not in bali_text
     assert "Pembayaran melalui rekening resmi perusahaan." not in bali_text
+
+
+def test_hojja_three_line_document_never_omits_the_third_billed_artwork():
+    value = snapshot(line_count=3)
+    value["project"]["company"] = "HOJJA"
+    value["issuer"]["display_name"] = "HOJJA ArtHouse"
+    value["document"]["template_key"] = "HOJJA"
+
+    content = " ".join(text(render_project_document_pdf(value)).split())
+
+    assert "Produksi wall branding area lobby nomor 1" in content
+    assert "Produksi wall branding area lobby nomor 2" in content
+    assert "Produksi wall branding area lobby nomor 3" in content
+
+
+def test_master_invoice_visibly_reconciles_tax_and_due_date_without_quotation_terms():
+    value = snapshot()
+    value["project"].update({"company": "TEXTURIN-Surabaya", "wallet": "TX SBY(216)"})
+    value["document"].update({
+        "document_type": "invoice", "invoice_kind": "FINAL",
+        "template_key": "TEXTURIN-SURABAYA", "payment_terms": "Lunas sebelum pemasangan.",
+    })
+    value["totals"].update({"taxable_base": 2_500_000, "tax": 275_000, "total": 2_775_000})
+
+    content = " ".join(text(render_project_document_pdf(value)).split())
+
+    assert "DUE DATE" in content
+    assert "2026-11-10" in content
+    assert "Pajak" in content
+    assert "Rp 275.000" in content
+    assert "Rp 2.775.000" in content
+    assert "Penawaran berlaku" not in content
+
+
+def test_receipt_pdf_is_an_acknowledgement_not_an_invoice_or_deposit_request():
+    value = snapshot()
+    value["document"].update({"document_type": "receipt", "invoice_kind": None})
+
+    content = " ".join(text(render_project_document_pdf(value)).split())
+
+    assert "RECEIPT" in content
+    assert "Telah diterima dari" in content
+    assert "Rp 2.500.000" in content
+    assert "Produksi wall branding area lobby" not in content
+    assert "Down Payment" not in content
+    assert "Total DP" not in content
 
 
 def test_renderer_produces_deterministic_a5_branded_pdf():
