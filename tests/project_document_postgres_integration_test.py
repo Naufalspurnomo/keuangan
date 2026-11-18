@@ -799,6 +799,54 @@ def test_rejected_issuer_code_rotation_does_not_interrupt_numbering(repository):
     assert second["official_number"] == "SO/HW/2027/000002"
 
 
+def test_migration_027_upgrades_legacy_event_trigger_for_project_hard_delete(repository, dsn):
+    import psycopg
+
+    created = project(repository, key="hard-delete-upgrade-project-create-0001")
+    project_id = created["project"]["id"]
+    expected_version = created["project"]["lock_version"]
+
+    with psycopg.connect(dsn, autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                CREATE OR REPLACE FUNCTION prevent_project_document_event_mutation()
+                RETURNS TRIGGER AS $$
+                BEGIN
+                    RAISE EXCEPTION 'project document events are append-only';
+                END;
+                $$ LANGUAGE plpgsql
+                """
+            )
+
+    with pytest.raises(ProjectDocumentUnavailable, match="Project delete unavailable"):
+        repository.delete_project(
+            project_id,
+            expected_version=expected_version,
+            expected_name=created["project"]["name"],
+            idempotency_key="hard-delete-upgrade-command-before-0001",
+            actor=ACTOR,
+        )
+
+    migration = (
+        Path(__file__).parents[1]
+        / "dashboard_api/migrations/027_project_event_hard_delete_gate.sql"
+    ).read_text(encoding="utf-8")
+    with psycopg.connect(dsn, autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(migration)
+
+    result = repository.delete_project(
+        project_id,
+        expected_version=expected_version,
+        expected_name=created["project"]["name"],
+        idempotency_key="hard-delete-upgrade-command-after-0001",
+        actor=ACTOR,
+    )
+    assert result["project_id"] == project_id
+    assert result["deleted"] is True
+
+
 def test_project_hard_delete_requires_gate_removes_descendants_and_replays(repository, dsn):
     import psycopg
 

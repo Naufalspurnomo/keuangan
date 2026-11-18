@@ -809,6 +809,7 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
             "024_brand_commercial_identity.sql",
             "025_quotation_artifacts.sql",
             "026_texturin_template_identity.sql",
+            "027_project_event_hard_delete_gate.sql",
         )
     ]
     try:

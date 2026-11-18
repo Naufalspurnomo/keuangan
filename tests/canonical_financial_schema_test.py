@@ -23,7 +23,7 @@ ROOT = Path(__file__).parents[1]
 def test_canonical_migrations_are_versioned_additive_and_checksums_are_stable():
     migrations = load_financial_migrations(ROOT / "dashboard_api" / "migrations")
 
-    assert [migration.version for migration in migrations] == list(range(9, 27))
+    assert [migration.version for migration in migrations] == list(range(9, 28))
     assert all(migration.sha256 == hashlib.sha256(migration.sql.encode()).hexdigest() for migration in migrations)
     combined = "\n".join(migration.sql for migration in migrations).lower()
     assert "opening_balances" in combined
@@ -70,10 +70,10 @@ def test_canonical_migrations_are_versioned_additive_and_checksums_are_stable():
     assert "historical_import boolean not null default false check (not historical_import)" in compact_sql
 
 
-def test_production_bootstrap_orders_prerequisite_project_schema_before_finance_through_026():
+def test_production_bootstrap_orders_prerequisite_project_schema_before_finance_through_027():
     migrations = load_production_bootstrap_migrations(ROOT / "dashboard_api" / "migrations")
 
-    assert [migration.version for migration in migrations] == list(range(1, 27))
+    assert [migration.version for migration in migrations] == list(range(1, 28))
     combined = "\n".join(migration.sql for migration in migrations).lower()
     assert combined.index("create table if not exists financial_ledger") < combined.index(
         "create index if not exists idx_financial_ledger_dashboard_scope"
@@ -200,8 +200,8 @@ def test_schema_readiness_default_verifies_complete_production_bootstrap():
         connection_factory=lambda _dsn: connection,
     )
 
-    assert result["current_version"] == 26
-    assert result["checksums_verified"] == 26
+    assert result["current_version"] == 27
+    assert result["checksums_verified"] == 27
     assert connection.commits == 0
 
 
