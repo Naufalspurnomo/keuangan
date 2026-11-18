@@ -14,10 +14,19 @@ const session = {
 const values: ProjectQuotationValues = {
   template_key: 'hollawall', template_version: 'commercial-v3', payment_profile_key: 'cv-holla-berkreasi',
   recipient_name: 'Ibu Rani', recipient_company: 'PT Klien', recipient_address: 'Surabaya', recipient_contact: '0812',
-  project_name: 'Backdrop Expo', subject: 'Penawaran backdrop', valid_until: '2026-12-10', project_image_url: null,
+  project_name: 'Backdrop Expo', subject: 'Penawaran backdrop', valid_until: '2026-12-10',
+  project_image_url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   lines: [{ id: 'line-1', description: 'Backdrop', quantity: '1', unit: 'set', unit_price: 10_000_000, discount_percent: '0' }],
   discount_mode: 'none', discount_value: '0', tax_percent: '0', payment_terms: '', content_notes: '', amount: 10_000_000,
 }
+const wireValues = {
+  ...values,
+  lines: values.lines.map(({ discount_percent, ...line }) => ({
+    ...line,
+    line_discount_percent: discount_percent,
+  })),
+}
+
 const quotation: ProjectQuotation = {
   id: quotationId, project_id: projectId, version: 1, canva_url: '', status: 'draft', channel: 'other',
   negotiation_notes: null, ...values, sent_at: null, decided_at: null, sales_order_id: null,
@@ -95,15 +104,32 @@ describe('projectQuotationApi production proxy contract', () => {
         Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrfToken,
         'If-Match': '*', 'Idempotency-Key': 'idem-key-1234567890',
       }),
-      body: JSON.stringify({ action: 'create_quotation', idempotency_key: 'idem-key-1234567890', project_id: projectId, values }),
+      body: JSON.stringify({ action: 'create_quotation', idempotency_key: 'idem-key-1234567890', project_id: projectId, values: wireValues }),
     }))
     expect(request).toHaveBeenNthCalledWith(2, '/admin/api/documents.php', expect.objectContaining({
       method: 'POST', headers: expect.objectContaining({ 'If-Match': '"2"', 'Idempotency-Key': 'idem-key-1234567890' }),
       body: JSON.stringify({
         action: 'update_quotation', idempotency_key: 'idem-key-1234567890', quotation_id: quotationId, expected_version: 2,
-        changes: { ...values, subject: 'Revisi subjek' },
+        changes: { ...wireValues, subject: 'Revisi subjek' },
       }),
     }))
+  })
+
+  it('serializes quotation line discounts with the backend canonical key', async () => {
+    request.mockImplementation(async () => response(quotation))
+
+    await api.create(projectId, {
+      ...values,
+      lines: [{ ...values.lines[0], discount_percent: '5' }],
+    }, session)
+
+    const body = JSON.parse(String(request.mock.calls[0][1]?.body)) as {
+      values: { lines: Array<Record<string, unknown>> }
+    }
+    expect(body.values.lines).toEqual([
+      expect.objectContaining({ line_discount_percent: '5' }),
+    ])
+    expect(body.values.lines[0]).not.toHaveProperty('discount_percent')
   })
 
   it('uses explicit revision and atomic Deal REST routes including Sales Order version', async () => {
@@ -132,7 +158,7 @@ describe('projectQuotationApi production proxy contract', () => {
       method: 'POST',
       headers: expect.objectContaining({ 'If-Match': '"2"' }),
       body: JSON.stringify({
-        action: 'revise_quotation', idempotency_key: 'idem-key-1234567890', quotation_id: quotationId, expected_version: 2, changes: values,
+        action: 'revise_quotation', idempotency_key: 'idem-key-1234567890', quotation_id: quotationId, expected_version: 2, changes: wireValues,
       }),
     }))
     expect(request).toHaveBeenNthCalledWith(2, '/admin/api/documents.php', expect.objectContaining({

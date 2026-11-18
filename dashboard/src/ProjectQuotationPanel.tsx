@@ -224,7 +224,8 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
       if (!values.recipient_name.trim()) throw new Error('Nama penerima wajib diisi.')
       if (!values.project_name.trim()) throw new Error('Nama proyek wajib diisi.')
       if (!values.subject.trim()) throw new Error('Subjek penawaran wajib diisi.')
-      if (values.project_image_url && !/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(values.project_image_url)) throw new Error('Gambar proyek harus berupa data PNG atau JPEG.')
+      if (!values.project_image_url) throw new Error('Gambar proyek wajib diunggah.')
+      if (!/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(values.project_image_url)) throw new Error('Gambar proyek harus berupa data PNG atau JPEG.')
       if (!values.lines.length) throw new Error('Tambahkan minimal satu item.')
       for (const line of values.lines) {
         if (!line.description.trim() || !line.unit.trim()) throw new Error('Deskripsi dan satuan setiap item wajib diisi.')
@@ -253,7 +254,7 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
         <label>Nama proyek<input value={values.project_name} onChange={(event) => field('project_name', event.target.value)} required /></label>
         <label className="wide">Subjek<input value={values.subject} onChange={(event) => field('subject', event.target.value)} required /></label>
         <label>Berlaku sampai<input value={`Ditetapkan ${policy.default_validity_days} hari dari tanggal kirim`} readOnly aria-readonly="true" /></label>
-        <label>Gambar proyek (PNG/JPEG)<input aria-label="Gambar proyek" type="file" accept="image/png,image/jpeg" onChange={uploadImage} /></label>
+        <label>Gambar proyek (PNG/JPEG)<input aria-label="Gambar proyek" type="file" accept="image/png,image/jpeg" required={!values.project_image_url} onChange={uploadImage} /></label>
       </div>
       {values.project_image_url && <div className="quotation-image-preview"><img src={values.project_image_url} alt="Pratinjau gambar proyek" /><button type="button" onClick={() => field('project_image_url', null)}>Hapus gambar</button></div>}
     </fieldset>

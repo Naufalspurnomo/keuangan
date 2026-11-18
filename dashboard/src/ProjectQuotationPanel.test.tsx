@@ -104,6 +104,7 @@ function deferred<T>() {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('ProjectQuotationPanel', () => {
@@ -132,6 +133,22 @@ describe('ProjectQuotationPanel', () => {
     expect(screen.getByLabelText('Template merek')).toHaveValue('HOLLAWALL · A5')
     expect(screen.getByLabelText('Nama penerima')).toHaveValue('Ibu Rani')
     expect(screen.queryByLabelText(/pilih.*merek/i)).toBeNull()
+    expect(screen.getByLabelText('Gambar proyek')).toBeRequired()
+    const imageDataUrl = 'data:image/jpeg;base64,/9j/2Q=='
+    class MockImage {
+      naturalWidth = 1
+      naturalHeight = 1
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      set src(_value: string) { this.onload?.() }
+    }
+    vi.stubGlobal('Image', MockImage)
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D)
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue(imageDataUrl)
+    fireEvent.change(screen.getByLabelText('Gambar proyek'), {
+      target: { files: [new File(['jpeg'], 'project.jpg', { type: 'image/jpeg' })] },
+    })
+    await screen.findByAltText('Pratinjau gambar proyek')
 
     fireEvent.change(screen.getByLabelText('Subjek'), { target: { value: 'Penawaran backdrop premium' } })
     expect(screen.getByLabelText('Berlaku sampai')).toHaveValue('Ditetapkan 7 hari dari tanggal kirim')
