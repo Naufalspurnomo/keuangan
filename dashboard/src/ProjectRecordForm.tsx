@@ -3,9 +3,8 @@ import { useState, type FormEvent } from 'react'
 
 import { useModalDialog } from './CanonicalDebtForms'
 import { createEmptyProjectDraft, validateProjectDraft, type ProjectDraft, type ProjectRecord } from './projectDocuments'
-import { CANONICAL_WALLETS, CANONICAL_WALLET_COMPANY_PAIRS, canonicalCompaniesForWallet } from './transactionMappings'
+import { CANONICAL_WALLETS, CANONICAL_WALLET_COMPANY_PAIRS, canonicalCompaniesForWallet, canonicalIssuerKey } from './transactionMappings'
 
-const PROJECT_ISSUER_KEY = 'hollawall'
 const DEFAULT_PAIR = CANONICAL_WALLET_COMPANY_PAIRS[0]
 
 interface ProjectRecordFormProps {
@@ -20,7 +19,7 @@ export default function ProjectRecordForm({ project, clients = [], saving = fals
   const dialog = useModalDialog(onClose)
   const [draft, setDraft] = useState<ProjectDraft>(() => project ? { ...project } : {
     ...createEmptyProjectDraft(new Date().toISOString().slice(0, 10)),
-    issuer_key: PROJECT_ISSUER_KEY,
+    issuer_key: canonicalIssuerKey(DEFAULT_PAIR.wallet, DEFAULT_PAIR.company),
     wallet: DEFAULT_PAIR.wallet,
     company: DEFAULT_PAIR.company,
   })
@@ -29,8 +28,13 @@ export default function ProjectRecordForm({ project, clients = [], saving = fals
   const companyOptions = canonicalCompaniesForWallet(draft.wallet)
   const changeWallet = (wallet: string) => {
     const company = CANONICAL_WALLET_COMPANY_PAIRS.find((pair) => pair.wallet === wallet)?.company ?? ''
-    setDraft((current) => ({ ...current, wallet, company }))
+    setDraft((current) => ({ ...current, wallet, company, issuer_key: canonicalIssuerKey(wallet, company) }))
   }
+  const changeCompany = (company: string) => setDraft((current) => ({
+    ...current,
+    company,
+    issuer_key: canonicalIssuerKey(current.wallet, company),
+  }))
   const clientOptions = [...new Map(clients.map((item) => [
     [item.client_name, item.client_company, item.client_contact, item.client_address].join('\u0000'), item,
   ])).values()]
@@ -64,11 +68,9 @@ export default function ProjectRecordForm({ project, clients = [], saving = fals
         <label>Nama klien<input value={draft.client_name} onChange={(event) => change('client_name', event.target.value)} /></label>
         <label>Perusahaan klien<input value={draft.client_company} onChange={(event) => change('client_company', event.target.value)} /></label>
         <label>Kontak klien<input value={draft.client_contact} onChange={(event) => change('client_contact', event.target.value)} /></label>
-        {project
-          ? <label>Profil penerbit<input value="CV Holla Berkreasi" readOnly aria-readonly="true" /></label>
-          : <label>Profil penerbit<select aria-label="Profil penerbit" value={draft.issuer_key} onChange={(event) => change('issuer_key', event.target.value)}><option value={PROJECT_ISSUER_KEY}>CV Holla Berkreasi</option></select></label>}
+        <label>Profil penerbit<input aria-label="Profil penerbit" value={draft.issuer_key} readOnly aria-readonly="true" /></label>
         <label>Dompet pencatatan<select aria-label="Dompet pencatatan" value={draft.wallet} onChange={(event) => changeWallet(event.target.value)}>{CANONICAL_WALLETS.map((wallet) => <option key={wallet} value={wallet}>{wallet}</option>)}</select><small className="field-help">Dompet sumber seluruh transaksi proyek ini.</small></label>
-        <label>Unit usaha<select aria-label="Unit usaha" value={draft.company} onChange={(event) => change('company', event.target.value)}>{companyOptions.map(({ company }) => <option key={company} value={company}>{company}</option>)}</select><small className="field-help">Hanya unit usaha yang berada di dompet terpilih.</small></label>
+        <label>Unit usaha<select aria-label="Unit usaha" value={draft.company} onChange={(event) => changeCompany(event.target.value)}>{companyOptions.map(({ company }) => <option key={company} value={company}>{company}</option>)}</select><small className="field-help">Hanya unit usaha yang berada di dompet terpilih.</small></label>
         <label>Status proyek<input aria-label="Status proyek" value={project ? (draft.status === 'active' ? 'Aktif' : draft.status === 'completed' ? 'Selesai' : draft.status === 'cancelled' ? 'Dibatalkan' : 'Direncanakan') : 'Aktif setelah dibuat'} readOnly aria-readonly="true" /><small className="field-help">Status diubah dari halaman proyek, bukan saat mengisi identitas.</small></label>
         <label>Tanggal mulai<input type="date" value={draft.started_on} onChange={(event) => change('started_on', event.target.value)} /></label>
         {(draft.status === 'completed' || draft.completed_on) && <label>Tanggal selesai<input type="date" value={draft.completed_on ?? ''} onChange={(event) => change('completed_on', event.target.value || null)} /></label>}

@@ -273,6 +273,52 @@ def service(repository=None):
     return ProjectDocumentService(repository), repository
 
 
+@pytest.mark.parametrize(
+    ("wallet", "company", "issuer_key"),
+    [
+        ("CV HB(101)", "HOLLA", "hollawall"),
+        ("CV HB(101)", "HOJJA", "hollawall"),
+        ("TX SBY(216)", "TEXTURIN-Surabaya", "texturin-surabaya"),
+        ("TX BALI(087)", "TEXTURIN-Bali", "texturin-bali"),
+    ],
+)
+def test_create_project_derives_canonical_payment_profile(wallet, company, issuer_key):
+    subject, repository = service()
+
+    subject.create_project(
+        {
+            "name": f"{company} project",
+            "client_name": "Client",
+            "issuer_key": issuer_key,
+            "wallet": wallet,
+            "company": company,
+        },
+        idempotency_key=f"project-canonical-profile-{issuer_key}-0001",
+        actor={"email": "owner@example.com"},
+    )
+
+    assert repository.calls[0][1]["issuer_key"] == issuer_key
+
+
+def test_create_project_rejects_payment_profile_mismatch():
+    subject, repository = service()
+
+    with pytest.raises(ValueError, match="issuer_key does not match"):
+        subject.create_project(
+            {
+                "name": "Bali mismatch",
+                "client_name": "Client",
+                "issuer_key": "hollawall",
+                "wallet": "TX BALI(087)",
+                "company": "TEXTURIN-Bali",
+            },
+            idempotency_key="project-profile-mismatch-0001",
+            actor={"email": "owner@example.com"},
+        )
+
+    assert repository.calls == []
+
+
 def test_create_project_leaves_volatile_defaults_to_atomic_repository_command():
     subject, repository = service()
 
@@ -324,7 +370,6 @@ def test_create_project_requires_wallet_company_binding(binding):
 @pytest.mark.parametrize(
     "changes, message",
     [
-        ({"issuer_key": ""}, "issuer_key is unsupported"),
         ({"wallet": "CV HB(101)", "company": "TEXTURIN-Surabaya"}, "wallet and company pair is unsupported"),
         ({"wallet": "unknown", "company": "HOLLA"}, "wallet and company pair is unsupported"),
     ],

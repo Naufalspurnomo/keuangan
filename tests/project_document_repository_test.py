@@ -257,6 +257,21 @@ def test_document_identity_requires_canonical_template_and_issuer_profile():
         )
 
 
+def test_texturin_payment_profile_migration_locks_eligibility_inputs_before_backfill():
+    sql = (ROOT / "dashboard_api/migrations/029_texturin_payment_profiles.sql").read_text(encoding="utf-8")
+    compact = " ".join(sql.lower().split())
+
+    lock = (
+        "lock table projects, project_documents, project_quotation_handoffs, "
+        "financial_transactions, financial_ledger in share row exclusive mode"
+    )
+    assert lock in compact
+    assert compact.index(lock) < compact.index("create temp table eligible_texturin_profile_backfill")
+    assert "d.status = 'draft'" in compact
+    assert "q.status = 'draft'" in compact
+    assert "insert into project_issuer_profiles" not in compact
+
+
 def test_brand_commercial_migration_is_additive_and_idempotent():
     sql = (ROOT / "dashboard_api/migrations/024_brand_commercial_identity.sql").read_text(encoding="utf-8")
     for fragment in (
