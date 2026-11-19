@@ -190,6 +190,46 @@ if ($thumbnail_id === 0) {{
 update_post_meta($thumbnail_id, '_wp_attachment_image_alt', {php_single_quoted(source['cover_alt'])});
 set_post_thumbnail($post_id, $thumbnail_id);
 
+// Clone the proven PLN Elementor structure (post 320) instead of approximating it.
+$template_id = 320;
+$template_raw = get_post_meta($template_id, '_elementor_data', true);
+$template_layout = json_decode($template_raw, true);
+if (!is_array($template_layout)) {{ http_response_code(500); echo json_encode(array('ok'=>false,'error'=>'pln-elementor-template-missing')); exit; }}
+$wanted_ids = array('d7d9368', '02bd8c4', '68f5066');
+$layout = array();
+foreach ($template_layout as $element) {{
+    if (isset($element['id']) && in_array($element['id'], $wanted_ids, true)) {{ $layout[] = $element; }}
+}}
+if (count($layout) !== 3) {{ http_response_code(500); echo json_encode(array('ok'=>false,'error'=>'pln-elementor-structure-changed')); exit; }}
+$rewrite = function (&$node) use (&$rewrite, $thumbnail_id, $image_url) {{
+    if (!is_array($node)) {{ return; }}
+    if (isset($node['id'], $node['settings']) && is_array($node['settings'])) {{
+        if ($node['id'] === 'a68edd1') {{ $node['settings']['title'] = {php_single_quoted(source['heading'])}; }}
+        elseif ($node['id'] === 'a81fb65') {{ $node['settings']['title'] = {php_single_quoted(source['excerpt'])}; }}
+        elseif ($node['id'] === '0005795') {{ $node['settings']['editor'] = '<p>' . {php_single_quoted(source['body'])} . '</p><p>' . {php_single_quoted(source['source_line'])} . '</p>'; }}
+        elseif ($node['id'] === '8657d16') {{ $node['settings']['title'] = 'Final Design Digital'; }}
+        elseif ($node['id'] === '6e30990') {{
+            $node['settings']['image'] = array('url'=>$image_url, 'id'=>$thumbnail_id, 'size'=>'');
+            $node['settings']['image_size'] = 'full';
+        }}
+    }}
+    foreach ($node as &$child) {{ if (is_array($child)) {{ $rewrite($child); }} }}
+}};
+foreach ($layout as &$element) {{ $rewrite($element); }}
+unset($element);
+update_post_meta($post_id, '_elementor_data', wp_slash(wp_json_encode($layout)));
+update_post_meta($post_id, '_elementor_edit_mode', 'builder');
+update_post_meta($post_id, '_elementor_template_type', 'wp-post');
+foreach (array('_elementor_version', '_elementor_pro_version', '_elementor_page_settings') as $meta_key) {{
+    $meta_value = get_post_meta($template_id, $meta_key, true);
+    if ($meta_value !== '') {{ update_post_meta($post_id, $meta_key, $meta_value); }}
+}}
+if (class_exists('\\Elementor\\Core\\Files\\CSS\\Post')) {{
+    $css_file = new \\Elementor\\Core\\Files\\CSS\\Post($post_id);
+    $css_file->update();
+}}
+if (class_exists('\\Elementor\\Plugin')) {{ \\Elementor\\Plugin::$instance->files_manager->clear_cache(); }}
+
 $translations = {php_array(mapping)};
 $settings = get_option('trp_settings', array());
 $default_language = !empty($settings['default-language']) ? (string)$settings['default-language'] : 'id_ID';
