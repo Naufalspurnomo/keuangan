@@ -272,6 +272,23 @@ def test_texturin_payment_profile_migration_locks_eligibility_inputs_before_back
     assert "insert into project_issuer_profiles" not in compact
 
 
+def test_texturin_finance_safe_backfill_never_mutates_financial_rows():
+    sql = (
+        ROOT
+        / "dashboard_api/migrations/030_texturin_finance_safe_profile_backfill.sql"
+    ).read_text(encoding="utf-8")
+    compact = " ".join(sql.lower().split())
+
+    assert (
+        "lock table projects, project_documents, project_quotation_handoffs "
+        "in share row exclusive mode"
+    ) in compact
+    assert "update financial_transactions" not in compact
+    assert "update financial_ledger" not in compact
+    assert "status <> 'draft'" in compact
+    assert "migration-030" in compact
+
+
 def test_brand_commercial_migration_is_additive_and_idempotent():
     sql = (ROOT / "dashboard_api/migrations/024_brand_commercial_identity.sql").read_text(encoding="utf-8")
     for fragment in (

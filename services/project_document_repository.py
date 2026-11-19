@@ -821,6 +821,7 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
             "027_project_event_hard_delete_gate.sql",
             "028_quotation_deposit_percent.sql",
             "029_texturin_payment_profiles.sql",
+            "030_texturin_finance_safe_profile_backfill.sql",
         )
     ]
     try:

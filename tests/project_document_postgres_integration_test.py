@@ -362,6 +362,115 @@ def test_texturin_payment_profile_migration_updates_only_inactive_drafts_and_is_
     )
 
 
+def test_texturin_finance_safe_backfill_preserves_transactions_and_is_rerunnable(
+    repository, dsn,
+):
+    import psycopg
+
+    hollawall = issuer(repository)
+    issuer(
+        repository,
+        issuer_key="texturin-surabaya",
+        number_code="TXS",
+        key="texturin-surabaya-finance-safe-profile-0001",
+    )
+    created = repository.create_project_with_sales_order(
+        {
+            "name": "Legacy Texturin With Finance",
+            "client_name": "PT Client",
+            "issuer_key": hollawall["issuer_key"],
+            "wallet": "TX SBY(216)",
+            "company": "TEXTURIN-Surabaya",
+            "status": "planned",
+            "start_date": "2026-11-17",
+        },
+        idempotency_key="texturin-finance-safe-project-0001",
+        actor=ACTOR,
+    )
+    insert_canonical_income(dsn, created["project"]["id"], amount=250_000)
+    insert_income(
+        dsn,
+        created["project"]["id"],
+        amount=125_000,
+        wallet="TX SBY(216)",
+        company="TEXTURIN-Surabaya",
+    )
+
+    migration_029 = (
+        Path(__file__).parents[1]
+        / "dashboard_api/migrations/029_texturin_payment_profiles.sql"
+    ).read_text(encoding="utf-8")
+    migration_030 = (
+        Path(__file__).parents[1]
+        / "dashboard_api/migrations/030_texturin_finance_safe_profile_backfill.sql"
+    ).read_text(encoding="utf-8")
+    with psycopg.connect(dsn, autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id::text, project_id::text, amount, status, version, request_hash "
+                "FROM financial_transactions WHERE project_id = %s ORDER BY id",
+                (created["project"]["id"],),
+            )
+            transactions_before = cursor.fetchall()
+            cursor.execute(
+                "SELECT source_key, project_id::text, amount, company, wallet, payload::text "
+                "FROM financial_ledger WHERE project_id = %s ORDER BY source_key",
+                (created["project"]["id"],),
+            )
+            ledger_before = cursor.fetchall()
+
+            cursor.execute(migration_029)
+            cursor.execute(
+                "SELECT issuer_key FROM projects WHERE id = %s",
+                (created["project"]["id"],),
+            )
+            assert cursor.fetchone() == ("hollawall",)
+
+            cursor.execute(migration_030)
+            cursor.execute(
+                "SELECT issuer_key, lock_version FROM projects WHERE id = %s",
+                (created["project"]["id"],),
+            )
+            project_after_first = cursor.fetchone()
+            cursor.execute(
+                "SELECT issuer_key, payment_profile_key, lock_version "
+                "FROM project_documents WHERE id = %s",
+                (created["sales_order"]["id"],),
+            )
+            document_after_first = cursor.fetchone()
+            cursor.execute(
+                "SELECT id::text, project_id::text, amount, status, version, request_hash "
+                "FROM financial_transactions WHERE project_id = %s ORDER BY id",
+                (created["project"]["id"],),
+            )
+            assert cursor.fetchall() == transactions_before
+            cursor.execute(
+                "SELECT source_key, project_id::text, amount, company, wallet, payload::text "
+                "FROM financial_ledger WHERE project_id = %s ORDER BY source_key",
+                (created["project"]["id"],),
+            )
+            assert cursor.fetchall() == ledger_before
+
+            cursor.execute(migration_030)
+            cursor.execute(
+                "SELECT issuer_key, lock_version FROM projects WHERE id = %s",
+                (created["project"]["id"],),
+            )
+            assert cursor.fetchone() == project_after_first
+            cursor.execute(
+                "SELECT issuer_key, payment_profile_key, lock_version "
+                "FROM project_documents WHERE id = %s",
+                (created["sales_order"]["id"],),
+            )
+            assert cursor.fetchone() == document_after_first
+
+    assert project_after_first[0] == "texturin-surabaya"
+    assert document_after_first[:2] == (
+        "texturin-surabaya",
+        "texturin-surabaya",
+    )
+
+
 def test_texturin_identity_migration_corrects_legacy_draft_with_immutability_trigger_active(
     repository, dsn,
 ):
