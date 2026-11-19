@@ -4,8 +4,10 @@ import { buildReportModel, cashTrend, chartProjects, chartTransactions, chartWal
 import { seedFinanceWorkspace, workspaceTotals } from './financeWorkspace'
 
 describe('finance report model', () => {
-  it('renders an empty optional report date without a false validation error', () => {
+  it('renders empty or missing optional report dates without crashing', () => {
     expect(dateLabel('')).toBe('Belum dipilih')
+    expect(dateLabel(null)).toBe('Belum dipilih')
+    expect(dateLabel(undefined)).toBe('Belum dipilih')
     expect(dateLabel('2026-11-11')).not.toBe('Tanggal tidak valid')
     expect(dateLabel('not-a-date')).toBe('Tanggal tidak valid')
   })

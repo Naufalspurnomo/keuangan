@@ -18,8 +18,8 @@ import type { Transaction } from './types'
 export const IDR = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })
 export const DATE = new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
 
-export function dateLabel(value: string) {
-  if (!value.trim()) return 'Belum dipilih'
+export function dateLabel(value: string | null | undefined) {
+  if (!value?.trim()) return 'Belum dipilih'
   const date = new Date(`${value.slice(0, 10)}T00:00`)
   return Number.isNaN(date.getTime()) ? 'Tanggal tidak valid' : DATE.format(date)
 }
