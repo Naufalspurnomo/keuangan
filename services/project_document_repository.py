@@ -2967,10 +2967,6 @@ class ProjectDocumentRepository:
                     expected_issuer = canonical_issuer_key(next_wallet, next_company)
                     if not expected_issuer:
                         raise ValueError("wallet and company pair is unsupported")
-                    if binding_changed and expected_issuer != str(current_project[0]):
-                        raise ProjectDocumentConflict(
-                            "wallet and company cannot cross payment profiles; create a new project"
-                        )
                     if binding_changed:
                         cursor.execute(
                             """SELECT EXISTS(
@@ -2989,6 +2985,10 @@ class ProjectDocumentRepository:
                         if bool(cursor.fetchone()[0]):
                             raise ProjectDocumentConflict(
                                 "wallet and company are immutable after commercial or financial activity"
+                            )
+                        if expected_issuer != str(current_project[0]):
+                            raise ProjectDocumentConflict(
+                                "wallet and company cannot cross payment profiles; create a new project"
                             )
                     if (
                         "issuer_key" in supplied
