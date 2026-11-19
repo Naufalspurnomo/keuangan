@@ -116,7 +116,7 @@ def build_runner(token: str, source: dict[str, str], target: dict[str, str], slu
     content = (
         "<section class=\"hollawall-project-hero alignfull\" style=\"width:100vw!important;max-width:none!important;position:relative;left:50%;margin:0 0 40px -50vw!important;padding:clamp(50px,5vw,72px) max(5vw,23.4px);box-sizing:border-box;background:#fb9202;color:#fff\">"
         "<div class=\"hollawall-project-hero__inner\" style=\"max-width:1296px;margin:0 auto\">"
-        f"<h1 style=\"margin:0;color:#fff;font-size:clamp(34px,4vw,58px);font-weight:800;line-height:1.05;letter-spacing:-.02em\">{source['heading']}</h1>"
+        f"<h1 style=\"margin:0;color:#fff;font-family:Montserrat,sans-serif;font-size:clamp(32px,3.75vw,54px);font-weight:800;line-height:.9;letter-spacing:normal\">{source['heading']}</h1>"
         "</div></section>"
         "<figure class=\"wp-block-image size-full hollawall-project-artwork\" style=\"margin-top:0;margin-bottom:32px\">"
         f"<img src=\"{image_url}\" alt=\"{source['cover_alt']}\" width=\"1135\" height=\"928\" style=\"display:block;width:100%;height:auto\" />"
