@@ -204,6 +204,20 @@ DOMPET_COMPANIES = {
     "TX BALI(087)": ["TEXTURIN-Bali"],
 }
 
+# Payment profile routing is derived from the canonical wallet/unit pair.
+# Bank account values remain owner-scoped runtime data, never source code.
+DOMPET_ISSUER_KEYS = {
+    "CV HB(101)": {"HOLLA": "hollawall", "HOJJA": "hollawall"},
+    "TX SBY(216)": {"TEXTURIN-Surabaya": "texturin-surabaya"},
+    "TX BALI(087)": {"TEXTURIN-Bali": "texturin-bali"},
+}
+
+
+def canonical_issuer_key(wallet: str, company: str) -> Optional[str]:
+    """Return the payment profile for an accepted wallet/unit pair."""
+    return DOMPET_ISSUER_KEYS.get(wallet, {}).get(company)
+
+
 # Read compatibility only. These labels exist in historical Sheets rows and
 # old AI output, but must never be exposed or accepted as a new unit binding.
 LEGACY_COMPANY_ALIASES = {

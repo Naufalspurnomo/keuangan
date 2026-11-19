@@ -262,6 +262,106 @@ def test_texturin_city_identity_survives_project_sales_order_and_quotation(repos
         )
 
 
+def test_texturin_payment_profile_migration_updates_only_inactive_drafts_and_is_rerunnable(
+    repository, dsn,
+):
+    hollawall = issuer(repository)
+    issuer(
+        repository,
+        issuer_key="texturin-surabaya",
+        number_code="TXS",
+        key="texturin-surabaya-payment-profile-0001",
+    )
+    draft = repository.create_project_with_sales_order(
+        {
+            "name": "Legacy Texturin Draft",
+            "client_name": "PT Client",
+            "issuer_key": hollawall["issuer_key"],
+            "wallet": "TX SBY(216)",
+            "company": "TEXTURIN-Surabaya",
+            "status": "planned",
+            "start_date": "2026-11-17",
+        },
+        idempotency_key="texturin-payment-draft-project-0001",
+        actor=ACTOR,
+    )
+    issued = repository.create_project_with_sales_order(
+        {
+            "name": "Legacy Texturin Issued",
+            "client_name": "PT Client",
+            "issuer_key": hollawall["issuer_key"],
+            "wallet": "TX SBY(216)",
+            "company": "TEXTURIN-Surabaya",
+            "status": "planned",
+            "start_date": "2026-11-17",
+        },
+        idempotency_key="texturin-payment-issued-project-0001",
+        actor=ACTOR,
+    )
+    import psycopg
+
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE projects SET quotation_required = FALSE WHERE id = %s",
+                (issued["project"]["id"],),
+            )
+    issued_document = issue_sales_order(
+        repository,
+        issued,
+        key="texturin-payment-issued-sales-order-0001",
+    )
+
+
+    migration = (
+        Path(__file__).parents[1]
+        / "dashboard_api/migrations/029_texturin_payment_profiles.sql"
+    ).read_text(encoding="utf-8")
+    with psycopg.connect(dsn, autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(migration)
+            cursor.execute(
+                "SELECT issuer_key, lock_version FROM projects WHERE id = %s",
+                (draft["project"]["id"],),
+            )
+            draft_project_after_first = cursor.fetchone()
+            cursor.execute(
+                "SELECT issuer_key, payment_profile_key, lock_version "
+                "FROM project_documents WHERE id = %s",
+                (draft["sales_order"]["id"],),
+            )
+            draft_document_after_first = cursor.fetchone()
+            cursor.execute(migration)
+            cursor.execute(
+                "SELECT issuer_key, lock_version FROM projects WHERE id = %s",
+                (draft["project"]["id"],),
+            )
+            assert cursor.fetchone() == draft_project_after_first
+            cursor.execute(
+                "SELECT issuer_key, payment_profile_key, lock_version "
+                "FROM project_documents WHERE id = %s",
+                (draft["sales_order"]["id"],),
+            )
+            assert cursor.fetchone() == draft_document_after_first
+            cursor.execute(
+                "SELECT issuer_key FROM projects WHERE id = %s",
+                (issued["project"]["id"],),
+            )
+            assert cursor.fetchone() == ("hollawall",)
+            cursor.execute(
+                "SELECT issuer_key, payment_profile_key, status "
+                "FROM project_documents WHERE id = %s",
+                (issued_document["id"],),
+            )
+            assert cursor.fetchone() == ("hollawall", "hollawall", "issued")
+
+    assert draft_project_after_first[0] == "texturin-surabaya"
+    assert draft_document_after_first[:2] == (
+        "texturin-surabaya",
+        "texturin-surabaya",
+    )
+
+
 def test_texturin_identity_migration_corrects_legacy_draft_with_immutability_trigger_active(
     repository, dsn,
 ):
@@ -527,6 +627,60 @@ def test_project_update_rejects_noncanonical_mapping(repository):
         )
 
     unchanged = repository.get_project(created["project"]["id"])
+    assert unchanged["wallet"] == "CV HB(101)"
+    assert unchanged["company"] == "HOLLA"
+
+
+def test_project_update_rejects_issuer_only_profile_mismatch(repository, dsn):
+    canonical = issuer(
+        repository,
+        issuer_key="texturin-surabaya",
+        number_code="TXS",
+        key="issuer-only-texturin-profile-0001",
+    )
+    project_id = str(uuid.uuid4())
+
+    import psycopg
+
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO projects (
+                    id, name, client_name, issuer_key, wallet, company,
+                    created_by, updated_by
+                ) VALUES (%s, 'Issuer-only guard', 'Client', %s,
+                          'TX SBY(216)', 'TEXTURIN-Surabaya', %s::jsonb, %s::jsonb)
+                """,
+                (project_id, canonical["issuer_key"], json.dumps(ACTOR), json.dumps(ACTOR)),
+            )
+
+    with pytest.raises(ValueError, match="issuer_key does not match wallet and company"):
+        repository.update_project(
+            project_id,
+            {"issuer_key": "hollawall"},
+            expected_version=1,
+            idempotency_key="issuer-only-mismatch-update-0001",
+            actor=ACTOR,
+        )
+
+    assert repository.get_project(project_id)["issuer_key"] == "texturin-surabaya"
+
+
+def test_project_update_rejects_cross_payment_profile_binding(repository):
+    created = project(repository, key="update-cross-profile-project-0001")
+
+    with pytest.raises(ProjectDocumentConflict, match="cannot cross payment profiles"):
+        repository.update_project(
+            created["project"]["id"],
+            {"wallet": "TX SBY(216)", "company": "TEXTURIN-Surabaya"},
+            expected_version=created["project"]["lock_version"],
+            idempotency_key="update-cross-profile-invalid-0001",
+            actor=ACTOR,
+        )
+
+    unchanged = repository.get_project(created["project"]["id"])
+    assert unchanged["issuer_key"] == "hollawall"
     assert unchanged["wallet"] == "CV HB(101)"
     assert unchanged["company"] == "HOLLA"
 

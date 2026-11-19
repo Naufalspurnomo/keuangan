@@ -55,6 +55,14 @@ describe('ProjectRecordForm', () => {
     expect(screen.queryByRole('option', { name: 'HOLLA' })).toBeNull()
     expect(screen.queryByRole('option', { name: 'TX SBY' })).toBeNull()
     expect(screen.getByLabelText('Unit usaha').querySelectorAll('option')).toHaveLength(1)
+    expect(screen.getByLabelText('Profil penerbit')).toHaveValue('texturin-surabaya')
+  })
+
+  it('binds Texturin Bali to its own payment profile', () => {
+    render(<ProjectRecordForm onSave={vi.fn()} onClose={vi.fn()} />)
+    fireEvent.change(screen.getByLabelText('Dompet pencatatan'), { target: { value: 'TX BALI(087)' } })
+    expect(screen.getByLabelText('Unit usaha')).toHaveValue('TEXTURIN-Bali')
+    expect(screen.getByLabelText('Profil penerbit')).toHaveValue('texturin-bali')
   })
 
   it('offers exactly HOLLA and HOJJA for wallet 101', () => {

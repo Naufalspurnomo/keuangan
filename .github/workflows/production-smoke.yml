@@ -17,6 +17,7 @@ env:
   BACKEND_ORIGIN: https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app
   SITE_ORIGIN: https://hollawall.com
   INCIDENT_TITLE: "[production-smoke] Hollawall production acceptance failed"
+  WHATSAPP_PROVIDER_EXPECTED_OFF: "1"
 
 jobs:
   smoke:
@@ -128,7 +129,23 @@ jobs:
           expected = os.environ['EXPECTED_RELEASE_SHA'].strip().lower()
           actual = str(release.get('release_sha') or '').strip().lower()
           assert expected and actual == expected, {'expected': expected, 'actual': actual}
-          assert payload.get('status') == 'healthy', payload
+          provider = payload.get('whatsapp_provider', {})
+          provider_expected_off = os.environ.get('WHATSAPP_PROVIDER_EXPECTED_OFF') == '1'
+          if provider_expected_off:
+              assert payload.get('status') in {'healthy', 'degraded'}, payload
+              assert provider.get('reachable') is False, payload
+              assert provider.get('connected') is False, payload
+              assert provider.get('logged_in') is False, payload
+              if provider.get('configured') is True:
+                  assert provider.get('state') in {'unreachable', 'unknown'}, payload
+              else:
+                  assert provider.get('configured') is False, payload
+                  assert provider.get('state') in {'disabled', 'unconfigured'}, payload
+          else:
+              assert payload.get('status') == 'healthy', payload
+              assert provider.get('reachable') is True, payload
+              assert provider.get('connected') is True, payload
+              assert provider.get('logged_in') is True, payload
           inbox = payload.get('transaction_inbox', {})
           assert inbox.get('durable') is True, payload
           backlog = inbox.get('backlog')
@@ -138,10 +155,6 @@ jobs:
           assert inbox.get('review_writes_enabled') is True, payload
           assert inbox.get('review_schema_ready') is True, payload
           assert inbox.get('review_audit_ready') is True, payload
-          provider = payload.get('whatsapp_provider', {})
-          assert provider.get('reachable') is True, payload
-          assert provider.get('connected') is True, payload
-          assert provider.get('logged_in') is True, payload
           assert snapshot.get('version') == 'dashboard.snapshot.v1', snapshot
           assert isinstance(snapshot.get('meta'), dict), snapshot
           assert isinstance(snapshot.get('transactions'), list), snapshot

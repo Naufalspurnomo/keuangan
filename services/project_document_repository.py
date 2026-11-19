@@ -25,7 +25,11 @@ from zoneinfo import ZoneInfo
 from PIL import Image as PillowImage
 from PIL import UnidentifiedImageError
 
-from config.wallets import is_canonical_wallet_company_pair, normalize_wallet_company_pair
+from config.wallets import (
+    canonical_issuer_key,
+    is_canonical_wallet_company_pair,
+    normalize_wallet_company_pair,
+)
 from services.project_document_models import (
     MAX_DOCUMENT_LINES,
     MAX_RECEIPT_ALLOCATIONS,
@@ -816,6 +820,7 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
             "026_texturin_template_identity.sql",
             "027_project_event_hard_delete_gate.sql",
             "028_quotation_deposit_percent.sql",
+            "029_texturin_payment_profiles.sql",
         )
     ]
     try:
@@ -2959,6 +2964,13 @@ class ProjectDocumentRepository:
                     )
                     if not binding_valid:
                         raise ValueError("wallet and company pair is unsupported")
+                    expected_issuer = canonical_issuer_key(next_wallet, next_company)
+                    if not expected_issuer:
+                        raise ValueError("wallet and company pair is unsupported")
+                    if binding_changed and expected_issuer != str(current_project[0]):
+                        raise ProjectDocumentConflict(
+                            "wallet and company cannot cross payment profiles; create a new project"
+                        )
                     if binding_changed:
                         cursor.execute(
                             """SELECT EXISTS(
@@ -2992,6 +3004,11 @@ class ProjectDocumentRepository:
                             raise ProjectDocumentConflict(
                                 "issuer_key is immutable after the document chain is created"
                             )
+                    if "issuer_key" in supplied:
+                        supplied_issuer = str(supplied["issuer_key"] or "").strip()
+                        if supplied_issuer != expected_issuer:
+                            raise ValueError("issuer_key does not match wallet and company")
+                        supplied["issuer_key"] = supplied_issuer
                     cursor.execute(
                         f"UPDATE projects SET {', '.join(assignments)} "
                         "WHERE id = %s AND lock_version = %s RETURNING " + _SELECT_PROJECT,

@@ -17,6 +17,14 @@ export function canonicalPair(wallet: string, company: string) {
   return CANONICAL_WALLET_COMPANY_PAIRS.find((pair) => pair.wallet === wallet && pair.company === company)
 }
 
+export function canonicalIssuerKey(wallet: string, company: string) {
+  const pair = canonicalPair(wallet, company)
+  if (!pair) return ''
+  if (pair.company === 'TEXTURIN-Surabaya') return 'texturin-surabaya'
+  if (pair.company === 'TEXTURIN-Bali') return 'texturin-bali'
+  return 'hollawall'
+}
+
 export function normalizeCanonicalPair(wallet: string, company: string) {
   const walletKey = wallet.trim().toLocaleLowerCase('id-ID')
   const companyKey = company.trim().toLocaleLowerCase('id-ID').replaceAll('-', ' ')
