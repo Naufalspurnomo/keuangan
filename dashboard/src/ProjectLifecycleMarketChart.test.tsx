@@ -39,6 +39,16 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(ageBand(days)).toBe(expected)
   })
 
+  it('renders legacy completed projects with a null completion date without crashing', () => {
+    const legacy = project('legacy-completed', 'Selesai Tanpa Tanggal', 'Holla', 'completed', '2026-09-01', null)
+
+    const { container } = render(<ProjectLifecycleMarketChart projects={[legacy]} transactions={[]} year={2026} asOf={new Date('2026-11-19T12:00:00+07:00')} onOpen={vi.fn()} />)
+
+    const candle = container.querySelector('[data-project-id="legacy-completed"]')
+    expect(candle).toBeTruthy()
+    expect(candle?.getAttribute('aria-label')).toContain('selesai Belum dipilih')
+  })
+
   it('keeps the same overdue color for active and completed projects and marks completion separately', () => {
     const lifecycleProjects = [
       project('active-100', 'Aktif 100 Hari', 'Holla', 'active', '2026-07-20'),
