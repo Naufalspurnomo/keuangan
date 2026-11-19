@@ -169,9 +169,19 @@ def test_texturin_surabaya_and_bali_have_distinct_pdf_contracts():
 
     bali = deepcopy(surabaya)
     bali["project"].update({"company": "TEXTURIN-Bali", "wallet": "TX BALI(087)"})
-    bali["document"].update({"document_type": "invoice", "template_key": "TEXTURIN-BALI"})
+    bali["document"].update({"document_type": "sales_order", "template_key": "TEXTURIN-BALI"})
     bali_pdf = render_project_document_pdf(bali)
     bali_text = " ".join(text(bali_pdf).split())
+    bali_final_invoice = deepcopy(bali)
+    bali_final_invoice["document"].update({"document_type": "invoice", "invoice_kind": "FINAL"})
+    bali_final_invoice_text = " ".join(text(render_project_document_pdf(bali_final_invoice)).split())
+    bali_fallback = snapshot(line_count=4)
+    bali_fallback["project"].update({"company": "TEXTURIN-Bali", "wallet": "TX BALI(087)"})
+    bali_fallback["document"].update({"document_type": "sales_order", "template_key": "TEXTURIN-BALI"})
+    bali_fallback_text = " ".join(text(render_project_document_pdf(bali_fallback)).split())
+    bali_fallback_final = deepcopy(bali_fallback)
+    bali_fallback_final["document"].update({"document_type": "invoice", "invoice_kind": "FINAL"})
+    bali_fallback_final_text = " ".join(text(render_project_document_pdf(bali_fallback_final)).split())
 
     assert surabaya_pdf != bali_pdf
     assert "texturin Surabaya · decorative finishes" in surabaya_text
@@ -182,9 +192,13 @@ def test_texturin_surabaya_and_bali_have_distinct_pdf_contracts():
     assert "Persetujuan penawaran disertai pembayaran signature fee sebesar 30%" in surabaya_text
     assert "Pembayaran melalui rekening resmi perusahaan." in surabaya_text
     assert "texturin Bali · decorative finishes" in bali_text
+    assert "SIGNATURE FEE (30%)" in bali_text
+    assert "Rp 750.000" in bali_text
+    assert "SIGNATURE FEE" not in bali_final_invoice_text
+    assert "SIGNATURE FEE (30%)" in bali_fallback_text
+    assert "SIGNATURE FEE" not in bali_fallback_final_text
     assert "BANK DETAILS" in bali_text
     assert "THANK YOU" in bali_text
-    assert "SIGNATURE FEE" not in bali_text
     assert "Pengecatan dilakukan pada bidang tembok/plafon yang siap dicat." not in bali_text
     assert "Pembayaran melalui rekening resmi perusahaan." not in bali_text
 

@@ -762,6 +762,7 @@ def _texturin_deposit(
 
 def _texturin_bali_total_and_bank(
     snapshot: Mapping[str, Any],
+    brand: BrandSpec,
     styles: Mapping[str, ParagraphStyle],
 ) -> list[Flowable]:
     total = int(_mapping(snapshot.get("totals")).get("total") or 0)
@@ -780,15 +781,18 @@ def _texturin_bali_total_and_bank(
         _paragraph_text(bank.get(field))
         for field in ("bank", "account_number", "account_name")
     )
-    return [
-        total_table,
+    trailing: list[Flowable] = [total_table]
+    if _master_has_deposit(snapshot):
+        trailing.extend([Spacer(1, 4 * mm), _texturin_deposit(snapshot, brand, styles)])
+    trailing.extend([
         Spacer(1, 5 * mm),
         Paragraph("<b>BANK DETAILS</b>", styles["value_bold"]),
         Spacer(1, 1.5 * mm),
         Paragraph(bank_text, styles["body"]),
         Spacer(1, 44 * mm),
         Paragraph("Best regards and thank you,<br/><b>Texturin Bali</b>", styles["right"]),
-    ]
+    ])
+    return trailing
 
 
 def _story(
@@ -806,7 +810,7 @@ def _story(
         Spacer(1, 7 * mm if brand.key != "hollawall" else 4 * mm),
     ]
     if brand.key == "texturin-bali":
-        return [*leading, *_texturin_bali_total_and_bank(snapshot, styles)]
+        return [*leading, *_texturin_bali_total_and_bank(snapshot, brand, styles)]
     trailing: list[Flowable] = [
         _totals(snapshot, brand, styles),
         Spacer(1, 6 * mm if brand.key != "hollawall" else 4 * mm),
@@ -1218,9 +1222,10 @@ def _draw_texturin_master(canvas: Any, snapshot: Mapping[str, Any], brand: Brand
     _canvas_text(canvas, brand, _idr(totals.get("total")), .94, summary_top, size=7, bold=True, right=True)
     policy = commercial_policy(brand.key)
     percent = _snapshot_deposit_percent(snapshot, brand)
-    if brand.key != "texturin-bali" and _master_has_deposit(snapshot):
+    if _master_has_deposit(snapshot):
         deposit = int(totals.get("total") or 0) * percent // 100
-        _canvas_text(canvas, brand, f"SIGNATURE FEE ({percent}%)", .55, summary_top + .030, size=6.3, bold=True)
+        deposit_left = .55 if brand.key != "texturin-bali" else .58
+        _canvas_text(canvas, brand, f"SIGNATURE FEE ({percent}%)", deposit_left, summary_top + .030, size=6.3, bold=True)
         _canvas_text(canvas, brand, _idr(deposit), .94, summary_top + .030, size=6.3, bold=True, right=True)
     if brand.key != "texturin-bali":
         terms = [] if _master_is_invoice(snapshot) else [*policy.get("default_terms", [])]
