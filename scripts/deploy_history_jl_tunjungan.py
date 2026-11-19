@@ -130,7 +130,7 @@ def build_runner(token: str, source: dict[str, str], target: dict[str, str], slu
         f"<h1 style=\"margin:0;color:#fff;font-family:Montserrat,sans-serif;font-size:clamp(32px,3.75vw,54px);font-weight:800;line-height:.9;letter-spacing:normal\">{source['heading']}</h1>"
         "</div></section>"
         "<figure class=\"wp-block-image size-full hollawall-project-artwork\" style=\"margin-top:0;margin-bottom:32px\">"
-        f"<img src=\"{image_url}\" alt=\"{source['cover_alt']}\" width=\"1159\" height=\"846\" style=\"display:block;width:100%;height:auto\" />"
+        f"<img src=\"{image_url}\" alt=\"{source['cover_alt']}\" width=\"1290\" height=\"942\" style=\"display:block;width:100%;height:auto\" />"
         "</figure>"
         "<section class=\"hollawall-project-story\" style=\"padding-bottom:48px\">"
         f"<p style=\"line-height:1.75\">{source['body']}</p>"
@@ -355,7 +355,7 @@ def main() -> int:
         "cover_alt": "Historical illustration of Jalan Tunjungan featuring a tram, horse-drawn carriages, and Surabaya heritage buildings",
     }
 
-    image_name = "history-jl-tunjungan.jpg"
+    image_name = "history-jl-tunjungan-pemkot.jpg"
     image_bytes = open(image_name, "rb").read()
     token = secrets.token_urlsafe(48)
     runner = build_runner(token, source, target, args.slug, image_name)
