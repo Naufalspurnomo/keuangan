@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 
 import { useModalDialog } from './CanonicalDebtForms'
 import ProjectDocumentPreview from './ProjectDocumentPreview'
@@ -60,6 +60,7 @@ function projectValues(project: ProjectRecord): ProjectQuotationValues {
     discount_mode: 'none',
     discount_value: '0',
     tax_percent: '0',
+    deposit_percent: commercialPolicy(project.company).default_deposit_percent,
     payment_terms: '',
     content_notes: '',
     amount: 0,
@@ -84,6 +85,7 @@ function valuesFromItem(project: ProjectRecord, item: ProjectQuotation): Project
     discount_mode: item.discount_mode ?? 'none',
     discount_value: item.discount_value ?? '0',
     tax_percent: item.tax_percent ?? '0',
+    deposit_percent: item.deposit_percent ?? fallback.deposit_percent,
     payment_terms: item.payment_terms ?? '',
     content_notes: item.content_notes ?? '',
     amount: item.amount,
@@ -293,6 +295,7 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
         <label>Jenis diskon dokumen<select value={values.discount_mode} onChange={(event) => field('discount_mode', event.target.value as ProjectQuotationValues['discount_mode'])}><option value="none">Tanpa diskon</option><option value="percent">Persen</option><option value="fixed">Rupiah</option></select></label>
         <label>Nilai diskon dokumen<input type="number" min="0" step={values.discount_mode === 'fixed' ? '1' : '0.01'} value={values.discount_value} disabled={values.discount_mode === 'none'} onChange={(event) => field('discount_value', event.target.value)} /></label>
         <label>Pajak (%)<input type="number" min="0" max="100" step="0.01" value={values.tax_percent} onChange={(event) => field('tax_percent', event.target.value)} /></label>
+        <label>DP proyek (%)<input type="number" min="1" max="99" step="1" value={values.deposit_percent} onChange={(event) => field('deposit_percent', Number(event.target.value))} required /><small>Default merek {policy.default_deposit_percent}%; boleh disesuaikan per proyek.</small></label>
         <label className="wide">Ketentuan pembayaran<textarea value={values.payment_terms} onChange={(event) => field('payment_terms', event.target.value)} /></label>
         <label className="wide">Catatan quotation<textarea value={values.content_notes} onChange={(event) => field('content_notes', event.target.value)} /></label>
       </div>
@@ -324,7 +327,7 @@ function DealDialog({ item, busy, onCancel, onConfirm }: {
 }) {
   const dialog = useModalDialog(onCancel, true, !busy)
   const total = item.accepted_snapshot?.amount ?? item.amount
-  const dp = commercialPolicy(item.template_key || 'hollawall').default_deposit_percent
+  const dp = item.deposit_percent ?? commercialPolicy(item.template_key || 'hollawall').default_deposit_percent
   const [countChoice, setCountChoice] = useState('1')
   const [customCount, setCustomCount] = useState('4')
   const [error, setError] = useState('')
@@ -376,12 +379,22 @@ export default function ProjectQuotationPanel({ project, salesOrder, session, ap
   const [dealItem, setDealItem] = useState<ProjectQuotation | null>(null)
   const [rejectItem, setRejectItem] = useState<ProjectQuotation | null>(null)
   const [rejectNote, setRejectNote] = useState('')
+  const pendingCreate = useRef<{ signature: string; idempotencyKey: string; savedId?: string } | null>(null)
   const closeReject = () => { setRejectItem(null); setRejectNote('') }
   const rejectDialog = useModalDialog(closeReject, Boolean(rejectItem), !busy)
 
   const load = async () => {
     setLoading(true); setError('')
-    try { setItems((await api.list(project.id)).sort((left, right) => right.version - left.version)) }
+    try {
+      const loaded = (await api.list(project.id)).sort((left, right) => right.version - left.version)
+      setItems(loaded)
+      const pending = pendingCreate.current
+      if (pending?.savedId && loaded.some((item) => item.id === pending.savedId)) {
+        pendingCreate.current = null
+        setEditor(null)
+        setNotice('Quotation tersimpan dan berhasil dipulihkan.')
+      }
+    }
     catch (reason) { setError(messageFrom(reason)) }
     finally { setLoading(false) }
   }
@@ -391,15 +404,32 @@ export default function ProjectQuotationPanel({ project, salesOrder, session, ap
     if (!editor) return
     setBusy(true); setError(''); setNotice('')
     try {
-      const saved = editor.mode === 'create'
-        ? await api.create(project.id, values, session)
+      const signature = JSON.stringify(values)
+      if (editor.mode === 'create' && pendingCreate.current && pendingCreate.current.signature !== signature) {
+        throw new Error('Hasil pembuatan quotation sebelumnya belum pasti. Ulangi data yang sama atau muat ulang daftar quotation.')
+      }
+      if (editor.mode === 'create' && !pendingCreate.current) pendingCreate.current = { signature, idempotencyKey: crypto.randomUUID() }
+      let saved = editor.mode === 'create'
+        ? pendingCreate.current?.savedId
+          ? (await api.list(project.id)).find((item) => item.id === pendingCreate.current?.savedId)
+          : await api.create(project.id, values, session, pendingCreate.current!.idempotencyKey)
         : editor.mode === 'revise'
           ? await api.revise(editor.source!, values, session)
           : await api.saveDraft(editor.source!, values, session)
+      if (!saved) throw new ProjectDocumentApiError('Quotation tersimpan, tetapi readback belum tersedia.', { code: 'quotation_readback_uncertain', retryable: true, uncertain: true })
+      if (editor.mode === 'create' && !pendingCreate.current!.savedId) {
+        pendingCreate.current!.savedId = saved.id
+        saved = (await api.list(project.id)).find((item) => item.id === saved!.id)
+        if (!saved) throw new ProjectDocumentApiError('Quotation tersimpan, tetapi readback belum tersedia.', { code: 'quotation_readback_uncertain', retryable: true, uncertain: true })
+      }
       setItems((current) => [saved, ...current.filter((item) => item.id !== saved.id)].sort((left, right) => right.version - left.version))
+      if (editor.mode === 'create') pendingCreate.current = null
       setEditor(null)
       setNotice(editor.mode === 'revise' ? `Versi ${saved.version} dibuat. Versi sebelumnya tetap tersimpan.` : `Draf versi ${saved.version} tersimpan.`)
-    } catch (reason) { const message = messageFrom(reason); setError(message); throw reason instanceof Error ? reason : new Error(message) }
+    } catch (reason) {
+      if (editor.mode === 'create' && !pendingCreate.current?.savedId && !(reason instanceof ProjectDocumentApiError && reason.uncertain)) pendingCreate.current = null
+      const message = messageFrom(reason); setError(message); throw reason instanceof Error ? reason : new Error(message)
+    }
     finally { setBusy(false) }
   }
   const transition = async (item: ProjectQuotation, status: 'sent' | 'rejected', note = '') => {

@@ -118,6 +118,7 @@ export interface ProjectQuotationAcceptedSnapshot {
   accepted_at?: string
   subject?: string
   lines?: ProjectQuotationLine[]
+  deposit_percent?: number
 }
 
 export interface ProjectQuotationValues {
@@ -136,6 +137,7 @@ export interface ProjectQuotationValues {
   discount_mode: DocumentDiscountMode
   discount_value: string
   tax_percent: string
+  deposit_percent: number
   payment_terms: string
   content_notes: string
   amount: number
@@ -168,6 +170,7 @@ export interface ProjectQuotation {
   discount_mode?: DocumentDiscountMode
   discount_value?: string
   tax_percent?: string
+  deposit_percent?: number
   payment_terms?: string
   content_notes?: string
   accepted_snapshot?: ProjectQuotationAcceptedSnapshot | null

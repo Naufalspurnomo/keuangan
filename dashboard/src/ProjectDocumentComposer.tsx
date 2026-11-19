@@ -21,7 +21,7 @@ interface ProjectDocumentComposerProps {
   saving?: boolean
   receiptOptions?: ReceiptOptions | null
   onOpenTransactions?: () => void
-  onSave: (document: ProjectDocumentDraft) => void | Promise<void>
+  onSave: (document: ProjectDocumentDraft) => boolean | void | Promise<boolean | void>
   onClose: () => void
 }
 
@@ -76,8 +76,8 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
       const commercial = draft.type === 'receipt' ? draft : { ...draft, lines: draft.lines.map((line) => normalizeCommercialLine(line, policy)) }
       const clean = validateDocumentDraft(commercial)
       setError('')
-      await onSave(clean)
-      setDirty(false)
+      const saved = await onSave(clean)
+      if (saved !== false) setDirty(false)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Dokumen belum dapat disimpan.')
       requestAnimationFrame(() => alertRef.current?.focus())

@@ -144,6 +144,22 @@ def test_renderer_preserves_reference_labels_and_brand_signoff(
         assert label in content
 
 
+def test_quotation_pdf_uses_project_specific_deposit_percent():
+    value = snapshot()
+    value["document"].update({
+        "document_type": "sales_order",
+        "template_key": "HOLLAWALL",
+        "deposit_percent": "50",
+        "payment_terms": "DP 50% sebelum produksi.",
+    })
+
+    content = " ".join(text(render_project_document_pdf(value)).split())
+
+    assert "Down Payment 50%" in content
+    assert "Rp 1.250.000" in content
+    assert "Down Payment 30%" not in content
+
+
 def test_texturin_surabaya_and_bali_have_distinct_pdf_contracts():
     surabaya = snapshot()
     surabaya["project"].update({"company": "TEXTURIN-Surabaya", "wallet": "TX SBY(216)"})

@@ -172,6 +172,7 @@ function quotation(value: unknown): ProjectQuotation {
     discount_mode: discountMode,
     discount_value: decimalText(item.discount_value),
     tax_percent: decimalText(item.tax_percent),
+    deposit_percent: Number(item.deposit_percent) || 0,
     payment_terms: text(item.payment_terms),
     content_notes: text(item.content_notes),
     accepted_snapshot: record(item.accepted_snapshot) as ProjectQuotation['accepted_snapshot'],
@@ -222,11 +223,12 @@ export function createProjectQuotationApi(options: ProjectQuotationApiOptions = 
     payload: Record<string, unknown>,
     session: ProjectDocumentSession,
     version: number | '*',
+    suppliedIdempotencyKey?: string,
   ) => {
     if (!session.capabilities.documentWrites || session.csrfToken.length < 16) {
       throw new Error('Sesi perubahan dokumen tidak valid.')
     }
-    const idempotencyKey = keyFactory()
+    const idempotencyKey = suppliedIdempotencyKey ?? keyFactory()
     try {
       const response = await request(endpoint, {
         method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error',
@@ -253,9 +255,9 @@ export function createProjectQuotationApi(options: ProjectQuotationApiOptions = 
       if (!Array.isArray(data.items)) throw new Error('Daftar quotation tidak lengkap.')
       return data.items.map(quotation)
     },
-    async create(projectId: string, values: ProjectQuotationValues, session: ProjectDocumentSession) {
+    async create(projectId: string, values: ProjectQuotationValues, session: ProjectDocumentSession, idempotencyKey?: string) {
       if (!UUID.test(projectId)) throw new Error('Project ID tidak valid.')
-      return quotation(await write('create_quotation', { project_id: projectId, values: wireValues(values) }, session, '*'))
+      return quotation(await write('create_quotation', { project_id: projectId, values: wireValues(values) }, session, '*', idempotencyKey))
     },
     async saveDraft(item: ProjectQuotation, values: ProjectQuotationValues, session: ProjectDocumentSession) {
       return quotation(await write('update_quotation', {

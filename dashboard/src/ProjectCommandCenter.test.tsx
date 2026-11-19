@@ -25,6 +25,22 @@ afterEach(() => {
 })
 
 describe('ProjectCommandCenter scroll stability', () => {
+  it('locks project completion actions and announces progress while status is pending', () => {
+    render(<ProjectCommandCenter
+      workspace={seedFinanceWorkspace()}
+      onAdd={vi.fn()}
+      onEdit={vi.fn()}
+      onComplete={vi.fn()}
+      onQuickComplete={vi.fn()}
+      onDelete={vi.fn()}
+      onOpen={vi.fn()}
+      busy
+    />)
+
+    expect(screen.getByRole('status').textContent).toContain('Menyelesaikan proyek')
+    for (const button of screen.getAllByRole('button', { name: /^Selesaikan / })) expect((button as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('reveals the active year inside its horizontal rail without scrolling the page', () => {
     render(<ProjectCommandCenter
       workspace={seedFinanceWorkspace()}

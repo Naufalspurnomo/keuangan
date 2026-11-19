@@ -125,8 +125,9 @@ describe('ProjectQuotationPanel', () => {
     expect(screen.getByRole('complementary', { name: 'Ringkasan quotation' })).toHaveTextContent(/Rp\s*5\.000\.000/)
   })
 
-  it('creates a structured draft from project-derived recipient data and automatic brand', async () => {
+  it('creates a structured draft from project-derived recipient data and confirms authoritative readback', async () => {
     const subject = api()
+    subject.list.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('Readback terputus')).mockResolvedValue([item])
     render(<ProjectQuotationPanel project={project} session={session} api={subject} onApplied={vi.fn()} />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Buat quotation' }))
@@ -171,8 +172,16 @@ describe('ProjectQuotationPanel', () => {
       payment_profile_key: 'hollawall',
       lines: [expect.objectContaining({ description: 'Backdrop premium', pricing_mode: 'area_rate', width: '2', height: '1', quantity: '2', unit: 'm²', unit_price: 5_000_000, discount_percent: '10' })],
       tax_percent: '11',
-    }), session))
+      deposit_percent: 30,
+    }), session, expect.any(String)))
     expect(JSON.stringify(subject.create.mock.calls[0])).toContain('commercial-v3')
+    await waitFor(() => expect(screen.getAllByRole('alert').some((alert) => alert.textContent?.includes('Readback terputus'))).toBe(true))
+    expect(subject.create).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Muat ulang' }))
+    await waitFor(() => expect(subject.list).toHaveBeenCalledTimes(3))
+    expect(subject.create).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('heading', { name: 'Buat quotation' })).toBeNull()
+    expect(await screen.findByText('Quotation tersimpan dan berhasil dipulihkan.')).toBeTruthy()
     expect(document.body.textContent).not.toMatch(/Quotation Canva|Link desain Canva/i)
   })
 

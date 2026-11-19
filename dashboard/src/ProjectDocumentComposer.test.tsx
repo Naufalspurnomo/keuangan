@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import ProjectDocumentComposer from './ProjectDocumentComposer'
@@ -213,6 +213,25 @@ describe('ProjectDocumentComposer', () => {
     fireEvent.change(screen.getByLabelText('Catatan'), { target: { value: 'Perubahan lokal' } })
     fireEvent.click(screen.getByRole('button', { name: 'Tutup penyusun dokumen' }))
     expect(confirm).toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('keeps local changes dirty when the server does not confirm the save', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const onSave = vi.fn(async () => false)
+    const onClose = vi.fn()
+    const draft = createEmptyDocumentDraft(project.id, 'invoice', '2026-11-03')
+    render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={onSave} onClose={onClose} />)
+
+    fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Panel akustik' } })
+    fireEvent.change(screen.getByLabelText('Lebar item 1'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('Tinggi item 1'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('HARGA/M² item 1'), { target: { value: '100000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan draf' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tutup penyusun dokumen' }))
+    expect(confirm).toHaveBeenCalledWith('Tutup penyusun dan buang perubahan yang belum disimpan?')
     expect(onClose).not.toHaveBeenCalled()
   })
 })

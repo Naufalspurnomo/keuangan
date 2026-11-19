@@ -49,7 +49,7 @@ export function projectAsOf(year: number, now = new Date()) {
   return new Date(Math.min(now.getTime(), yearEnd.getTime()))
 }
 
-export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onComplete, onQuickComplete, onDelete, onOpen, readOnly = false, canAdd = !readOnly, destructiveActionLabel = 'Hapus' }: {
+export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onComplete, onQuickComplete, onDelete, onOpen, readOnly = false, canAdd = !readOnly, destructiveActionLabel = 'Hapus', busy = false }: {
   workspace: FinanceWorkspace
   onAdd: () => void
   onEdit: (project: FinanceProject) => void
@@ -60,6 +60,7 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onCompl
   readOnly?: boolean
   canAdd?: boolean
   destructiveActionLabel?: string
+  busy?: boolean
 }) {
   const snapshotYear = projectSnapshotYear(workspace)
   const years = useMemo(() => projectYearOptions(workspace), [workspace])
@@ -106,8 +107,8 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onCompl
   const changeYear = (next: number) => { setYear(next); setPage(0) }
   const asOf = projectAsOf(year, projectSnapshotDate(workspace))
 
-  return <section className="project-command-center">
-    <header className="command-head"><div><p className="eyebrow">PROYEK{workspace.mode === 'demo' ? ' · DATA DEMO' : ''}</p><h1>Portofolio proyek per tahun</h1><p>Bandingkan proyek selesai, aktif, dibatalkan, dan direncanakan.</p></div>{canAdd && <button type="button" className="primary-button" onClick={onAdd}><Plus size={16} /> Buat proyek</button>}</header>
+  return <section className="project-command-center" aria-busy={busy}>
+    <header className="command-head"><div><p className="eyebrow">PROYEK{workspace.mode === 'demo' ? ' · DATA DEMO' : ''}</p><h1>Portofolio proyek per tahun</h1><p>Bandingkan proyek selesai, aktif, dibatalkan, dan direncanakan.</p></div>{canAdd && <button type="button" className="primary-button" disabled={busy} onClick={onAdd}><Plus size={16} /> Buat proyek</button>}</header>
 
     <section className="year-command" aria-label="Pilih tahun proyek">
       <button type="button" aria-label="Tahun sebelumnya" title={yearIndex <= 0 ? 'Tidak ada tahun sebelumnya' : undefined} disabled={yearIndex <= 0} onClick={() => changeYear(years[yearIndex - 1])}><ArrowLeft size={19} /></button>
@@ -129,13 +130,14 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onCompl
 
     <p className="project-status-note"><strong>Lingkup {year}.</strong> Selesai: pekerjaan ditutup. Aktif: sedang berjalan. Direncanakan: belum dimulai.</p>
 
-    <ProjectLifecycleMarketChart projects={allYear} transactions={workspace.transactions} year={year} asOf={asOf} onOpen={onOpen} onQuickComplete={onQuickComplete} />
+    <ProjectLifecycleMarketChart projects={allYear} transactions={workspace.transactions} year={year} asOf={asOf} onOpen={onOpen} onQuickComplete={(project) => { if (!busy) onQuickComplete(project) }} />
+    {busy && <p role="status" className="project-status-note"><strong>Menyelesaikan proyek…</strong> Status sedang dikonfirmasi ke server.</p>}
 
     <section className="project-controls" aria-label="Filter daftar proyek"><label className="command-search"><Search size={17} /><span className="sr-only">Cari proyek</span><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(0) }} placeholder="Cari proyek atau klien" /></label><label><span className="sr-only">Perusahaan</span><select value={company} onChange={(event) => { setCompany(event.target.value as 'all' | CompanyId); setPage(0) }}><option value="all">Semua perusahaan</option>{COMPANIES.map((item) => <option key={item}>{item}</option>)}</select></label><label><span className="sr-only">Status</span><select value={status} onChange={(event) => { setStatus(event.target.value as 'all' | ProjectStatus); setPage(0) }}><option value="all">Semua status</option>{statusOrder.map((item) => <option key={item} value={item}>{projectStatusLabel(item)}</option>)}</select></label><span aria-live="polite"><strong>{filtered.length}</strong> proyek</span></section>
 
     {filtered.length ? <section className="project-register" aria-label={`Daftar proyek ${year}`}><header><div><p className="eyebrow">DAFTAR PROYEK</p><h3>Rincian {year}</h3></div></header><div className="project-register-headings" aria-hidden="true"><span>Proyek</span><span>Status</span><span>Periode</span><span>Arus kas</span><span>Aksi</span></div>{visible.map((project) => {
         const view = projectView(project, workspace)
-        return <article key={project.id}><button type="button" className="project-register-main" aria-label={`Buka proyek ${project.name}`} onClick={() => onOpen(project)}><span><strong>{project.name}</strong><small>{project.company} · {project.wallet}{project.client ? ` · ${project.client}` : ''}</small></span><b className={`status-chip ${project.status}`}>{project.status === 'completed' && <Check size={12} aria-hidden="true" />}{projectStatusLabel(project.status)}</b><span><small>{dateLabel(project.started_on)}</small><strong>{project.completed_on ? dateLabel(project.completed_on) : 'Belum selesai'}</strong></span><span className={view.net >= 0 ? 'positive' : 'negative'}><small>{view.transactions} transaksi</small><strong>{IDR.format(view.net)}</strong></span></button>{!readOnly && <div className="row-actions" aria-label={`Aksi ${project.name}`}>{project.status === 'active' && <button type="button" className="complete-project-action" aria-label={`Selesaikan ${project.name}`} onClick={() => onComplete(project)}><Check size={16} /><span>Selesai</span></button>}<button type="button" aria-label={`Ubah ${project.name}`} onClick={() => onEdit(project)}><Pencil size={16} /><span className="row-action-label">Ubah</span></button><button type="button" className="danger" aria-label={`${destructiveActionLabel} ${project.name}`} onClick={() => onDelete(project)}><Trash2 size={16} /><span className="row-action-label">{destructiveActionLabel}</span></button></div>}</article>
+        return <article key={project.id}><button type="button" className="project-register-main" aria-label={`Buka proyek ${project.name}`} onClick={() => onOpen(project)}><span><strong>{project.name}</strong><small>{project.company} · {project.wallet}{project.client ? ` · ${project.client}` : ''}</small></span><b className={`status-chip ${project.status}`}>{project.status === 'completed' && <Check size={12} aria-hidden="true" />}{projectStatusLabel(project.status)}</b><span><small>{dateLabel(project.started_on)}</small><strong>{project.completed_on ? dateLabel(project.completed_on) : 'Belum selesai'}</strong></span><span className={view.net >= 0 ? 'positive' : 'negative'}><small>{view.transactions} transaksi</small><strong>{IDR.format(view.net)}</strong></span></button>{!readOnly && <div className="row-actions" aria-label={`Aksi ${project.name}`}>{project.status === 'active' && <button type="button" className="complete-project-action" aria-label={`Selesaikan ${project.name}`} disabled={busy} onClick={() => { if (!busy) onComplete(project) }}><Check size={16} /><span>{busy ? 'Menyelesaikan…' : 'Selesai'}</span></button>}<button type="button" aria-label={`Ubah ${project.name}`} disabled={busy} onClick={() => onEdit(project)}><Pencil size={16} /><span className="row-action-label">Ubah</span></button><button type="button" className="danger" aria-label={`${destructiveActionLabel} ${project.name}`} disabled={busy} onClick={() => onDelete(project)}><Trash2 size={16} /><span className="row-action-label">{destructiveActionLabel}</span></button></div>}</article>
       })}</section> : <section className="command-empty" aria-label={`Daftar proyek ${year}`}><strong>Proyek tidak ditemukan</strong><p>{readOnly ? 'Ubah filter untuk melihat proyek lain.' : `Ubah filter atau tambahkan proyek untuk tahun ${year}.`}</p>{!readOnly && <button className="primary-button" onClick={onAdd}><Plus size={16} /> Tambah proyek</button>}</section>}
     {pageCount > 1 && <nav className="project-ledger-pagination" aria-label="Pagination proyek">
       <button type="button" onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={page === 0} aria-label="Halaman proyek sebelumnya"><ArrowLeft size={16} /> Sebelumnya</button>

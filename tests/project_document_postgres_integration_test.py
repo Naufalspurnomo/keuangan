@@ -21,6 +21,7 @@ from services.project_document_repository import (
     ensure_project_document_schema,
     project_document_schema_health,
 )
+from services.financial_schema import load_production_bootstrap_migrations
 from services.project_document_pdf import render_project_document_artifact
 from services.project_documents import ProjectDocumentService
 
@@ -111,11 +112,9 @@ def dsn():
             cursor.execute(payment_migration)
             cursor.execute(evidence_migration)
             cursor.execute(quotation_migration)
-    ensure_project_document_schema(selected)
-    with psycopg.connect(selected, autocommit=True) as connection:
-        with connection.cursor() as cursor:
             for migration in canonical_extensions:
                 cursor.execute(migration)
+    ensure_project_document_schema(selected)
     return selected
 
 
@@ -596,6 +595,201 @@ def insert_income(
     return selected
 
 
+def insert_canonical_income(dsn, project_id, amount=500_000):
+    import psycopg
+    from psycopg.types.json import Jsonb
+
+    transaction_id = uuid.uuid4()
+    cash_posting_id = uuid.uuid4()
+    revenue_posting_id = uuid.uuid4()
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT wallet.id, unit.id
+                FROM wallets wallet
+                JOIN wallet_business_units pair ON pair.wallet_id = wallet.id
+                JOIN business_units unit ON unit.id = pair.business_unit_id
+                WHERE wallet.display_name = 'CV HB(101)'
+                ORDER BY unit.code
+                LIMIT 1
+                """
+            )
+            wallet_id, business_unit_id = cursor.fetchone()
+            cursor.execute(
+                """
+                INSERT INTO financial_transactions (
+                    id, idempotency_key_hash, request_hash, scope, project_id,
+                    transaction_type, flow_class, amount, currency, category,
+                    description, occurred_at, source, source_reference, evidence,
+                    actor, version, status
+                ) VALUES (
+                    %s, %s, %s, 'project', %s,
+                    'inflow', 'external', %s, 'IDR', 'DP',
+                    'Pembayaran proyek canonical', TIMESTAMPTZ '2026-11-03 08:00:00+07',
+                    'dashboard', %s, %s, %s, 1, 'posted'
+                )
+                """,
+                (
+                    transaction_id,
+                    hashlib.sha256(f"idem:{transaction_id}".encode()).hexdigest(),
+                    hashlib.sha256(f"request:{transaction_id}".encode()).hexdigest(),
+                    project_id,
+                    amount,
+                    f"test:{transaction_id}",
+                    Jsonb({}),
+                    Jsonb(ACTOR),
+                ),
+            )
+            cursor.execute(
+                """
+                INSERT INTO financial_postings (
+                    id, transaction_id, wallet_id, business_unit_id,
+                    account_class, signed_amount, currency
+                ) VALUES
+                    (%s, %s, %s, %s, 'cash', %s, 'IDR'),
+                    (%s, %s, NULL, NULL, 'revenue', %s, 'IDR')
+                """,
+                (
+                    cash_posting_id,
+                    transaction_id,
+                    wallet_id,
+                    business_unit_id,
+                    amount,
+                    revenue_posting_id,
+                    transaction_id,
+                    -amount,
+                ),
+            )
+    return f"canonical:{transaction_id}"
+
+
+def correct_canonical_income(dsn, source_key, amount):
+    import psycopg
+    from psycopg.types.json import Jsonb
+
+    root_id = uuid.UUID(source_key.removeprefix("canonical:"))
+    correction_id = uuid.uuid4()
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT transaction.project_id, posting.wallet_id, posting.business_unit_id
+                FROM financial_transactions transaction
+                JOIN financial_postings posting
+                  ON posting.transaction_id = transaction.id
+                 AND posting.account_class = 'cash'
+                WHERE transaction.id = %s
+                """,
+                (root_id,),
+            )
+            project_id, wallet_id, business_unit_id = cursor.fetchone()
+            cursor.execute(
+                """
+                INSERT INTO financial_transactions (
+                    id, idempotency_key_hash, request_hash, scope, project_id,
+                    transaction_type, flow_class, amount, currency, category,
+                    description, occurred_at, source, source_reference, evidence,
+                    actor, version, status, revision_of_id
+                ) VALUES (
+                    %s, %s, %s, 'project', %s,
+                    'inflow', 'external', %s, 'IDR', 'DP',
+                    'Pembayaran proyek canonical terkoreksi', TIMESTAMPTZ '2026-11-03 09:00:00+07',
+                    'dashboard', %s, %s, %s, 2, 'correction', %s
+                )
+                """,
+                (
+                    correction_id,
+                    hashlib.sha256(f"idem:{correction_id}".encode()).hexdigest(),
+                    hashlib.sha256(f"request:{correction_id}".encode()).hexdigest(),
+                    project_id,
+                    amount,
+                    f"test:{correction_id}",
+                    Jsonb({}),
+                    Jsonb(ACTOR),
+                    root_id,
+                ),
+            )
+            cursor.execute(
+                """
+                INSERT INTO financial_postings (
+                    id, transaction_id, wallet_id, business_unit_id,
+                    account_class, signed_amount, currency
+                ) VALUES
+                    (%s, %s, %s, %s, 'cash', %s, 'IDR'),
+                    (%s, %s, NULL, NULL, 'revenue', %s, 'IDR')
+                """,
+                (
+                    uuid.uuid4(), correction_id, wallet_id, business_unit_id, amount,
+                    uuid.uuid4(), correction_id, -amount,
+                ),
+            )
+    return str(correction_id)
+
+
+def reverse_canonical_income(dsn, source_key, amount):
+    import psycopg
+    from psycopg.types.json import Jsonb
+
+    root_id = uuid.UUID(source_key.removeprefix("canonical:"))
+    reversal_id = uuid.uuid4()
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT transaction.project_id, posting.wallet_id, posting.business_unit_id
+                FROM financial_transactions transaction
+                JOIN financial_postings posting
+                  ON posting.transaction_id = transaction.id
+                 AND posting.account_class = 'cash'
+                WHERE transaction.id = %s
+                """,
+                (root_id,),
+            )
+            project_id, wallet_id, business_unit_id = cursor.fetchone()
+            cursor.execute(
+                """
+                INSERT INTO financial_transactions (
+                    id, idempotency_key_hash, request_hash, scope, project_id,
+                    transaction_type, flow_class, amount, currency, category,
+                    description, occurred_at, source, source_reference, evidence,
+                    actor, version, status, reversal_of_id
+                ) VALUES (
+                    %s, %s, %s, 'project', %s,
+                    'inflow', 'external', %s, 'IDR', 'DP',
+                    'Pembayaran proyek canonical dibalik', TIMESTAMPTZ '2026-11-03 10:00:00+07',
+                    'dashboard', %s, %s, %s, 2, 'reversal', %s
+                )
+                """,
+                (
+                    reversal_id,
+                    hashlib.sha256(f"idem:{reversal_id}".encode()).hexdigest(),
+                    hashlib.sha256(f"request:{reversal_id}".encode()).hexdigest(),
+                    project_id,
+                    amount,
+                    f"test:{reversal_id}",
+                    Jsonb({}),
+                    Jsonb(ACTOR),
+                    root_id,
+                ),
+            )
+            cursor.execute(
+                """
+                INSERT INTO financial_postings (
+                    id, transaction_id, wallet_id, business_unit_id,
+                    account_class, signed_amount, currency
+                ) VALUES
+                    (%s, %s, %s, %s, 'cash', %s, 'IDR'),
+                    (%s, %s, NULL, NULL, 'revenue', %s, 'IDR')
+                """,
+                (
+                    uuid.uuid4(), reversal_id, wallet_id, business_unit_id, -amount,
+                    uuid.uuid4(), reversal_id, amount,
+                ),
+            )
+    return str(reversal_id)
+
+
 def set_document_total(repository, document, total, key):
     return repository.update_draft(
         document["id"],
@@ -976,12 +1170,33 @@ def test_project_creation_defaults_and_invoice_status_restrictions(repository):
         actor=ACTOR,
     )
     assert completed["status"] == "completed"
-    with pytest.raises(ProjectDocumentConflict, match="planned or active"):
-        repository.create_document_draft(
+    with pytest.raises(ProjectDocumentConflict, match="only allow a FINAL"):
+        repository.create_invoice_draft(
             completed["id"],
-            document_type="invoice",
+            values={"invoice_kind": "PROGRESS", "lines": [{"description": "Terlambat", "quantity": 1, "unit": "unit", "unit_price": 1}]},
+            idempotency_key="invoice-progress-after-complete-0001",
+            actor=ACTOR,
+        )
+    final_invoice = repository.create_invoice_draft(
+        completed["id"],
+        values={"invoice_kind": "FINAL"},
+        idempotency_key="invoice-create-key-0002",
+        actor=ACTOR,
+    )
+    assert final_invoice["invoice_kind"] == "FINAL"
+
+    cancelled = repository.update_project(
+        completed["id"],
+        {"status": "cancelled"},
+        expected_version=completed["lock_version"],
+        idempotency_key="project-cancel-after-complete-key-0001",
+        actor=ACTOR,
+    )
+    with pytest.raises(ProjectDocumentConflict, match="cancelled project"):
+        repository.create_invoice_draft(
+            cancelled["id"],
             values={"invoice_kind": "PROGRESS"},
-            idempotency_key="invoice-create-key-0002",
+            idempotency_key="invoice-create-key-0003",
             actor=ACTOR,
         )
 
@@ -1330,6 +1545,109 @@ def test_service_creates_receipt_and_authority_evidence_atomically(repository, d
         for snapshot in allocation_snapshots
     } == {source_key, second_source_key}
     assert issued["immutable_snapshot"]["totals"]["total"] == 300_000
+
+
+def test_canonical_incomes_are_project_isolated_and_issue_receipts_without_sheets(repository, dsn):
+    first = project(repository, key="canonical-receipt-project-a-0001")["project"]
+    second = project(repository, key="canonical-receipt-project-b-0001")["project"]
+    source_a = insert_canonical_income(dsn, first["id"], amount=300_000)
+    source_b = insert_canonical_income(dsn, second["id"], amount=500_000)
+
+    assert [item["source_key"] for item in repository.list_receipt_candidates(first["id"])] == [source_a]
+    assert [item["source_key"] for item in repository.list_receipt_candidates(second["id"])] == [source_b]
+
+    subject = ProjectDocumentService(repository)
+    with pytest.raises(ProjectDocumentConflict, match="canonical project identity"):
+        subject.create_receipt(
+            first["id"],
+            allocations=[{"ledger_source_key": source_b, "amount": 100_000}],
+            values={},
+            idempotency_key="canonical-receipt-cross-project-0001",
+            actor=ACTOR,
+        )
+
+    draft = subject.create_receipt(
+        first["id"],
+        allocations=[{"ledger_source_key": source_a, "amount": 300_000}],
+        values={"notes": "DP canonical"},
+        idempotency_key="canonical-receipt-create-0001",
+        actor=ACTOR,
+    )
+    assert draft["allocations"][0]["ledger_snapshot"]["draft_authority"]["adapter_version"] == (
+        "postgresql-canonical-finance/1"
+    )
+    issued = subject.issue_document(
+        draft["id"],
+        expected_version=draft["lock_version"],
+        idempotency_key="canonical-receipt-issue-0001",
+        actor=ACTOR,
+    )
+    assert issued["status"] == "issued"
+    assert issued["official_number"] == "KWT/HW/2027/000001"
+    assert issued["immutable_snapshot"]["allocations"][0]["ledger_snapshot"]["issue_authority"][
+        "canonical_transaction_id"
+    ] == source_a.removeprefix("canonical:")
+    assert repository.list_receipt_candidates(first["id"]) == []
+    assert [item["source_key"] for item in repository.list_receipt_candidates(second["id"])] == [source_b]
+
+
+def test_canonical_receipt_fails_closed_when_income_is_corrected_after_draft(repository, dsn):
+    created = project(repository, key="canonical-receipt-correction-project-0001")["project"]
+    source_key = insert_canonical_income(dsn, created["id"], amount=300_000)
+    subject = ProjectDocumentService(repository)
+    draft = subject.create_receipt(
+        created["id"],
+        allocations=[{"ledger_source_key": source_key, "amount": 100_000}],
+        values={},
+        idempotency_key="canonical-receipt-correction-create-0001",
+        actor=ACTOR,
+    )
+
+    correction_id = correct_canonical_income(dsn, source_key, amount=300_000)
+    candidates = repository.list_receipt_candidates(created["id"])
+    assert candidates[0]["source_key"] == source_key
+    assert correction_id != source_key.removeprefix("canonical:")
+    with pytest.raises(ProjectDocumentConflict, match="source no longer exists"):
+        subject.create_receipt(
+            created["id"],
+            allocations=[{"ledger_source_key": f"canonical:{correction_id}", "amount": 100_000}],
+            values={},
+            idempotency_key="canonical-child-correction-rejected-0001",
+            actor=ACTOR,
+        )
+
+    with pytest.raises(ProjectDocumentConflict, match="changed after draft: canonical_transaction_id"):
+        subject.issue_document(
+            draft["id"],
+            expected_version=draft["lock_version"],
+            idempotency_key="canonical-receipt-correction-issue-0001",
+            actor=ACTOR,
+        )
+
+
+def test_canonical_reversal_child_key_is_not_independently_allocatable(repository, dsn):
+    created = project(repository, key="canonical-receipt-reversal-project-0001")["project"]
+    source_key = insert_canonical_income(dsn, created["id"], amount=300_000)
+    reversal_id = reverse_canonical_income(dsn, source_key, amount=300_000)
+    subject = ProjectDocumentService(repository)
+
+    assert repository.list_receipt_candidates(created["id"]) == []
+    with pytest.raises(ProjectDocumentConflict, match="source no longer exists"):
+        subject.create_receipt(
+            created["id"],
+            allocations=[{"ledger_source_key": f"canonical:{reversal_id}", "amount": 100_000}],
+            values={},
+            idempotency_key="canonical-child-reversal-rejected-0001",
+            actor=ACTOR,
+        )
+    with pytest.raises(ProjectDocumentConflict, match="source no longer exists"):
+        subject.create_receipt(
+            created["id"],
+            allocations=[{"ledger_source_key": source_key, "amount": 100_000}],
+            values={},
+            idempotency_key="canonical-reversed-root-rejected-0001",
+            actor=ACTOR,
+        )
 
 
 def test_receipt_sheet_drift_or_missing_reader_fails_closed_before_issue(repository, dsn):
@@ -2432,6 +2750,83 @@ def test_sql_lifecycle_terminal_immutability_and_no_delete_guards(repository, ds
                 cursor.execute("DELETE FROM projects WHERE id = %s", (created["project"]["id"],))
 
 
+def test_migration_028_upgrades_populated_schema_027_and_is_rerunnable(dsn):
+    import psycopg
+    from psycopg.types.json import Jsonb
+
+    migrations = load_production_bootstrap_migrations()
+    migration_028 = next(migration for migration in migrations if migration.version == 28)
+    with psycopg.connect(dsn, autocommit=True) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
+            for migration in migrations:
+                if migration.version <= 27:
+                    cursor.execute(migration.sql)
+            actor = Jsonb(ACTOR)
+            cursor.execute(
+                """
+                INSERT INTO project_issuer_profiles (
+                    issuer_key, legal_name, display_name, number_code, address,
+                    created_by, updated_by
+                ) VALUES ('upgrade-test', 'Upgrade Test', 'Upgrade Test', 'UP', 'Surabaya', %s, %s)
+                """,
+                (actor, actor),
+            )
+            project_id = uuid.uuid4()
+            cursor.execute(
+                """
+                INSERT INTO projects (
+                    id, name, client_name, issuer_key, wallet, company,
+                    status, created_by, updated_by
+                ) VALUES (%s, 'Upgrade', 'Client', 'upgrade-test', 'CV HB(101)', 'HOLLA', 'active', %s, %s)
+                """,
+                (project_id, actor, actor),
+            )
+            statuses = ('draft', 'sent', 'accepted', 'rejected', 'revised')
+            for version, status in enumerate(statuses, start=1):
+                sent_at = None if status == 'draft' else FIXED_NOW
+                decided_at = FIXED_NOW if status in {'accepted', 'rejected', 'revised'} else None
+                template_key = 'HOJJA' if version % 2 else 'HOLLAWALL'
+                cursor.execute(
+                    """
+                    INSERT INTO project_quotation_handoffs (
+                        id, project_id, version, canva_url, amount, status,
+                        sent_at, decided_at, created_by, updated_by,
+                        template_key, lock_version
+                    ) VALUES (%s, %s, %s, %s, 1000000, %s, %s, %s, %s, %s, %s, 7)
+                    """,
+                    (
+                        uuid.uuid4(), project_id, version,
+                        f"https://www.canva.com/design/upgrade-{version}", status,
+                        sent_at, decided_at, actor, actor, template_key,
+                    ),
+                )
+            cursor.execute(migration_028.sql)
+            cursor.execute(migration_028.sql)
+            cursor.execute(
+                """
+                SELECT status, template_key, deposit_percent, lock_version
+                FROM project_quotation_handoffs
+                ORDER BY version
+                """
+            )
+            rows = cursor.fetchall()
+            cursor.execute(
+                """
+                SELECT tgenabled
+                FROM pg_trigger
+                WHERE tgname = 'trg_project_quotation_transition'
+                  AND tgrelid = 'project_quotation_handoffs'::regclass
+                """
+            )
+            trigger_enabled = cursor.fetchone()[0]
+
+    assert [row[0] for row in rows] == list(statuses)
+    assert [int(row[2]) for row in rows] == [50, 30, 50, 30, 50]
+    assert {row[3] for row in rows} == {7}
+    assert trigger_enabled == 'O'
+
+
 def test_schema_health_detects_missing_exact_trigger(repository, dsn):
     import psycopg
 
@@ -2687,6 +3082,102 @@ def test_invoice_payment_lifecycle_tracks_paid_outstanding_and_final_balance(rep
     assert all(invoice["payment_status"] == "PAID" for invoice in paid["invoices"])
     assert repository.get_project_payment_summary(project_id) == paid
 
+
+
+def test_project_binding_becomes_immutable_after_commercial_activity(repository):
+    created = project(repository, key="binding-lock-project-0001", quotation_required=True)
+    project_id = created["project"]["id"]
+    repository.create_project_quotation(
+        project_id,
+        values={"amount": 100_000, "canva_url": "https://www.canva.com/design/binding-lock"},
+        idempotency_key="binding-lock-quotation-0001",
+        actor=ACTOR,
+    )
+
+    with pytest.raises(ProjectDocumentConflict, match="wallet and company are immutable"):
+        repository.update_project(
+            project_id,
+            {"wallet": "TX SBY(216)", "company": "TEXTURIN-Surabaya"},
+            expected_version=created["project"]["lock_version"],
+            idempotency_key="binding-lock-update-0001",
+            actor=ACTOR,
+        )
+    unchanged = repository.get_project(project_id)
+    assert unchanged["wallet"] == "CV HB(101)"
+    assert unchanged["company"] == "HOLLA"
+
+
+def test_parallel_projects_keep_different_dp_and_payments_isolated(repository):
+    project_a = project(repository, key="parallel-a-project-0001")
+    project_b = project(repository, key="parallel-b-project-0001")
+    project_a_id = project_a["project"]["id"]
+    project_b_id = project_b["project"]["id"]
+    issue_sales_order(repository, project_a, total=1_000_000, key="parallel-a-sales-order-0001")
+    issue_sales_order(repository, project_b, total=2_000_000, key="parallel-b-sales-order-0001")
+
+    invoice_a = issue(
+        repository,
+        invoice_with_total(repository, project_a_id, "DP", 300_000, "parallel-a-dp-0001"),
+        "parallel-a-dp-issue-0001",
+    )
+    invoice_b = issue(
+        repository,
+        invoice_with_total(repository, project_b_id, "DP", 1_000_000, "parallel-b-dp-0001"),
+        "parallel-b-dp-issue-0001",
+    )
+    assert repository.get_project_payment_summary(project_a_id)["invoiced_total"] == 300_000
+    assert repository.get_project_payment_summary(project_b_id)["invoiced_total"] == 1_000_000
+
+    income_a = insert_income(
+        repository._dsn,
+        project_a_id,
+        amount=300_000,
+        source_key="parallel-a-income-0001",
+    )
+    income_b = insert_income(
+        repository._dsn,
+        project_b_id,
+        amount=500_000,
+        source_key="parallel-b-income-0001",
+    )
+    receipt_a = ProjectDocumentService(repository).create_receipt(
+        project_a_id,
+        invoice_id=invoice_a["id"],
+        allocations=[{"ledger_source_key": income_a, "amount": 300_000}],
+        values={"notes": "DP 30% proyek A"},
+        idempotency_key="parallel-a-receipt-create-0001",
+        actor=ACTOR,
+    )
+    receipt_b = ProjectDocumentService(repository).create_receipt(
+        project_b_id,
+        invoice_id=invoice_b["id"],
+        allocations=[{"ledger_source_key": income_b, "amount": 500_000}],
+        values={"notes": "DP parsial proyek B"},
+        idempotency_key="parallel-b-receipt-create-0001",
+        actor=ACTOR,
+    )
+    issue(repository, receipt_a, "parallel-a-receipt-issue-0001")
+    issue(repository, receipt_b, "parallel-b-receipt-issue-0001")
+
+    summary_a = repository.get_project_payment_summary(project_a_id)
+    summary_b = repository.get_project_payment_summary(project_b_id)
+    assert summary_a["paid_total"] == 300_000
+    assert summary_a["contract_outstanding"] == 700_000
+    assert summary_a["invoices"][0]["payment_status"] == "PAID"
+    assert summary_b["paid_total"] == 500_000
+    assert summary_b["contract_outstanding"] == 1_500_000
+    assert summary_b["invoices"][0]["outstanding"] == 500_000
+    assert summary_b["invoices"][0]["payment_status"] == "PARTIALLY_PAID"
+
+    with pytest.raises(ProjectDocumentConflict, match="canonical project identity"):
+        ProjectDocumentService(repository).create_receipt(
+            project_b_id,
+            invoice_id=invoice_b["id"],
+            allocations=[{"ledger_source_key": income_a, "amount": 1}],
+            values={},
+            idempotency_key="parallel-cross-project-receipt-0001",
+            actor=ACTOR,
+        )
 
 
 def test_void_invoice_keeps_cash_and_marks_payment_unapplied(repository):
@@ -3047,6 +3538,7 @@ def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(reposit
             }],
             "discount_mode": "none",
             "tax_percent": "0",
+            "deposit_percent": 50,
             "payment_terms": "DP sebelum produksi",
             "content_notes": "Harga termasuk pemasangan.",
         },
@@ -3056,6 +3548,7 @@ def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(reposit
     assert first["template_key"] == "HOLLAWALL"
     assert first["amount"] == 900_000
     assert first["canva_url"] is None
+    assert first["deposit_percent"] == 50
 
     edited = repository.update_project_quotation(
         first["id"],
@@ -3101,9 +3594,17 @@ def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(reposit
         revision["id"], status="sent", note="", expected_version=revision["lock_version"],
         idempotency_key="structured-quotation-sent-0002", actor=ACTOR,
     )
+    with pytest.raises(ProjectDocumentConflict, match="must match sent quotation"):
+        repository.deal_project_quotation(
+            revision_sent["id"], dp_percent=30, remaining_installments=3,
+            expected_version=revision_sent["lock_version"],
+            expected_document_id=sales_order["id"],
+            expected_document_version=sales_order["lock_version"],
+            idempotency_key="structured-quotation-wrong-dp-0001", actor=ACTOR,
+        )
     deal = repository.deal_project_quotation(
         revision_sent["id"],
-        dp_percent=30,
+        dp_percent=50,
         remaining_installments=3,
         expected_version=revision_sent["lock_version"],
         expected_document_id=sales_order["id"],
@@ -3114,6 +3615,7 @@ def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(reposit
 
     assert deal["quotation"]["status"] == "accepted"
     assert deal["quotation"]["accepted_snapshot"]["amount"] == 1_000_002
+    assert deal["quotation"]["accepted_snapshot"]["deposit_percent"] == "50"
     assert deal["sales_order"]["lines"][0]["description"] == "Backdrop utama final"
     assert deal["sales_order"]["template_key"] == "HOLLAWALL"
     assert deal["sales_order"]["template_version"] == "commercial-v3"
@@ -3127,15 +3629,15 @@ def test_structured_quotation_revision_and_deal_create_exact_dp_schedule(reposit
     assert deal["dp_invoice"]["invoice_kind"] == "DP"
     assert deal["dp_invoice"]["template_key"] == "HOLLAWALL"
     assert deal["dp_invoice"]["payment_profile_key"] == "hollawall"
-    assert repository._calculate_totals(deal["dp_invoice"])["total"] == 300_001
+    assert repository._calculate_totals(deal["dp_invoice"])["total"] == 500_001
     schedule = deal["installment_schedule"]
-    assert [item["amount"] for item in schedule] == [300_001, 233_334, 233_334, 233_333]
+    assert [item["amount"] for item in schedule] == [500_001, 166_667, 166_667, 166_667]
     assert sum(item["amount"] for item in schedule) == 1_000_002
     assert schedule[0]["invoice_id"] == deal["dp_invoice"]["id"]
 
     with pytest.raises(ProjectDocumentConflict, match="already been dealt"):
         repository.deal_project_quotation(
-            revision_sent["id"], dp_percent=30, remaining_installments=1,
+            revision_sent["id"], dp_percent=50, remaining_installments=1,
             expected_version=deal["quotation"]["lock_version"],
             expected_document_id=deal["sales_order"]["id"],
             expected_document_version=deal["sales_order"]["lock_version"],

@@ -741,7 +741,7 @@ def _texturin_deposit(
     styles: Mapping[str, ParagraphStyle],
 ) -> Flowable:
     policy = commercial_policy(brand.key)
-    percent = int(policy.get("default_deposit_percent") or 0)
+    percent = _snapshot_deposit_percent(snapshot, brand)
     total = int(_mapping(snapshot.get("totals")).get("total") or 0)
     amount = total * percent // 100
     table = Table([
@@ -1006,6 +1006,14 @@ def _master_has_deposit(snapshot: Mapping[str, Any]) -> bool:
     )
 
 
+def _snapshot_deposit_percent(snapshot: Mapping[str, Any], brand: BrandSpec) -> int:
+    document = _mapping(snapshot.get("document"))
+    value = document.get("deposit_percent")
+    if value is None:
+        value = commercial_policy(brand.key).get("default_deposit_percent")
+    return int(value or 0)
+
+
 def _master_tax_label(snapshot: Mapping[str, Any]) -> str:
     tax_percent = _mapping(snapshot.get("document")).get("tax_percent")
     return f"Pajak {_text(tax_percent)}%" if tax_percent not in (None, "", "0", 0, "0.0") else "Pajak"
@@ -1076,7 +1084,7 @@ def _draw_hollawall_master(canvas: Any, snapshot: Mapping[str, Any], brand: Bran
     _canvas_text(canvas, brand, "TOTAL", .70, total_top, size=6.2, bold=True)
     _canvas_text(canvas, brand, _idr(totals.get("total")), .93, total_top, size=6.2, bold=True, right=True)
     policy = commercial_policy(brand.key)
-    percent = int(policy.get("default_deposit_percent") or 0)
+    percent = _snapshot_deposit_percent(snapshot, brand)
     if _master_has_deposit(snapshot):
         deposit = int(totals.get("total") or 0) * percent // 100
         _canvas_text(canvas, brand, f"{policy['labels']['deposit']} {percent}%", .66, total_top + .030, size=5.5, bold=True)
@@ -1123,7 +1131,7 @@ def _draw_hojja_master(canvas: Any, snapshot: Mapping[str, Any], brand: BrandSpe
         if width and height:
             _canvas_text(canvas, brand, f"({_text(width)} × {_text(height)} {_text(meta.get('dimension_unit'), 'm')})", .15, top + .022, size=6.4)
         if _master_has_deposit(snapshot):
-            _canvas_text(canvas, brand, f"DP {commercial_policy(brand.key)['default_deposit_percent']}%", .15, top + .047, size=6.4)
+            _canvas_text(canvas, brand, f"DP {_snapshot_deposit_percent(snapshot, brand)}%", .15, top + .047, size=6.4)
         _canvas_text(canvas, brand, meta.get("display_quantity") or line.get("quantity"), .67, top, size=7.2, right=True)
         original = meta.get("original_price")
         if original:
@@ -1209,7 +1217,7 @@ def _draw_texturin_master(canvas: Any, snapshot: Mapping[str, Any], brand: Brand
     _canvas_text(canvas, brand, "TOTAL", summary_left, summary_top, size=7, bold=True)
     _canvas_text(canvas, brand, _idr(totals.get("total")), .94, summary_top, size=7, bold=True, right=True)
     policy = commercial_policy(brand.key)
-    percent = int(policy.get("default_deposit_percent") or 0)
+    percent = _snapshot_deposit_percent(snapshot, brand)
     if brand.key != "texturin-bali" and _master_has_deposit(snapshot):
         deposit = int(totals.get("total") or 0) * percent // 100
         _canvas_text(canvas, brand, f"SIGNATURE FEE ({percent}%)", .55, summary_top + .030, size=6.3, bold=True)
