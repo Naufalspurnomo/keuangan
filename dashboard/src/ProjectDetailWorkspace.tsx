@@ -148,7 +148,7 @@ export default function ProjectDetailWorkspace({
         {...actionProps(TAB_ACTION[item.id])}
       >{item.label}</button>)}
     </div>
-    <div id={`project-${activeTab}-panel`} role="tabpanel" aria-labelledby={`project-${activeTab}-tab`} tabIndex={0}>{panel}</div>
+    <div id={`project-${activeTab}-panel`} role="tabpanel" aria-labelledby={`project-${activeTab}-tab`} tabIndex={0} className={activeTab === 'transactions' ? 'project-transaction-detail' : undefined}>{panel}</div>
   </section>
 }
 
