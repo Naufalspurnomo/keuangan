@@ -119,6 +119,15 @@ body.translatepress-en_US #menu-primary-menu-1 li.menu-item-2054 a::after {{
         margin-top: 8px;
     }}
 }}
+/* Native cross-document transition: no navigation interception or artificial delay. */
+@view-transition {{ navigation: auto; }}
+::view-transition-old(root) {{ animation: hw-language-out 120ms ease-out both; }}
+::view-transition-new(root) {{ animation: hw-language-in 180ms ease-out both; }}
+@keyframes hw-language-out {{ to {{ opacity: 0; }} }}
+@keyframes hw-language-in {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
+@media (prefers-reduced-motion: reduce) {{
+    ::view-transition-old(root), ::view-transition-new(root) {{ animation: none !important; }}
+}}
 /* Reset Blocksy menu-indicator styling; keep the switch compact. */
 #menu-primary-menu li.menu-item-2054 {{ align-self: center; }}
 #menu-primary-menu li.menu-item-2054 a.ct-menu-link,
