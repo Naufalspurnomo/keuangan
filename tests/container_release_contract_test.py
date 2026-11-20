@@ -115,6 +115,41 @@ def test_activation_rejects_noncanonical_release_before_migration():
     migrate.assert_not_called()
 
 
+def test_activation_prefers_koyeb_deployed_sha_over_stale_configured_sha():
+    deployed = "a" * 40
+    with (
+        patch.dict(
+            "os.environ",
+            {
+                "CANONICAL_FINANCE_ACTIVATE": "1",
+                "DATABASE_URL": "postgresql://isolated-test/db",
+                "RELEASE_SHA": "stale",
+                "KOYEB_GIT_SHA": deployed,
+            },
+            clear=True,
+        ),
+        patch.object(activate_canonical_finance, "apply_financial_migrations"),
+        patch("psycopg.connect", side_effect=RuntimeError("stop after release validation")),
+    ):
+        try:
+            activate_canonical_finance.activate()
+        except RuntimeError as error:
+            assert str(error) == "stop after release validation"
+        else:
+            raise AssertionError("test must stop after release validation")
+
+
+def test_phase_a_container_supports_031_but_defers_constraint_activation():
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    activation = (ROOT / "scripts" / "activate_canonical_finance.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "PROJECT_COMPLETION_CONSTRAINT_ENABLED=0" in dockerfile
+    assert "apply_through=target" in activation
+    assert 'PROJECT_COMPLETION_CONSTRAINT_ENABLED' in activation
+
+
 def test_container_context_excludes_private_runtime_material():
     patterns = {
         line.strip() for line in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()

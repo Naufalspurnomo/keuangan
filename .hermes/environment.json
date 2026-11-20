@@ -4,7 +4,7 @@
     "name": "Hollawall backend and browser acceptance",
     "kind": "flask-react",
     "bootstrap": [
-      ".venv/bin/python -m pip install -r requirements.txt",
+      ".venv/bin/python -m pip install -r requirements.txt pytest==9.0.2 playwright==1.55.0 openpyxl==3.1.5 PyYAML==6.0.3",
       "npm ci --prefix dashboard"
     ],
     "build": [

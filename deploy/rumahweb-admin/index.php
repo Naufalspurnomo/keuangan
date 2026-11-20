@@ -241,12 +241,10 @@ if (!isset($_SESSION[SESSION_KEY])):
   <meta name="theme-color" content="#fb9202">
   <title>Masuk — Hollawall</title>
   <link rel="icon" type="image/png" href="<?= ADMIN_PATH ?>brand/hollawall-logo.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+
   <style>
     :root{color-scheme:light;--orange:#fb9202;--cyan:#18b8c6;--navy:#163746;--cream:#ffecd2;--muted:#607781;--line:#d7e4e6}
-    *{box-sizing:border-box}html,body{min-height:100%;margin:0}body{font-family:'Montserrat',sans-serif;background:#fff;color:var(--navy)}
+    *{box-sizing:border-box}html,body{min-height:100%;margin:0}body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#fff;color:var(--navy)}
     .site-header{height:100px;display:flex;align-items:center;justify-content:space-between;padding:0 max(6vw,28px);background:#fff}.site-header img{display:block;width:64px;height:64px;object-fit:contain}.back-link{color:var(--orange);font-size:14px;font-weight:800;text-decoration:none}.back-link:hover{text-decoration:underline}.back-link:focus-visible,input:focus-visible,button:focus-visible{outline:3px solid rgba(24,184,198,.32);outline-offset:3px}
     main{min-height:calc(100vh - 100px);display:grid;grid-template-columns:minmax(0,1.08fr) minmax(420px,.92fr)}.story{position:relative;overflow:hidden;display:flex;align-items:center;min-height:620px;padding:64px max(6vw,48px);background:var(--orange) url('<?= ADMIN_PATH ?>brand/waves-background.svg') center/cover no-repeat;color:#fff}.story>div{position:relative;z-index:1;max-width:700px}.story p{max-width:600px;margin:26px 0 0;color:var(--cream);font-size:15px;font-weight:600;line-height:1.7}.story h1{max-width:720px;margin:0;font-size:clamp(54px,7vw,96px);font-weight:900;line-height:.9;letter-spacing:-.055em;text-transform:uppercase}.story h1 span{position:relative;display:inline-block}.story h1 span:after{content:'';position:absolute;left:0;right:-10%;bottom:-14px;height:11px;border-radius:999px;background:var(--cyan);transform:rotate(-1.5deg)}
     .signin{display:grid;place-items:center;padding:56px max(6vw,44px);background:#fff}.signin-inner{width:min(100%,430px)}.eyebrow{margin:0 0 12px;color:var(--cyan);font-size:11px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}.signin h2{margin:0 0 12px;font-size:clamp(34px,4vw,52px);font-weight:900;line-height:1;letter-spacing:-.045em}.intro{margin:0 0 34px;color:var(--muted);font-size:14px;line-height:1.65}.field{margin-bottom:19px}label{display:block;margin:0 0 8px;font-size:12px;font-weight:800}input{width:100%;height:50px;border:1px solid var(--line);border-radius:10px;background:#f7fafb;color:var(--navy);font:600 14px 'Montserrat',sans-serif;padding:0 15px;outline:0}input:focus{border-color:var(--cyan);background:#fff;box-shadow:0 0 0 4px rgba(24,184,198,.1)}button{width:100%;height:52px;margin-top:6px;border:0;border-radius:10px;background:var(--orange);color:var(--navy);font:900 14px 'Montserrat',sans-serif;cursor:pointer}button:hover{background:#ffa11f}.error{margin:0 0 20px;border-left:4px solid #c84d49;background:#fff2f0;color:#923b38;font-size:12px;font-weight:600;line-height:1.5;padding:12px 14px}.session-note{margin:19px 0 0;color:var(--muted);font-size:11px;font-weight:600;line-height:1.55}
@@ -257,7 +255,7 @@ if (!isset($_SESSION[SESSION_KEY])):
 <body>
 <header class="site-header"><a href="https://hollawall.com/en/" aria-label="Beranda Hollawall"><img src="<?= ADMIN_PATH ?>brand/hollawall-logo.png" alt="Hollawall"></a><a class="back-link" href="https://hollawall.com/en/">Kembali ke situs Hollawall</a></header>
 <main>
-  <section class="story" aria-label="Ruang finansial Hollawall"><div><h1>Ruang<br><span>Finansial</span></h1><p>Lanjutan dari ruang kerja Hollawall untuk membaca posisi kas, aktivitas unit, dan proyek dalam satu snapshot yang dapat ditelusuri.</p></div></section>
+  <section class="story" aria-label="Ruang finansial Hollawall"><div><h1>Ruang<br><span>Finansial</span></h1><p>Lanjutan dari ruang kerja Hollawall untuk membaca posisi kas, aktivitas unit, dan Project dalam satu snapshot yang dapat ditelusuri.</p></div></section>
   <section class="signin">
     <div class="signin-inner">
       <header><p class="eyebrow">Hollawall Group</p><h2>Masuk</h2><p class="intro">Gunakan akun ruang kerja finansial Hollawall.</p></header>

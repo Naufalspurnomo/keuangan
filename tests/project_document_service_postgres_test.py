@@ -226,6 +226,7 @@ def test_repository_replays_project_and_invoice_after_midnight_and_status_change
             datetime(2026, 11, 3, 16, 59, tzinfo=ZoneInfo("UTC")),
             datetime(2026, 11, 3, 17, 1, tzinfo=ZoneInfo("UTC")),
             datetime(2026, 11, 3, 17, 2, tzinfo=ZoneInfo("UTC")),
+            datetime(2026, 11, 3, 17, 3, tzinfo=ZoneInfo("UTC")),
         ]
     )
     repository._now = lambda: next(moments)
@@ -340,7 +341,7 @@ def test_issue_replay_does_not_consume_clock_or_recheck_later_project_state(repo
         actor=ACTOR,
     )
     assert replay == issued
-    assert clock_calls == ["called"]
+    assert clock_calls == ["called", "called"]
 
 
 def test_repository_invoice_command_applies_dp_progress_and_final_policy(repository):

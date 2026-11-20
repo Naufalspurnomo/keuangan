@@ -114,7 +114,9 @@ def dsn():
             cursor.execute(quotation_migration)
             for migration in canonical_extensions:
                 cursor.execute(migration)
-    ensure_project_document_schema(selected)
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv("PROJECT_COMPLETION_CONSTRAINT_ENABLED", "1")
+        ensure_project_document_schema(selected)
     return selected
 
 
@@ -1404,6 +1406,81 @@ def test_project_hard_delete_requires_gate_removes_descendants_and_replays(repos
     assert target_outbox_count == 0
 
 
+def test_completion_migration_backfills_audit_metadata_and_constraint(dsn):
+    import psycopg
+    from psycopg.types.json import Jsonb
+
+    with psycopg.connect(dsn) as connection, connection.cursor() as cursor:
+        cursor.execute("ALTER TABLE projects DROP CONSTRAINT IF EXISTS chk_projects_completion_date_lifecycle")
+        project_id = str(uuid.uuid4())
+        actor = {"type": "test", "email": "owner@example.com"}
+        cursor.execute(
+            """
+            INSERT INTO project_issuer_profiles(
+                issuer_key, legal_name, display_name, number_code, address,
+                bank_details, created_by, updated_by
+            ) VALUES (
+                'hollawall', 'CV Holla Berkreasi', 'Hollawall', 'HW', 'Surabaya',
+                '{}'::jsonb, %s, %s
+            ) ON CONFLICT (issuer_key) DO NOTHING
+            """,
+            (Jsonb(actor), Jsonb(actor)),
+        )
+        cursor.execute(
+            """
+            INSERT INTO projects(
+                id, name, client_name, issuer_key, wallet, company, status,
+                start_date, completion_date, created_by, updated_by,
+                created_at, updated_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, 'completed', %s, NULL, %s, %s,
+                '2026-11-03T12:00:00Z', '2026-11-03T12:00:00Z'
+            )
+            """,
+            (
+                project_id,
+                "Legacy Complete",
+                "Legacy Client",
+                "hollawall",
+                "CV HB(101)",
+                "HOLLA",
+                "2026-11-03",
+                Jsonb(actor),
+                Jsonb(actor),
+            ),
+        )
+        cursor.execute(
+            "SELECT lock_version FROM projects WHERE id = %s", (project_id,)
+        )
+        before_version = int(cursor.fetchone()[0])
+        sql = (
+            Path(__file__).parents[1]
+            / "dashboard_api/migrations/031_project_completion_date_invariant.sql"
+        ).read_text(encoding="utf-8")
+        cursor.execute(sql)
+        cursor.execute(
+            "SELECT completion_date, lock_version, updated_by FROM projects WHERE id = %s",
+            (project_id,),
+        )
+        completion_date, lock_version, updated_by = cursor.fetchone()
+        cursor.execute(
+            """
+            SELECT event_type, actor
+            FROM project_document_events
+            WHERE project_id = %s AND event_type = 'project.completion_date_backfilled'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (project_id,),
+        )
+        event_type, event_actor = cursor.fetchone()
+
+    assert str(completion_date) == "2026-11-03"
+    assert lock_version == before_version + 1
+    assert updated_by["id"] == "migration-031"
+    assert event_type == "project.completion_date_backfilled"
+    assert event_actor["id"] == "migration-031"
+
+
 def test_project_creation_defaults_and_invoice_status_restrictions(repository):
     created = project(repository)
     sales_order = created["sales_order"]
@@ -1433,6 +1510,26 @@ def test_project_creation_defaults_and_invoice_status_restrictions(repository):
         actor=ACTOR,
     )
     assert completed["status"] == "completed"
+    assert completed["completion_date"] == "2027-01-01"
+    import psycopg
+
+    with psycopg.connect(repository._dsn) as connection, connection.cursor() as cursor:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            cursor.execute(
+                "UPDATE projects SET completion_date = NULL WHERE id = %s",
+                (completed["id"],),
+            )
+        connection.rollback()
+
+    corrected_completion = repository.update_project(
+        completed["id"],
+        {"completion_date": "2027-01-02"},
+        expected_version=completed["lock_version"],
+        idempotency_key="project-completion-date-fix-key-0001",
+        actor=ACTOR,
+    )
+    assert corrected_completion["completion_date"] == "2027-01-02"
+    completed = corrected_completion
     with pytest.raises(ProjectDocumentConflict, match="only allow a FINAL"):
         repository.create_invoice_draft(
             completed["id"],
@@ -1455,6 +1552,7 @@ def test_project_creation_defaults_and_invoice_status_restrictions(repository):
         idempotency_key="project-cancel-after-complete-key-0001",
         actor=ACTOR,
     )
+    assert cancelled["completion_date"] is None
     with pytest.raises(ProjectDocumentConflict, match="cancelled project"):
         repository.create_invoice_draft(
             cancelled["id"],

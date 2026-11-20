@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/canonical-finance-readiness.php';
+
 // Shared Task-4 implementation. Entry points must define PD_PROXY_RESOURCE as
 // either `projects` or `documents` before loading this file.
 const PD_ADMIN_PATH = '/admin/';
@@ -336,7 +338,7 @@ function pd_post_route(string $resource, string $action, array $body, string $pr
     return [$action === 'update' ? 'PATCH' : 'POST', $documentsBase . '/' . $id . $suffix, $payload];
 }
 
-function pd_proxy(string $method, string $url, array|false $payload, bool $pdf, string $token, bool $localWritesEnabled, string $key = '', string $ifMatch = ''): never
+function pd_proxy(string $method, string $url, array|false $payload, bool $pdf, string $token, bool $localWritesEnabled, bool $canonicalWritesEnabled, string $key = '', string $ifMatch = ''): never
 {
     $response = '';
     $tooLarge = false;
@@ -423,7 +425,8 @@ function pd_proxy(string $method, string $url, array|false $payload, bool $pdf, 
                 'reads_enabled' => ($capabilities['reads_enabled'] ?? null) === true,
                 'project_document_writes_enabled' => $localWritesEnabled
                     && ($capabilities['project_document_writes_enabled'] ?? null) === true,
-                'transaction_correction_reversal' => false,
+                'transaction_correction_reversal' => $canonicalWritesEnabled
+                    && ($capabilities['transaction_correction_reversal'] ?? null) === true,
                 'hard_delete' => $localWritesEnabled
                     && ($capabilities['hard_delete'] ?? null) === true,
             ]],
@@ -482,12 +485,13 @@ if (!preg_match('/^[^\x00-\x1F\x7F]{16,512}$/D', $token)) {
 $projectsBase = pd_validate_url((string) ($config['upstream_projects_url'] ?? ''), '/api/dashboard/v1/projects');
 $documentsBase = pd_validate_url((string) ($config['upstream_documents_url'] ?? ''), '/api/dashboard/v1/documents');
 $localWritesEnabled = ($config['project_document_writes_enabled'] ?? false) === true;
+$canonicalWritesEnabled = canonical_finance_proxy_ready($config);
 
 if ($method === 'GET') {
     $action = is_string($_GET['action'] ?? null) ? $_GET['action'] : '';
     [$upstreamMethod, $url, $pdf] = pd_get_route($resource, $action, $_GET, $projectsBase, $documentsBase);
     session_write_close();
-    pd_proxy($upstreamMethod, $url, false, $pdf, $token, $localWritesEnabled);
+    pd_proxy($upstreamMethod, $url, false, $pdf, $token, $localWritesEnabled, $canonicalWritesEnabled);
 }
 
 $body = pd_json_body();
@@ -508,4 +512,4 @@ if (!$localWritesEnabled) {
 [$key, $ifMatch] = pd_write_headers($body, $action, $config);
 [$upstreamMethod, $url, $payload] = pd_post_route($resource, $action, $body, $projectsBase, $documentsBase);
 session_write_close();
-pd_proxy($upstreamMethod, $url, $payload, false, $token, true, $key, $ifMatch);
+pd_proxy($upstreamMethod, $url, $payload, false, $token, true, $canonicalWritesEnabled, $key, $ifMatch);

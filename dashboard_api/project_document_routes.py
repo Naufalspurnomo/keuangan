@@ -60,13 +60,16 @@ def _json_safe(value: Any) -> Any:
 
 
 def _capabilities() -> dict[str, bool]:
+    canonical_lifecycle = bool(
+        current_app.config.get("CANONICAL_FINANCE_API_ENABLED", False)
+        and current_app.config.get("CANONICAL_FINANCE_WRITES_ENABLED", False)
+    )
     return {
         "reads_enabled": True,
         "project_document_writes_enabled": bool(
             current_app.config.get("PROJECT_DOCUMENT_WRITES_ENABLED", False)
         ),
-        # The shared service does not safely mutate authoritative Sheets cash.
-        "transaction_correction_reversal": False,
+        "transaction_correction_reversal": canonical_lifecycle,
         "hard_delete": bool(
             current_app.config.get("PROJECT_DOCUMENT_WRITES_ENABLED", False)
         ),

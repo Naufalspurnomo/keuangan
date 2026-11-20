@@ -10,7 +10,7 @@ from typing import Any, Callable, Iterable
 
 
 APPLICATION_SCHEMA_MIN = 18
-APPLICATION_SCHEMA_MAX = 30
+APPLICATION_SCHEMA_MAX = 31
 MIGRATION_LOCK_ID = 0x484F4C4C415741  # stable "HOLLAWA" advisory lock namespace
 _MIGRATION_PATTERN = re.compile(r"^(?P<version>\d{3})_.*\.sql$")
 
@@ -143,6 +143,7 @@ def apply_financial_migrations(
     dsn: str,
     *,
     migrations: Iterable[Migration] | None = None,
+    apply_through: int | None = None,
     connection_factory: Callable[[str], Any] | None = None,
 ) -> dict[str, Any]:
     """Apply migrations once under a transaction-scoped PostgreSQL advisory lock.
@@ -155,6 +156,13 @@ def apply_financial_migrations(
     if not selected_dsn:
         raise FinancialSchemaError("canonical finance migration requires a database DSN")
     selected = _selected_migrations(migrations)
+    target = (
+        max((migration.version for migration in selected), default=0)
+        if apply_through is None
+        else int(apply_through)
+    )
+    if target < 0 or target > max((migration.version for migration in selected), default=0):
+        raise FinancialSchemaError("canonical finance migration target is unsupported")
     connector = connection_factory or _connect
     applied_now: list[int] = []
     try:
@@ -186,6 +194,8 @@ def apply_financial_migrations(
                         f"{max(existing)} > {newest_supported}"
                     )
                 for migration in selected:
+                    if migration.version > target:
+                        continue
                     recorded = existing.get(migration.version)
                     if recorded is not None:
                         if recorded != (migration.sha256, migration.filename):
@@ -207,9 +217,13 @@ def apply_financial_migrations(
         raise
     except Exception as exc:
         raise FinancialSchemaError(f"canonical finance migration failed: {type(exc).__name__}") from exc
+    current_version = max(
+        [*existing, *applied_now],
+        default=0,
+    )
     return {
         "applied": applied_now,
-        "current_version": max((migration.version for migration in selected), default=0),
+        "current_version": current_version,
         "ready": True,
     }
 

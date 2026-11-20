@@ -557,7 +557,10 @@ def health_check():
             'writes_enabled': project_document_writes_enabled,
             'schema_ready': bool(project_schema.get('ready')),
             'ready': project_schema_ready,
-            'transaction_correction_reversal': False,
+            'transaction_correction_reversal': bool(
+                app.config.get('CANONICAL_FINANCE_API_ENABLED', False)
+                and app.config.get('CANONICAL_FINANCE_WRITES_ENABLED', False)
+            ),
             'hard_delete': project_document_writes_enabled,
         }
         review_writes_enabled = bool(inbox.get('review_writes_enabled'))
@@ -638,8 +641,8 @@ def health_check():
 def release_health_check():
     """Return immutable, non-secret deployment provenance."""
     release_sha = (
-        os.getenv('RELEASE_SHA', '').strip()
-        or os.getenv('KOYEB_GIT_SHA', '').strip()
+        os.getenv('KOYEB_GIT_SHA', '').strip()
+        or os.getenv('RELEASE_SHA', '').strip()
         or 'unknown'
     )
     return jsonify({'status': 'ok', 'release_sha': release_sha}), 200

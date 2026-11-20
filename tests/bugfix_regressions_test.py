@@ -8,18 +8,18 @@ from handlers.revision_handler import handle_undo_command
 DASHBOARD_ID = "dashboard:17:" + "a" * 64
 
 
-def test_release_health_reports_configured_sha_without_runtime_dependencies():
-    with patch.dict(os.environ, {"RELEASE_SHA": "abc123", "KOYEB_GIT_SHA": "ignored"}, clear=False), \
+def test_release_health_prefers_koyeb_deployed_sha_without_runtime_dependencies():
+    with patch.dict(os.environ, {"RELEASE_SHA": "stale123", "KOYEB_GIT_SHA": "deployed123"}, clear=False), \
          patch.object(main, "inbox_health", side_effect=AssertionError("must not run")):
         response = main.app.test_client().get("/api/health/release")
     assert response.status_code == 200
-    assert response.get_json() == {"status": "ok", "release_sha": "abc123"}
+    assert response.get_json() == {"status": "ok", "release_sha": "deployed123"}
 
 
-def test_release_health_falls_back_to_koyeb_sha():
-    with patch.dict(os.environ, {"RELEASE_SHA": "", "KOYEB_GIT_SHA": "koyeb123"}, clear=False):
+def test_release_health_falls_back_to_configured_sha_outside_koyeb():
+    with patch.dict(os.environ, {"RELEASE_SHA": "configured123", "KOYEB_GIT_SHA": ""}, clear=False):
         response = main.app.test_client().get("/api/health/release")
-    assert response.get_json() == {"status": "ok", "release_sha": "koyeb123"}
+    assert response.get_json() == {"status": "ok", "release_sha": "configured123"}
 
 
 def test_explicit_dashboard_undo_uses_exact_message_id_and_confirmation():
