@@ -110,6 +110,7 @@ def build_runner(token: str, source: dict[str, str], target: dict[str, str], slu
         source["p2"]: target["p2"],
         source["p3"]: target["p3"],
         source["source_line"]: target["source_line"],
+        source["source_line"].replace("&", "&amp;"): target["source_line"].replace("&", "&amp;"),
         source["cover_alt"]: target["cover_alt"],
     }
     image_url = f"https://hollawall.com/wp-content/uploads/hollawall-projects/{image_name}"
