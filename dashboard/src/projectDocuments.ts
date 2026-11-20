@@ -231,6 +231,7 @@ export interface ProjectDocumentDraft {
   discount_mode: DocumentDiscountMode
   discount_value: string
   tax_percent: string
+  deposit_percent?: number
   allocations: ReceiptAllocation[]
 }
 

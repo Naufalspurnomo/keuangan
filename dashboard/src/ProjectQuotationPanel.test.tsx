@@ -141,6 +141,26 @@ describe('ProjectQuotationPanel', () => {
     expect(screen.getByRole('complementary', { name: 'Ringkasan quotation' })).toHaveTextContent(/Rp\s*5\.000\.000/)
   })
 
+  it('keeps a custom Texturin deposit percentage identical in the form and paper proof', async () => {
+    const texturinProject = {
+      ...project,
+      issuer_key: 'texturin-surabaya',
+      wallet: 'TX SBY(216)',
+      company: 'TEXTURIN-Surabaya',
+    }
+    render(<ProjectQuotationPanel project={texturinProject} session={session} api={api()} onApplied={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Buat quotation' }))
+
+    fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Lime wash paint' } })
+    fireEvent.change(screen.getByLabelText('Luas tagihan item 1 (m²)'), { target: { value: '13.47' } })
+    fireEvent.change(screen.getByLabelText('PPM item 1 *'), { target: { value: '250000' } })
+    fireEvent.change(screen.getByLabelText(/^DP Project \(%\)/), { target: { value: '45' } })
+
+    const proof = screen.getByText(/BUKTI KERTAS/).parentElement!
+    expect(proof).toHaveTextContent('45% signature fee')
+    expect(proof).not.toHaveTextContent('30% signature fee')
+  })
+
   it('creates a structured draft from project-derived recipient data and confirms authoritative readback', async () => {
     const subject = api()
     subject.list.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('Readback terputus')).mockResolvedValue([item])

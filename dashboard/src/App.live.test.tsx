@@ -749,12 +749,14 @@ describe('production live source mode', () => {
   it('closes after the committed write while refresh runs, warns on refresh failure, then polls again', async () => {
     vi.useFakeTimers()
     let snapshotRequests = 0
-    const refresh = deferred<Response>()
+    const preCommitPoll = deferred<Response>()
+    const postCommitReadback = deferred<Response>()
     const request = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === '/admin/api/snapshot.php') {
         snapshotRequests += 1
-        if (snapshotRequests === 2) return refresh.promise
+        if (snapshotRequests === 2) return preCommitPoll.promise
+        if (snapshotRequests === 3) return postCommitReadback.promise
         return liveResponse()
       }
       if (url === '/admin/api/write-session.php') return writeSessionResponse()
@@ -765,6 +767,8 @@ describe('production live source mode', () => {
     vi.stubGlobal('fetch', request)
     render(<App />)
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(snapshotRequests).toBe(2)
 
     fireEvent.click(screen.getByRole('button', { name: 'Operasional kantor' }))
     fireEvent.click(screen.getAllByRole('button', { name: /Biaya kantor|Catat biaya/ })[0])
@@ -777,10 +781,13 @@ describe('production live source mode', () => {
     expect(snapshotRequests).toBe(2)
     expect(screen.getByRole('status')).toHaveTextContent('Data sedang diperbarui')
 
-    await act(async () => { refresh.reject(new Error('snapshot offline')); await Promise.resolve(); await Promise.resolve() })
+    await act(async () => { preCommitPoll.resolve(liveResponse()); await Promise.resolve(); await Promise.resolve() })
+    expect(snapshotRequests).toBe(3)
+
+    await act(async () => { postCommitReadback.reject(new Error('snapshot offline')); await Promise.resolve(); await Promise.resolve() })
     expect(screen.getByRole('status')).toHaveTextContent('Transaksi sudah tercatat, tetapi data terbaru belum dapat dimuat')
 
     await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
-    expect(snapshotRequests).toBe(3)
+    expect(snapshotRequests).toBe(4)
   })
 })

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 from copy import deepcopy
+from typing import Any, cast
 
 import pytest
 from PIL import Image as PillowImage
@@ -84,6 +85,32 @@ def reader(pdf: bytes) -> PdfReader:
 def xobject_count(pdf: bytes) -> int:
     resources = reader(pdf).pages[0]["/Resources"]
     return len(resources["/XObject"].get_object()) if "/XObject" in resources else 0
+
+
+def image_dimensions(pdf: bytes) -> set[tuple[int, int]]:
+    dimensions: set[tuple[int, int]] = set()
+    for page in reader(pdf).pages:
+        resources = cast(dict[str, Any], page["/Resources"])
+        if "/XObject" not in resources:
+            continue
+        xobjects = cast(dict[str, Any], resources["/XObject"].get_object())
+        for reference in xobjects.values():
+            image = reference.get_object()
+            if image.get("/Subtype") == "/Image":
+                dimensions.add((int(image["/Width"]), int(image["/Height"])))
+    return dimensions
+
+
+def page_image_dimensions(page) -> set[tuple[int, int]]:
+    resources = cast(dict[str, Any], page["/Resources"])
+    if "/XObject" not in resources:
+        return set()
+    xobjects = cast(dict[str, Any], resources["/XObject"].get_object())
+    return {
+        (int(image["/Width"]), int(image["/Height"]))
+        for reference in xobjects.values()
+        if (image := reference.get_object()).get("/Subtype") == "/Image"
+    }
 
 
 def visible_text_runs(pdf: bytes) -> list[dict]:
@@ -187,6 +214,24 @@ def test_quotation_pdf_uses_project_specific_deposit_percent():
     assert "Down Payment 30%" not in content
 
 
+def test_hojja_quotation_pdf_uses_project_specific_deposit_percent_consistently():
+    value = snapshot()
+    value["project"]["company"] = "HOJJA"
+    value["issuer"]["display_name"] = "HOJJA ArtHouse"
+    value["document"].update({
+        "document_type": "sales_order",
+        "template_key": "HOJJA",
+        "deposit_percent": "45",
+        "payment_terms": "DP 45% sebelum produksi.",
+    })
+
+    content = " ".join(text(render_project_document_pdf(value)).split())
+
+    assert "DP 45%" in content
+    assert "Rp 1.125.000" in content
+    assert "Rp 750.000" not in content
+
+
 def test_texturin_surabaya_and_bali_have_distinct_pdf_contracts():
     surabaya = snapshot()
     surabaya["project"].update({"company": "TEXTURIN-Surabaya", "wallet": "TX SBY(216)"})
@@ -273,12 +318,14 @@ def test_texturin_two_item_pdf_matches_the_readable_signed_paper_contract():
     height = float(page.mediabox.height)
 
     assert "20 November 2026" in content
+    assert "VALID UNTIL" in content
+    assert "27 November 2026" in content
     assert "Evanvun" in content
     assert xobject_count(pdf) >= 2  # Canonical master plus canonical sign-off artwork.
     for expected in ("Tanah", "Rp 3.000.000", "Air", "Rp 8.000.000", "Rp 11.000.000"):
         assert expected in content
     dynamic = [run for run in runs if run["text"] in {
-        "GGWP", "Gatau", "QTN/001", "20 November 2026", "Tanah", "Air",
+        "GGWP", "Gatau", "QTN/001", "20 November 2026", "VALID UNTIL", "27 November 2026", "Tanah", "Air",
         "Rp 10.000", "Rp 40.000", "300 m²", "200 m²",
         "Rp 3.000.000", "Rp 8.000.000", "Rp 11.000.000",
     }]
@@ -293,6 +340,42 @@ def test_texturin_two_item_pdf_matches_the_readable_signed_paper_contract():
     item_total_right = max(run["right"] for key in ("Rp 3.000.000", "Rp 8.000.000") for run in by_text[key])
     assert ppm_right < quantity_right < item_total_right
     assert item_total_right == pytest.approx(width * .928, abs=2)
+
+
+def test_texturin_long_terms_use_paginated_flow_without_losing_content_or_signoff():
+    value = snapshot(line_count=2)
+    value["project"].update({
+        "name": "Gatau", "client_name": "GGWP", "client_company": "",
+        "company": "TEXTURIN-Surabaya", "wallet": "TX SBY(216)",
+    })
+    value["issuer"].update({
+        "issuer_key": "texturin-surabaya", "display_name": "Texturin Surabaya",
+        "bank_details": {"bank": "BCA", "account_number": "123", "account_name": "Evan Setyawan"},
+    })
+    marker = "AKHIR-KETENTUAN-TERVERIFIKASI"
+    value["document"].update({
+        "document_type": "sales_order", "template_key": "TEXTURIN-SURABAYA",
+        "official_number": "QTN/LONG", "issue_date": "2026-11-20",
+        "valid_until": "2026-11-27", "deposit_percent": "45",
+        "payment_terms": (("Ketentuan pembayaran khusus Project. " * 230) + marker)[:9_000],
+        "notes": "Catatan quotation tetap terbaca.",
+    })
+
+    pdf = render_project_document_pdf(value)
+    content = " ".join(text(pdf).split())
+
+    assert len(reader(pdf).pages) >= 2
+    assert marker in content
+    assert "Pengecatan dilakukan pada bidang tembok/plafon yang siap dicat." in content
+    assert "Hasil aplikasi ditargetkan 80% sesuai sampel karena proses handmade." in content
+    assert "Persetujuan penawaran disertai pembayaran signature fee sebesar 45%" in content
+    assert "signature fee sebesar 30%" not in content
+    assert "BANK DETAILS" in content
+    assert "SIGNATURE FEE (45%)" in content
+    assert (283, 244) in image_dimensions(pdf)  # Canonical Evanvun sign-off, including later pages.
+    final_page = reader(pdf).pages[-1]
+    assert "BANK DETAILS" in (final_page.extract_text() or "")
+    assert (283, 244) in page_image_dimensions(final_page)
 
 
 def test_hojja_three_line_document_never_omits_the_third_billed_artwork():

@@ -735,7 +735,7 @@ function LiveDashboardApp() {
     try {
       const result = await pendingAttempt.current.submit(writeSession)
       pendingAttempt.current = null
-      return { ...result, readback: state.reload().then(() => undefined) }
+      return { ...result, readback: state.reload({ afterActive: true }).then(() => undefined) }
     } catch (error) {
       if (!(error && typeof error === 'object' && 'uncertain' in error && error.uncertain)) {
         pendingAttempt.current = null

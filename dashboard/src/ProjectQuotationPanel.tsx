@@ -115,6 +115,7 @@ function quotationDraft(project: ProjectRecord, values: ProjectQuotationValues):
     discount_mode: values.discount_mode,
     discount_value: values.discount_value,
     tax_percent: values.tax_percent,
+    deposit_percent: values.deposit_percent,
     allocations: [],
   }
 }

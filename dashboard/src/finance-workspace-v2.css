@@ -611,7 +611,7 @@ html[data-theme='dark'] .year-command nav button.active { color: #0c2028; }
 .texturin-master-document .live-line > :nth-child(2) { padding-left: .9em; }
 .texturin-master-document .live-project-image { top: 31%; left: 12%; width: 30%; height: 14%; }
 .texturin-master-document .live-totals { top: 52%; right: 6.2%; width: 30.3%; }
-.texturin-master-document .live-terms { top: 62%; left: 6.8%; width: 84%; font-size: .9em; font-style: italic; }
+.texturin-master-document .live-terms { top: 62%; bottom: 11%; left: 6.8%; width: 84%; overflow: auto; font-size: .9em; font-style: italic; }
 .texturin-master-document .live-bank { top: 90.5%; left: 6.8%; width: 38%; }
 .texturin-master-document .live-deposit { top: 57.4%; right: 6.2%; width: 42%; }
 .texturin-master-document .live-closing { right: 1.7%; bottom: .8%; width: 25%; }
