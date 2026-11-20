@@ -21,7 +21,10 @@ from services.project_document_repository import (
     ensure_project_document_schema,
     project_document_schema_health,
 )
-from services.financial_schema import load_production_bootstrap_migrations
+from services.financial_schema import (
+    apply_financial_migrations,
+    load_production_bootstrap_migrations,
+)
 from services.project_document_pdf import render_project_document_artifact
 from services.project_documents import ProjectDocumentService
 
@@ -114,9 +117,20 @@ def dsn():
             cursor.execute(quotation_migration)
             for migration in canonical_extensions:
                 cursor.execute(migration)
+    # The completion-date contract is a numbered release migration. Startup
+    # only verifies it; tests must apply it through the same ledger runner used
+    # by production so SQL and the version record remain one transaction.
+    migrations = load_production_bootstrap_migrations(migration_root)
+    apply_financial_migrations(
+        selected,
+        migrations=migrations[26:],
+        apply_through=31,
+    )
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setenv("PROJECT_COMPLETION_CONSTRAINT_ENABLED", "1")
-        ensure_project_document_schema(selected)
+        health = ensure_project_document_schema(selected)
+    assert health["ready"] is True
+    assert health["completion_constraint"] is True
     return selected
 
 
