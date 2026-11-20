@@ -75,7 +75,7 @@ describe('ProjectLifecycleMarketChart', () => {
     const { container } = render(<ProjectLifecycleMarketChart projects={projects} transactions={transactions} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={vi.fn()} />)
     expect(container.querySelectorAll('.age-band-swatches > i')).toHaveLength(5)
     expect(container.textContent).toContain('Warna umur: hijau · toska · kuning · oranye · merah')
-    expect(container.textContent).toContain('Selesai: warna umur dipertahankan, tanda centang menunjukkan status')
+    expect(container.textContent).toContain('Tepi ganda menandai Project yang telah selesai')
     expect(container.textContent).toContain('Bulan terbaru di atas; Project terbaru di kanan')
   })
 

@@ -248,7 +248,7 @@ describe('Hollawall demo finance workspace', () => {
     const summary = screen.getByLabelText('Status Project tahun 2026')
     expect(within(summary).getByText(/Hasil filter · \d+\/5/)).toBeTruthy()
     expect(document.querySelectorAll('.project-market-canvas')).toHaveLength(4)
-    expect(screen.getByText('8 / 18 aktif')).toBeTruthy()
+    expect(screen.getByText('10 / 18 aktif')).toBeTruthy()
     expect(screen.getByText('Garis putih = rentang transaksi')).toBeTruthy()
     expect(screen.getAllByRole('button', { name: /transaksi pertama .* transaksi terakhir/ }).length).toBeGreaterThan(0)
   })
