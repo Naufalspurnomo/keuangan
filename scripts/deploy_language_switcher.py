@@ -63,15 +63,21 @@ SWITCHER_CSS = f"""{MARKER_START}
 #menu-primary-menu-1 li.menu-item-2054 a::before,
 #menu-primary-menu li.menu-item-2054 a::after,
 #menu-primary-menu-1 li.menu-item-2054 a::after {{
-    display: inline-flex;
+    display: inline-flex !important;
+    position: static !important;
     align-items: center;
+    width: auto !important;
+    height: 18px !important;
     min-height: 18px;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
     background-repeat: no-repeat;
     background-position: left center;
     background-size: 18px 14px;
     font-size: 13px;
     line-height: 18px;
     letter-spacing: .04em;
+    opacity: 1 !important;
 }}
 body.translatepress-id_ID #menu-primary-menu li.menu-item-2054 a::before,
 body.translatepress-id_ID #menu-primary-menu-1 li.menu-item-2054 a::before {{
@@ -79,6 +85,7 @@ body.translatepress-id_ID #menu-primary-menu-1 li.menu-item-2054 a::before {{
     padding-left: 23px;
     background-image: url("https://hollawall.com/wp-content/plugins/translatepress-multilingual/assets/flags/4x3/id_ID.svg");
     font-weight: 800;
+    opacity: 1 !important;
 }}
 body.translatepress-id_ID #menu-primary-menu li.menu-item-2054 a::after,
 body.translatepress-id_ID #menu-primary-menu-1 li.menu-item-2054 a::after {{
