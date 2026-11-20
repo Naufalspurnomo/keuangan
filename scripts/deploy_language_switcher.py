@@ -157,6 +157,9 @@ body.translatepress-en_US #menu-primary-menu-1 li.menu-item-2054 a::after {{
 }}
 #menu-primary-menu li.menu-item-2054 a::after,
 #menu-primary-menu-1 li.menu-item-2054 a::after {{ opacity: .55 !important; }}
+/* TranslatePress emits the target flag as an actual image; hide it because both flags are rendered once by the switcher pseudo-elements. */
+#menu-primary-menu li.menu-item-2054 img.trp-flag-image,
+#menu-primary-menu-1 li.menu-item-2054 img.trp-flag-image {{ display: none !important; }}
 #menu-primary-menu-1 li.menu-item-2054 a.ct-menu-link {{ color: #fff; border-color: rgba(255,255,255,.55); }}
 {MARKER_END}"""
 
