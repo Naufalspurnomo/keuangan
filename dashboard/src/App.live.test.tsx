@@ -275,6 +275,7 @@ describe('production live source mode', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Buka Project Kontrak Panggung Utama' }))
     expect(screen.queryByText('123e4567-e89b-42d3-a456-426614174000')).toBeNull()
     expect(screen.getByRole('tab', { name: 'Transaksi' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tabpanel')).toHaveClass('project-transaction-detail')
     expect(screen.getByRole('tab', { name: 'Quotation & Invoice' })).toBeTruthy()
     expect(window.location.hash).toContain('project=123e4567-e89b-42d3-a456-426614174000')
     expect(request).toHaveBeenCalledWith('/admin/api/projects.php?action=list', expect.objectContaining({ credentials: 'same-origin' }))
