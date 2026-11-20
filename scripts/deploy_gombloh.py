@@ -126,6 +126,7 @@ def build_runner(token: str, source: dict[str, str], target: dict[str, str], slu
         f"<p style=\"line-height:1.75\">{source['p2']}</p>"
         f"<p style=\"line-height:1.75\">{source['p3']}</p>"
         f"<p style=\"line-height:1.75;font-size:.9em;opacity:.75;margin-top:28px\">{source['source_line']}</p>"
+        f"<p style=\"line-height:1.75;font-size:.9em;opacity:.75\">{source['hashtag']}</p>"
         "</section>"
     )
     php = f"""<?php
@@ -177,7 +178,7 @@ $rewrite = function (&$node) use (&$rewrite, $thumbnail_id, $image_url) {{
     if (isset($node['id'], $node['settings']) && is_array($node['settings'])) {{
         if ($node['id'] === 'aa7b09e') {{ $node['settings']['title'] = {php_single_quoted(source['heading'])}; }}
         elseif ($node['id'] === '6cf922c') {{ $node['settings']['title'] = {php_single_quoted(source['excerpt'])}; }}
-        elseif ($node['id'] === '857f5dd') {{ $node['settings']['editor'] = '<p>' . {php_single_quoted(source['p1'])} . '</p><p>' . {php_single_quoted(source['p2'])} . '</p><p>' . {php_single_quoted(source['p3'])} . '</p><p>' . {php_single_quoted(source['source_line'])} . '</p>'; }}
+        elseif ($node['id'] === '857f5dd') {{ $node['settings']['editor'] = '<p>' . {php_single_quoted(source['p1'])} . '</p><p>' . {php_single_quoted(source['p2'])} . '</p><p>' . {php_single_quoted(source['p3'])} . '</p><p><strong>' . {php_single_quoted(source['source_line'])} . '</strong></p><p>' . {php_single_quoted(source['hashtag'])} . '</p>'; }}
         elseif ($node['id'] === '30518f6') {{ $node['settings']['title'] = 'Final Design Digital'; }}
         elseif ($node['id'] === 'e02eed0') {{ $node['settings']['editor'] = ''; }}
         elseif ($node['id'] === 'ba3acbc') {{ $node['settings']['image'] = array('url'=>$image_url, 'id'=>$thumbnail_id, 'size'=>''); $node['settings']['image_size'] = 'full'; }}
@@ -205,7 +206,10 @@ $created_ids = array();
 foreach ($translations as $original => $translated) {{
     $row = $wpdb->get_row($wpdb->prepare("SELECT id, translated, status FROM `$table` WHERE BINARY original = %s ORDER BY id ASC LIMIT 1", $original), ARRAY_A);
     if ($row) {{
-        if ((string)$row['translated'] !== (string)$translated || (int)$row['status'] !== 2) {{ if (!$existing) {{ wp_delete_post($post_id, true); }} http_response_code(409); echo json_encode(array('ok'=>false,'error'=>'translation-conflict','original'=>$original)); exit; }}
+        if ((string)$row['translated'] !== (string)$translated || (int)$row['status'] !== 2) {{
+            $ok = $wpdb->update($table, array('translated'=>$translated,'status'=>2), array('id'=>(int)$row['id']), array('%s','%d'), array('%d'));
+            if ($ok === false) {{ http_response_code(500); echo json_encode(array('ok'=>false,'error'=>'translation-update-failed','original'=>$original)); exit; }}
+        }}
         continue;
     }}
     $ok = $wpdb->insert($table, array('original'=>$original,'translated'=>$translated,'status'=>2,'block_type'=>0), array('%s','%s','%d','%d'));
@@ -258,20 +262,22 @@ def main() -> int:
     source = {
         "title": "GOMBLOH: SANG MUSISI LEGENDARIS",
         "heading": "GOMBLOH: SANG MUSISI LEGENDARIS",
-        "p1": "Soedjarwoto Soemarsono, yang dikenal dengan nama Gombloh, merupakan musisi dan pencipta lagu legendaris Indonesia. Orang tua Gombloh merupakan warga asli Surabaya, mereka bertempat tinggal di Lawang Seketeng Gang IV. Namun, tahun 1948 terjadi Agresi Militer Belanda II, sehingga mereka harus mengungsi di Jombang, Jawa Timur. Di sanalah Gombloh lahir, tepatnya di Tawangsari, Jombang pada 12 Juli 1948. Meskipun lahir di Jombang, Gombloh tumbuh dan berkarya di Surabaya. Selain dikenal sebagai seniman, Gombloh juga pernah menempuh pendidikan arsitektur di Institut Teknologi Sepuluh Nopember (ITS) Surabaya sebelum memilih untuk lebih mendalami dunia musik.",
+        "p1": "Soedjarwoto Soemarsono, yang dikenal dengan nama Gombloh, merupakan musisi dan pencipta lagu legendaris Indonesia. Orang tua Gombloh merupakan warga asli Surabaya, mereka bertempat tinggal di Lawang Seketeng Gang IV. Namun, tahun 1948 terjadi agresi militer Belanda II, sehingga mereka harus mengungsi di Jombang, Jawa Timur. Disanalah Gombloh lahir, tepatnya di Tawangsari, Jombang pada 12 Juli 1948. Meskipun lahir di Jombang, Gombloh tumbuh dan berkarya di Surabaya. Selain dikenal sebagai seniman, Gombloh juga pernah menempuh pendidikan arsitektur di Institut Teknologi Sepuluh Nopember (ITS) Surabaya sebelum memilih untuk lebih mendalami dunia musik.",
         "p2": "Perjalanan musiknya berkembang sejak akhir 1960-an. Pada 1969, Gombloh bersama Leo Kristi dan sejumlah musisi lainnya membentuk grup musik yang bernama Lemon Tree’s Anno ’69 yang mengusung aliran folk. Melalui musik, ia mengangkat beragam kisah kehidupan masyarakat, kritik sosial, dan persoalan kemanusiaan dengan gaya yang khas dan dekat dengan kehidupan sehari-hari. Salah satu karyanya yang paling dikenal adalah Kebyar-Kebyar, lagu yang menggambarkan kecintaan terhadap Indonesia dan semangat persatuan. Kepeduliannya terhadap lingkungan juga tercermin dalam lagu Berita Cuaca.",
         "p3": "Gombloh meninggal dunia di Surabaya pada 9 Januari 1988, dalam usia 39 tahun. Meski perjalanan hidupnya terbilang singkat, karya-karyanya terus dikenang dan diwariskan lintas generasi.",
-        "source_line": "Sumber: Buku Gombloh: Revolusi Cinta dari Surabaya karya Guruh Dimas Nugraha & Moegers (Kelompok Penggemar Gombloh) · #CeritaMuralTunjungan",
+        "source_line": "Sumber: Buku Gombloh: Revolusi Cinta dari Surabaya karya Guruh Dimas Nugraha & Mogers (Kelompok Penggemar Gombloh)",
+        "hashtag": "#CeritaMuralTunjungan",
         "excerpt": "Pemkot Surabaya X Hollawall",
         "cover_alt": "Ilustrasi Gombloh bermain gitar dengan latar panggung musik dan bangunan bersejarah Tunjungan",
     }
     target = {
         "title": "GOMBLOH: THE LEGENDARY MUSICIAN",
         "heading": "GOMBLOH: THE LEGENDARY MUSICIAN",
-        "p1": "Soedjarwoto Soemarsono, known as Gombloh, was a legendary Indonesian musician and songwriter. Gombloh’s parents were natives of Surabaya; they lived on Lawang Seketeng Gang IV. However, in 1948, the Second Dutch Military Aggression occurred, forcing them to flee to Jombang, East Java. It was there that Gombloh was born, specifically in Tawangsari, Jombang, on July 12, 1948. Although he was born in Jombang, Gombloh grew up and pursued his career in Surabaya. In addition to being known as an artist, Gombloh also studied architecture at the Sepuluh Nopember Institute of Technology (ITS) in Surabaya before choosing to delve deeper into the world of music.",
-        "p2": "His musical journey began in the late 1960s. In 1969, Gombloh, along with Leo Kristi and several other musicians, formed the folk band Lemon Tree’s Anno ’69. Through his music, he highlighted a variety of stories about people’s lives, social criticism, and humanitarian issues in a distinctive style that resonated with everyday life. One of his best-known works is Kebyar-Kebyar, a song that expresses love for Indonesia and a spirit of unity. His concern for the environment is also reflected in the song Berita Cuaca.",
+        "p1": "Soedjarwoto Soemarsono, known as Gombloh, was a legendary Indonesian musician and songwriter. Gombloh’s parents were natives of Surabaya; they lived on Lawang Seketeng Gang IV. However, in 1948, the Second Dutch Military Aggression occurred, forcing them to flee to Jombang, East Java. It was there that Gombloh was born, specifically in Tawangsari, Jombang, on July 14, 1948. Although he was born in Jombang, Gombloh grew up and pursued his career in Surabaya. In addition to being known as an artist, Gombloh also studied architecture at the Sepuluh Nopember Institute of Technology (ITS) in Surabaya before choosing to delve deeper into the world of music.",
+        "p2": "His musical journey began in the late 1960s. In 1969, Gombloh, along with Leo Kristi and several other musicians, formed the folk band Lemon Tree’s Anno ’69. Through his music, he highlighted a variety of stories about people’s lives, social criticism, and humanitarian issues in a distinctive style that resonated with everyday life. One of his best-known works is “Kebyar-Kebyar,” a song that expresses love for Indonesia and a spirit of unity. His concern for the environment is also reflected in the song “Berita Cuaca.”",
         "p3": "Gombloh passed away in Surabaya on January 9, 1988, at the age of 39. Although his life was relatively short, his works continue to be remembered and passed down across generations.",
-        "source_line": "Source: Gombloh: The Love Revolution from Surabaya by Guruh Dimas Nugraha & Moegers (Gombloh Fan Club) · #CeritaMuralTunjungan",
+        "source_line": "Source: The Book Gombloh: The Love Revolution from Surabaya by Guruh Dimas Nugraha & Mogers (Gombloh Fan Club)",
+        "hashtag": "#CeritaMuralTunjungan",
         "excerpt": "Pemkot Surabaya X Hollawall",
         "cover_alt": "Illustration of Gombloh playing guitar against a musical stage and a historic Tunjungan building",
     }

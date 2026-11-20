@@ -119,7 +119,8 @@ def build_runner(token: str, source: dict[str, str], target: dict[str, str], slu
     mapping = {
         source["title"]: target["title"],
         source["heading"]: target["heading"],
-        source["body"]: target["body"],
+        source["p1"]: target["p1"],
+        source["p2"]: target["p2"],
         source["source_line"]: target["source_line"],
         source["cover_alt"]: target["cover_alt"],
     }
@@ -133,8 +134,10 @@ def build_runner(token: str, source: dict[str, str], target: dict[str, str], slu
         f"<img src=\"{image_url}\" alt=\"{source['cover_alt']}\" width=\"1290\" height=\"942\" style=\"display:block;width:100%;height:auto\" />"
         "</figure>"
         "<section class=\"hollawall-project-story\" style=\"padding-bottom:48px\">"
-        f"<p style=\"line-height:1.75\">{source['body']}</p>"
+        f"<p style=\"line-height:1.75\">{source['p1']}</p>"
+        f"<p style=\"line-height:1.75\">{source['p2']}</p>"
         f"<p style=\"line-height:1.75;font-size:.9em;opacity:.75;margin-top:28px\">{source['source_line']}</p>"
+        f"<p style=\"line-height:1.75;font-size:.9em;opacity:.75\">{source['hashtag']}</p>"
         "</section>"
     )
     excerpt = source["excerpt"]
@@ -206,7 +209,7 @@ $rewrite = function (&$node) use (&$rewrite, $thumbnail_id, $image_url) {{
     if (isset($node['id'], $node['settings']) && is_array($node['settings'])) {{
         if ($node['id'] === 'aa7b09e') {{ $node['settings']['title'] = {php_single_quoted(source['heading'])}; }}
         elseif ($node['id'] === '6cf922c') {{ $node['settings']['title'] = {php_single_quoted(source['excerpt'])}; }}
-        elseif ($node['id'] === '857f5dd') {{ $node['settings']['editor'] = '<p>' . {php_single_quoted(source['body'])} . '</p><p>' . {php_single_quoted(source['source_line'])} . '</p>'; }}
+        elseif ($node['id'] === '857f5dd') {{ $node['settings']['editor'] = '<p>' . {php_single_quoted(source['p1'])} . '</p><p>' . {php_single_quoted(source['p2'])} . '</p><p><strong>' . {php_single_quoted(source['source_line'])} . '</strong></p><p>' . {php_single_quoted(source['hashtag'])} . '</p>'; }}
         elseif ($node['id'] === '30518f6') {{ $node['settings']['title'] = 'Final Design Digital'; }}
         elseif ($node['id'] === 'e02eed0') {{ $node['settings']['editor'] = ''; }}
         elseif ($node['id'] === 'ba3acbc') {{
@@ -248,10 +251,8 @@ foreach ($translations as $original => $translated) {{
     $row = $wpdb->get_row($wpdb->prepare("SELECT id, translated, status, block_type FROM `$table` WHERE BINARY original = %s ORDER BY id ASC LIMIT 1", $original), ARRAY_A);
     if ($row) {{
         if ((string)$row['translated'] !== (string)$translated || (int)$row['status'] !== 2) {{
-            if (!$existing) {{ wp_delete_post($post_id, true); }}
-            http_response_code(409);
-            echo json_encode(array('ok'=>false,'error'=>'translation-conflict','original'=>$original));
-            exit;
+            $ok = $wpdb->update($table, array('translated'=>$translated,'status'=>2), array('id'=>(int)$row['id']), array('%s','%d'), array('%d'));
+            if ($ok === false) {{ http_response_code(500); echo json_encode(array('ok'=>false,'error'=>'translation-update-failed','original'=>$original)); exit; }}
         }}
         continue;
     }}
@@ -280,7 +281,7 @@ if (defined('WPO_CACHE_DIR') && is_dir(WPO_CACHE_DIR)) {{
     }}
 }}
 $readback = get_post($post_id);
-$verified = $readback && $readback->post_status === 'publish' && $readback->post_name === $slug && $readback->post_title === {php_single_quoted(source['title'])} && strpos($readback->post_content, {php_single_quoted(source['body'])}) !== false;
+$verified = $readback && $readback->post_status === 'publish' && $readback->post_name === $slug && $readback->post_title === {php_single_quoted(source['title'])} && strpos($readback->post_content, {php_single_quoted(source['p1'])}) !== false && strpos($readback->post_content, {php_single_quoted(source['p2'])}) !== false;
 if (!$verified) {{
     foreach ($created_ids as $created_id) {{ $wpdb->delete($table, array('id'=>$created_id), array('%d')); }}
     if (!$existing) {{ wp_delete_post($post_id, true); }}
@@ -341,16 +342,20 @@ def main() -> int:
     source = {
         "title": "SEJARAH JL. TUNJUNGAN",
         "heading": "SEJARAH JL. TUNJUNGAN",
-        "body": "Sejak 1888, Jalan Tunjungan berkembang menjadi salah satu pusat perdagangan dan perbelanjaan penting di Surabaya. Perkembangannya didukung oleh jaringan trem yang menghubungkan kawasan ini dengan Krian, Wonokromo, hingga Jembatan Merah. Deretan pertokoan, pusat perbelanjaan, dan hotel menjadikan Tunjungan sebagai shopping street yang mencerminkan dinamika kehidupan ekonomi dan perkotaan Surabaya pada masa kolonial. Setelah mengalami kemunduran aktivitas pada dekade 1990-an, Jalan Tunjungan kembali hidup melalui revitalisasi kawasan. Kini, kawasan ini menjadi destinasi wisata heritage sekaligus ruang publik yang menawarkan kuliner, kafe, serta kegiatan seni dan budaya. Bangunan bersejarah seperti Siola dan berbagai bangunan pertokoan lama menjadi bagian dari identitas Tunjungan sebagai salah satu ikon sejarah dan gaya hidup Kota Surabaya.",
-        "source_line": "Sumber: #CeritaMuralTunjungan",
+        "p1": "Sejak 1888, Jalan Tunjungan berkembang menjadi salah satu pusat perdagangan dan perbelanjaan penting di Surabaya. Perkembangannya didukung oleh jaringan trem yang menghubungkan kawasan ini dengan Krian, Wonokromo, hingga Jembatan Merah. Deretan pertokoan, pusat perbelanjaan, dan hotel menjadikan Tunjungan sebagai shopping street yang mencerminkan dinamika kehidupan ekonomi dan perkotaan Surabaya pada masa kolonial.",
+        "p2": "Setelah mengalami kemunduran aktivitas pada dekade 1990-an, Jalan Tunjungan kembali hidup melalui revitalisasi kawasan. Kini, kawasan ini menjadi destinasi wisata heritage sekaligus ruang publik yang menawarkan kuliner, kafe, serta kegiatan seni dan budaya. Bangunan bersejarah seperti Siola dan berbagai bangunan pertokoan lama menjadi bagian dari identitas Tunjungan sebagai salah satu ikon sejarah dan gaya hidup Kota Surabaya.",
+        "source_line": "Sumber: Tim Ahli Cagar Budaya Kota Surabaya",
+        "hashtag": "#CeritaMuralTunjungan",
         "excerpt": "Pemkot Surabaya X Hollawall",
         "cover_alt": "Ilustrasi sejarah Jalan Tunjungan dengan trem, kereta kuda, dan bangunan bersejarah Surabaya",
     }
     target = {
         "title": "HISTORY OF JL. TUNJUNGAN",
         "heading": "HISTORY OF JL. TUNJUNGAN",
-        "body": "Since 1888, Jalan Tunjungan has developed into one of Surabaya’s major commercial and shopping districts. Its growth was supported by a tram network connecting the area with Krian, Wonokromo, and Jembatan Merah. Rows of shops, shopping establishments, and hotels transformed Tunjungan into a prominent shopping street, reflecting Surabaya’s economic vitality and urban development during the colonial era. After experiencing a decline in commercial activity during the 1990s, Jalan Tunjungan was brought back to life through urban revitalization. Today, it is a heritage tourism destination and a vibrant public space featuring culinary attractions, cafés, and various arts and cultural activities. Historic buildings such as Siola, along with the district’s old shophouses, form an important part of Tunjungan’s identity as one of Surabaya’s icons of history and urban lifestyle.",
-        "source_line": "Source: #CeritaMuralTunjungan",
+        "p1": "Since 1888, Jalan Tunjungan has developed into one of Surabaya’s major commercial and shopping districts. Its growth was supported by a tram network connecting the area with Krian, Wonokromo, and Jembatan Merah. Rows of shops, shopping establishments, and hotels transformed Tunjungan into a prominent shopping street, reflecting the economic vitality and urban development of Surabaya during the colonial era.",
+        "p2": "After experiencing a decline in commercial activity during the 1990s, Jalan Tunjungan has been brought back to life through urban revitalization. Today, it is a heritage tourism destination and a vibrant public space featuring culinary attractions, cafés, and various arts and cultural activities. Historic buildings such as Siola, along with the district’s old shophouses, form an important part of Tunjungan’s identity as one of Surabaya’s iconic historic and lifestyle destinations.",
+        "source_line": "Source: The Culture Heritage Expert Team of Surabaya City",
+        "hashtag": "#CeritaMuralTunjungan",
         "excerpt": "Pemkot Surabaya X Hollawall",
         "cover_alt": "Historical illustration of Jalan Tunjungan featuring a tram, horse-drawn carriages, and Surabaya heritage buildings",
     }
