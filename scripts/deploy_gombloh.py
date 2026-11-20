@@ -205,11 +205,13 @@ $table_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_
 if ($table_exists !== $table) {{ if (!$existing) {{ wp_delete_post($post_id, true); }} http_response_code(500); echo json_encode(array('ok'=>false,'error'=>'translatepress-table-missing')); exit; }}
 $created_ids = array();
 foreach ($translations as $original => $translated) {{
-    $row = $wpdb->get_row($wpdb->prepare("SELECT id, translated, status FROM `$table` WHERE BINARY original = %s ORDER BY id ASC LIMIT 1", $original), ARRAY_A);
-    if ($row) {{
-        if ((string)$row['translated'] !== (string)$translated || (int)$row['status'] !== 2) {{
-            $ok = $wpdb->update($table, array('translated'=>$translated,'status'=>2), array('id'=>(int)$row['id']), array('%s','%d'), array('%d'));
-            if ($ok === false) {{ http_response_code(500); echo json_encode(array('ok'=>false,'error'=>'translation-update-failed','original'=>$original)); exit; }}
+    $rows = $wpdb->get_results($wpdb->prepare("SELECT id, translated, status FROM `$table` WHERE BINARY original = %s ORDER BY id ASC", $original), ARRAY_A);
+    if ($rows) {{
+        foreach ($rows as $row) {{
+            if ((string)$row['translated'] !== (string)$translated || (int)$row['status'] !== 2) {{
+                $ok = $wpdb->update($table, array('translated'=>$translated,'status'=>2), array('id'=>(int)$row['id']), array('%s','%d'), array('%d'));
+                if ($ok === false) {{ http_response_code(500); echo json_encode(array('ok'=>false,'error'=>'translation-update-failed','original'=>$original)); exit; }}
+            }}
         }}
         continue;
     }}
