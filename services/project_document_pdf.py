@@ -35,6 +35,7 @@ from reportlab.platypus import (
     Flowable,
     Frame,
     Image,
+    KeepTogether,
     PageTemplate,
     Paragraph,
     Spacer,
@@ -701,6 +702,25 @@ def _notes_and_signatures(
     document = _mapping(snapshot.get("document"))
     issuer = _mapping(snapshot.get("issuer"))
     bank = _mapping(issuer.get("bank_details"))
+    if _is_texturin(brand):
+        terms: list[Flowable] = []
+        for index, value in enumerate(_texturin_master_terms(snapshot, brand).split("\n\n")):
+            if index:
+                terms.append(Spacer(1, 1 * mm))
+            terms.append(Paragraph(_paragraph_text(value), styles["body"]))
+        closure: list[Flowable] = [
+            Paragraph("<b>BANK DETAILS</b>", styles["value_bold"]),
+            Spacer(1, 1.5 * mm),
+        ]
+        if bank:
+            bank_text = " · ".join(_text(bank.get(field)) for field in ("bank", "account_number", "account_name"))
+            closure.append(Paragraph(f"<b>{_paragraph_text(bank_text)}</b>", styles["small"]))
+        if _TEXTURIN_SIGNOFF_DATA:
+            signoff = Image(io.BytesIO(_TEXTURIN_SIGNOFF_DATA), width=48 * mm, height=34 * mm, kind="proportional")
+            signoff.hAlign = "RIGHT"
+            closure.extend([Spacer(1, 4 * mm), signoff])
+        return [*terms, Spacer(1, 4 * mm), KeepTogether(closure)]
+
     heading = "BANK DETAILS" if _is_texturin(brand) else "Payment Information"
     notes: list[Flowable] = [
         Paragraph(f"<b>{heading}</b>", styles["value_bold"]),
@@ -715,9 +735,6 @@ def _notes_and_signatures(
 
     prepared = _paragraph_text(document.get("prepared_by"), _text(issuer.get("display_name"), brand.identity))
     approved = _paragraph_text(document.get("client_signatory"), "Nama & tanda tangan")
-    if _is_texturin(brand):
-        return notes
-
     if brand.key == "hollawall":
         signoff_items: list[Flowable] = [
             Paragraph("Best regards and thank you,", styles["right"]),
@@ -1038,6 +1055,44 @@ def _snapshot_deposit_percent(snapshot: Mapping[str, Any], brand: BrandSpec) -> 
     return int(value or 0)
 
 
+def _texturin_master_terms(snapshot: Mapping[str, Any], brand: BrandSpec) -> str:
+    document = _mapping(snapshot.get("document"))
+    policy = commercial_policy(brand.key)
+    terms = [] if _master_is_invoice(snapshot) else [*policy.get("default_terms", [])]
+    percent = _snapshot_deposit_percent(snapshot, brand)
+    terms = [
+        re.sub(r"signature fee sebesar \d+(?:[.,]\d+)?%", f"signature fee sebesar {percent}%", term, flags=re.IGNORECASE)
+        for term in terms
+    ]
+    terms.extend(
+        str(value).strip()
+        for value in (document.get("payment_terms"), document.get("notes"))
+        if str(value or "").strip()
+    )
+    if not terms:
+        terms = ["Pembayaran sesuai tanggal jatuh tempo yang tercantum."]
+    return "\n\n".join(terms)
+
+
+def _texturin_master_terms_fit(snapshot: Mapping[str, Any], brand: BrandSpec) -> bool:
+    if brand.key == "texturin-bali":
+        return True
+    regular, _ = _register_fonts(brand)
+    style = ParagraphStyle(
+        f"master-fit-{brand.key}",
+        fontName=regular,
+        fontSize=10.2,
+        leading=14.2,
+        textColor=brand.ink,
+        alignment=TA_LEFT,
+    )
+    value = _paragraph_text(_texturin_master_terms(snapshot, brand)).replace("\n", "<br/>")
+    paragraph = Paragraph(f"<i>{value}</i>", style)
+    _, height = paragraph.wrap(brand.page_size[0] * .87, brand.page_size[1])
+    available = brand.page_size[1] * (.922 - .614) - 14.2
+    return height <= available
+
+
 def _master_tax_label(snapshot: Mapping[str, Any]) -> str:
     tax_percent = _mapping(snapshot.get("document")).get("tax_percent")
     return f"Pajak {_text(tax_percent)}%" if tax_percent not in (None, "", "0", 0, "0.0") else "Pajak"
@@ -1180,7 +1235,7 @@ def _draw_hojja_master(canvas: Any, snapshot: Mapping[str, Any], brand: BrandSpe
     summary_top += .025
     _canvas_text(canvas, brand, "TOTAL", .57, summary_top, size=7, bold=True)
     _canvas_text(canvas, brand, _idr(totals.get("total")), .89, summary_top, size=7, bold=True, right=True)
-    percent = int(commercial_policy(brand.key).get("default_deposit_percent") or 0)
+    percent = _snapshot_deposit_percent(snapshot, brand)
     if _master_has_deposit(snapshot):
         deposit = int(totals.get("total") or 0) * percent // 100
         summary_top += .031
@@ -1212,6 +1267,9 @@ def _draw_texturin_master(canvas: Any, snapshot: Mapping[str, Any], brand: Brand
     if _master_is_invoice(snapshot):
         _canvas_text(canvas, brand, "DUE DATE", .67, meta_top + .046, size=10.5, bold=True)
         _canvas_text(canvas, brand, _date_label(document.get("due_date")), .928, meta_top + .046, size=10.5, right=True)
+    elif document.get("valid_until"):
+        _canvas_text(canvas, brand, "VALID UNTIL", .67, meta_top + .046, size=10.5, bold=True)
+        _canvas_text(canvas, brand, _date_label(document.get("valid_until")), .928, meta_top + .046, size=10.5, right=True)
     if _master_is_receipt(snapshot):
         _draw_master_receipt(canvas, snapshot, brand, x=.12, top=.35, width=.74)
         return
@@ -1248,11 +1306,7 @@ def _draw_texturin_master(canvas: Any, snapshot: Mapping[str, Any], brand: Brand
         _canvas_text(canvas, brand, f"SIGNATURE FEE ({percent}%)", deposit_left, summary_top + .030, size=9.5, bold=True)
         _canvas_text(canvas, brand, _idr(deposit), .928, summary_top + .030, size=9.5, bold=True, right=True)
     if brand.key != "texturin-bali":
-        terms = [] if _master_is_invoice(snapshot) else [*policy.get("default_terms", [])]
-        terms.extend(str(value).strip() for value in (document.get("payment_terms"), document.get("notes")) if str(value or "").strip())
-        if not terms:
-            terms = ["Pembayaran sesuai tanggal jatuh tempo yang tercantum."]
-        _canvas_paragraph(canvas, brand, "\n\n".join(terms), .066, .614, .87, size=10.2, leading=14.2, italic=True)
+        _canvas_paragraph(canvas, brand, _texturin_master_terms(snapshot, brand), .066, .614, .87, size=10.2, leading=14.2, italic=True)
     bank = _mapping(issuer.get("bank_details"))
     bank_top = .60 if brand.key == "texturin-bali" else .922
     _canvas_text(canvas, brand, "BANK DETAILS", .054, bank_top, size=10.5, bold=True)
@@ -1389,7 +1443,8 @@ def render_project_document_pdf(
     if not isinstance(snapshot, Mapping):
         raise TypeError("snapshot must be a mapping")
     brand = _brand_for(snapshot)
-    if brand.key in _MASTER_ART and len(_master_lines(snapshot)) <= 3:
+    master_content_fits = not _is_texturin(brand) or _texturin_master_terms_fit(snapshot, brand)
+    if brand.key in _MASTER_ART and len(_master_lines(snapshot)) <= 3 and master_content_fits:
         return _build_master_pdf(snapshot, brand)
     first_pass = _build_pdf(snapshot, brand, logo_path, None)
     total_pages = _page_count(first_pass)

@@ -96,6 +96,24 @@ describe('ProjectDocumentPreview brand renderers', () => {
     expect(within(page).getByAltText('Texturin sign-off Evanvun')).toBeTruthy()
   })
 
+  it('uses the quotation-specific deposit percentage in the Texturin paper proof', () => {
+    const project = { ...baseProject, issuer_key: 'texturin-surabaya', wallet: 'TX SBY(216)', company: 'TEXTURIN-Surabaya' }
+    const document = documentFor(project, 'texturin-surabaya', {
+      id: 'line-texturin-custom-deposit', description: 'Lime wash paint', quantity: '', unit: 'm²', unit_price: 250_000, discount_percent: '0',
+      pricing_mode: 'ppm_area', width: '5', height: '2.695', dimension_unit: 'm', area_rounding: 'truncate',
+    })
+    Object.assign(document, { type: 'sales_order' as const, due_date: null, valid_until: '2026-11-17', deposit_percent: 45 })
+
+    render(<ProjectDocumentPreview project={project} document={document} title="Quotation" />)
+
+    const page = screen.getByRole('article', { name: 'Pratinjau A4 Quotation Texturin Surabaya' })
+    expect(page).toHaveTextContent('45% signature fee')
+    expect(page).toHaveTextContent('Rp1.515.375')
+    expect(page).toHaveTextContent('signature fee sebesar 45%')
+    expect(page).not.toHaveTextContent('30% signature fee')
+    expect(page).not.toHaveTextContent('signature fee sebesar 30%')
+  })
+
   it('keeps a two-item Texturin paper proof complete, aligned, and signed', () => {
     const project = {
       ...baseProject,

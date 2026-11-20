@@ -35,6 +35,10 @@ interface UseLiveSnapshotOptions {
   pollIntervalMs?: number
 }
 
+interface LiveSnapshotReloadOptions {
+  afterActive?: boolean
+}
+
 const rupiah = new Intl.NumberFormat('id-ID', {
   style: 'currency',
   currency: 'IDR',
@@ -92,7 +96,7 @@ export function useLiveSnapshot({ endpoint, loader = loadLiveSnapshot, pollInter
   const activeRequest = useRef<Promise<DashboardSnapshot> | null>(null)
   const requestSequence = useRef(0)
 
-  const reload = useCallback(() => {
+  const startRequest = useCallback(() => {
     if (activeRequest.current) return activeRequest.current
     const controller = new AbortController()
     const sequence = ++requestSequence.current
@@ -125,6 +129,12 @@ export function useLiveSnapshot({ endpoint, loader = loadLiveSnapshot, pollInter
     activeRequest.current = request
     return request
   }, [endpoint, loader])
+
+  const reload = useCallback((options: LiveSnapshotReloadOptions = {}) => {
+    const active = activeRequest.current
+    if (!active || !options.afterActive) return startRequest()
+    return active.then(startRequest, startRequest)
+  }, [startRequest])
 
   useEffect(() => {
     void reload().catch(() => undefined)
