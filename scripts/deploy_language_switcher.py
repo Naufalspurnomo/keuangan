@@ -20,8 +20,8 @@ MARKER_END = "/* HollaWall language switcher UX END */"
 
 SWITCHER_CSS = f"""{MARKER_START}
 /* Scope only the header desktop menu and mobile off-canvas menu. */
-#menu-primary-menu > li.menu-item-2054 > a.ct-menu-link,
-#menu-primary-menu-1 > li.menu-item-2054 > a.ct-menu-link {{
+#menu-primary-menu li.menu-item-2054 a.ct-menu-link,
+#menu-primary-menu-1 li.menu-item-2054 a.ct-menu-link {{
     display: inline-flex !important;
     align-items: center;
     justify-content: center;
@@ -34,55 +34,55 @@ SWITCHER_CSS = f"""{MARKER_START}
     transition: background-color .2s ease, color .2s ease, border-color .2s ease;
 }}
 
-#menu-primary-menu > li.menu-item-2054 > a.ct-menu-link:hover,
-#menu-primary-menu > li.menu-item-2054 > a.ct-menu-link:focus-visible,
-#menu-primary-menu-1 > li.menu-item-2054 > a.ct-menu-link:hover,
-#menu-primary-menu-1 > li.menu-item-2054 > a.ct-menu-link:focus-visible {{
+#menu-primary-menu li.menu-item-2054 a.ct-menu-link:hover,
+#menu-primary-menu li.menu-item-2054 a.ct-menu-link:focus-visible,
+#menu-primary-menu-1 li.menu-item-2054 a.ct-menu-link:hover,
+#menu-primary-menu-1 li.menu-item-2054 a.ct-menu-link:focus-visible {{
     background: #fb9202;
     color: #fff;
     border-color: #fb9202;
 }}
 
-#menu-primary-menu > li.menu-item-2054 .trp-menu-ls-label,
-#menu-primary-menu-1 > li.menu-item-2054 .trp-menu-ls-label {{
+#menu-primary-menu li.menu-item-2054 .trp-menu-ls-label,
+#menu-primary-menu-1 li.menu-item-2054 .trp-menu-ls-label {{
     display: inline-flex;
     align-items: center;
     gap: 0;
     font-size: 0;
 }}
 
-#menu-primary-menu > li.menu-item-2054 .trp-flag-image,
-#menu-primary-menu-1 > li.menu-item-2054 .trp-flag-image,
-#menu-primary-menu > li.menu-item-2054 .trp-ls-language-name,
-#menu-primary-menu-1 > li.menu-item-2054 .trp-ls-language-name {{
+#menu-primary-menu li.menu-item-2054 .trp-flag-image,
+#menu-primary-menu-1 li.menu-item-2054 .trp-flag-image,
+#menu-primary-menu li.menu-item-2054 .trp-ls-language-name,
+#menu-primary-menu-1 li.menu-item-2054 .trp-ls-language-name {{
     display: none;
 }}
 
 /* The native TranslatePress anchor remains the target link. */
-body.translatepress-id_ID #menu-primary-menu > li.menu-item-2054 > a::before,
-body.translatepress-id_ID #menu-primary-menu-1 > li.menu-item-2054 > a::before {{
+body.translatepress-id_ID #menu-primary-menu li.menu-item-2054 a::before,
+body.translatepress-id_ID #menu-primary-menu-1 li.menu-item-2054 a::before {{
     content: "ID";
     font-size: 13px;
     font-weight: 800;
     letter-spacing: .04em;
 }}
-body.translatepress-id_ID #menu-primary-menu > li.menu-item-2054 > a::after,
-body.translatepress-id_ID #menu-primary-menu-1 > li.menu-item-2054 > a::after {{
+body.translatepress-id_ID #menu-primary-menu li.menu-item-2054 a::after,
+body.translatepress-id_ID #menu-primary-menu-1 li.menu-item-2054 a::after {{
     content: " | EN";
     font-size: 13px;
     font-weight: 500;
     letter-spacing: .04em;
     opacity: .72;
 }}
-body.translatepress-en_US #menu-primary-menu > li.menu-item-2054 > a::before,
-body.translatepress-en_US #menu-primary-menu-1 > li.menu-item-2054 > a::before {{
+body.translatepress-en_US #menu-primary-menu li.menu-item-2054 a::before,
+body.translatepress-en_US #menu-primary-menu-1 li.menu-item-2054 a::before {{
     content: "EN";
     font-size: 13px;
     font-weight: 800;
     letter-spacing: .04em;
 }}
-body.translatepress-en_US #menu-primary-menu > li.menu-item-2054 > a::after,
-body.translatepress-en_US #menu-primary-menu-1 > li.menu-item-2054 > a::after {{
+body.translatepress-en_US #menu-primary-menu li.menu-item-2054 a::after,
+body.translatepress-en_US #menu-primary-menu-1 li.menu-item-2054 a::after {{
     content: " | ID";
     font-size: 13px;
     font-weight: 500;
@@ -91,7 +91,7 @@ body.translatepress-en_US #menu-primary-menu-1 > li.menu-item-2054 > a::after {{
 }}
 
 @media (max-width: 999px) {{
-    #menu-primary-menu-1 > li.menu-item-2054 > a.ct-menu-link {{
+    #menu-primary-menu-1 li.menu-item-2054 a.ct-menu-link {{
         width: max-content;
         margin-top: 8px;
     }}
