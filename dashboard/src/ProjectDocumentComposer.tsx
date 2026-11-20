@@ -154,7 +154,7 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
           </div>
         </section>
 
-        {draft.type !== 'receipt' ? <fieldset className="document-lines document-form-section"><legend><span>2</span><div><strong>Item & harga</strong><small>Masukkan pekerjaan yang ditagihkan. Total dihitung otomatis.</small></div></legend>
+        {draft.type !== 'receipt' ? <section className="document-lines document-form-section" aria-labelledby="document-lines-heading"><div className="document-section-heading"><span>2</span><div><h3 id="document-lines-heading">Item & harga</h3><p>Masukkan pekerjaan yang ditagihkan. Total dihitung otomatis.</p></div></div>
           {draft.lines.map((line, index) => <div className="document-line" key={line.id}>
             <label className="line-description">Deskripsi item {index + 1}<input aria-label={`Deskripsi item ${index + 1}`} value={line.description} onChange={(event) => changeLine(index, 'description', event.target.value)} /></label>
             {(!line.pricing_mode || line.pricing_mode === 'legacy_generic') ? <>
@@ -175,8 +175,8 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
             {policy.pricing_mode !== 'fixed_artwork' && <label>Diskon %<input aria-label={`Diskon item ${index + 1}`} inputMode="decimal" value={line.discount_percent} onChange={(event) => changeLine(index, 'discount_percent', event.target.value)} /></label>}
             <button type="button" className="icon-button danger" aria-label={`Hapus item ${index + 1}`} disabled={draft.lines.length === 1} onClick={() => change('lines', draft.lines.filter((_, lineIndex) => lineIndex !== index))}><Trash2 size={17} /></button>
           </div>)}
-          <button type="button" className="secondary-button" onClick={() => change('lines', [...draft.lines, draftFrom({ ...draft, id: null, lines: [createEmptyDocumentLine()] }, project).lines[0]])}><Plus size={16} /> Tambah item</button>
-        </fieldset> : <section className="receipt-allocation-note document-form-section" aria-labelledby="receipt-allocation-heading"><div className="document-section-heading"><span>2</span><div><h3 id="receipt-allocation-heading">Pilih pembayaran untuk kuitansi</h3><p>Centang transaksi yang akan dibuktikan oleh kuitansi ini.</p></div></div>
+          <button type="button" className="icon-button document-add-item" aria-label="Tambah item" onClick={() => change('lines', [...draft.lines, draftFrom({ ...draft, id: null, lines: [createEmptyDocumentLine()] }, project).lines[0]])}><Plus size={17} /></button>
+        </section> : <section className="receipt-allocation-note document-form-section" aria-labelledby="receipt-allocation-heading"><div className="document-section-heading"><span>2</span><div><h3 id="receipt-allocation-heading">Pilih pembayaran untuk kuitansi</h3><p>Centang transaksi yang akan dibuktikan oleh kuitansi ini.</p></div></div>
           {document.id ? <>
             <p>Invoice tujuan dan transaksi dikunci setelah kuitansi dibuat. Untuk koreksi, batalkan kuitansi lalu buat kuitansi baru.</p>
             <div className="receipt-candidates">{draft.allocations.map((allocation) => <div key={allocation.source_key}><span>{allocation.transaction_date || 'Tanpa tanggal'} · {allocation.description}</span><strong>{allocation.amount.toLocaleString('id-ID')}</strong></div>)}</div>

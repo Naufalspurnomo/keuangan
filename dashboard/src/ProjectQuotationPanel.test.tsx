@@ -108,6 +108,25 @@ afterEach(() => {
 })
 
 describe('ProjectQuotationPanel', () => {
+  it('keeps section headings inside white cards and uses accessible icon-only item actions', async () => {
+    render(<ProjectQuotationPanel project={project} session={session} api={api()} onApplied={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Buat quotation' }))
+
+    for (const name of ['Data penerima dan Project', 'Rincian item', 'Ringkasan dan ketentuan']) {
+      const heading = screen.getByRole('heading', { name })
+      expect(heading.closest('fieldset')).toBeTruthy()
+    }
+    const add = screen.getByRole('button', { name: 'Tambah item' })
+    expect(add.textContent).toBe('')
+    expect(add.querySelector('svg')).toBeTruthy()
+    fireEvent.click(add)
+    const remove = screen.getByRole('button', { name: 'Hapus item 2' })
+    expect(remove.textContent).toBe('')
+    expect(remove.querySelector('svg')).toBeTruthy()
+    fireEvent.click(remove)
+    expect(screen.queryByLabelText('Deskripsi item 2')).toBeNull()
+  })
+
   it('uses direct billed area and keeps the live commercial summary visible', async () => {
     render(<ProjectQuotationPanel project={project} session={session} api={api()} onApplied={vi.fn()} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Buat quotation' }))
@@ -184,13 +203,15 @@ describe('ProjectQuotationPanel', () => {
   it('saves an existing draft in place and creates an explicit revision as a new version', async () => {
     const draft = { ...item, status: 'draft' as const }
     const subject = api([draft])
-    render(<ProjectQuotationPanel project={project} session={session} api={subject} onApplied={vi.fn()} />)
+    const onNotice = vi.fn()
+    render(<ProjectQuotationPanel project={project} session={session} api={subject} onApplied={vi.fn()} onNotice={onNotice} />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Edit versi 1' }))
     fireEvent.change(screen.getByLabelText('Subjek'), { target: { value: 'Draf diperbarui' } })
     fireEvent.click(screen.getByRole('button', { name: 'Simpan draf' }))
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
     await waitFor(() => expect(subject.saveDraft).toHaveBeenCalledWith(draft, expect.objectContaining({ subject: 'Draf diperbarui' }), session))
+    expect(onNotice).toHaveBeenCalledWith('Draf versi 1 tersimpan.')
 
     fireEvent.click(screen.getByRole('button', { name: 'Buat revisi versi 1' }))
     expect(screen.getByText('Revisi dari versi 1')).toBeTruthy()

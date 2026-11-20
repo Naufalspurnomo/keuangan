@@ -30,6 +30,7 @@ interface ProjectDocumentsWorkspaceProps {
   session: ProjectDocumentSession
   route: ProjectDocumentRoute
   onRouteChange: (route: ProjectDocumentRoute) => void
+  onNotice?: (message: string) => void
 }
 
 function displayDate(value: string) {
@@ -42,7 +43,7 @@ function errorFlags(reason: unknown) {
   return { stale: error.stale === true, uncertain: error.uncertain === true, retryable: error.retryable === true, message: error.message || 'Permintaan belum dapat diselesaikan.' }
 }
 
-export default function ProjectDocumentsWorkspace({ project, api, session, route, onRouteChange }: ProjectDocumentsWorkspaceProps) {
+export default function ProjectDocumentsWorkspace({ project, api, session, route, onRouteChange, onNotice }: ProjectDocumentsWorkspaceProps) {
   const [documents, setDocuments] = useState<ProjectDocumentRecord[]>([])
   const [paymentSummary, setPaymentSummary] = useState<ProjectPaymentSummary | null>(null)
   const [receiptOptions, setReceiptOptions] = useState<ReceiptOptions | null>(null)
@@ -61,25 +62,30 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
   const writesEnabled = session.capabilities.documentWrites
   const today = jakartaToday()
   const preparingReceipt = route.type === 'receipt' && loading && !active
+  const announce = useCallback((message: string) => {
+    setNotice(message)
+    onNotice?.(message)
+  }, [onNotice])
 
   const loadList = useCallback(async () => {
     setLoading(true)
     setError('')
     setNotice('')
-    try {
-      const [result, summary] = await Promise.all([
-        api.listDocuments(project.id),
-        api.getPaymentSummary(project.id),
-      ])
+    const appendError = (message: string) => setError((current) => current ? `${current} ${message}` : message)
+    const documentsRequest = api.listDocuments(project.id).then((result) => {
       setDocuments(result.documents)
-      setPaymentSummary(summary)
-    } catch {
+    }).catch(() => {
       setDocuments([])
+      appendError('Dokumen belum dapat dimuat. Periksa koneksi lalu coba lagi.')
+    })
+    const paymentRequest = api.getPaymentSummary(project.id).then((summary) => {
+      setPaymentSummary(summary)
+    }).catch(() => {
       setPaymentSummary(null)
-      setError('Dokumen belum dapat dimuat. Periksa koneksi lalu coba lagi.')
-    } finally {
-      setLoading(false)
-    }
+      appendError('Ringkasan pembayaran belum dapat dimuat.')
+    })
+    await Promise.all([documentsRequest, paymentRequest])
+    setLoading(false)
   }, [api, project.id])
 
   useEffect(() => { void loadList() }, [loadList])
@@ -129,13 +135,13 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
     try {
       const summary = await api.getPaymentSummary(project.id)
       setPaymentSummary(summary)
-      setNotice('Perubahan dikonfirmasi dan dibaca kembali dari server.')
+      announce('Perubahan dikonfirmasi dan dibaca kembali dari server.')
     } catch {
-      setNotice('Perubahan dokumen sudah dikonfirmasi. Ringkasan pembayaran belum dapat dimuat ulang; gunakan Coba lagi.')
+      announce('Perubahan dokumen sudah dikonfirmasi. Ringkasan pembayaran belum dapat dimuat ulang; gunakan Coba lagi.')
     }
   // replaceDocument only uses stable React setters.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, project.id])
+  }, [announce, api, project.id])
 
   const execute = async (command: ProjectDocumentCommand<ProjectDocumentRecord>, after?: (document: ProjectDocumentRecord) => Promise<void>) => {
     if (mutationInFlight.current) return false
@@ -217,7 +223,7 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
       anchor.download = `${'number' in active && active.number ? active.number.replaceAll('/', '-') : active.id}.pdf`
       anchor.click()
       URL.revokeObjectURL(url)
-      setNotice('Unduhan PDF disiapkan.')
+      announce('Unduhan PDF disiapkan.')
     } catch (reason) {
       setError(errorFlags(reason).message)
     } finally { setBusy(false) }
@@ -229,8 +235,6 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
   const retrySame = () => { if (retryCommand) void execute(retryCommand, retryAfter ?? undefined) }
 
   const sorted = useMemo(() => [...documents].sort((left, right) => right.updated_at.localeCompare(left.updated_at)), [documents])
-
-  if (loading && !documents.length && !active) return <div className="project-detail-empty" role="status"><strong>Memuat dokumen…</strong><span>Mengambil daftar terbaru dari server.</span></div>
 
   if (active) {
     const composing = !('status' in active) || active.status === 'draft'
@@ -271,14 +275,15 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
       project={project}
       salesOrder={documents.find((document) => document.type === 'sales_order' && document.status === 'draft')}
       session={session}
+      onNotice={onNotice}
       onApplied={async (documentId) => {
         await authoritativeReadback(documentId)
         onRouteChange({ tab: 'documents', projectId: project.id, document: documentId })
       }}
-      additionalCreateActions={<><button type="button" className="secondary-button" onClick={() => create('invoice')} disabled={!writesEnabled || loading}><FilePlus2 size={16} /> Buat invoice</button><button type="button" className="secondary-button" onClick={() => create('receipt')} disabled={!writesEnabled || loading || preparingReceipt}>{preparingReceipt ? <RefreshCw className="is-spinning" size={16} /> : <Plus size={16} />} {preparingReceipt ? 'Menyiapkan kuitansi…' : 'Buat kuitansi'}</button></>}
+      additionalCreateActions={<><button type="button" className="secondary-button" onClick={() => create('invoice')} disabled={!writesEnabled}><FilePlus2 size={16} /> Buat invoice</button><button type="button" className="secondary-button" onClick={() => create('receipt')} disabled={!writesEnabled || loading || preparingReceipt}>{preparingReceipt ? <RefreshCw className="is-spinning" size={16} /> : <Plus size={16} />} {preparingReceipt ? 'Menyiapkan kuitansi…' : 'Buat kuitansi'}</button></>}
     />
     {paymentSummary && <section className="payment-summary" aria-label="Ringkasan pembayaran"><header><div><p className="eyebrow">STATUS PEMBAYARAN</p><h3>{paymentSummary.payment_status === 'NOT_CONTRACTED' ? 'Sales Order belum diterbitkan' : paymentSummary.payment_status === 'PAID' ? 'Lunas' : paymentSummary.payment_status === 'PARTIALLY_PAID' ? 'Dibayar sebagian' : 'Belum dibayar'}</h3></div></header><div className="payment-summary-grid"><span><small>Nilai kontrak</small><strong>{paymentSummary.contract_total === null ? '—' : IDR.format(paymentSummary.contract_total)}</strong></span><span><small>Sudah ditagihkan</small><strong>{IDR.format(paymentSummary.invoiced_total)}</strong></span><span><small>Sudah dibayar</small><strong>{IDR.format(paymentSummary.paid_total)}</strong></span><span><small>Belum dibayar</small><strong>{paymentSummary.contract_outstanding === null ? '—' : IDR.format(paymentSummary.contract_outstanding)}</strong></span><span><small>Belum ditagihkan</small><strong>{paymentSummary.unbilled_total === null ? '—' : IDR.format(paymentSummary.unbilled_total)}</strong></span></div>{paymentSummary.unapplied_total > 0 && <p className="payment-summary-warning">{IDR.format(paymentSummary.unapplied_total)} sudah diterima tetapi belum dialokasikan ke invoice aktif.</p>}{paymentSummary.overpaid_total > 0 && <p className="payment-summary-warning">Kelebihan pembayaran {IDR.format(paymentSummary.overpaid_total)} perlu direkonsiliasi.</p>}{paymentSummary.invoices.length > 0 && <div className="invoice-payment-list">{paymentSummary.invoices.map((invoice) => <article key={invoice.invoice_id}><div><strong>{invoice.invoice_kind} · {invoice.official_number}</strong><span>{invoice.payment_status === 'PAID' ? 'Lunas' : invoice.payment_status === 'PARTIALLY_PAID' ? 'Dibayar sebagian' : 'Belum dibayar'}</span></div><small>{IDR.format(invoice.paid_total)} dibayar · {IDR.format(invoice.outstanding)} tersisa</small></article>)}</div>}</section>}
-    {!error && !sorted.length ? <div className="project-detail-empty project-document-empty"><strong>Belum ada Invoice atau kuitansi.</strong><span>Dokumen tersimpan dan dapat dibuka kembali dari daftar ini.</span></div> : <div className="project-document-list">{sorted.map((document) => <article key={document.id} className="project-document-card" aria-label={document.number ?? `${documentTypeLabel(document.type)} draf`}>
+    {loading && !sorted.length ? <div className="project-detail-empty project-document-empty" role="status"><strong>Memuat dokumen…</strong><span>Mengambil daftar terbaru dari server tanpa menahan Quotation dan Invoice.</span></div> : !error && !sorted.length ? <div className="project-detail-empty project-document-empty"><strong>Belum ada Invoice atau kuitansi.</strong><span>Dokumen tersimpan dan dapat dibuka kembali dari daftar ini.</span></div> : <div className="project-document-list">{sorted.map((document) => <article key={document.id} className="project-document-card" aria-label={document.number ?? `${documentTypeLabel(document.type)} draf`}>
       <div><span className={`document-status ${document.status}`}>{documentStatusLabel(document.status)}</span><small>{documentTypeLabel(document.type)}</small><strong>{document.number ?? `${documentTypeLabel(document.type)} draf`}</strong><span>Diperbarui {displayDate(document.updated_at)}</span></div>
       <div><strong>{IDR.format(document.totals.total)}</strong><button type="button" className="secondary-button" aria-label={`Buka ${document.number ?? `${documentTypeLabel(document.type)} draf`}`} onClick={() => open(document)}>Buka</button></div>
     </article>)}</div>}

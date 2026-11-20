@@ -7,6 +7,7 @@ from copy import deepcopy
 import pytest
 from PIL import Image as PillowImage
 from pypdf import PdfReader
+from reportlab.pdfbase import pdfmetrics
 
 from services.project_document_pdf import (
     RENDERER_VERSION,
@@ -83,6 +84,32 @@ def reader(pdf: bytes) -> PdfReader:
 def xobject_count(pdf: bytes) -> int:
     resources = reader(pdf).pages[0]["/Resources"]
     return len(resources["/XObject"].get_object()) if "/XObject" in resources else 0
+
+
+def visible_text_runs(pdf: bytes) -> list[dict]:
+    runs: list[dict] = []
+
+    def visit(value, _cm, tm, font, size):
+        cleaned = " ".join(value.split())
+        if cleaned and size > 1:
+            base_font = str((font or {}).get("/BaseFont") or "").lstrip("/")
+            registered_font = base_font.split("+", 1)[-1]
+            registered_font = {
+                "HankenGrotesk-Regular": "HankenGrotesk",
+                "OpenSauceOne-Regular": "OpenSauceOne",
+                "Roboto-Regular": "Roboto",
+            }.get(registered_font, registered_font)
+            runs.append({
+                "text": cleaned,
+                "size": float(size),
+                "x": float(tm[4]),
+                "right": float(tm[4]) + pdfmetrics.stringWidth(cleaned, registered_font, float(size)),
+                "y": float(tm[5]),
+                "font": base_font,
+            })
+
+    reader(pdf).pages[0].extract_text(visitor_text=visit)
+    return runs
 
 
 def text(pdf: bytes) -> str:
@@ -201,6 +228,71 @@ def test_texturin_surabaya_and_bali_have_distinct_pdf_contracts():
     assert "THANK YOU" in bali_text
     assert "Pengecatan dilakukan pada bidang tembok/plafon yang siap dicat." not in bali_text
     assert "Pembayaran melalui rekening resmi perusahaan." not in bali_text
+
+
+def test_texturin_two_item_pdf_matches_the_readable_signed_paper_contract():
+    value = snapshot(line_count=2)
+    value["project"].update({
+        "name": "Gatau", "client_name": "GGWP", "client_company": "",
+        "company": "TEXTURIN-Surabaya", "wallet": "TX SBY(216)",
+    })
+    value["issuer"].update({
+        "issuer_key": "texturin-surabaya", "display_name": "Texturin Surabaya",
+        "bank_details": {"bank": "BCA", "account_number": "123", "account_name": "Evan Setyawan"},
+    })
+    value["document"].update({
+        "document_type": "sales_order", "template_key": "TEXTURIN-SURABAYA",
+        "official_number": "QTN/001", "issue_date": "2026-11-20",
+        "valid_until": "2026-11-27", "deposit_percent": "30",
+        "payment_terms": "", "notes": "",
+    })
+    value["lines"] = [
+        {
+            "description": "Tanah", "quantity": "300", "unit": "m²",
+            "unit_price": 10_000, "line_gross": 3_000_000,
+            "line_discount_percent": "0", "line_discount": 0,
+            "line_total": 3_000_000,
+        },
+        {
+            "description": "Air", "quantity": "200", "unit": "m²",
+            "unit_price": 40_000, "line_gross": 8_000_000,
+            "line_discount_percent": "0", "line_discount": 0,
+            "line_total": 8_000_000,
+        },
+    ]
+    value["totals"].update({
+        "subtotal": 11_000_000, "taxable_base": 11_000_000,
+        "tax": 0, "total": 11_000_000,
+    })
+
+    pdf = render_project_document_pdf(value)
+    content = " ".join(text(pdf).split())
+    runs = visible_text_runs(pdf)
+    page = reader(pdf).pages[0]
+    width = float(page.mediabox.width)
+    height = float(page.mediabox.height)
+
+    assert "20 November 2026" in content
+    assert "Evanvun" in content
+    assert xobject_count(pdf) >= 2  # Canonical master plus canonical sign-off artwork.
+    for expected in ("Tanah", "Rp 3.000.000", "Air", "Rp 8.000.000", "Rp 11.000.000"):
+        assert expected in content
+    dynamic = [run for run in runs if run["text"] in {
+        "GGWP", "Gatau", "QTN/001", "20 November 2026", "Tanah", "Air",
+        "Rp 10.000", "Rp 40.000", "300 m²", "200 m²",
+        "Rp 3.000.000", "Rp 8.000.000", "Rp 11.000.000",
+    }]
+    assert dynamic and min(run["size"] for run in dynamic) >= 9
+    assert all(0 <= run["x"] <= run["right"] <= width and 0 <= run["y"] <= height for run in dynamic)
+
+    by_text = {}
+    for run in runs:
+        by_text.setdefault(run["text"], []).append(run)
+    ppm_right = max(run["right"] for key in ("Rp 10.000", "Rp 40.000") for run in by_text[key])
+    quantity_right = max(run["right"] for key in ("300 m²", "200 m²") for run in by_text[key])
+    item_total_right = max(run["right"] for key in ("Rp 3.000.000", "Rp 8.000.000") for run in by_text[key])
+    assert ppm_right < quantity_right < item_total_right
+    assert item_total_right == pytest.approx(width * .928, abs=2)
 
 
 def test_hojja_three_line_document_never_omits_the_third_billed_artwork():

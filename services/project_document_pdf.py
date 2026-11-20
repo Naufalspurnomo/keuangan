@@ -14,6 +14,7 @@ import re
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
 from html import escape
 from pathlib import Path
 from typing import Any, Callable
@@ -43,7 +44,7 @@ from reportlab.platypus import (
 
 from services.commercial_document_policy import commercial_policy
 
-RENDERER_VERSION = "branded-commercial-v4"
+RENDERER_VERSION = "branded-commercial-v5"
 MAX_PROJECT_IMAGE_URL_CHARS = 196_608
 MAX_PROJECT_IMAGE_BYTES = 144 * 1024
 MAX_PROJECT_IMAGE_PIXELS = 16_000_000
@@ -64,6 +65,8 @@ _BRAND_LOGOS = {
 _HOLLAWALL_FOOTER_ART = _ASSET_DIR / "hollawall-footer-art.png"
 _HOLLAWALL_FOOTER_LOGO = _ASSET_DIR / "hollawall-footer-logo.png"
 _HOLLAWALL_FOOTER_ART_DATA = _HOLLAWALL_FOOTER_ART.read_bytes() if _HOLLAWALL_FOOTER_ART.is_file() else b""
+_TEXTURIN_SIGNOFF = _ASSET_DIR / "texturin-evanvun-signoff.png"
+_TEXTURIN_SIGNOFF_DATA = _TEXTURIN_SIGNOFF.read_bytes() if _TEXTURIN_SIGNOFF.is_file() else b""
 _MASTER_ART = {
     key: path.read_bytes()
     for key, path in {
@@ -166,6 +169,23 @@ def _mapping(value: Any) -> dict[str, Any]:
 def _text(value: Any, fallback: str = "—") -> str:
     cleaned = str(value or "").strip()
     return cleaned or fallback
+
+
+_INDONESIAN_MONTHS = (
+    "", "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+    "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+)
+
+
+def _date_label(value: Any) -> str:
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return "—"
+    try:
+        parsed = date.fromisoformat(cleaned)
+    except ValueError:
+        return cleaned
+    return f"{parsed.day:02d} {_INDONESIAN_MONTHS[parsed.month]} {parsed.year}"
 
 
 def _paragraph_text(value: Any, fallback: str = "—") -> str:
@@ -1179,67 +1199,76 @@ def _draw_texturin_master(canvas: Any, snapshot: Mapping[str, Any], brand: Brand
     issuer = _mapping(snapshot.get("issuer"))
     totals = _mapping(snapshot.get("totals"))
     title = _document_title(snapshot).title()
-    _canvas_text(canvas, brand, title, .068, .17 if brand.key == "texturin-bali" else .155, size=18, bold=True)
-    meta_top = .218 if brand.key == "texturin-bali" else .198
-    _canvas_text(canvas, brand, "TO", .068, meta_top, size=6.5, bold=True)
-    _canvas_text(canvas, brand, project.get("client_company") or project.get("client_name"), .16, meta_top, size=6.5)
-    _canvas_text(canvas, brand, "PROJECT", .068, meta_top + .022, size=6.5, bold=True)
-    _canvas_text(canvas, brand, project.get("name"), .16, meta_top + .022, size=6.5)
-    _canvas_text(canvas, brand, "NO.", .67, meta_top, size=6.5, bold=True)
-    _canvas_text(canvas, brand, document.get("official_number"), .94, meta_top, size=6.5, right=True)
-    _canvas_text(canvas, brand, "DATE", .67, meta_top + .022, size=6.5, bold=True)
-    _canvas_text(canvas, brand, document.get("issue_date"), .94, meta_top + .022, size=6.5, right=True)
+    _canvas_text(canvas, brand, title, .068, .188 if brand.key == "texturin-bali" else .174, size=23.25, bold=True)
+    meta_top = .222 if brand.key == "texturin-bali" else .201
+    _canvas_text(canvas, brand, "TO", .068, meta_top, size=10.5, bold=True)
+    _canvas_text(canvas, brand, project.get("client_company") or project.get("client_name"), .16, meta_top, size=10.5)
+    _canvas_text(canvas, brand, "PROJECT", .068, meta_top + .023, size=10.5, bold=True)
+    _canvas_text(canvas, brand, project.get("name"), .16, meta_top + .023, size=10.5)
+    _canvas_text(canvas, brand, "NO.", .67, meta_top, size=10.5, bold=True)
+    _canvas_text(canvas, brand, document.get("official_number"), .928, meta_top, size=10.5, right=True)
+    _canvas_text(canvas, brand, "DATE", .67, meta_top + .023, size=10.5, bold=True)
+    _canvas_text(canvas, brand, _date_label(document.get("issue_date")), .928, meta_top + .023, size=10.5, right=True)
     if _master_is_invoice(snapshot):
-        _canvas_text(canvas, brand, "DUE DATE", .67, meta_top + .044, size=6.5, bold=True)
-        _canvas_text(canvas, brand, document.get("due_date"), .94, meta_top + .044, size=6.5, right=True)
+        _canvas_text(canvas, brand, "DUE DATE", .67, meta_top + .046, size=10.5, bold=True)
+        _canvas_text(canvas, brand, _date_label(document.get("due_date")), .928, meta_top + .046, size=10.5, right=True)
     if _master_is_receipt(snapshot):
         _draw_master_receipt(canvas, snapshot, brand, x=.12, top=.35, width=.74)
         return
-    lines_top = .327 if brand.key == "texturin-bali" else .285
+    lines_top = .335 if brand.key == "texturin-bali" else .294
     for index, line in enumerate(_master_lines(snapshot)[:3]):
         top = lines_top + index * .035
-        _canvas_text(canvas, brand, index + 1, .075, top, size=6.5)
-        _canvas_text(canvas, brand, line.get("description"), .15, top, size=6.5)
-        _canvas_text(canvas, brand, _idr(line.get("unit_price")), .61, top, size=6.5, right=True)
-        _canvas_text(canvas, brand, f"{_text(line.get('quantity'))} {_text(line.get('unit'), '')}", .78, top, size=6.5, right=True)
-        _canvas_text(canvas, brand, _idr(line.get("line_total")), .94, top, size=6.5, right=True)
+        _canvas_text(canvas, brand, index + 1, .079, top, size=10.5)
+        _canvas_text(canvas, brand, line.get("description"), .13, top, size=10.5)
+        _canvas_text(canvas, brand, _idr(line.get("unit_price")), .553, top, size=10.5, right=True)
+        _canvas_text(canvas, brand, f"{_text(line.get('quantity'))} {_text(line.get('unit'), '')}", .710, top, size=10.5, right=True)
+        _canvas_text(canvas, brand, _idr(line.get("line_total")), .928, top, size=10.5, right=True)
     summary_top = .49 if brand.key == "texturin-bali" else .53
-    summary_left = .70 if brand.key == "texturin-bali" else .68
-    _canvas_text(canvas, brand, "Subtotal", summary_left, summary_top, size=6.5)
-    _canvas_text(canvas, brand, _idr(totals.get("subtotal")), .94, summary_top, size=6.5, right=True)
+    summary_left = .70 if brand.key == "texturin-bali" else .637
+    _canvas_text(canvas, brand, "Subtotal", summary_left, summary_top, size=10.5)
+    _canvas_text(canvas, brand, _idr(totals.get("subtotal")), .928, summary_top, size=10.5, right=True)
     discount = int(totals.get("document_discount") or 0)
-    if discount:
+    if brand.key != "texturin-bali" or discount:
         summary_top += .022
-        _canvas_text(canvas, brand, "Diskon", summary_left, summary_top, size=6.5, color=_DISCOUNT)
-        _canvas_text(canvas, brand, _idr(discount), .94, summary_top, size=6.5, color=_DISCOUNT, right=True)
+        _canvas_text(canvas, brand, "Diskon", summary_left, summary_top, size=10.5, color=_DISCOUNT)
+        _canvas_text(canvas, brand, _idr(discount), .928, summary_top, size=10.5, color=_DISCOUNT, right=True)
     tax = int(totals.get("tax") or 0)
     if tax:
         summary_top += .022
-        _canvas_text(canvas, brand, _master_tax_label(snapshot), summary_left, summary_top, size=6.5)
-        _canvas_text(canvas, brand, _idr(tax), .94, summary_top, size=6.5, right=True)
+        _canvas_text(canvas, brand, _master_tax_label(snapshot), summary_left, summary_top, size=10.5)
+        _canvas_text(canvas, brand, _idr(tax), .928, summary_top, size=10.5, right=True)
     summary_top += .033
-    _canvas_text(canvas, brand, "TOTAL", summary_left, summary_top, size=7, bold=True)
-    _canvas_text(canvas, brand, _idr(totals.get("total")), .94, summary_top, size=7, bold=True, right=True)
+    _canvas_text(canvas, brand, "TOTAL", summary_left, summary_top, size=10.5, bold=True)
+    _canvas_text(canvas, brand, _idr(totals.get("total")), .928, summary_top, size=10.5, bold=True, right=True)
     policy = commercial_policy(brand.key)
     percent = _snapshot_deposit_percent(snapshot, brand)
     if _master_has_deposit(snapshot):
         deposit = int(totals.get("total") or 0) * percent // 100
         deposit_left = .55 if brand.key != "texturin-bali" else .58
-        _canvas_text(canvas, brand, f"SIGNATURE FEE ({percent}%)", deposit_left, summary_top + .030, size=6.3, bold=True)
-        _canvas_text(canvas, brand, _idr(deposit), .94, summary_top + .030, size=6.3, bold=True, right=True)
+        _canvas_text(canvas, brand, f"SIGNATURE FEE ({percent}%)", deposit_left, summary_top + .030, size=9.5, bold=True)
+        _canvas_text(canvas, brand, _idr(deposit), .928, summary_top + .030, size=9.5, bold=True, right=True)
     if brand.key != "texturin-bali":
         terms = [] if _master_is_invoice(snapshot) else [*policy.get("default_terms", [])]
-        terms.extend(_text(value) for value in (document.get("payment_terms"), document.get("notes")) if _text(value))
+        terms.extend(str(value).strip() for value in (document.get("payment_terms"), document.get("notes")) if str(value or "").strip())
         if not terms:
             terms = ["Pembayaran sesuai tanggal jatuh tempo yang tercantum."]
-        _canvas_paragraph(canvas, brand, "\n\n".join(terms), .068, .65, .80, size=5.8, leading=7.2, italic=True)
+        _canvas_paragraph(canvas, brand, "\n\n".join(terms), .066, .614, .87, size=10.2, leading=14.2, italic=True)
     bank = _mapping(issuer.get("bank_details"))
-    bank_top = .60 if brand.key == "texturin-bali" else .865
-    _canvas_text(canvas, brand, "BANK DETAILS", .068, bank_top, size=6.3, bold=True)
-    _canvas_text(canvas, brand, f"{_text(bank.get('bank'))} · {_text(bank.get('account_number'))}", .068, bank_top + .022, size=6.1)
-    _canvas_text(canvas, brand, bank.get("account_name"), .068, bank_top + .044, size=6.1)
-    _canvas_text(canvas, brand, "THANK YOU", .83, .90, size=6, bold=True)
-    _canvas_text(canvas, brand, issuer.get("display_name"), .94, .94, size=9, right=True)
+    bank_top = .60 if brand.key == "texturin-bali" else .922
+    _canvas_text(canvas, brand, "BANK DETAILS", .054, bank_top, size=10.5, bold=True)
+    _canvas_text(canvas, brand, f"{_text(bank.get('bank'))} · {_text(bank.get('account_number'))}", .054, bank_top + .017, size=10.5)
+    _canvas_text(canvas, brand, bank.get("account_name"), .054, bank_top + .034, size=10.5)
+    if _TEXTURIN_SIGNOFF_DATA:
+        canvas.drawImage(
+            ImageReader(io.BytesIO(_TEXTURIN_SIGNOFF_DATA)),
+            brand.page_size[0] * .735,
+            brand.page_size[1] * .008,
+            width=brand.page_size[0] * .25,
+            height=brand.page_size[1] * .125,
+            preserveAspectRatio=True,
+            anchor="c",
+            mask="auto",
+        )
 
 
 def _searchable_extra_values(snapshot: Mapping[str, Any]) -> list[str]:
@@ -1265,9 +1294,9 @@ def _draw_searchable_snapshot_layer(canvas: Any, snapshot: Mapping[str, Any], br
     static_labels = {
         "hollawall": "INVOICE QUOTATION TANGGAL LETTER NO. TOTAL DP Best regards",
         "hojja": "INVOICE QUOTATION DATE LETTER ID Total DP Payment Information",
-        "texturin": "INVOICE QUOTATION QUOTATION NO. PPM QTY/LUAS BANK DETAILS THANK YOU",
-        "texturin-surabaya": "INVOICE QUOTATION QUOTATION NO. PPM QTY/LUAS BANK DETAILS SIGNATURE FEE THANK YOU",
-        "texturin-bali": "INVOICE QUOTATION QUOTATION NO. PPM QTY/LUAS AREA (M²) BANK DETAILS THANK YOU",
+        "texturin": "INVOICE QUOTATION QUOTATION NO. PPM QTY/LUAS BANK DETAILS THANK YOU Evanvun",
+        "texturin-surabaya": "INVOICE QUOTATION QUOTATION NO. PPM QTY/LUAS BANK DETAILS SIGNATURE FEE THANK YOU Evanvun",
+        "texturin-bali": "INVOICE QUOTATION QUOTATION NO. PPM QTY/LUAS AREA (M²) BANK DETAILS THANK YOU Evanvun",
     }[brand.key]
     values = [brand.identity, static_labels, *_searchable_extra_values(snapshot)]
     text = canvas.beginText(0, 0)
@@ -1306,7 +1335,8 @@ def _build_master_pdf(snapshot: Mapping[str, Any], brand: BrandSpec) -> bytes:
     else:
         _draw_texturin_master(canvas, snapshot, brand)
     _draw_master_watermark(canvas, snapshot, brand)
-    _draw_master_footer(canvas, snapshot, brand)
+    if not _is_texturin(brand):
+        _draw_master_footer(canvas, snapshot, brand)
     _draw_searchable_snapshot_layer(canvas, snapshot, brand)
     canvas.showPage()
     canvas.save()

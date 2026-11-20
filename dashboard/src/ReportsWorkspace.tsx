@@ -169,10 +169,9 @@ export default function ReportsWorkspace({ workspace }: { workspace: FinanceWork
       setExporting(false)
     }
   }
-  const demoSuffix = workspace.mode === 'demo' ? ' · DATA DEMO' : ''
   const canExport = !invalidRange && dataset.rows.length > 0
   return <section className="finance-page-stack report-workspace">
-    <header className="command-head"><div><p className="eyebrow">LAPORAN{demoSuffix}</p><h1>Laporan</h1><p>Pilih jenis, periode, dan cakupan. Periksa hasilnya sebelum ekspor.</p></div></header>
+    <header className="command-head"><div><h1>Laporan</h1><p>Pilih jenis, periode, dan cakupan. Periksa hasilnya sebelum ekspor.</p></div></header>
     <label className="field"><span>Jenis laporan</span><select aria-label="Jenis laporan" value={reportType} onChange={(event) => { setReportType(event.target.value as CanonicalReportType); setExportStatus('') }}>{CANONICAL_REPORT_TYPES.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label>
     <Filters filters={filters} setFilters={setFilters} workspace={workspace} />
     {error && <p className="form-error" role="alert">{error}</p>}

@@ -65,7 +65,7 @@ it('blocks all transaction dismissal paths while saving', () => {
   const close = vi.fn()
   const save = vi.fn(() => new Promise<void>(() => {}))
   render(<TransactionForm projects={seedFinanceWorkspace().projects} onSave={save} onClose={close} />)
-  fireEvent.submit(screen.getByRole('button', { name: 'Simpan transaksi' }).closest('form')!)
+  fireEvent.submit(screen.getByRole('button', { name: 'Tambah Transaksi' }).closest('form')!)
   fireEvent.keyDown(document, { key: 'Escape' })
   fireEvent.click(screen.getByRole('button', { name: 'Tutup' }))
   fireEvent.mouseDown(screen.getByRole('dialog').parentElement!)

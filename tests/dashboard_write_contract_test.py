@@ -104,9 +104,9 @@ def test_date_must_be_canonical_valid_iso_date(raw_date):
     assert_invalid(valid_payload(date=raw_date), r"date: must")
 
 
-def test_date_allows_backdating_but_rejects_future_business_dates():
+def test_date_allows_past_and_future_business_dates():
     assert validate(valid_payload(date="2026-10-01")).date == date(2026, 10, 1)
-    assert_invalid(valid_payload(date="2026-10-03"), r"date: must not be in the future in Asia/Jakarta")
+    assert validate(valid_payload(date="2030-10-03")).date == date(2030, 10, 3)
 
 
 def test_default_clock_uses_asia_jakarta(monkeypatch):

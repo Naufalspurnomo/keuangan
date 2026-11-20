@@ -26,6 +26,23 @@ afterEach(() => {
 })
 
 describe('ProjectDocumentComposer', () => {
+  it('keeps invoice headings inside cards and uses accessible icon-only item actions', () => {
+    const draft = createEmptyDocumentDraft(project.id, 'invoice', '2026-11-03')
+    render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={vi.fn()} onClose={vi.fn()} />)
+
+    for (const name of ['Detail invoice', 'Item & harga', 'Ketentuan & persetujuan']) {
+      const heading = screen.getByRole('heading', { name })
+      expect(heading.closest('.document-form-section')).toBeTruthy()
+    }
+    const add = screen.getByRole('button', { name: 'Tambah item' })
+    const remove = screen.getByRole('button', { name: 'Hapus item 1' })
+    expect(add.textContent).toBe('')
+    expect(remove.textContent).toBe('')
+    expect(add.querySelector('svg')).toBeTruthy()
+    expect(remove.querySelector('svg')).toBeTruthy()
+    expect(remove).toBeDisabled()
+  })
+
   it('presents direct billed area with a live invoice total', () => {
     const draft = createEmptyDocumentDraft(project.id, 'invoice', '2026-11-03')
     render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={vi.fn()} onClose={vi.fn()} />)

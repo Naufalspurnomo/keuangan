@@ -169,7 +169,7 @@ def journeys(browser):
     goto_page(page,'Operasional Kantor')
     dispatch(page.get_by_role('button',name='Biaya kantor').first)
     dialog=page.get_by_role('dialog'); dialog.get_by_label('Dompet *').select_option('TX Bali'); dialog.get_by_label('Jumlah *').fill('500000'); dialog.get_by_label('Keterangan *').fill('QA listrik 500 ribu')
-    dispatch(dialog.get_by_role('button',name='Simpan transaksi')); page.wait_for_timeout(150)
+    dispatch(dialog.get_by_role('button',name='Tambah Transaksi')); page.wait_for_timeout(150)
     assert page.get_by_text('QA listrik 500 ribu',exact=True).count()==1
     stored=json.loads(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
     office=next(row for row in stored['transactions'] if row['notes']=='QA listrik 500 ribu')

@@ -42,6 +42,50 @@ describe('Hollawall demo finance workspace', () => {
     expect(within(menu).queryByRole('button', { name: /Perlu Ditinjau/ })).toBeNull()
   })
 
+  it('keeps breadcrumbs and white page titles while removing yellow title labels', () => {
+    renderApp()
+
+    expect(document.querySelector('.breadcrumbs strong')?.textContent).toBe('Dashboard')
+    expect(document.querySelector('.overview-command h1')?.textContent).toBe('Dashboard')
+    expect(document.querySelector('.overview-command > div > .eyebrow')).toBeNull()
+
+    nav('Arus Kas')
+    expect(document.querySelector('.breadcrumbs strong')?.textContent).toBe('Arus Kas')
+    expect(document.querySelector('.page-heading h1')?.textContent).toBe('Arus Kas')
+    expect(document.querySelector('.page-heading > div > .eyebrow')).toBeNull()
+
+    nav('Dompet')
+    expect(document.querySelector('.breadcrumbs strong')?.textContent).toBe('Dompet')
+    expect(document.querySelector('.page-heading h1')?.textContent).toBe('Dompet')
+    expect(document.querySelector('.page-heading > div > .eyebrow')).toBeNull()
+    expect(document.querySelector('.wallet-workspace > .ops-heading h2')?.textContent).toBe('Posisi kas per sumber')
+    expect(document.querySelector('.wallet-workspace > .ops-heading .eyebrow')).toBeNull()
+
+    nav('Project')
+    expect(document.querySelector('.breadcrumbs strong')?.textContent).toBe('Project')
+    expect(document.querySelector('.project-command-heading h1')?.textContent).toBe('Project')
+    expect(document.querySelector('.project-command-heading .eyebrow')).toBeNull()
+
+    nav('Operasional Kantor')
+    expect(document.querySelector('.breadcrumbs strong')?.textContent).toBe('Operasional Kantor')
+    expect(document.querySelector('.page-heading h1')?.textContent).toBe('Operasional Kantor')
+    expect(document.querySelector('.page-heading > div > .eyebrow')).toBeNull()
+    expect(document.querySelector('.finance-page-stack > .command-head h2')?.textContent).toBe('Kebutuhan kantor')
+    expect(document.querySelector('.finance-page-stack > .command-head .eyebrow')).toBeNull()
+
+    nav('Hutang')
+    expect(document.querySelector('.breadcrumbs strong')?.textContent).toBe('Hutang')
+    expect(document.querySelector('.page-heading h1')?.textContent).toBe('Hutang')
+    expect(document.querySelector('.page-heading > div > .eyebrow')).toBeNull()
+    expect(document.querySelector('.finance-page-stack > .command-head h2')?.textContent).toBe('Hutang antar-dompet')
+    expect(document.querySelector('.finance-page-stack > .command-head .eyebrow')).toBeNull()
+
+    nav('Laporan')
+    expect(document.querySelector('.breadcrumbs strong')?.textContent).toBe('Laporan')
+    expect(document.querySelector('.report-workspace > .command-head h1')?.textContent).toBe('Laporan')
+    expect(document.querySelector('.report-workspace > .command-head .eyebrow')).toBeNull()
+  })
+
   it('keeps exports in Reports and preserves project context in the mobile breadcrumb', () => {
     renderApp()
     nav('Project')
@@ -298,7 +342,7 @@ describe('Hollawall demo finance workspace', () => {
     fireEvent.change(within(dialog).getByLabelText('Dompet *'), { target: { value: 'TX Bali' } })
     fireEvent.change(within(dialog).getByLabelText('Jumlah *'), { target: { value: '500000' } })
     fireEvent.change(within(dialog).getByLabelText('Keterangan *'), { target: { value: 'Listrik kantor QA' } })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Simpan transaksi' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Tambah Transaksi' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(screen.getByText('Listrik kantor QA')).toBeTruthy()
     expect(screen.getAllByText('TX Bali').length).toBeGreaterThan(0)

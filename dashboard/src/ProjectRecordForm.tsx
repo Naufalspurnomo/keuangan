@@ -98,9 +98,9 @@ export default function ProjectRecordForm({ project, clients = [], saving = fals
         <label>Unit usaha<select aria-label="Unit usaha" value={draft.company} onChange={(event) => changeCompany(event.target.value)}>{companyOptions.map(({ company }) => <option key={company} value={company}>{company}</option>)}</select><small className="field-help">Hanya unit usaha yang berada di dompet terpilih.</small></label>
         <label>Tanggal mulai<input type="date" value={draft.started_on} onChange={(event) => change('started_on', event.target.value)} /></label>
         {(draft.status === 'completed' || draft.completed_on) && <label>Tanggal selesai<input type="date" value={draft.completed_on ?? ''} onChange={(event) => change('completed_on', event.target.value || null)} /></label>}
+        <label className="wide">Alamat klien<textarea value={draft.client_address} onChange={(event) => change('client_address', event.target.value)} /></label>
+        <label className="wide">Catatan kontrak<textarea value={draft.contract_notes} onChange={(event) => change('contract_notes', event.target.value)} /></label>
       </div>
-      <label>Alamat klien<textarea value={draft.client_address} onChange={(event) => change('client_address', event.target.value)} /></label>
-      <label>Catatan kontrak<textarea value={draft.contract_notes} onChange={(event) => change('contract_notes', event.target.value)} /></label>
       </fieldset>
       <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={close}>Batal</button><button type="submit" className="primary-button" disabled={busy}>{busy ? 'Menyimpan…' : 'Simpan Project'}</button></div>
     </form>
