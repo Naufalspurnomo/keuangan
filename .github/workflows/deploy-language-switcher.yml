@@ -1,0 +1,44 @@
+name: Deploy HollaWall Language Switcher UX
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hollawall-language-switcher
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Deploy scoped language switcher UX
+        env:
+          RW_FTP_HOST: ${{ secrets.RUMAHWEB_FTP_HOST }}
+          RW_FTP_USER: ${{ secrets.RUMAHWEB_FTP_USER }}
+          RW_FTP_PASSWORD: ${{ secrets.RUMAHWEB_FTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          python scripts/deploy_language_switcher.py --evidence /tmp/language-switcher.json
+          python - <<'PY'
+          import json
+          evidence = json.load(open('/tmp/language-switcher.json'))
+          assert evidence['success'] is True, evidence
+          assert evidence['runner_removed'] is True, evidence
+          assert evidence['marker_present'] is True, evidence
+          assert all(item['http'] == 200 for item in evidence['live_readback'].values()), evidence
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: language-switcher-${{ github.run_id }}
+          path: /tmp/language-switcher.json
+          if-no-files-found: warn
+          retention-days: 30
