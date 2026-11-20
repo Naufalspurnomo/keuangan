@@ -241,9 +241,14 @@ def test_texturin_surabaya_and_bali_have_distinct_pdf_contracts():
 
     bali = deepcopy(surabaya)
     bali["project"].update({"company": "TEXTURIN-Bali", "wallet": "TX BALI(087)"})
-    bali["document"].update({"document_type": "sales_order", "template_key": "TEXTURIN-BALI"})
+    bali["document"].update({
+        "document_type": "sales_order", "template_key": "TEXTURIN-BALI",
+        "valid_until": "2026-11-17",
+    })
     bali_pdf = render_project_document_pdf(bali)
     bali_text = " ".join(text(bali_pdf).split())
+    bali_runs = visible_text_runs(bali_pdf)
+    bali_height = float(reader(bali_pdf).pages[0].mediabox.height)
     bali_final_invoice = deepcopy(bali)
     bali_final_invoice["document"].update({"document_type": "invoice", "invoice_kind": "FINAL"})
     bali_final_invoice_text = " ".join(text(render_project_document_pdf(bali_final_invoice)).split())
@@ -273,6 +278,8 @@ def test_texturin_surabaya_and_bali_have_distinct_pdf_contracts():
     assert "THANK YOU" in bali_text
     assert "Pengecatan dilakukan pada bidang tembok/plafon yang siap dicat." not in bali_text
     assert "Pembayaran melalui rekening resmi perusahaan." not in bali_text
+    bali_validity_y = next(run["y"] for run in bali_runs if run["text"] == "VALID UNTIL")
+    assert bali_validity_y == pytest.approx(bali_height * (1 - (.222 + .046)), abs=.1)
 
 
 def test_texturin_two_item_pdf_matches_the_readable_signed_paper_contract():
@@ -335,6 +342,10 @@ def test_texturin_two_item_pdf_matches_the_readable_signed_paper_contract():
     by_text = {}
     for run in runs:
         by_text.setdefault(run["text"], []).append(run)
+    issue_date_y = by_text["20 November 2026"][0]["y"]
+    validity_y = by_text["VALID UNTIL"][0]["y"]
+    assert validity_y >= height * .775
+    assert issue_date_y - validity_y >= 14
     ppm_right = max(run["right"] for key in ("Rp 10.000", "Rp 40.000") for run in by_text[key])
     quantity_right = max(run["right"] for key in ("300 m²", "200 m²") for run in by_text[key])
     item_total_right = max(run["right"] for key in ("Rp 3.000.000", "Rp 8.000.000") for run in by_text[key])
@@ -400,10 +411,16 @@ def test_master_invoice_visibly_reconciles_tax_and_due_date_without_quotation_te
     })
     value["totals"].update({"taxable_base": 2_500_000, "tax": 275_000, "total": 2_775_000})
 
-    content = " ".join(text(render_project_document_pdf(value)).split())
+    pdf = render_project_document_pdf(value)
+    content = " ".join(text(pdf).split())
+    runs = visible_text_runs(pdf)
+    page_height = float(reader(pdf).pages[0].mediabox.height)
+    by_text = {run["text"]: run for run in runs}
 
     assert "DUE DATE" in content
-    assert "2026-11-10" in content
+    assert "10 November 2026" in by_text
+    assert by_text["DUE DATE"]["y"] >= page_height * .775
+    assert by_text["03 November 2026"]["y"] - by_text["DUE DATE"]["y"] >= 14
     assert "Pajak" in content
     assert "Rp 275.000" in content
     assert "Rp 2.775.000" in content
