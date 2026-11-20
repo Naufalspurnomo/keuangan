@@ -58,35 +58,51 @@ SWITCHER_CSS = f"""{MARKER_START}
     display: none;
 }}
 
-/* The native TranslatePress anchor remains the target link. */
+/* The native TranslatePress anchor remains the target link. Both real SVG flags are shown. */
+#menu-primary-menu li.menu-item-2054 a::before,
+#menu-primary-menu-1 li.menu-item-2054 a::before,
+#menu-primary-menu li.menu-item-2054 a::after,
+#menu-primary-menu-1 li.menu-item-2054 a::after {{
+    display: inline-flex;
+    align-items: center;
+    min-height: 18px;
+    background-repeat: no-repeat;
+    background-position: left center;
+    background-size: 18px 14px;
+    font-size: 13px;
+    line-height: 18px;
+    letter-spacing: .04em;
+}}
 body.translatepress-id_ID #menu-primary-menu li.menu-item-2054 a::before,
 body.translatepress-id_ID #menu-primary-menu-1 li.menu-item-2054 a::before {{
     content: "ID";
-    font-size: 13px;
+    padding-left: 23px;
+    background-image: url("https://hollawall.com/wp-content/plugins/translatepress-multilingual/assets/flags/4x3/id_ID.svg");
     font-weight: 800;
-    letter-spacing: .04em;
 }}
 body.translatepress-id_ID #menu-primary-menu li.menu-item-2054 a::after,
 body.translatepress-id_ID #menu-primary-menu-1 li.menu-item-2054 a::after {{
     content: " | EN";
-    font-size: 13px;
+    padding-left: 23px;
+    margin-left: 7px;
+    background-image: url("https://hollawall.com/wp-content/plugins/translatepress-multilingual/assets/flags/4x3/en_US.svg");
     font-weight: 500;
-    letter-spacing: .04em;
     opacity: .72;
 }}
 body.translatepress-en_US #menu-primary-menu li.menu-item-2054 a::before,
 body.translatepress-en_US #menu-primary-menu-1 li.menu-item-2054 a::before {{
     content: "EN";
-    font-size: 13px;
+    padding-left: 23px;
+    background-image: url("https://hollawall.com/wp-content/plugins/translatepress-multilingual/assets/flags/4x3/en_US.svg");
     font-weight: 800;
-    letter-spacing: .04em;
 }}
 body.translatepress-en_US #menu-primary-menu li.menu-item-2054 a::after,
 body.translatepress-en_US #menu-primary-menu-1 li.menu-item-2054 a::after {{
     content: " | ID";
-    font-size: 13px;
+    padding-left: 23px;
+    margin-left: 7px;
+    background-image: url("https://hollawall.com/wp-content/plugins/translatepress-multilingual/assets/flags/4x3/id_ID.svg");
     font-weight: 500;
-    letter-spacing: .04em;
     opacity: .72;
 }}
 
