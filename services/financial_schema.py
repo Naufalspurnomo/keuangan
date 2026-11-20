@@ -13,6 +13,8 @@ APPLICATION_SCHEMA_MIN = 18
 APPLICATION_SCHEMA_MAX = 31
 MIGRATION_LOCK_ID = 0x484F4C4C415741  # stable "HOLLAWA" advisory lock namespace
 _MIGRATION_PATTERN = re.compile(r"^(?P<version>\d{3})_.*\.sql$")
+_BEGIN_TRANSACTION = re.compile(r"^\s*(?:BEGIN|START\s+TRANSACTION)\s*;\s*$", re.I)
+_COMMIT_TRANSACTION = re.compile(r"^\s*COMMIT\s*;\s*$", re.I)
 
 _FRESH_DATABASE_PREREQUISITES = """
 CREATE TABLE IF NOT EXISTS financial_ledger (
@@ -76,6 +78,27 @@ class Migration:
     filename: str
     sql: str
     sha256: str
+
+
+def _runner_sql(sql: str) -> list[str]:
+    """Strip migration-owned boundaries; the ledger runner owns the transaction."""
+    lines = sql.splitlines()
+    code_indexes = [
+        index
+        for index, line in enumerate(lines)
+        if line.strip() and not line.lstrip().startswith("--")
+    ]
+    if code_indexes and _BEGIN_TRANSACTION.fullmatch(lines[code_indexes[0]]):
+        lines[code_indexes[0]] = ""
+    code_indexes = [
+        index
+        for index, line in enumerate(lines)
+        if line.strip() and not line.lstrip().startswith("--")
+    ]
+    if code_indexes and _COMMIT_TRANSACTION.fullmatch(lines[code_indexes[-1]]):
+        lines[code_indexes[-1]] = ""
+    stripped = "\n".join(lines).strip()
+    return [stripped] if stripped else []
 
 
 def load_financial_migrations(root: Path | None = None) -> list[Migration]:
@@ -203,7 +226,8 @@ def apply_financial_migrations(
                                 f"migration checksum or filename mismatch at version {migration.version}"
                             )
                         continue
-                    cursor.execute(migration.sql)
+                    for statement in _runner_sql(migration.sql):
+                        cursor.execute(statement)
                     cursor.execute(
                         """
                         INSERT INTO financial_schema_migrations(version, filename, checksum)

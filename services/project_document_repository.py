@@ -894,8 +894,9 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
         "029_texturin_payment_profiles.sql",
         "030_texturin_finance_safe_profile_backfill.sql",
     ]
-    if _completion_constraint_enabled():
-        migration_names.append("031_project_completion_date_invariant.sql")
+    # Migration 031 is a numbered contract migration owned by the canonical
+    # ledger runner. Startup only verifies its constraint when the feature flag
+    # is enabled; it must never re-run the lock/backfill path on every import.
     migrations = [
         (migration_root / name).read_text(encoding="utf-8")
         for name in migration_names

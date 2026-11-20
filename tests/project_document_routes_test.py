@@ -345,12 +345,34 @@ class ProjectDocumentRouteTests(unittest.TestCase):
         self.login(client)
         app.config["CANONICAL_FINANCE_API_ENABLED"] = True
         app.config["CANONICAL_FINANCE_WRITES_ENABLED"] = True
+        app.extensions["canonical_finance_write_authority"] = lambda: "postgresql"
 
         response = client.get("/api/dashboard/v1/project-documents/capabilities")
 
         self.assertEqual(response.status_code, 200)
         capabilities = response.get_json()["meta"]["capabilities"]
         self.assertTrue(capabilities["transaction_correction_reversal"])
+
+    def test_capabilities_fail_closed_when_durable_finance_authority_is_not_postgresql(self):
+        app, _repository = self.make_app(enabled=True)
+        client = app.test_client()
+        self.login(client)
+        app.config["CANONICAL_FINANCE_API_ENABLED"] = True
+        app.config["CANONICAL_FINANCE_WRITES_ENABLED"] = True
+
+        resolvers = (
+            lambda: "google_sheets",
+            lambda: (_ for _ in ()).throw(RuntimeError("latch unavailable")),
+            None,
+        )
+        for resolver in resolvers:
+            app.extensions["canonical_finance_write_authority"] = resolver
+            response = client.get("/api/dashboard/v1/project-documents/capabilities")
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(
+                response.get_json()["meta"]["capabilities"]
+                ["transaction_correction_reversal"]
+            )
 
     def test_project_create_update_status_contract(self):
         app, repository = self.make_app(enabled=True)
@@ -812,6 +834,10 @@ class ProjectDocumentHealthContractTests(unittest.TestCase):
             main, "project_document_schema_health", return_value={"ready": False, "writes_enabled": True}
         ), patch.object(main, "allowlist_required", return_value=False), patch.object(
             main, "webhook_secret_required", return_value=False
+        ), patch.dict(
+            main.app.extensions,
+            {"canonical_finance_write_authority": lambda: "postgresql"},
+            clear=False,
         ):
             response, code = main.health_check()
         self.assertEqual(code, 503)
@@ -819,6 +845,38 @@ class ProjectDocumentHealthContractTests(unittest.TestCase):
         self.assertFalse(body["project_document_readiness"]["ready"])
         self.assertTrue(body["project_document_readiness"]["writes_enabled"])
         self.assertTrue(body["project_document_readiness"]["transaction_correction_reversal"])
+
+    def test_health_fails_closed_for_transaction_lifecycle_when_authority_is_not_postgresql(self):
+        import main
+
+        provider = {"configured": False, "reachable": False, "connected": False, "logged_in": False}
+        with main.app.test_request_context("/health"), patch.dict(
+            main.app.config,
+            {
+                "PROJECT_DOCUMENT_READS_ENABLED": True,
+                "PROJECT_DOCUMENT_WRITES_ENABLED": True,
+                "DASHBOARD_TRANSACTION_WRITES_ENABLED": False,
+                "CANONICAL_FINANCE_API_ENABLED": True,
+                "CANONICAL_FINANCE_WRITES_ENABLED": True,
+            },
+        ), patch.dict(
+            main.app.extensions,
+            {"canonical_finance_write_authority": lambda: "google_sheets"},
+            clear=False,
+        ), patch.object(main, "inbox_health", return_value={"durable": True}), patch.object(
+            main, "get_wuzapi_status", return_value=provider
+        ), patch.object(main, "dashboard_write_schema_health", return_value={"ready": True}), patch.object(
+            main, "project_document_schema_health", return_value={"ready": True}
+        ), patch.object(main, "allowlist_required", return_value=False), patch.object(
+            main, "webhook_secret_required", return_value=False
+        ):
+            response, code = main.health_check()
+
+        self.assertEqual(code, 200)
+        self.assertFalse(
+            response.get_json()["project_document_readiness"]
+            ["transaction_correction_reversal"]
+        )
 
     def test_health_fails_when_configured_reads_have_unready_schema(self):
         import main

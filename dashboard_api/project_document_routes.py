@@ -19,6 +19,7 @@ from uuid import UUID
 from flask import Blueprint, Response, current_app, jsonify, make_response, request
 
 from dashboard_api.auth import owner_identity, owner_required, write_csrf_valid
+from dashboard_api.runtime_capabilities import canonical_finance_lifecycle_ready
 from services.project_document_models import DocumentCalculationError
 from services.project_document_repository import (
     ProjectDocumentConflict,
@@ -60,9 +61,9 @@ def _json_safe(value: Any) -> Any:
 
 
 def _capabilities() -> dict[str, bool]:
-    canonical_lifecycle = bool(
-        current_app.config.get("CANONICAL_FINANCE_API_ENABLED", False)
-        and current_app.config.get("CANONICAL_FINANCE_WRITES_ENABLED", False)
+    canonical_lifecycle = canonical_finance_lifecycle_ready(
+        current_app.config,
+        current_app.extensions,
     )
     return {
         "reads_enabled": True,
