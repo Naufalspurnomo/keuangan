@@ -211,9 +211,6 @@ export function updateProject(workspace: FinanceWorkspace, id: string, input: Pr
   const current = workspace.projects.find((project) => project.id === id)
   if (!current) throw new FinanceValidationError('Project tidak ditemukan.')
   const clean = validateProjectInput(input, workspace.projects, id)
-  const linkedTransactions = workspace.transactions.filter((row) => row.project_id === id)
-  if (linkedTransactions.some((row) => row.date < clean.started_on)) throw new FinanceValidationError('Tanggal mulai Project tidak boleh setelah transaksi pertamanya.')
-  if (clean.completed_on && linkedTransactions.some((row) => row.date > clean.completed_on!)) throw new FinanceValidationError('Tanggal selesai tidak boleh sebelum transaksi terakhir.')
   const nextProject = { ...current, ...clean, wallet: COMPANY_WALLET[clean.company], updated_at: nowIso() }
   const transactions = workspace.transactions.map((transaction) => transaction.project_id === id
     ? { ...transaction, wallet: nextProject.wallet, company: nextProject.company, updated_at: nowIso() }
@@ -357,8 +354,7 @@ export function isFinanceWorkspace(value: unknown): value is FinanceWorkspace {
   for (const row of value.transactions) {
     if (!isRecord(row) || typeof row.id !== 'string' || transactionIds.has(row.id) || !validIsoDate(row.date) || !['income', 'expense'].includes(String(row.direction)) || !validMoney(row.amount, false) || !['project', 'office'].includes(String(row.scope)) || !WALLETS.includes(row.wallet as WalletId) || typeof row.notes !== 'string' || !validTimestamp(row.created_at) || !validTimestamp(row.updated_at)) return false
     const linkedProject = typeof row.project_id === 'string' ? projectMap.get(row.project_id) : undefined
-    const rowDate = String(row.date)
-    if (row.scope === 'project' && (!linkedProject || visibleProjectStatus(linkedProject.status as ProjectStatus) === 'cancelled' || rowDate < String(linkedProject.started_on) || (linkedProject.completed_on !== null && rowDate > String(linkedProject.completed_on)) || row.company !== linkedProject.company || row.wallet !== linkedProject.wallet || row.office_category !== null)) return false
+    if (row.scope === 'project' && (!linkedProject || visibleProjectStatus(linkedProject.status as ProjectStatus) === 'cancelled' || row.company !== linkedProject.company || row.wallet !== linkedProject.wallet || row.office_category !== null)) return false
     if (row.scope === 'office' && (row.direction !== 'expense' || row.company !== null || row.project_id !== null || !OFFICE_CATEGORIES.includes(row.office_category as OfficeCategory))) return false
     transactionIds.add(row.id)
   }

@@ -112,7 +112,7 @@ describe('demo finance workspace', () => {
     expect(next.transactions.filter((item) => item.project_id === project.id).every((item) => item.wallet === 'TX SBY' && item.company === 'Texturin Surabaya')).toBe(true)
   })
 
-  it('cannot complete a project before its latest transaction', () => {
+  it('keeps project lifecycle dates independent from valid transaction dates', () => {
     const created = createProject(seedFinanceWorkspace(), newProject({ name: 'Batas Selesai' }))
     const project = created.projects.at(-1)!
     const withTransaction = createTransaction(created, {
@@ -122,9 +122,6 @@ describe('demo finance workspace', () => {
 
     expect(() => updateProject(withTransaction, project.id, {
       ...project, status: 'completed', completed_on: '2026-06-09',
-    })).toThrow('Tanggal selesai tidak boleh sebelum transaksi terakhir.')
-    expect(() => updateProject(withTransaction, project.id, {
-      ...project, status: 'completed', completed_on: '2026-06-10',
     })).not.toThrow()
   })
 
@@ -132,10 +129,11 @@ describe('demo finance workspace', () => {
     const workspace = seedFinanceWorkspace()
     const project = workspace.projects.find((item) => item.status === 'completed')!
 
-    expect(() => createTransaction(workspace, {
+    const next = createTransaction(workspace, {
       date: '2026-12-31', direction: 'income', amount: 500_000, scope: 'project', wallet: project.wallet,
       company: project.company, project_id: project.id, office_category: null, notes: 'Pembayaran terlambat',
-    })).not.toThrow()
+    })
+    expect(isFinanceWorkspace(next)).toBe(true)
   })
 
   it('blocks deletion of a project that still has financial records', () => {
@@ -176,7 +174,7 @@ describe('demo finance workspace', () => {
     const completedTransaction = workspace.transactions.find((transaction) => transaction.project_id === completed.id)!
     expect(isFinanceWorkspace({ ...workspace, transactions: workspace.transactions.map((transaction) => transaction.id === completedTransaction.id
       ? { ...transaction, date: '2026-12-31' }
-      : transaction) })).toBe(false)
+      : transaction) })).toBe(true)
     expect(isFinanceWorkspace({ ...workspace, debts: [{ ...workspace.debts[0], repaid: workspace.debts[0].amount + 1 }] })).toBe(false)
     expect(isFinanceWorkspace({ ...workspace, transactions: [{ ...workspace.transactions[0], amount: Number.MAX_SAFE_INTEGER + 1 }] })).toBe(false)
   })

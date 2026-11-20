@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import ProjectDocumentsWorkspace from './ProjectDocumentsWorkspace'
@@ -121,6 +121,36 @@ afterEach(() => {
 })
 
 describe('ProjectDocumentsWorkspace', () => {
+  it('ignores stale list responses after switching projects', async () => {
+    const oldList = deferred<Awaited<ReturnType<ProjectDocumentApi['listDocuments']>>>()
+    const oldSummary = deferred<Awaited<ReturnType<ProjectDocumentApi['getPaymentSummary']>>>()
+    const nextProject = { ...project, id: '55555555-5555-4555-8555-555555555555', name: 'Project Baru' }
+    const nextDocument = { ...draft, id: '66666666-6666-4666-8666-666666666666', project_id: nextProject.id }
+    const subject = api({
+      listDocuments: vi.fn((projectId) => projectId === project.id
+        ? oldList.promise
+        : Promise.resolve({ documents: [nextDocument], capabilities: session.capabilities })),
+      getPaymentSummary: vi.fn((projectId) => projectId === project.id
+        ? oldSummary.promise
+        : Promise.resolve({ ...paymentSummary, project_id: nextProject.id })),
+    })
+    const { rerender } = render(
+      <ProjectDocumentsWorkspace project={project} api={subject} session={session} route={{ tab: 'documents' }} onRouteChange={vi.fn()} />,
+    )
+
+    rerender(<ProjectDocumentsWorkspace project={nextProject} api={subject} session={session} route={{ tab: 'documents' }} onRouteChange={vi.fn()} />)
+    expect(await screen.findByRole('article', { name: 'Sales Order draf' })).toBeTruthy()
+
+    await act(async () => {
+      oldList.resolve({ documents: [issued], capabilities: session.capabilities })
+      oldSummary.resolve(paymentSummary)
+      await Promise.all([oldList.promise, oldSummary.promise])
+    })
+
+    expect(screen.getByRole('article', { name: 'Sales Order draf' })).toBeTruthy()
+    expect(screen.queryByText('INV/HW/2026/000001')).toBeNull()
+  })
+
   it('renders loading, empty, error, and retry states', async () => {
     const loading = deferred<Awaited<ReturnType<ProjectDocumentApi['listDocuments']>>>()
     const subject = api({ listDocuments: vi.fn(() => loading.promise) })
