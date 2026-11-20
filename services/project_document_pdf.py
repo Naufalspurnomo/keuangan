@@ -1256,20 +1256,22 @@ def _draw_texturin_master(canvas: Any, snapshot: Mapping[str, Any], brand: Brand
     title = _document_title(snapshot).title()
     _canvas_text(canvas, brand, title, .068, .188 if brand.key == "texturin-bali" else .174, size=23.25, bold=True)
     meta_top = .222 if brand.key == "texturin-bali" else .201
+    right_meta_top = meta_top if brand.key == "texturin-bali" else meta_top - .018
+    deadline_offset = .046 if brand.key == "texturin-bali" else .041
     _canvas_text(canvas, brand, "TO", .068, meta_top, size=10.5, bold=True)
     _canvas_text(canvas, brand, project.get("client_company") or project.get("client_name"), .16, meta_top, size=10.5)
     _canvas_text(canvas, brand, "PROJECT", .068, meta_top + .023, size=10.5, bold=True)
     _canvas_text(canvas, brand, project.get("name"), .16, meta_top + .023, size=10.5)
-    _canvas_text(canvas, brand, "NO.", .67, meta_top, size=10.5, bold=True)
-    _canvas_text(canvas, brand, document.get("official_number"), .928, meta_top, size=10.5, right=True)
-    _canvas_text(canvas, brand, "DATE", .67, meta_top + .023, size=10.5, bold=True)
-    _canvas_text(canvas, brand, _date_label(document.get("issue_date")), .928, meta_top + .023, size=10.5, right=True)
+    _canvas_text(canvas, brand, "NO.", .67, right_meta_top, size=10.5, bold=True)
+    _canvas_text(canvas, brand, document.get("official_number"), .928, right_meta_top, size=10.5, right=True)
+    _canvas_text(canvas, brand, "DATE", .67, right_meta_top + .023, size=10.5, bold=True)
+    _canvas_text(canvas, brand, _date_label(document.get("issue_date")), .928, right_meta_top + .023, size=10.5, right=True)
     if _master_is_invoice(snapshot):
-        _canvas_text(canvas, brand, "DUE DATE", .67, meta_top + .046, size=10.5, bold=True)
-        _canvas_text(canvas, brand, _date_label(document.get("due_date")), .928, meta_top + .046, size=10.5, right=True)
+        _canvas_text(canvas, brand, "DUE DATE", .67, right_meta_top + deadline_offset, size=10.5, bold=True)
+        _canvas_text(canvas, brand, _date_label(document.get("due_date")), .928, right_meta_top + deadline_offset, size=10.5, right=True)
     elif document.get("valid_until"):
-        _canvas_text(canvas, brand, "VALID UNTIL", .67, meta_top + .046, size=10.5, bold=True)
-        _canvas_text(canvas, brand, _date_label(document.get("valid_until")), .928, meta_top + .046, size=10.5, right=True)
+        _canvas_text(canvas, brand, "VALID UNTIL", .67, right_meta_top + deadline_offset, size=10.5, bold=True)
+        _canvas_text(canvas, brand, _date_label(document.get("valid_until")), .928, right_meta_top + deadline_offset, size=10.5, right=True)
     if _master_is_receipt(snapshot):
         _draw_master_receipt(canvas, snapshot, brand, x=.12, top=.35, width=.74)
         return
