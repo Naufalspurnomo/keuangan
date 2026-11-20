@@ -1896,13 +1896,22 @@ class ProjectDocumentRepository:
         project["client_company"] = quotation.get("recipient_company") or project.get("client_company")
         project["client_address"] = quotation.get("recipient_address") or project.get("client_address")
         project["client_contact"] = quotation.get("recipient_contact") or project.get("client_contact")
-        issue_date = instant.astimezone(JAKARTA).date()
+        issued_at = quotation.get("issued_at")
+        issue_date = (
+            issued_at if isinstance(issued_at, datetime) else instant
+        ).astimezone(JAKARTA).date()
+        valid_until = quotation.get("valid_until")
+        if not valid_until:
+            validity_days = int(
+                commercial_policy(quotation.get("template_key"))["default_validity_days"]
+            )
+            valid_until = issue_date + timedelta(days=validity_days)
         document = {
             "id": quotation["id"], "project_id": quotation["project_id"],
             "issuer_key": project["issuer_key"], "document_type": "sales_order",
             "status": quotation.get("status") or "draft",
             "official_number": quotation.get("official_number") or f"QTN/{quotation['version']:03d}",
-            "issue_date": issue_date, "valid_until": quotation.get("valid_until"),
+            "issue_date": issue_date, "valid_until": valid_until,
             "template_key": quotation.get("template_key"),
             "template_version": quotation.get("template_version"),
             "payment_profile_key": quotation.get("payment_profile_key"),
