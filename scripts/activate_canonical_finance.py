@@ -53,15 +53,17 @@ def activate() -> None:
     if not dsn:
         raise RuntimeError("canonical finance activation requires a database DSN")
 
-    release = str(os.getenv("RELEASE_SHA") or os.getenv("KOYEB_GIT_SHA") or "").strip()
+    release = str(os.getenv("KOYEB_GIT_SHA") or os.getenv("RELEASE_SHA") or "").strip()
     if _RELEASE_SHA_PATTERN.fullmatch(release) is None:
         raise RuntimeError(
             "canonical finance activation requires a 40-character lowercase release SHA"
         )
 
+    target = 31 if _enabled("PROJECT_COMPLETION_CONSTRAINT_ENABLED") else 30
     apply_financial_migrations(
         dsn,
         migrations=load_production_bootstrap_migrations(),
+        apply_through=target,
     )
 
     import psycopg

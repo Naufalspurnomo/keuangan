@@ -243,7 +243,7 @@ class FakeProjectDocumentRepository:
 
 
 class ProjectDocumentRouteTests(unittest.TestCase):
-    def make_app(self, *, enabled=False):
+    def make_app(self, *, enabled=False, canonical_enabled=False):
         repository = FakeProjectDocumentRepository()
         app = Flask(__name__)
         app.config.update(
@@ -252,6 +252,7 @@ class ProjectDocumentRouteTests(unittest.TestCase):
             DASHBOARD_OWNER_EMAIL="owner@example.com",
             DASHBOARD_PROXY_TOKEN_HASH=PROXY_TOKEN_HASH,
             PROJECT_DOCUMENT_WRITES_ENABLED=enabled,
+            CANONICAL_FINANCE_WRITES_ENABLED=canonical_enabled,
         )
         register_dashboard(
             app,
@@ -337,6 +338,19 @@ class ProjectDocumentRouteTests(unittest.TestCase):
         self.assertEqual(repository.calls[-1][0], "delete_project")
         self.assertEqual(repository.calls[-1][2]["expected_name"], "Project Alpha")
         self.assertEqual(client.delete(f"/api/dashboard/v1/documents/{DOCUMENT_ID}").status_code, 405)
+
+    def test_capabilities_advertise_transaction_lifecycle_when_canonical_writes_are_enabled(self):
+        app, _repository = self.make_app(enabled=True)
+        client = app.test_client()
+        self.login(client)
+        app.config["CANONICAL_FINANCE_API_ENABLED"] = True
+        app.config["CANONICAL_FINANCE_WRITES_ENABLED"] = True
+
+        response = client.get("/api/dashboard/v1/project-documents/capabilities")
+
+        self.assertEqual(response.status_code, 200)
+        capabilities = response.get_json()["meta"]["capabilities"]
+        self.assertTrue(capabilities["transaction_correction_reversal"])
 
     def test_project_create_update_status_contract(self):
         app, repository = self.make_app(enabled=True)
@@ -786,7 +800,12 @@ class ProjectDocumentHealthContractTests(unittest.TestCase):
         provider = {"configured": False, "reachable": False, "connected": False, "logged_in": False}
         with main.app.test_request_context("/health"), patch.dict(
             main.app.config,
-            {"PROJECT_DOCUMENT_WRITES_ENABLED": True, "DASHBOARD_TRANSACTION_WRITES_ENABLED": False},
+            {
+                "PROJECT_DOCUMENT_WRITES_ENABLED": True,
+                "DASHBOARD_TRANSACTION_WRITES_ENABLED": False,
+                "CANONICAL_FINANCE_API_ENABLED": True,
+                "CANONICAL_FINANCE_WRITES_ENABLED": True,
+            },
         ), patch.object(main, "inbox_health", return_value={"durable": True}), patch.object(
             main, "get_wuzapi_status", return_value=provider
         ), patch.object(main, "dashboard_write_schema_health", return_value={"ready": False}), patch.object(
@@ -799,7 +818,7 @@ class ProjectDocumentHealthContractTests(unittest.TestCase):
         body = response.get_json()
         self.assertFalse(body["project_document_readiness"]["ready"])
         self.assertTrue(body["project_document_readiness"]["writes_enabled"])
-        self.assertFalse(body["project_document_readiness"]["transaction_correction_reversal"])
+        self.assertTrue(body["project_document_readiness"]["transaction_correction_reversal"])
 
     def test_health_fails_when_configured_reads_have_unready_schema(self):
         import main

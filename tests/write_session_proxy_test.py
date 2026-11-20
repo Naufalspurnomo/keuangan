@@ -37,11 +37,22 @@ class WriteSessionProxyTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def write_config(self, *, enabled: bool | None = None, username: str | None = None) -> None:
+    def write_config(
+        self,
+        *,
+        enabled: bool | None = None,
+        canonical_enabled: bool = False,
+        canonical_ready: bool = False,
+        username: str | None = None,
+    ) -> None:
         enabled_config = (
             ""
             if enabled is None
             else f"'transaction_writes_enabled'=>{'true' if enabled else 'false'},"
+        )
+        canonical_url = (
+            "https://example.invalid/api/dashboard/v1/canonical-transactions"
+            if canonical_ready else ""
         )
         self.config.write_text(
             "<?php return ["
@@ -50,6 +61,11 @@ class WriteSessionProxyTests(unittest.TestCase):
             "'proxy_token'=>'synthetic-server-token-0001',"
             "'upstream_snapshot_url'=>'https://example.invalid/snapshot',"
             f"{enabled_config}"
+            f"'canonical_finance_writes_enabled'=>{'true' if canonical_enabled else 'false'},"
+            f"'upstream_canonical_transactions_url'=>'{canonical_url}',"
+            f"'dashboard_actor_assertion_secret'=>'{'x' * 48 if canonical_ready else ''}',"
+            f"'dashboard_actor_assertion_audience'=>'{'hollawall-finance-api' if canonical_ready else ''}',"
+            f"'owner_email'=>'{'owner@example.test' if canonical_ready else ''}',"
             "'upstream_transactions_url'=>'https://example.invalid/transactions'];",
             encoding="utf-8",
         )
@@ -204,6 +220,29 @@ class WriteSessionProxyTests(unittest.TestCase):
                     "canonical_finance_writes_enabled": False,
                     "canonical_debt_writes_enabled": False,
                 },
+            )
+
+    def test_canonical_write_capability_requires_every_proxy_prerequisite(self) -> None:
+        self.write_config(canonical_enabled=True, canonical_ready=False)
+        with self.php_server() as base:
+            session_id = self.login(base)
+            response = requests.get(
+                self.endpoint(base), headers=self.cookie(session_id), timeout=5
+            )
+            self.assertFalse(
+                response.json()["data"]["capabilities"]
+                ["canonical_finance_writes_enabled"]
+            )
+
+        self.write_config(canonical_enabled=True, canonical_ready=True)
+        with self.php_server() as base:
+            session_id = self.login(base)
+            response = requests.get(
+                self.endpoint(base), headers=self.cookie(session_id), timeout=5
+            )
+            self.assertTrue(
+                response.json()["data"]["capabilities"]
+                ["canonical_finance_writes_enabled"]
             )
 
 

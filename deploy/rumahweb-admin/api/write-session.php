@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/canonical-finance-readiness.php';
+
 const ADMIN_PATH = '/admin/';
 const SESSION_LIFETIME = 2592000;
 const SESSION_RENEW_AFTER = 86400;
@@ -111,7 +113,7 @@ echo json_encode([
         'csrf_token' => $csrf,
         'capabilities' => [
             'writes_enabled' => ($config['transaction_writes_enabled'] ?? false) === true,
-            'canonical_finance_writes_enabled' => ($config['canonical_finance_writes_enabled'] ?? false) === true,
+            'canonical_finance_writes_enabled' => canonical_finance_proxy_ready($config),
             'canonical_debt_writes_enabled' => ($config['canonical_debt_writes_enabled'] ?? false) === true,
         ],
     ],

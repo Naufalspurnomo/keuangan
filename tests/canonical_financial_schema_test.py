@@ -23,7 +23,7 @@ ROOT = Path(__file__).parents[1]
 def test_canonical_migrations_are_versioned_additive_and_checksums_are_stable():
     migrations = load_financial_migrations(ROOT / "dashboard_api" / "migrations")
 
-    assert [migration.version for migration in migrations] == list(range(9, 31))
+    assert [migration.version for migration in migrations] == list(range(9, 32))
     assert all(migration.sha256 == hashlib.sha256(migration.sql.encode()).hexdigest() for migration in migrations)
     combined = "\n".join(migration.sql for migration in migrations).lower()
     assert "opening_balances" in combined
@@ -70,10 +70,10 @@ def test_canonical_migrations_are_versioned_additive_and_checksums_are_stable():
     assert "historical_import boolean not null default false check (not historical_import)" in compact_sql
 
 
-def test_production_bootstrap_orders_prerequisite_project_schema_before_finance_through_030():
+def test_production_bootstrap_orders_prerequisite_project_schema_before_finance_through_031():
     migrations = load_production_bootstrap_migrations(ROOT / "dashboard_api" / "migrations")
 
-    assert [migration.version for migration in migrations] == list(range(1, 31))
+    assert [migration.version for migration in migrations] == list(range(1, 32))
     combined = "\n".join(migration.sql for migration in migrations).lower()
     assert combined.index("create table if not exists financial_ledger") < combined.index(
         "create index if not exists idx_financial_ledger_dashboard_scope"
@@ -164,6 +164,50 @@ def test_one_shot_migration_uses_advisory_lock_and_records_checksum_once():
     assert connection.commits == 1
 
 
+def test_staged_migration_target_defers_031_but_supports_it_for_rollback():
+    migration_030 = Migration(
+        30,
+        "030_test.sql",
+        "SELECT 30",
+        hashlib.sha256(b"SELECT 30").hexdigest(),
+    )
+    migration_031 = Migration(
+        31,
+        "031_test.sql",
+        "SELECT 31",
+        hashlib.sha256(b"SELECT 31").hexdigest(),
+    )
+    fresh_cursor = _Cursor()
+    fresh_connection = _Connection(fresh_cursor)
+
+    result = apply_financial_migrations(
+        "postgres://test",
+        migrations=[migration_030, migration_031],
+        apply_through=30,
+        connection_factory=lambda _dsn: fresh_connection,
+    )
+
+    assert result == {"applied": [30], "current_version": 30, "ready": True}
+    executed = [sql for sql, _params in fresh_cursor.executed]
+    assert migration_030.sql in executed
+    assert migration_031.sql not in executed
+
+    upgraded_cursor = _Cursor(applied=[
+        (30, migration_030.sha256, migration_030.filename),
+        (31, migration_031.sha256, migration_031.filename),
+    ])
+    upgraded_connection = _Connection(upgraded_cursor)
+    rollback_result = apply_financial_migrations(
+        "postgres://test",
+        migrations=[migration_030, migration_031],
+        apply_through=30,
+        connection_factory=lambda _dsn: upgraded_connection,
+    )
+
+    assert rollback_result == {"applied": [], "current_version": 31, "ready": True}
+    assert migration_031.sql not in [sql for sql, _params in upgraded_cursor.executed]
+
+
 def test_schema_readiness_is_read_only_and_rejects_checksum_drift():
     migration = Migration(9, "009_test.sql", "SELECT 1", hashlib.sha256(b"SELECT 1").hexdigest())
     cursor = _Cursor(applied=[(9, "0" * 64, "009_test.sql")])
@@ -200,8 +244,8 @@ def test_schema_readiness_default_verifies_complete_production_bootstrap():
         connection_factory=lambda _dsn: connection,
     )
 
-    assert result["current_version"] == 30
-    assert result["checksums_verified"] == 30
+    assert result["current_version"] == 31
+    assert result["checksums_verified"] == 31
     assert connection.commits == 0
 
 

@@ -27,6 +27,8 @@ class RumahwebAdminReleaseTests(unittest.TestCase):
         login = (RELEASE / "index.php").read_text(encoding="utf-8")
         proxy = (RELEASE / "api" / "snapshot.php").read_text(encoding="utf-8")
         self.assertIn("Masuk ke dashboard", login)
+        self.assertIn("aktivitas unit, dan Project", login)
+        self.assertNotIn("aktivitas unit, dan proyek", login)
         self.assertIn("brand/hollawall-logo.png", login)
         self.assertIn("brand/waves-background.svg", login)
         self.assertNotIn('class="mark">H', login)

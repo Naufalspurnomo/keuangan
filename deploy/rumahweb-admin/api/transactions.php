@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/canonical-finance-readiness.php';
+
 const ADMIN_PATH = '/admin/';
 const SESSION_LIFETIME = 2592000;
 const SESSION_RENEW_AFTER = 86400;
@@ -129,7 +131,7 @@ $canonical = in_array($action, ['correction', 'reversal'], true);
 if ($action !== '' && !$canonical) {
     json_error(422, 'invalid_transaction_action', 'Transaction action is invalid.');
 }
-if ($canonical && ($config['canonical_finance_writes_enabled'] ?? false) !== true) {
+if ($canonical && !canonical_finance_proxy_ready($config)) {
     json_error(503, 'canonical_finance_writes_disabled', 'Canonical transaction writes are disabled.');
 }
 if (!$canonical && ($config['transaction_writes_enabled'] ?? false) !== true) {

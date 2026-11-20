@@ -192,6 +192,53 @@ def _instant(value: datetime | None = None) -> datetime:
     return selected
 
 
+def _project_lifecycle_values(
+    values: Mapping[str, Any],
+    *,
+    today: Callable[[], date],
+    current_status: str | None = None,
+    current_completion_date: date | None = None,
+) -> dict[str, Any]:
+    """Keep Project status and completion date as one atomic invariant."""
+    prepared = dict(values)
+    status_supplied = "status" in prepared
+    completion_supplied = "completion_date" in prepared
+    status = (
+        str(prepared.get("status") or "").strip()
+        if status_supplied
+        else str(current_status or "").strip()
+    )
+    if status_supplied:
+        if status not in PROJECT_STATUSES:
+            raise ValueError("unsupported project status")
+        prepared["status"] = status
+    if completion_supplied:
+        completion = prepared.get("completion_date")
+        if completion in {None, ""}:
+            prepared["completion_date"] = None
+        elif isinstance(completion, str):
+            prepared["completion_date"] = date.fromisoformat(completion)
+        elif not isinstance(completion, date):
+            raise ValueError("completion_date must be an ISO date")
+    if not status:
+        return prepared
+    if status != "completed":
+        if (
+            not status_supplied
+            and completion_supplied
+            and prepared.get("completion_date") is not None
+        ):
+            raise ValueError("completion_date is only allowed for completed projects")
+        if status_supplied:
+            prepared["completion_date"] = None
+        return prepared
+    if completion_supplied and prepared.get("completion_date") is None:
+        prepared["completion_date"] = current_completion_date or today()
+    elif status_supplied and not completion_supplied:
+        prepared["completion_date"] = current_completion_date or today()
+    return prepared
+
+
 def format_official_number(
     document_type: str,
     issuer_code: str,
@@ -729,7 +776,16 @@ SELECT
               'trg_project_issuer_profile_events_append_only',
               'trg_project_document_artifacts_immutable'
           )
-    ) AS triggers_ready
+    ) AS triggers_ready,
+    EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        WHERE c.conname = 'chk_projects_completion_date_lifecycle'
+          AND c.conrelid = 'projects'::regclass
+          AND POSITION('status = ''completed''::text' IN pg_get_constraintdef(c.oid, TRUE)) > 0
+          AND POSITION('completion_date IS NOT NULL' IN pg_get_constraintdef(c.oid, TRUE)) > 0
+          AND POSITION('completion_date IS NULL' IN pg_get_constraintdef(c.oid, TRUE)) > 0
+    ) AS completion_constraint_ready
 """
 
 _CANONICAL_ISSUER_HEALTH_QUERY = """
@@ -745,14 +801,31 @@ SELECT EXISTS (
 """
 
 
-def _schema_status(row: Any) -> dict[str, bool]:
-    tables, constraints, indexes, triggers = map(bool, row or (False, False, False, False))
+def _completion_constraint_enabled() -> bool:
+    return str(os.getenv("PROJECT_COMPLETION_CONSTRAINT_ENABLED") or "").strip().casefold() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def _schema_status(
+    row: Any, *, require_completion_constraint: bool | None = None
+) -> dict[str, bool]:
+    values = list(row or ())
+    values.extend([False] * (5 - len(values)))
+    tables, constraints, indexes, triggers, completion_constraint = map(bool, values[:5])
+    required = (
+        _completion_constraint_enabled()
+        if require_completion_constraint is None
+        else bool(require_completion_constraint)
+    )
     return {
-        "ready": tables and constraints and indexes and triggers,
+        "ready": tables and constraints and indexes and triggers
+        and (completion_constraint or not required),
         "tables": tables,
         "constraints": constraints,
         "indexes": indexes,
         "triggers": triggers,
+        "completion_constraint": completion_constraint,
     }
 
 
@@ -800,29 +873,32 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
             "Project document repository requires STATE_DATABASE_URL or DATABASE_URL"
         )
     migration_root = Path(__file__).parents[1] / "dashboard_api" / "migrations"
+    migration_names = [
+        "003_project_documents.sql",
+        # Migration 003 is intentionally idempotent but carries legacy
+        # delete triggers. Restore every hard-delete gate immediately so a
+        # later compatibility migration failure cannot leave them downgraded.
+        "022_project_hard_delete.sql",
+        "005_canonical_project_transactions.sql",
+        "006_invoice_payment_applications.sql",
+        "007_project_transaction_evidence.sql",
+        "008_project_quotation_handoffs.sql",
+        "019_structured_quotations.sql",
+        "020_quotation_invariants.sql",
+        "022_project_hard_delete.sql",
+        "024_brand_commercial_identity.sql",
+        "025_quotation_artifacts.sql",
+        "026_texturin_template_identity.sql",
+        "027_project_event_hard_delete_gate.sql",
+        "028_quotation_deposit_percent.sql",
+        "029_texturin_payment_profiles.sql",
+        "030_texturin_finance_safe_profile_backfill.sql",
+    ]
+    if _completion_constraint_enabled():
+        migration_names.append("031_project_completion_date_invariant.sql")
     migrations = [
         (migration_root / name).read_text(encoding="utf-8")
-        for name in (
-            "003_project_documents.sql",
-            # Migration 003 is intentionally idempotent but carries legacy
-            # delete triggers. Restore every hard-delete gate immediately so a
-            # later compatibility migration failure cannot leave them downgraded.
-            "022_project_hard_delete.sql",
-            "005_canonical_project_transactions.sql",
-            "006_invoice_payment_applications.sql",
-            "007_project_transaction_evidence.sql",
-            "008_project_quotation_handoffs.sql",
-            "019_structured_quotations.sql",
-            "020_quotation_invariants.sql",
-            "022_project_hard_delete.sql",
-            "024_brand_commercial_identity.sql",
-            "025_quotation_artifacts.sql",
-            "026_texturin_template_identity.sql",
-            "027_project_event_hard_delete_gate.sql",
-            "028_quotation_deposit_percent.sql",
-            "029_texturin_payment_profiles.sql",
-            "030_texturin_finance_safe_profile_backfill.sql",
-        )
+        for name in migration_names
     ]
     try:
         with _default_connection_factory(selected) as connection:
@@ -1149,6 +1225,10 @@ class ProjectDocumentRepository:
                     key_hash, _, replay = self._claim(cursor, "project.create", idempotency_key, request)
                     if replay is not None:
                         return replay
+                    persisted_command = _project_lifecycle_values(
+                        {**command, "status": status},
+                        today=lambda: _instant(self._now()).astimezone(JAKARTA).date(),
+                    )
                     cursor.execute(
                         "SELECT EXISTS(SELECT 1 FROM project_issuer_profiles WHERE issuer_key = %s)",
                         (issuer_key,),
@@ -1175,8 +1255,9 @@ class ProjectDocumentRepository:
                             issuer_key,
                             wallet,
                             company,
-                            status,
-                            command.get("start_date"), command.get("completion_date"),
+                            persisted_command["status"],
+                            persisted_command.get("start_date"),
+                            persisted_command.get("completion_date"),
                             str(command.get("contract_notes") or "").strip(),
                             actor_json, actor_json,
                         ),
@@ -2934,13 +3015,6 @@ class ProjectDocumentRepository:
                 supplied[field] = cleaned
         actor_json, _ = _actor(actor)
         request = {"project_id": project_id, "changes": supplied, "expected_version": expected_version}
-        assignments = []
-        params: list[Any] = []
-        for field, value in supplied.items():
-            assignments.append(f"{field} = %s")
-            params.append(value)
-        assignments.extend(["lock_version = lock_version + 1", "updated_by = %s::jsonb", "updated_at = NOW()"])
-        params.extend([actor_json, project_id, expected_version])
         try:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
@@ -2948,12 +3022,40 @@ class ProjectDocumentRepository:
                     if replay is not None:
                         return replay
                     cursor.execute(
-                        "SELECT issuer_key, wallet, company FROM projects WHERE id = %s FOR UPDATE",
+                        "SELECT issuer_key, wallet, company, start_date, status, completion_date "
+                        "FROM projects WHERE id = %s FOR UPDATE",
                         (project_id,),
                     )
                     current_project = cursor.fetchone()
                     if not current_project:
                         raise ProjectDocumentNotFound("project not found")
+                    supplied = _project_lifecycle_values(
+                        supplied,
+                        current_status=str(current_project[4]),
+                        current_completion_date=current_project[5],
+                        today=lambda: _instant(self._now()).astimezone(JAKARTA).date(),
+                    )
+                    assignments = []
+                    params: list[Any] = []
+                    for field, value in supplied.items():
+                        assignments.append(f"{field} = %s")
+                        params.append(value)
+                    assignments.extend([
+                        "lock_version = lock_version + 1",
+                        "updated_by = %s::jsonb",
+                        "updated_at = NOW()",
+                    ])
+                    params.extend([actor_json, project_id, expected_version])
+                    completion_date = supplied.get("completion_date")
+                    next_start_date = supplied.get("start_date", current_project[3])
+                    if isinstance(next_start_date, str) and next_start_date:
+                        next_start_date = date.fromisoformat(next_start_date)
+                    if (
+                        completion_date is not None
+                        and next_start_date is not None
+                        and completion_date < next_start_date
+                    ):
+                        raise ValueError("completion_date cannot precede start_date")
                     next_wallet = str(supplied.get("wallet", current_project[1]))
                     next_company = str(supplied.get("company", current_project[2]))
                     binding_changed = (

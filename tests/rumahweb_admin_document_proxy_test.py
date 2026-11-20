@@ -83,6 +83,8 @@ class RumahwebAdminProjectDocumentProxyTests(unittest.TestCase):
         self,
         *,
         enabled: bool,
+        canonical_enabled: bool = False,
+        canonical_ready: bool = False,
         projects: str = "https://example.invalid/api/dashboard/v1/projects",
         documents: str = "https://example.invalid/api/dashboard/v1/documents",
         public_origin: str = "https://finance.example.test",
@@ -94,6 +96,11 @@ class RumahwebAdminProjectDocumentProxyTests(unittest.TestCase):
             "'proxy_token'=>'synthetic-server-token-0001',"
             "'upstream_snapshot_url'=>'https://example.invalid/snapshot',"
             "'transaction_writes_enabled'=>false,"
+            f"'canonical_finance_writes_enabled'=>{'true' if canonical_enabled else 'false'},"
+            f"'upstream_canonical_transactions_url'=>'{'https://example.invalid/api/dashboard/v1/canonical-transactions' if canonical_ready else ''}',"
+            f"'dashboard_actor_assertion_secret'=>'{'x' * 48 if canonical_ready else ''}',"
+            f"'dashboard_actor_assertion_audience'=>'{'hollawall-finance-api' if canonical_ready else ''}',"
+            f"'owner_email'=>'{'owner@example.test' if canonical_ready else ''}',"
             "'upstream_transactions_url'=>'https://example.invalid/transactions',"
             f"'project_document_writes_enabled'=>{'true' if enabled else 'false'},"
             f"'public_origin'=>'{public_origin}',"
@@ -200,14 +207,14 @@ class RumahwebAdminProjectDocumentProxyTests(unittest.TestCase):
         self.assertLess(int(connect_timeout.group(1)), int(timeout.group(1)))
 
     @staticmethod
-    def success(data):
+    def success(data, *, transaction_lifecycle=False):
         return {
             "api_version": "dashboard.v1",
             "data": data,
             "meta": {"capabilities": {
                 "reads_enabled": True,
                 "project_document_writes_enabled": True,
-                "transaction_correction_reversal": False,
+                "transaction_correction_reversal": transaction_lifecycle,
                 "hard_delete": False,
             }},
         }
@@ -270,6 +277,61 @@ class RumahwebAdminProjectDocumentProxyTests(unittest.TestCase):
                 self.assertFalse(
                     response.json()["meta"]["capabilities"]
                     ["project_document_writes_enabled"]
+                )
+
+    def test_read_capabilities_preserve_transaction_lifecycle_when_both_gates_are_enabled(self):
+        responses = [(200, "application/json", self.success(
+            {"items": []}, transaction_lifecycle=True
+        ))]
+        with self.https_upstream(responses) as (root, cert, _server):
+            with self.php_server(ca_bundle=cert) as base:
+                self.write_config(
+                    enabled=True,
+                    canonical_enabled=True,
+                    canonical_ready=True,
+                    projects=root + "/projects",
+                    documents=root + "/documents",
+                    public_origin=base.removesuffix("/admin/"),
+                )
+                session_id, _csrf = self.login(base)
+                response = requests.get(
+                    base + "api/projects.php",
+                    headers=self.cookie(session_id),
+                    params={"action": "list"},
+                    timeout=5,
+                )
+
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertTrue(
+                    response.json()["meta"]["capabilities"]
+                    ["transaction_correction_reversal"]
+                )
+
+    def test_read_capabilities_fail_closed_when_canonical_proxy_is_incomplete(self):
+        responses = [(200, "application/json", self.success(
+            {"items": []}, transaction_lifecycle=True
+        ))]
+        with self.https_upstream(responses) as (root, cert, _server):
+            with self.php_server(ca_bundle=cert) as base:
+                self.write_config(
+                    enabled=True,
+                    canonical_enabled=True,
+                    canonical_ready=False,
+                    projects=root + "/projects",
+                    documents=root + "/documents",
+                    public_origin=base.removesuffix("/admin/"),
+                )
+                session_id, _csrf = self.login(base)
+                response = requests.get(
+                    base + "api/projects.php",
+                    headers=self.cookie(session_id),
+                    params={"action": "list"},
+                    timeout=5,
+                )
+
+                self.assertFalse(
+                    response.json()["meta"]["capabilities"]
+                    ["transaction_correction_reversal"]
                 )
 
     def test_project_read_and_write_routes_are_exact_and_headers_sanitized(self):

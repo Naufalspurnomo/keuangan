@@ -58,6 +58,23 @@ def test_migration_defines_exact_schema_and_database_guards():
     assert "credit_note" not in sql
 
 
+def test_project_completion_migration_backfills_dates_and_enforces_lifecycle_invariant():
+    sql = (
+        ROOT / "dashboard_api/migrations/031_project_completion_date_invariant.sql"
+    ).read_text(encoding="utf-8")
+    compact = " ".join(sql.split())
+
+    assert "UPDATE projects" in sql
+    assert "completion_date = GREATEST(" in compact
+    assert "COALESCE(completion_date, updated_at" in compact
+    assert "chk_projects_completion_date_lifecycle" in sql
+    assert "status = 'completed' AND completion_date IS NOT NULL" in compact
+    assert "status <> 'completed' AND completion_date IS NULL" in compact
+    assert "lock_version = lock_version + 1" in compact
+    assert '"id":"migration-031"' in compact
+    assert "INSERT INTO project_document_events" in sql
+
+
 def test_structured_quotation_accepts_cached_frontend_line_discount_key():
     values = {
         "template_key": "hollawall",
@@ -367,6 +384,7 @@ def test_schema_health_is_read_only_and_requires_exact_catalog_objects(monkeypat
         "constraints": True,
         "indexes": True,
         "triggers": True,
+        "completion_constraint": False,
     }
     health_sql = executed[0]
     for exact_object in (
@@ -383,12 +401,69 @@ def test_schema_health_is_read_only_and_requires_exact_catalog_objects(monkeypat
         "trg_project_documents_no_delete",
         "trg_project_document_immutable",
         "trg_project_document_events_append_only",
+        "chk_projects_completion_date_lifecycle",
     ):
         assert exact_object in health_sql
     assert "pg_get_indexdef" in health_sql or "pg_get_expr" in health_sql
     assert "pg_get_constraintdef" in health_sql
     assert "tgtype" in health_sql or "pg_get_triggerdef" in health_sql
     assert all("CREATE TABLE" not in statement for statement in executed)
+
+
+def test_project_lifecycle_completion_clock_is_lazy_for_noncompleted_updates():
+    called = False
+
+    def today():
+        nonlocal called
+        called = True
+        return datetime(2027, 1, 1, tzinfo=ZoneInfo("Asia/Jakarta")).date()
+
+    active = repository_module._project_lifecycle_values({"status": "active"}, today=today)
+    assert active == {"status": "active", "completion_date": None}
+    assert called is False
+
+    completed = repository_module._project_lifecycle_values({"status": "completed"}, today=today)
+    assert completed == {
+        "status": "completed",
+        "completion_date": datetime(2027, 1, 1, tzinfo=ZoneInfo("Asia/Jakarta")).date(),
+    }
+    assert called is True
+
+    cancelled = repository_module._project_lifecycle_values(
+        {"status": "cancelled", "completion_date": "2027-01-02"},
+        today=lambda: datetime(2027, 1, 1, tzinfo=ZoneInfo("Asia/Jakarta")).date(),
+    )
+    assert cancelled == {"status": "cancelled", "completion_date": None}
+
+
+def test_project_lifecycle_normalizes_partial_completion_date_using_current_state():
+    current = datetime(2026, 12, 30, tzinfo=ZoneInfo("Asia/Jakarta")).date()
+
+    partial = repository_module._project_lifecycle_values(
+        {"completion_date": "2027-01-02"},
+        current_status="completed",
+        current_completion_date=current,
+        today=lambda: (_ for _ in ()).throw(AssertionError("clock must stay lazy")),
+    )
+    assert partial == {
+        "completion_date": datetime(2027, 1, 2, tzinfo=ZoneInfo("Asia/Jakarta")).date()
+    }
+
+    preserved = repository_module._project_lifecycle_values(
+        {"status": "completed"},
+        current_status="completed",
+        current_completion_date=current,
+        today=lambda: (_ for _ in ()).throw(AssertionError("clock must stay lazy")),
+    )
+    assert preserved == {"status": "completed", "completion_date": current}
+
+    with pytest.raises(ValueError, match="only allowed for completed projects"):
+        repository_module._project_lifecycle_values(
+            {"completion_date": "2027-01-02"},
+            current_status="active",
+            current_completion_date=None,
+            today=lambda: current,
+        )
 
 
 def test_runtime_health_requires_the_canonical_production_issuer(monkeypatch):
