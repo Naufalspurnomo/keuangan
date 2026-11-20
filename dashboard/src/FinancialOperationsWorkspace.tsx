@@ -85,7 +85,7 @@ function MovementLedger({ rows, onOpenProject, showSourceDetails = false }: { ro
     {visible.map((row) => <article key={row.id}>
       <time>{day(row.transaction_date)}</time>
       <div><strong>{row.notes || row.project || 'Transaksi umum'}</strong><span>{[row.company, row.wallet].filter((value, index, all) => value && all.indexOf(value) === index).join(' · ')}</span></div>
-      {row.project && !['-', 'Operasional Kantor', 'Hutang internal'].includes(row.project) ? <button type="button" onClick={() => onOpenProject?.(row.project!)}>{row.project}</button> : <span>{isInternal(row) ? 'Hutang internal' : 'Tanpa proyek'}</span>}
+      {row.project && !['-', 'Operasional Kantor', 'Hutang internal'].includes(row.project) ? <button type="button" onClick={() => onOpenProject?.(row.project!)}>{row.project}</button> : <span>{isInternal(row) ? 'Hutang internal' : 'Tanpa Project'}</span>}
       <em className={row.transaction_type === 'Pemasukan' ? 'positive' : 'negative'}>{row.transaction_type === 'Pemasukan' ? '+' : '−'}{amount(row.amount)}</em>
       <small>{isInternal(row) ? 'Internal' : 'Eksternal'}{showSourceDetails ? ` · Source ${row.source_key || `ID ${row.id}`}` : ''}</small>
     </article>)}
@@ -119,7 +119,7 @@ export function CashflowWorkspace({ transactions, cashTrend, internalOpen = 0, d
   const outflow = operating.filter((row) => row.transaction_type === 'Pengeluaran').reduce((sum, row) => sum + row.amount, 0)
 
   return <section className="financial-ops cashflow-workspace">
-    <header className="ops-heading"><div><p className="eyebrow">ARUS KAS</p><h2>Aliran kas, bukan sekadar saldo</h2><p>Pemasukan dan pengeluaran ditelusuri per periode dan perusahaan. Hutang internal tetap terpisah dari arus eksternal.</p></div><div className="ops-asof"><span>Data hingga</span><strong>{dataThrough ? day(dataThrough) : '—'}</strong></div></header>
+    <div className="ops-asof"><span>Data sampai</span><strong>{dataThrough ? day(dataThrough) : '—'}</strong></div>
     <div className="ops-filter-block">
       <div className="ops-filter-row"><label>Tahun<select aria-label="Tahun arus kas" value={year} onChange={(event) => setYear(event.target.value)}><option value="all">Semua tahun</option>{years.map((item) => <option key={item} value={item}>{item}</option>)}</select></label><nav aria-label="Periode arus kas">{PERIODS.map((item) => <button type="button" className={period === item.key ? 'active' : ''} key={item.key} onClick={() => setPeriod(item.key)}>{item.label}</button>)}</nav></div>
       <nav className="ops-unit-filters" aria-label="Perusahaan"><button type="button" className={company === 'Semua unit' ? 'active' : ''} onClick={() => setCompany('Semua unit')}>Semua perusahaan</button>{companies.map((name) => <button type="button" className={company === name ? 'active' : ''} key={name} onClick={() => setCompany(name)}>{name}</button>)}</nav>

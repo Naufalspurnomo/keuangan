@@ -24,7 +24,7 @@ export default function ProjectCompleteDialog({ project, onSave, onClose }: {
     event.preventDefault()
     if (submitting.current) return
     if (!completedOn || completedOn < project.started_on) {
-      setError('Tanggal selesai tidak boleh sebelum tanggal mulai proyek.')
+      setError('Tanggal selesai tidak boleh sebelum tanggal mulai Project.')
       return
     }
     submitting.current = true
@@ -42,15 +42,15 @@ export default function ProjectCompleteDialog({ project, onSave, onClose }: {
       onClose()
     } catch (reason) {
       submitting.current = false
-      setError(reason instanceof Error ? reason.message : 'Proyek belum dapat diselesaikan.')
+      setError(reason instanceof Error ? reason.message : 'Project belum dapat diselesaikan.')
     }
   }
 
-  return <Modal title={`Selesaikan ${project.name}`} copy="Tetapkan tanggal penyelesaian proyek. Data transaksi tetap tersimpan." onClose={onClose}>
+  return <Modal title={`Selesaikan ${project.name}`} copy="Tetapkan tanggal penyelesaian Project. Data transaksi tetap tersimpan." onClose={onClose}>
     <form className="finance-form project-complete-form" onSubmit={submit} noValidate>
       <label><span>Tanggal selesai *</span><input autoFocus type="date" required min={project.started_on} value={completedOn} onChange={(event) => { setCompletedOn(event.target.value); setError('') }} /></label>
       {error && <p className="form-error" role="alert">{error}</p>}
-      <footer><button type="button" className="secondary-button" onClick={onClose}>Batal</button><button className="primary-button">Selesaikan proyek</button></footer>
+      <footer><button type="button" className="secondary-button" onClick={onClose}>Batal</button><button className="primary-button">Selesaikan Project</button></footer>
     </form>
   </Modal>
 }

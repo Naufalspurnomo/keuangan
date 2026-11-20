@@ -1,9 +1,11 @@
 import { ArrowRight, Eye, Pencil, Plus, ReceiptText, Trash2, X } from 'lucide-react'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 
 import ProjectDocumentPreview from './ProjectDocumentPreview'
+import RupiahAmountInput from './RupiahAmountInput'
 import { commercialPolicy, normalizeCommercialLine } from './commercialDocumentPolicy'
 import { projectTemplateKey } from './commercialDocumentViewModel'
+import { compressProjectImage } from './projectDocumentImage'
 import {
   calculateDocumentTotals,
   createEmptyDocumentLine,
@@ -42,6 +44,7 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
   const [view, setView] = useState<'edit' | 'preview'>('edit')
   const [dirty, setDirty] = useState(false)
   const [error, setError] = useState('')
+  const [imageProcessing, setImageProcessing] = useState(false)
   const alertRef = useRef<HTMLParagraphElement>(null)
 
   useEffect(() => {
@@ -55,6 +58,16 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
     setDraft((current) => ({ ...current, [key]: value }))
     setDirty(true)
     setError('')
+  }
+  const uploadImage = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget
+    const file = input.files?.[0]
+    if (!file) return
+    setImageProcessing(true)
+    setError('')
+    try { change('project_image_url', await compressProjectImage(file)) }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Gambar Project gagal diproses.') }
+    finally { setImageProcessing(false); input.value = '' }
   }
   const changeLine = (index: number, key: keyof ProjectDocumentDraft['lines'][number], value: string | number | null) => {
     change('lines', draft.lines.map((line, lineIndex) => lineIndex === index ? { ...line, [key]: value } : line))
@@ -71,8 +84,9 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
   }
   const submit = async (event: FormEvent) => {
     event.preventDefault()
+    if (saving || imageProcessing) return
     try {
-      if (draft.project_image_url && !/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(draft.project_image_url)) throw new Error('Gambar proyek harus berupa data PNG atau JPEG.')
+      if (draft.project_image_url && !/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(draft.project_image_url)) throw new Error('Gambar Project harus berupa data PNG atau JPEG.')
       const commercial = draft.type === 'receipt' ? draft : { ...draft, lines: draft.lines.map((line) => normalizeCommercialLine(line, policy)) }
       const clean = validateDocumentDraft(commercial)
       setError('')
@@ -120,8 +134,8 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
     </ol>
     {receiptIsNew && !hasReceiptSources ? <section className="receipt-blocked-state" aria-labelledby="receipt-blocked-title">
       <span className="receipt-blocked-icon"><ReceiptText size={28} /></span>
-      <div><p className="eyebrow">PEMBAYARAN BELUM TERSEDIA</p><h3 id="receipt-blocked-title">Kuitansi belum bisa dibuat</h3><p>Catat pemasukan proyek terlebih dahulu. Nominal kuitansi selalu diambil dari transaksi pemasukan terverifikasi, bukan dari catatan atau input manual.</p></div>
-      <div className="receipt-blocked-actions"><button type="button" className="secondary-button" onClick={close}>Kembali</button>{onOpenTransactions && <button type="button" className="primary-button" onClick={onOpenTransactions}>Buka transaksi proyek <ArrowRight size={16} /></button>}</div>
+      <div><p className="eyebrow">PEMBAYARAN BELUM TERSEDIA</p><h3 id="receipt-blocked-title">Kuitansi belum bisa dibuat</h3><p>Catat pemasukan Project terlebih dahulu. Nominal kuitansi selalu diambil dari transaksi pemasukan terverifikasi, bukan dari catatan atau input manual.</p></div>
+      <div className="receipt-blocked-actions"><button type="button" className="secondary-button" onClick={close}>Kembali</button>{onOpenTransactions && <button type="button" className="primary-button" onClick={onOpenTransactions}>Buka transaksi Project <ArrowRight size={16} /></button>}</div>
     </section> : <>
     <div className="document-view-tabs" role="tablist" aria-label="Tampilan dokumen">
       <button type="button" role="tab" aria-selected={view === 'edit'} onClick={() => setView('edit')}><Pencil size={16} /> Edit</button>
@@ -130,6 +144,7 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
     <div className="document-composer-layout">
       <form className={`document-editor${view === 'preview' ? ' mobile-hidden-panel' : ''}`} onSubmit={submit} noValidate>
         {error && <p ref={alertRef} tabIndex={-1} role="alert" className="form-error">{error}</p>}
+        <fieldset className="document-editor-fields" disabled={saving || imageProcessing}>
         <section className="document-form-section" aria-labelledby="document-detail-heading">
           <div className="document-section-heading"><span>1</span><div><h3 id="document-detail-heading">Detail {typeName}</h3><p>Tanggal dan jenis tagihan yang terlihat pada dokumen.</p></div></div>
           <div className="document-field-grid">
@@ -150,13 +165,13 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
             </> : policy.pricing_mode === 'fixed_artwork' ? <>
               <label>Jumlah artwork<input aria-label={`Jumlah artwork item ${index + 1}`} type="number" min="1" step="1" value={line.display_quantity ?? line.quantity} onChange={(event) => { changeLine(index, 'display_quantity', event.target.value); changeLine(index, 'quantity', event.target.value) }} /></label>
               <label>Dimensi (m)<input aria-label={`Lebar item ${index + 1}`} inputMode="decimal" value={line.width ?? ''} onChange={(event) => changeLine(index, 'width', event.target.value)} placeholder="Lebar" /></label>
-              <label>Harga awal<input aria-label={`Harga awal item ${index + 1}`} type="number" min="0" step="1" value={line.original_price ?? ''} onChange={(event) => changeLine(index, 'original_price', event.target.value ? Number(event.target.value) : null)} /></label>
+              <RupiahAmountInput label={`Harga awal item ${index + 1}`} value={line.original_price ?? null} required={false} disabled={saving || imageProcessing} onChange={(amount) => changeLine(index, 'original_price', amount)} />
             </> : <>
               <label>Lebar (m)<input aria-label={`Lebar item ${index + 1}`} inputMode="decimal" value={line.width ?? ''} onChange={(event) => changeLine(index, 'width', event.target.value)} /></label>
               <label>Tinggi (m)<input aria-label={`Tinggi item ${index + 1}`} inputMode="decimal" value={line.height ?? ''} onChange={(event) => changeLine(index, 'height', event.target.value)} /></label>
               <label>Pembulatan<select aria-label={`Pembulatan luas item ${index + 1}`} value={line.area_rounding ?? 'half_up'} onChange={(event) => changeLine(index, 'area_rounding', event.target.value)}><option value="exact">Exact</option><option value="half_up">Half-up</option><option value="truncate">Potong</option><option value="manual_override">Override</option></select></label>
             </>}
-            <label>{policy.labels.unit_price}<input aria-label={`${policy.labels.unit_price} item ${index + 1}`} type="number" min="0" step="1" value={line.unit_price} onChange={(event) => changeLine(index, 'unit_price', Number(event.target.value))} /></label>
+            <RupiahAmountInput label={`${policy.labels.unit_price} item ${index + 1}`} value={line.unit_price} required={false} disabled={saving || imageProcessing} onChange={(amount) => changeLine(index, 'unit_price', amount ?? 0)} />
             <label>Diskon %<input aria-label={`Diskon item ${index + 1}`} inputMode="decimal" value={line.discount_percent} onChange={(event) => changeLine(index, 'discount_percent', event.target.value)} /></label>
             <button type="button" className="icon-button danger" aria-label={`Hapus item ${index + 1}`} disabled={draft.lines.length === 1} onClick={() => change('lines', draft.lines.filter((_, lineIndex) => lineIndex !== index))}><Trash2 size={17} /></button>
           </div>)}
@@ -170,7 +185,7 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
             <div className="receipt-candidates">{receiptOptions?.transactions.map((candidate) => {
               const selected = draft.allocations.find((item) => item.source_key === candidate.source_key)
               const amount = candidate.available_amount ?? candidate.amount
-              return <label key={candidate.source_key} className={`receipt-candidate${selected ? ' selected' : ''}`}><span className="receipt-candidate-check"><input type="checkbox" checked={Boolean(selected)} onChange={(event) => toggleAllocation(candidate.source_key, event.target.checked)} /><span><strong>{candidate.description}</strong><small>{candidate.transaction_date || 'Tanpa tanggal'} · tersedia {amount.toLocaleString('id-ID')}</small></span></span><span className="receipt-candidate-amount"><small>Nominal kuitansi</small><input aria-label={`Nominal ${candidate.description}`} type="number" min="1" max={candidate.available_amount} disabled={!selected} value={selected?.amount ?? amount} onChange={(event) => changeAllocationAmount(candidate.source_key, Number(event.target.value))} /></span></label>
+              return <article key={candidate.source_key} className={`receipt-candidate${selected ? ' selected' : ''}`}><label className="receipt-candidate-check"><input type="checkbox" checked={Boolean(selected)} onChange={(event) => toggleAllocation(candidate.source_key, event.target.checked)} /><span><strong>{candidate.description}</strong><small>{candidate.transaction_date || 'Tanpa tanggal'} · tersedia Rp {amount.toLocaleString('id-ID')}</small></span></label><RupiahAmountInput label={`Nominal kuitansi ${candidate.description}`} value={selected?.amount ?? amount} required={false} disabled={!selected || saving} onChange={(nextAmount) => changeAllocationAmount(candidate.source_key, nextAmount ?? 0)} /></article>
             })}</div>
             {!draft.allocations.length && <p className="receipt-selection-hint" role="status">Pilih minimal satu pembayaran untuk mengaktifkan pratinjau dan penyimpanan.</p>}
           </>}
@@ -181,7 +196,9 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
           <div className="document-field-grid">
           {draft.type !== 'receipt' && draft.invoice_kind !== 'FINAL' && <>
             <label>Diskon dokumen<select value={draft.discount_mode} onChange={(event) => change('discount_mode', event.target.value as ProjectDocumentDraft['discount_mode'])}><option value="none">Tanpa diskon</option><option value="fixed">Nominal</option><option value="percent">Persen</option></select></label>
-            {draft.discount_mode !== 'none' && <label>Nilai diskon<input inputMode="decimal" value={draft.discount_value} onChange={(event) => change('discount_value', event.target.value)} /></label>}
+            {draft.discount_mode === 'fixed'
+              ? <RupiahAmountInput label="Nilai diskon" value={Number.isSafeInteger(Number(draft.discount_value)) ? Number(draft.discount_value) : null} required={false} disabled={saving || imageProcessing} onChange={(amount) => change('discount_value', String(amount ?? ''))} />
+              : draft.discount_mode === 'percent' && <label>Nilai diskon (%)<input inputMode="decimal" value={draft.discount_value} onChange={(event) => change('discount_value', event.target.value)} /></label>}
             <label>Pajak persen<input aria-label="Pajak persen" inputMode="decimal" value={draft.tax_percent} onChange={(event) => change('tax_percent', event.target.value)} /></label>
           </>}
           <label>Disiapkan oleh <span className="field-help">Nama tim Hollawall yang membuat dokumen.</span><input value={draft.prepared_by} onChange={(event) => change('prepared_by', event.target.value)} placeholder="Nama penyusun" /></label>
@@ -191,11 +208,12 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
             <label>{draft.type === 'receipt' ? 'Keterangan pembayaran' : 'Catatan'} <span className="field-help">{draft.type === 'receipt' ? 'Contoh: Pelunasan termin pertama.' : 'Informasi tambahan yang tampil di bawah total.'}</span><textarea aria-label="Catatan" value={draft.notes} onChange={(event) => change('notes', event.target.value)} placeholder={draft.type === 'receipt' ? 'Tulis keterangan bila diperlukan' : 'Tulis catatan bila diperlukan'} /></label>
             {draft.type !== 'receipt' && <label>Syarat pembayaran <span className="field-help">Contoh: DP 50%, pelunasan sebelum pengiriman.</span><textarea value={draft.payment_terms} onChange={(event) => change('payment_terms', event.target.value)} placeholder="Tulis ketentuan pembayaran" /></label>}
           </div>
-          {draft.type !== 'receipt' && <details className="document-optional"><summary>Tambahkan gambar proyek</summary><label>Data gambar <span className="field-help">Opsional. Gunakan data PNG atau JPEG.</span><input aria-label="Gambar proyek" value={draft.project_image_url ?? ''} onChange={(event) => change('project_image_url', event.target.value || null)} placeholder="data:image/png;base64,…" /></label></details>}
+          {draft.type !== 'receipt' && <div className="document-optional"><label>Gambar Project (PNG/JPEG) <span className="field-help">Opsional. Gambar akan dikompresi sebelum disimpan.</span><input aria-label="Gambar Project" type="file" accept="image/png,image/jpeg" disabled={saving || imageProcessing} onChange={uploadImage} /></label>{imageProcessing && <p role="status">Memproses gambar…</p>}{draft.project_image_url && <div className="quotation-image-preview"><img src={draft.project_image_url} alt="Pratinjau gambar Project" /><button type="button" className="secondary-button" disabled={saving || imageProcessing} onClick={() => change('project_image_url', null)}>Hapus gambar</button></div>}</div>}
         </section>
+        </fieldset>
         <div className="document-save-bar">
           <div aria-label={`Total ${typeName}`} className="document-live-total"><span>{draft.type === 'receipt' && !receiptReady ? 'Pembayaran belum dipilih' : calculationError ? 'Periksa nilai item' : `Total ${typeName}`}</span><strong>{draft.type === 'receipt' && !receiptReady ? '—' : calculationError ? '—' : money}</strong>{calculationError && <small>{calculationError}</small>}</div>
-          <div>{!writesEnabled && <span className="write-disabled-note">Penyimpanan dokumen belum diaktifkan.</span>}<button type="button" className="secondary-button" onClick={close}>Batal</button><button type="submit" className="primary-button" disabled={!writesEnabled || saving || !receiptReady}>{saving ? 'Menyimpan…' : 'Simpan draf'}</button></div>
+          <div>{!writesEnabled && <span className="write-disabled-note">Penyimpanan dokumen belum diaktifkan.</span>}<button type="button" className="secondary-button" onClick={close} disabled={saving || imageProcessing}>Batal</button><button type="submit" className="primary-button" disabled={!writesEnabled || saving || imageProcessing || !receiptReady}>{imageProcessing ? 'Memproses gambar…' : saving ? 'Menyimpan…' : 'Simpan draf'}</button></div>
         </div>
       </form>
       <aside className={`document-preview-pane${view === 'edit' ? ' mobile-hidden-panel' : ''}`} aria-label={`Pratinjau ${typeName}`}><div className="document-preview-label"><span>PRATINJAU LANGSUNG · {policy.template_key.toUpperCase()}</span><small>{calculationError ? 'Periksa nilai item' : receiptReady ? `${policy.page_size} · terbarui otomatis` : 'Menunggu pembayaran'}</small></div>{receiptReady && !calculationError ? <ProjectDocumentPreview project={project} document={previewDraft} /> : <section className="document-preview-empty"><ReceiptText size={28} /><h3>{calculationError ? 'Pratinjau perlu diperbaiki' : 'Pratinjau belum tersedia'}</h3><p>{calculationError || 'Pilih pembayaran di sebelah kiri. Total dan isi kuitansi akan muncul otomatis.'}</p></section>}</aside>

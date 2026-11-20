@@ -13,7 +13,6 @@ from zoneinfo import ZoneInfo
 
 from config.constants import OPERATIONAL_CATEGORIES
 from config.wallets import DOMPET_COMPANIES
-from security import ALLOWED_CATEGORIES
 
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
 DASHBOARD_TIMEZONE = ZoneInfo("Asia/Jakarta")
@@ -28,7 +27,8 @@ WALLET_COMPANY_PAIRS = frozenset(
     for wallet, companies in DOMPET_COMPANIES.items()
     for company in companies
 )
-PROJECT_CATEGORIES = frozenset(ALLOWED_CATEGORIES)
+PROJECT_EXPENSE_CATEGORIES = frozenset({"Operasi Project", "Bahan Alat", "Gaji", "Lain-lain"})
+PROJECT_INCOME_CATEGORIES = frozenset({"DP", "DP 1", "DP 2", "Pelunasan"})
 OFFICE_CATEGORIES = frozenset(OPERATIONAL_CATEGORIES)
 
 REQUIRED_FIELDS = frozenset(
@@ -129,8 +129,8 @@ def _validate_date(value: Any, current_date: date) -> date:
         _fail("date", "must be a valid ISO date in YYYY-MM-DD format")
     if value != request_date.isoformat():
         _fail("date", "must use canonical ISO format YYYY-MM-DD")
-    if request_date != current_date:
-        _fail("date", "must be the current Asia/Jakarta date")
+    if request_date > current_date:
+        _fail("date", "must not be in the future in Asia/Jakarta")
     return request_date
 
 
@@ -205,8 +205,13 @@ def validate_transaction_request(
             raise TypeError("project_exists must return bool")
         if not exists:
             _fail("project", "does not exist for wallet/company")
-        if category not in PROJECT_CATEGORIES:
-            _fail("category", "is not an operational project category")
+        allowed_categories = (
+            PROJECT_INCOME_CATEGORIES
+            if direction == "Pemasukan"
+            else PROJECT_EXPENSE_CATEGORIES
+        )
+        if category not in allowed_categories:
+            _fail("category", "is not valid for this project transaction direction")
     else:
         if "project" in payload:
             _fail("project", "must be omitted for office scope")

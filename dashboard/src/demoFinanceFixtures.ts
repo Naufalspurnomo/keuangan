@@ -69,8 +69,8 @@ const DEMO_PROJECT_ROWS: readonly ProjectRow[] = [
   ['p26-griya', 'Griya Wellness Center', 'Holla', 'active', '2026-10-10', null, 'Griya Sehat Indonesia', 98_000_000, 'Wellness center fase konstruksi.'],
   ['p26-harmoni', 'Harmoni Kids Library', 'Hojja', 'active', '2026-10-21', null, 'Yayasan Harmoni Anak', 54_000_000, 'Perpustakaan anak tahap awal.'],
   ['p26-kirana', 'Kirana Event Pavilion', 'Holla', 'cancelled', '2026-10-24', null, 'Kirana Kreasi', 82_000_000, 'Dibatalkan sebelum mobilisasi; dipertahankan untuk histori portofolio.'],
-  ['p26-indrapura', 'Indrapura Co-living', 'Texturin Bali', 'planned', '2026-11-10', null, 'Indrapura Living', 330_000_000, 'Mobilisasi direncanakan November.'],
-  ['p26-jenggala', 'Jenggala Innovation Lab', 'Texturin Surabaya', 'planned', '2026-12-05', null, 'Jenggala Inovasi', null, 'Menunggu finalisasi nilai kontrak.'],
+  ['p26-indrapura', 'Indrapura Co-living', 'Texturin Bali', 'active', '2026-10-10', null, 'Indrapura Living', 330_000_000, 'Mobilisasi berjalan.'],
+  ['p26-jenggala', 'Jenggala Innovation Lab', 'Texturin Surabaya', 'active', '2026-10-20', null, 'Jenggala Inovasi', null, 'Pekerjaan awal berjalan; nilai kontrak belum dicatat.'],
 ]
 
 type TransactionRow = readonly [
@@ -185,7 +185,7 @@ const OFFICE_TRANSACTION_ROWS: readonly (readonly [string, string, WalletId, Off
 ]
 
 const DEMO_DEBTS: readonly FinanceDebt[] = [
-  { id: 'demo-debt-1', date: '2026-02-14', borrower: 'TX Bali', lender: 'CV HB', amount: 25_000_000, repaid: 10_000_000, notes: 'Dukungan kas proyek Bali', created_at: '2026-02-14T08:00:00.000Z', updated_at: '2026-03-10T08:00:00.000Z' },
+  { id: 'demo-debt-1', date: '2026-02-14', borrower: 'TX Bali', lender: 'CV HB', amount: 25_000_000, repaid: 10_000_000, notes: 'Dukungan kas Project Bali', created_at: '2026-02-14T08:00:00.000Z', updated_at: '2026-03-10T08:00:00.000Z' },
   { id: 'demo-debt-2', date: '2026-04-03', borrower: 'TX SBY', lender: 'CV HB', amount: 12_500_000, repaid: 12_500_000, notes: 'Pendanaan material sementara', created_at: '2026-04-03T08:00:00.000Z', updated_at: '2026-05-01T08:00:00.000Z' },
 ]
 

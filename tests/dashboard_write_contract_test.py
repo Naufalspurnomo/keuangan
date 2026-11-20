@@ -25,7 +25,7 @@ def valid_payload(**changes: object) -> dict[str, object]:
         "description": "Pembayaran termin",
         "wallet": "CV HB(101)",
         "company": "HOLLA",
-        "category": "Lain-lain",
+        "category": "DP",
         "project": "PROJECT-001",
     }
     payload.update(changes)
@@ -62,7 +62,7 @@ def test_returns_frozen_canonical_request_and_passes_project_to_validator():
         description="Pembayaran termin",
         wallet="CV HB(101)",
         company="HOLLA",
-        category="Lain-lain",
+        category="DP",
         project="PROJECT-001",
     )
     assert seen == ["PROJECT-001"]
@@ -104,8 +104,9 @@ def test_date_must_be_canonical_valid_iso_date(raw_date):
     assert_invalid(valid_payload(date=raw_date), r"date: must")
 
 
-def test_date_must_equal_injected_current_jakarta_date():
-    assert_invalid(valid_payload(date="2026-10-01"), r"date: must be the current Asia/Jakarta date")
+def test_date_allows_backdating_but_rejects_future_business_dates():
+    assert validate(valid_payload(date="2026-10-01")).date == date(2026, 10, 1)
+    assert_invalid(valid_payload(date="2026-10-03"), r"date: must not be in the future in Asia/Jakarta")
 
 
 def test_default_clock_uses_asia_jakarta(monkeypatch):
@@ -222,9 +223,29 @@ def test_rejects_unknown_or_mismatched_wallet_company_pairs(wallet, company):
     )
 
 
-@pytest.mark.parametrize("category", ["Bahan Alat", "Gaji", "Operasi Kantor", "Lain-lain"])
-def test_accepts_project_categories_used_by_runtime(category):
-    assert validate(valid_payload(category=category)).category == category
+@pytest.mark.parametrize("category", ["Bahan Alat", "Gaji", "Operasi Project", "Lain-lain"])
+def test_accepts_project_expense_categories(category):
+    assert validate(valid_payload(direction="Pengeluaran", category=category)).category == category
+
+
+@pytest.mark.parametrize("category", ["DP", "DP 1", "DP 2", "Pelunasan"])
+def test_accepts_project_income_categories(category):
+    assert validate(valid_payload(direction="Pemasukan", category=category)).category == category
+
+
+def test_project_categories_cannot_cross_direction_or_use_legacy_office_category():
+    assert_invalid(
+        valid_payload(direction="Pemasukan", category="Bahan Alat"),
+        r"category: is not valid for this project transaction direction",
+    )
+    assert_invalid(
+        valid_payload(direction="Pengeluaran", category="DP"),
+        r"category: is not valid for this project transaction direction",
+    )
+    assert_invalid(
+        valid_payload(direction="Pengeluaran", category="Operasi Kantor"),
+        r"category: is not valid for this project transaction direction",
+    )
 
 
 @pytest.mark.parametrize("category", ["Gaji", "ListrikAir", "Konsumsi", "Peralatan", "Lain Lain"])
@@ -235,7 +256,7 @@ def test_accepts_office_categories_used_by_runtime(category):
 
 
 def test_rejects_categories_outside_selected_scope():
-    assert_invalid(valid_payload(category="Material"), r"category: is not an operational project category")
+    assert_invalid(valid_payload(category="Material"), r"category: is not valid for this project transaction direction")
 
     office = valid_payload(scope="office", direction="Pengeluaran", category="Lain-lain")
     del office["project"]

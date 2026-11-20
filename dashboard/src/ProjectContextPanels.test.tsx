@@ -25,7 +25,7 @@ afterEach(cleanup)
 describe('project context panels', () => {
   it('summarizes only transactions bound to the selected canonical project id', () => {
     render(<ProjectOverviewPanel project={project} workspace={exactWorkspace} />)
-    expect(screen.getByRole('heading', { name: 'Ringkasan proyek' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Ringkasan Project' })).toBeTruthy()
     expect(screen.getByText(project.name)).toBeTruthy()
     expect(screen.getByText(/transaksi tercatat/i)).toBeTruthy()
   })

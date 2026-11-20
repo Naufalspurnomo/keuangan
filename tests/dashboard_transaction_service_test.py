@@ -34,7 +34,7 @@ def valid_payload(**changes):
         "description": "Pembayaran termin",
         "wallet": "CV HB(101)",
         "company": "HOLLA",
-        "category": "Lain-lain",
+        "category": "DP",
         "project": "PROJECT-001",
     }
     payload.update(changes)
@@ -232,7 +232,7 @@ def test_project_request_claims_appends_reads_back_completes_and_projects():
     assert store.complete_calls[0][1] == {key: value for key, value in response.items() if key != "duplicate"}
     assert projection.rows[0]["sheet_name"] == "CV HB(101)"
     assert projection.rows[0]["company"] == "HOLLA"
-    assert projection.rows[0]["kategori"] == "Lain-lain"
+    assert projection.rows[0]["kategori"] == "DP"
 
 
 def test_uuid_project_uses_canonical_name_in_sheet_and_uuid_in_projection_with_alternate_pair():
@@ -452,7 +452,7 @@ def test_google_sheets_adapter_calls_existing_append_helpers_without_queue(monke
     assert project_calls[0]["allow_queue"] is False
     assert project_calls[0]["dompet_sheet"] == "CV HB(101)"
     assert project_calls[0]["project_name"] == "PROJECT-001"
-    assert project_calls[0]["transaction"]["kategori"] == "Lain-lain"
+    assert project_calls[0]["transaction"]["kategori"] == "DP"
     assert office_calls[0]["allow_queue"] is False
     assert office_calls[0]["source_wallet"] == "CV HB(101)"
     assert office_calls[0]["category"] == "Gaji"

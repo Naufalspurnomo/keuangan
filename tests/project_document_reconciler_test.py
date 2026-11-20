@@ -37,7 +37,7 @@ def test_dashboard_transaction_validation_accepts_authoritative_project_uuid():
             "description": "Pembayaran DP",
             "wallet": "CV HB(101)",
             "company": "HOLLA",
-            "category": "Bahan Alat",
+            "category": "DP",
             "project": project_id,
         }
     )

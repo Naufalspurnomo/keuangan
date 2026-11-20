@@ -95,6 +95,51 @@ def test_correction_preserves_original_and_replaces_effective_state():
     assert [item["id"] for item in view["history"]] == [original["id"], corrected["id"]]
 
 
+def test_create_and_correction_accept_backdated_business_instants():
+    service, _ = make_service()
+    original = service.create_transaction(
+        payload(occurred_at="2020-03-04T00:00:00+07:00"), actor=ACTOR
+    )["transaction"]
+
+    corrected = service.correct_transaction(
+        original["id"],
+        {
+            "idempotency_key": "txn-backdate-correction-01",
+            "expected_version": 1,
+            "occurred_at": "2019-12-31T23:59:00+07:00",
+            "reason": "Tanggal pada bukti bank dikonfirmasi",
+        },
+        actor=ACTOR,
+    )["transaction"]
+
+    assert corrected["occurred_at"] == "2019-12-31T16:59:00+00:00"
+
+
+@pytest.mark.parametrize("occurred_at", ["2999-01-01T00:00:00+07:00"])
+def test_create_rejects_future_business_instants(occurred_at):
+    service, _ = make_service()
+
+    with pytest.raises(FinanceValidationError, match="must not be in the future in Asia/Jakarta"):
+        service.create_transaction(payload(occurred_at=occurred_at), actor=ACTOR)
+
+
+def test_correction_rejects_future_business_instant():
+    service, _ = make_service()
+    original = service.create_transaction(payload(), actor=ACTOR)["transaction"]
+
+    with pytest.raises(FinanceValidationError, match="must not be in the future in Asia/Jakarta"):
+        service.correct_transaction(
+            original["id"],
+            {
+                "idempotency_key": "txn-future-correction-01",
+                "expected_version": 1,
+                "occurred_at": "2999-01-01T00:00:00+07:00",
+                "reason": "Tanggal masa depan tidak valid",
+            },
+            actor=ACTOR,
+        )
+
+
 def test_reversal_after_correction_closes_linear_revision_chain():
     service, _ = make_service()
     original = service.create_transaction(payload(), actor=ACTOR)["transaction"]

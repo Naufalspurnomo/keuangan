@@ -24,6 +24,7 @@ from security import log_timing
 
 ALLOWED_AGENT_CATEGORIES = {
     "Operasi Kantor",
+    "Operasi Project",
     "Bahan Alat",
     "Gaji",
     "Lain-lain",
@@ -395,7 +396,7 @@ Return a JSON object:
   "transactions": [
     {
       "tanggal": "YYYY-MM-DD",
-      "kategori": "Operasi Kantor|Bahan Alat|Gaji|Lain-lain",
+      "kategori": "Operasi Kantor|Operasi Project|Bahan Alat|Gaji|Lain-lain",
       "keterangan": "short description from the real user text",
       "jumlah": integer IDR,
       "tipe": "Pengeluaran|Pemasukan",

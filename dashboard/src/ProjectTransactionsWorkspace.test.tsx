@@ -32,7 +32,7 @@ describe('ProjectTransactionsWorkspace', () => {
     render(<ProjectTransactionsWorkspace workspace={workspace} project={project} onBack={vi.fn()} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onComplete={vi.fn()} onReactivate={vi.fn()} />)
 
     expect(screen.getByRole('heading', { name: project.name })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Kembali ke Proyek' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Kembali ke Project' })).toBeTruthy()
     expect(screen.queryByLabelText('Filter aktivitas')).toBeNull()
     expect(screen.queryByLabelText('Filter proyek')).toBeNull()
     for (const row of ownRows) expect(screen.getByText(row.notes)).toBeTruthy()
@@ -73,8 +73,8 @@ describe('ProjectTransactionsWorkspace', () => {
     const onComplete = vi.fn()
     render(<ProjectTransactionsWorkspace workspace={workspace} project={project} onBack={vi.fn()} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onComplete={onComplete} onReactivate={vi.fn()} />)
 
-    expect(within(screen.getByRole('region', { name: 'Status proyek' })).getByText('Aktif')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Selesaikan proyek' }))
+    expect(within(screen.getByRole('region', { name: 'Status Project' })).getByText('Aktif')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Selesaikan Project' }))
     expect(onComplete).toHaveBeenCalledWith(project)
     expect(screen.queryByRole('button', { name: 'Aktifkan kembali' })).toBeNull()
   })
@@ -85,10 +85,10 @@ describe('ProjectTransactionsWorkspace', () => {
     const onReactivate = vi.fn()
     render(<ProjectTransactionsWorkspace workspace={workspace} project={project} onBack={vi.fn()} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onComplete={vi.fn()} onReactivate={onReactivate} />)
 
-    expect(within(screen.getByRole('region', { name: 'Status proyek' })).getByText('Selesai')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: 'Status Project' })).getByText('Selesai')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Tambah transaksi' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Aktifkan kembali' }))
     expect(onReactivate).toHaveBeenCalledWith(project)
-    expect(screen.queryByRole('button', { name: 'Selesaikan proyek' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Selesaikan Project' })).toBeNull()
   })
 })

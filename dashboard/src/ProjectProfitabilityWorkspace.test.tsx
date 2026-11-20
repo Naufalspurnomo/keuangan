@@ -56,7 +56,7 @@ describe('ProjectProfitabilityWorkspace', () => {
     const metrics = within(screen.getByRole('region', { name: 'Ringkasan kas Surabaya Office' }))
     await waitFor(() => expect(metrics.getByText('Nilai kontrak').parentElement).toHaveTextContent(/1\.000\.000/))
     expect(metrics.getByText('Kas masuk').parentElement).toHaveTextContent(/400\.000/)
-    expect(metrics.getByText('Pengeluaran proyek tercatat').parentElement).toHaveTextContent(/300\.000/)
+    expect(metrics.getByText('Pengeluaran Project tercatat').parentElement).toHaveTextContent(/300\.000/)
     expect(metrics.getByText('Gaji/upah tercatat').parentElement).toHaveTextContent(/100\.000/)
     expect(metrics.getByText('Arus kas bersih').parentElement).toHaveTextContent(/100\.000/)
     expect(metrics.getByText('Sisa kontrak setelah kas keluar').parentElement).toHaveTextContent(/700\.000/)

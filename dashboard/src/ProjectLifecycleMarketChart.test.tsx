@@ -75,8 +75,8 @@ describe('ProjectLifecycleMarketChart', () => {
     const { container } = render(<ProjectLifecycleMarketChart projects={projects} transactions={transactions} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={vi.fn()} />)
     expect(container.querySelectorAll('.age-band-swatches > i')).toHaveLength(5)
     expect(container.textContent).toContain('Warna umur: hijau · toska · kuning · oranye · merah')
-    expect(container.textContent).toContain('Selesai: warna umur dipertahankan, tanda centang menunjukkan status')
-    expect(container.textContent).toContain('Bulan terbaru di atas; proyek terbaru di kanan')
+    expect(container.textContent).toContain('Tepi ganda menandai Project yang telah selesai')
+    expect(container.textContent).toContain('Bulan terbaru di atas; Project terbaru di kanan')
   })
 
   it('renders four fixed company canvases with active/total summaries and no chart pagination', () => {
@@ -126,13 +126,16 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(holla.querySelector('.project-market-wick')).toBeTruthy()
   })
 
-  it('keeps left click for detail and exposes desktop context actions on a project candle', () => {
+  it('selects with the first click, opens explicitly, and exposes desktop context actions', () => {
     const onOpen = vi.fn()
     const onQuickComplete = vi.fn()
     const { container } = render(<ProjectLifecycleMarketChart projects={projects} transactions={transactions} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={onOpen} onQuickComplete={onQuickComplete} />)
     const active = container.querySelector('[data-project-id="h-active"]') as HTMLButtonElement
 
-    fireEvent.click(active)
+    fireEvent.click(active, { detail: 1 })
+    expect(onOpen).not.toHaveBeenCalled()
+    expect(active).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByRole('button', { name: 'Buka Project Holla Terbaru' }))
     expect(onOpen).toHaveBeenCalledWith(projects[1])
 
     fireEvent.contextMenu(active, { clientX: 240, clientY: 180 })
@@ -142,9 +145,19 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(menu.isConnected).toBe(false)
 
     fireEvent.contextMenu(active, { clientX: 240, clientY: 180 })
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Selesaikan proyek' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Selesaikan Project' }))
     expect(onQuickComplete).toHaveBeenCalledWith(projects[1])
     expect(screen.queryByRole('menu', { name: 'Aksi Holla Terbaru' })).toBeNull()
+  })
+
+  it('opens a project candle through keyboard activation', () => {
+    const onOpen = vi.fn()
+    const { container } = render(<ProjectLifecycleMarketChart projects={projects} transactions={transactions} year={2026} asOf={new Date('2026-10-28T12:00:00+07:00')} onOpen={onOpen} />)
+    const active = container.querySelector('[data-project-id="h-active"]') as HTMLButtonElement
+
+    fireEvent.click(active, { detail: 0 })
+
+    expect(onOpen).toHaveBeenCalledWith(projects[1])
   })
 
   it('does not expose quick completion for a project that is already completed', () => {
@@ -152,7 +165,7 @@ describe('ProjectLifecycleMarketChart', () => {
     fireEvent.contextMenu(container.querySelector('[data-project-id="h-old"]') as HTMLButtonElement)
 
     expect(screen.getByRole('menuitem', { name: 'Lihat detail' })).toBeTruthy()
-    expect(screen.queryByRole('menuitem', { name: 'Selesaikan proyek' })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: 'Selesaikan Project' })).toBeNull()
   })
 
   it('leaves ordinary vertical wheel to the page and requires Ctrl or Command for local zoom', () => {
@@ -172,7 +185,7 @@ describe('ProjectLifecycleMarketChart', () => {
     }
     window.addEventListener('wheel', emulatePageScroll)
 
-    expect(readout(canvas)).toContain('Seret untuk geser · Ctrl/⌘ + roda untuk zoom · zoom 100%')
+    expect(readout(canvas)).toContain('Seret untuk geser · Ctrl/⌘ + roda untuk zoom · klik dua kali untuk membuka · zoom 100%')
     const outsideWheel = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true })
     act(() => { expect(container.querySelector('.project-market-report-head')?.dispatchEvent(outsideWheel)).toBe(true) })
     expect(outsideWheel.defaultPrevented).toBe(false)
@@ -289,7 +302,7 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(onOpen).not.toHaveBeenCalled()
 
     viewport.scrollTop = 300
-    fireEvent.click(screen.getByRole('button', { name: 'Kembali ke proyek terbaru Holla' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Kembali ke Project terbaru Holla' }))
     expect(viewport.scrollLeft).toBe(700)
     expect(viewport.scrollTop).toBe(0)
     const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame')
@@ -304,7 +317,10 @@ describe('ProjectLifecycleMarketChart', () => {
     expect(viewport.scrollTop).toBe(0)
     scheduleFrame.mockRestore()
     cancelFrame.mockRestore()
-    fireEvent.click(candle)
+    fireEvent.pointerDown(candle, { pointerType: 'mouse', button: 0, pointerId: 12, clientX: 220, clientY: 180 })
+    fireEvent.pointerUp(candle, { pointerType: 'mouse', button: 0, pointerId: 12, clientX: 220, clientY: 180 })
+    fireEvent.click(candle, { detail: 1 })
+    fireEvent.click(screen.getByRole('button', { name: 'Buka Project Holla Terbaru' }))
     expect(onOpen).toHaveBeenCalledWith(projects[1])
   })
 })

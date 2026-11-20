@@ -3017,6 +3017,7 @@ Output MUST be a JSON array of objects.
 ALLOWED CATEGORIES & KEYWORDS:
 {categories_str}
 - Operasi Kantor: listrik, air, internet, sewa, pulsa, admin, wifi, telepon, kebersihan
+- Operasi Project: biaya operasional yang khusus untuk project, misalnya logistik atau kebutuhan di lokasi project
 - Bahan Alat: semen, pasir, kayu, cat, besi, keramik, paku, gerinda, meteran, bor, gergaji
 - Gaji: upah, tukang, honor, fee, lembur, mandor, kuli, pekerja, borongan, karyawan
 - Lain-lain: transport, bensin, makan, parkir, toll, ongkir, biaya lain, biaya transfer
@@ -3065,6 +3066,7 @@ CRITICAL LOGIC RULES:
 1. **PROJECT NAME vs COMPANY NAME - VERY IMPORTANT:**
    - "nama_projek" = The PROJECT/JOB name (e.g., "Purana", "Avant", "Villa Ubud")
    - "company" = The BUSINESS ENTITY (e.g., "TEXTURIN-Bali", "HOLLA", "KANTOR")
+   - Use "Operasi Project" for operating costs tied to a named project; use "Operasi Kantor" for office costs.
    - These are DIFFERENT! Company is WHERE the expense is recorded. Project is WHAT job it's for.
    - EXAMPLE: "purana bayar sugeng untuk Texturin Bali"
      -> nama_projek: "Purana" (the project name from description)

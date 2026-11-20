@@ -28,13 +28,13 @@ const nav = (name: string) => fireEvent.click(within(screen.getByRole('navigatio
 describe('Hollawall demo finance workspace', () => {
   it('renders the canonical shell with exactly seven owned navigation views', () => {
     renderApp()
-    expect(screen.getByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy()
     expect(screen.getByText(/Data keuangan demo tersimpan di browser ini dan tidak terhubung ke buku besar produksi\. Data Presensi privat dibaca dari server\./)).toBeTruthy()
     const menu = screen.getByRole('navigation', { name: 'Menu utama' })
     expect(within(menu).getAllByRole('button')).toHaveLength(7)
     for (const [label, id] of [
       ['Dashboard', 'nav.dashboard'], ['Arus Kas', 'nav.cashflow'], ['Dompet', 'nav.wallets'],
-      ['Proyek', 'nav.projects'], ['Operasional Kantor', 'nav.office'], ['Hutang', 'nav.debts'], ['Laporan', 'nav.reports'],
+      ['Project', 'nav.projects'], ['Operasional Kantor', 'nav.office'], ['Hutang', 'nav.debts'], ['Laporan', 'nav.reports'],
     ] as const) {
       const item = within(menu).getByRole('button', { name: new RegExp(`^${label}`) })
       expect(item.getAttribute('data-action-id')).toBe(id)
@@ -44,8 +44,10 @@ describe('Hollawall demo finance workspace', () => {
 
   it('keeps exports in Reports and preserves project context in the mobile breadcrumb', () => {
     renderApp()
-    nav('Proyek')
-    fireEvent.click(document.querySelector('button[data-project-candle]')!)
+    nav('Project')
+    const candle = document.querySelector('button[data-project-candle]')!
+    fireEvent.click(candle)
+    fireEvent.click(candle)
     const projectName = document.querySelector('.project-detail-identity h1')?.textContent
     expect(projectName).toBeTruthy()
     expect(document.querySelector('.breadcrumbs strong')?.textContent).toBe(projectName)
@@ -57,7 +59,7 @@ describe('Hollawall demo finance workspace', () => {
 
   it('registers visible action controls with a stable id and one owner route', () => {
     renderApp()
-    for (const label of ['Dashboard', 'Arus Kas', 'Dompet', 'Proyek', 'Operasional Kantor', 'Hutang', 'Laporan']) nav(label)
+    for (const label of ['Dashboard', 'Arus Kas', 'Dompet', 'Project', 'Operasional Kantor', 'Hutang', 'Laporan']) nav(label)
     const registered = [...document.querySelectorAll<HTMLElement>('[data-action-id]')]
     expect(registered.length).toBeGreaterThan(7)
     expect(registered.every((control) => Boolean(control.dataset.ownerRoute))).toBe(true)
@@ -65,12 +67,12 @@ describe('Hollawall demo finance workspace', () => {
 
   it('keeps the overview showcase dense, transparent, and additive', () => {
     renderApp()
-    expect(screen.getByRole('heading', { name: 'Pusat kendali keuangan Hollawall' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Arus kas per unit' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Tren kas 12 bulan' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Sebaran saldo dompet' })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: 'Kontribusi proyek terbesar' })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: 'Omzet dan rentang proyek' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Kontribusi Project terbesar' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Saldo per dompet' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Audit data demo' })).toBeTruthy()
     expect(document.querySelectorAll('.showcase-chart')).toHaveLength(3)
   })
@@ -78,7 +80,7 @@ describe('Hollawall demo finance workspace', () => {
   it('keeps cashflow as a full analytical workspace instead of one chart', () => {
     renderApp()
     nav('Arus Kas')
-    expect(screen.getByRole('heading', { name: 'Aliran kas, bukan sekadar saldo' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Arus Kas' })).toBeTruthy()
     expect(screen.getByText('Kas masuk eksternal')).toBeTruthy()
     expect(screen.getByText('Kas keluar eksternal')).toBeTruthy()
     expect(screen.getByText('Arus bersih eksternal')).toBeTruthy()
@@ -98,8 +100,8 @@ describe('Hollawall demo finance workspace', () => {
     expect(project).toBeTruthy()
     fireEvent.click(project!)
     expect(window.location.hash).toMatch(/^#projects\?project=/)
-    expect(screen.getByRole('button', { name: 'Kembali ke Proyek' })).toBeTruthy()
-    expect(screen.queryByLabelText('Filter proyek')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Kembali ke Project' })).toBeTruthy()
+    expect(screen.queryByLabelText('Filter Project')).toBeNull()
   })
 
   it('keeps wallet analysis traceable from distribution to mutation ledger', () => {
@@ -123,45 +125,45 @@ describe('Hollawall demo finance workspace', () => {
 
     nav('Operasional Kantor')
     expect(screen.getByRole('heading', { name: 'Kebutuhan kantor' })).toBeTruthy()
-    expect(screen.getByText(/Biaya kantor terpisah dari proyek/)).toBeTruthy()
+    expect(screen.getByText(/Biaya kantor terpisah dari Project/)).toBeTruthy()
   })
 
-  it('connects the restored project timeline to the writable demo workspace', () => {
+  it('opens Project creation from the dashboard into the writable demo workspace', () => {
     renderApp()
-    fireEvent.click(screen.getByRole('button', { name: 'Tambah proyek Hollawall' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Tambah Project' }))
     expect(screen.getByRole('dialog')).toBeTruthy()
-    expect(within(screen.getByRole('dialog')).getByRole('heading', { name: 'Tambah proyek' })).toBeTruthy()
+    expect(within(screen.getByRole('dialog')).getByRole('heading', { name: 'Tambah Project' })).toBeTruthy()
   })
 
   it('creates a project, persists it, and records an audit event', async () => {
     const first = renderApp()
-    nav('Proyek')
-    fireEvent.click(screen.getAllByRole('button', { name: 'Tambah proyek' })[0])
+    nav('Project')
+    fireEvent.click(screen.getByRole('button', { name: 'Buat Project' }))
     const dialog = screen.getByRole('dialog')
-    fireEvent.change(within(dialog).getByLabelText('Nama proyek *'), { target: { value: 'Proyek Integrasi' } })
+    fireEvent.change(within(dialog).getByLabelText('Nama Project *'), { target: { value: 'Integrasi Baru' } })
     fireEvent.change(within(dialog).getByLabelText('Klien'), { target: { value: 'Klien Integrasi' } })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Tambah proyek' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Tambah Project' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(screen.getAllByText('Proyek Integrasi').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Integrasi Baru').length).toBeGreaterThan(0)
     expect(window.location.hash).toMatch(/^#projects\?project=prj-/)
     expect(screen.getAllByRole('button', { name: 'Tambah transaksi' })).toHaveLength(1)
     expect(JSON.parse(localStorage.getItem('hollawall-finance-demo-v3')!).projects.at(-1).status).toBe('active')
 
     first.unmount()
     renderApp()
-    nav('Proyek')
-    expect(screen.getAllByText('Proyek Integrasi').length).toBeGreaterThan(0)
+    nav('Project')
+    expect(screen.getAllByText('Integrasi Baru').length).toBeGreaterThan(0)
     nav('Dashboard')
-    expect(screen.getByText('Menambah proyek Proyek Integrasi')).toBeTruthy()
+    expect(screen.getByText('Menambah Project Integrasi Baru')).toBeTruthy()
   })
 
   it('keeps invalid project submission open without mutating storage', () => {
     renderApp()
-    nav('Proyek')
-    fireEvent.click(screen.getAllByRole('button', { name: 'Tambah proyek' })[0])
+    nav('Project')
+    fireEvent.click(screen.getByRole('button', { name: 'Buat Project' }))
     const before = localStorage.getItem('hollawall-finance-demo-v3')
     const dialog = screen.getByRole('dialog')
-    fireEvent.submit(within(dialog).getByRole('button', { name: 'Tambah proyek' }).closest('form')!)
+    fireEvent.submit(within(dialog).getByRole('button', { name: 'Tambah Project' }).closest('form')!)
     expect(screen.getByRole('dialog')).toBeTruthy()
     expect(localStorage.getItem('hollawall-finance-demo-v3')).toBe(before)
   })
@@ -173,21 +175,21 @@ describe('Hollawall demo finance workspace', () => {
     workspace.transactions = workspace.transactions.filter((row) => row.project_id === project.id)
     localStorage.setItem('hollawall-finance-demo-v3', JSON.stringify(workspace))
     renderApp()
-    nav('Proyek')
+    nav('Project')
 
     fireEvent.click(screen.getByRole('button', { name: `Selesaikan ${project.name}` }))
     const dialog = screen.getByRole('dialog')
     const latestTransactionDate = workspace.transactions.reduce((latest, row) => row.date > latest ? row.date : latest, project.started_on)
     fireEvent.change(within(dialog).getByLabelText('Tanggal selesai *'), { target: { value: latestTransactionDate } })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Selesaikan proyek' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Selesaikan Project' }))
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(screen.getByRole('status').textContent).toBe('Proyek diselesaikan.')
+    expect(screen.getByRole('status').textContent).toBe('Project diselesaikan.')
     expect(document.querySelector('.status-chip.completed')?.textContent).toBe('Selesai')
     expect(document.querySelector('.project-market-completed')?.textContent).toContain('Selesai')
     expect(screen.queryByRole('button', { name: `Selesaikan ${project.name}` })).toBeNull()
     nav('Dashboard')
-    expect(screen.getByText(`Memperbarui proyek ${project.name}`)).toBeTruthy()
+    expect(screen.getByText(`Memperbarui Project ${project.name}`)).toBeTruthy()
   }, 30_000)
 
   it('quick-completes an active project from the candle context menu without opening a dialog', async () => {
@@ -197,12 +199,12 @@ describe('Hollawall demo finance workspace', () => {
     workspace.transactions = workspace.transactions.filter((row) => row.project_id === project.id)
     localStorage.setItem('hollawall-finance-demo-v3', JSON.stringify(workspace))
     renderApp()
-    nav('Proyek')
+    nav('Project')
 
     fireEvent.contextMenu(document.querySelector(`[data-project-id="${project.id}"]`)!)
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Selesaikan proyek' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Selesaikan Project' }))
 
-    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Proyek diselesaikan.'))
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Project diselesaikan.'))
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(document.querySelector(`[data-project-id="${project.id}"]`)?.classList.contains('is-completed')).toBe(true)
     expect(JSON.parse(localStorage.getItem('hollawall-finance-demo-v3')!).projects[0].status).toBe('completed')
@@ -215,13 +217,15 @@ describe('Hollawall demo finance workspace', () => {
     workspace.transactions = workspace.transactions.filter((row) => row.project_id === project.id)
     localStorage.setItem('hollawall-finance-demo-v3', JSON.stringify(workspace))
     renderApp()
-    nav('Proyek')
-    fireEvent.click(document.querySelector(`[data-project-id="${project.id}"]`)!)
+    nav('Project')
+    const candle = document.querySelector(`[data-project-id="${project.id}"]`)!
+    fireEvent.click(candle)
+    fireEvent.click(candle)
 
     fireEvent.click(screen.getByRole('button', { name: 'Aktifkan kembali' }))
 
-    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Proyek diaktifkan kembali.'))
-    expect(screen.getByRole('region', { name: 'Status proyek' }).textContent).toContain('Aktif')
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Project diaktifkan kembali.'))
+    expect(screen.getByRole('region', { name: 'Status Project' }).textContent).toContain('Aktif')
     const stored = JSON.parse(localStorage.getItem('hollawall-finance-demo-v3')!).projects[0]
     expect(stored.status).toBe('active')
     expect(stored.completed_on).toBeNull()
@@ -229,23 +233,22 @@ describe('Hollawall demo finance workspace', () => {
 
   it('navigates annual project data and exposes explicit completion ratios', () => {
     renderApp()
-    nav('Proyek')
-    expect(screen.getByRole('button', { name: '2024, 12 selesai dari 12 proyek' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '2025, 12 selesai dari 15 proyek' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '2026, 7 selesai dari 18 proyek' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Tahun sebelumnya' }))
-    expect(screen.getByText((_, element) => element?.tagName === 'SPAN' && element.textContent === '12/15 selesai')).toBeTruthy()
-    expect(screen.getByLabelText('Status proyek tahun 2025')).toBeTruthy()
+    nav('Project')
+    const year = screen.getByRole('combobox', { name: 'Project per tahun' })
+    for (const value of ['2024', '2025', '2026']) expect(within(year).getByRole('option', { name: value })).toBeTruthy()
+    fireEvent.change(year, { target: { value: '2025' } })
+    expect(screen.getByText('Hasil filter · 12/15')).toBeTruthy()
+    expect(screen.getByLabelText('Status Project tahun 2025')).toBeTruthy()
   })
 
   it('keeps annual summaries aligned with company filters and exposes transaction ranges', () => {
     renderApp()
-    nav('Proyek')
+    nav('Project')
     fireEvent.change(screen.getByLabelText('Perusahaan'), { target: { value: 'Holla' } })
-    const summary = screen.getByLabelText('Status proyek tahun 2026')
+    const summary = screen.getByLabelText('Status Project tahun 2026')
     expect(within(summary).getByText(/Hasil filter · \d+\/5/)).toBeTruthy()
     expect(document.querySelectorAll('.project-market-canvas')).toHaveLength(4)
-    expect(screen.getByText('8 / 18 aktif')).toBeTruthy()
+    expect(screen.getByText('10 / 18 aktif')).toBeTruthy()
     expect(screen.getByText('Garis putih = rentang transaksi')).toBeTruthy()
     expect(screen.getAllByRole('button', { name: /transaksi pertama .* transaksi terakhir/ }).length).toBeGreaterThan(0)
   })
@@ -253,34 +256,38 @@ describe('Hollawall demo finance workspace', () => {
   it('opens project detail under Projects and restores view state with the explicit back action', async () => {
     vi.spyOn(window, 'scrollY', 'get').mockReturnValue(640)
     renderApp()
-    nav('Proyek')
-    fireEvent.click(screen.getByRole('button', { name: 'Tahun sebelumnya' }))
+    nav('Project')
+    fireEvent.change(screen.getByRole('combobox', { name: 'Project per tahun' }), { target: { value: '2025' } })
     fireEvent.change(screen.getByLabelText('Perusahaan'), { target: { value: 'Holla' } })
-    fireEvent.click(document.querySelector('button[data-project-candle]')!)
+    const candle = document.querySelector('button[data-project-candle]')!
+    fireEvent.click(candle)
+    fireEvent.click(candle)
     expect(window.location.hash).toMatch(/^#projects\?project=/)
-    fireEvent.click(screen.getByRole('button', { name: 'Kembali ke Proyek' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Kembali ke Project' }))
     await waitFor(() => expect(window.location.hash).toBe('#projects'))
-    expect(screen.getByRole('heading', { name: 'Umur dan status proyek' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Umur dan status Project' })).toBeTruthy()
     expect((screen.getByLabelText('Perusahaan') as HTMLSelectElement).value).toBe('Holla')
-    expect(screen.getByRole('button', { name: '2025, 12 selesai dari 15 proyek' }).getAttribute('aria-current')).toBe('page')
+    expect(screen.getByRole('combobox', { name: 'Project per tahun' })).toHaveValue('2025')
     await waitFor(() => expect(window.scrollTo).toHaveBeenCalledWith({ top: 640, behavior: 'auto' }))
   })
 
   it('returns from a project drilldown to the Projects page with its view state', async () => {
     renderApp()
-    nav('Proyek')
+    nav('Project')
     expect(window.location.hash).toBe('#projects')
-    fireEvent.click(screen.getByRole('button', { name: 'Tahun sebelumnya' }))
+    fireEvent.change(screen.getByRole('combobox', { name: 'Project per tahun' }), { target: { value: '2025' } })
     fireEvent.change(screen.getByLabelText('Perusahaan'), { target: { value: 'Holla' } })
-    fireEvent.click(document.querySelector('button[data-project-candle]')!)
+    const candle = document.querySelector('button[data-project-candle]')!
+    fireEvent.click(candle)
+    fireEvent.click(candle)
     expect(window.location.hash).toMatch(/^#projects\?project=/)
-    expect(screen.getByRole('button', { name: 'Kembali ke Proyek' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Kembali ke Project' })).toBeTruthy()
 
     act(() => window.history.back())
     await waitFor(() => expect(window.location.hash).toBe('#projects'))
-    expect(screen.getByRole('heading', { name: 'Umur dan status proyek' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Umur dan status Project' })).toBeTruthy()
     expect((screen.getByLabelText('Perusahaan') as HTMLSelectElement).value).toBe('Holla')
-    expect(screen.getByRole('button', { name: '2025, 12 selesai dari 15 proyek' }).getAttribute('aria-current')).toBe('page')
+    expect(screen.getByRole('combobox', { name: 'Project per tahun' })).toHaveValue('2025')
   })
 
   it('creates an office expense from an explicitly selected wallet', async () => {
@@ -300,12 +307,12 @@ describe('Hollawall demo finance workspace', () => {
   it('filters report preview using the same seven visible scope labels and complete row set', () => {
     renderApp()
     nav('Laporan')
-    expect(screen.getByRole('heading', { name: 'Pusat laporan kanonis' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Laporan' })).toBeTruthy()
     const preview = screen.getByRole('region', { name: 'Pratinjau laporan' })
     expect(within(preview).getByLabelText('Filter aktif').children).toHaveLength(7)
     expect(within(preview).getAllByRole('row')).toHaveLength(95)
     expect(within(preview).queryByText(/Pratinjau menampilkan 50/)).toBeNull()
-    fireEvent.change(screen.getByLabelText('Aktivitas'), { target: { value: 'office' } })
+    fireEvent.change(screen.getByLabelText('Lingkup'), { target: { value: 'office' } })
     expect(within(preview).getAllByText('Operasional Kantor').length).toBeGreaterThan(0)
     expect(within(preview).getByText('4', { selector: '.preview-metrics strong' })).toBeTruthy()
   })

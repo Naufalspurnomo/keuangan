@@ -14,6 +14,7 @@ import {
 } from './financeWorkspace'
 import type { CashTrendPoint, ProjectSummary, WalletSnapshot } from './snapshot'
 import type { Transaction } from './types'
+import { visibleProjectStatus } from './projectStatus'
 
 export const IDR = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })
 export const DATE = new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -25,11 +26,12 @@ export function dateLabel(value: string | null | undefined) {
 }
 
 export function projectLabel(project: FinanceProject | undefined) {
-  return project?.name ?? 'Proyek tidak ditemukan'
+  return project?.name ?? 'Project tidak ditemukan'
 }
 
 export function projectStatusLabel(status: ProjectStatus) {
-  return status === 'completed' ? 'Selesai' : status === 'active' ? 'Aktif' : status === 'cancelled' ? 'Dibatalkan' : 'Direncanakan'
+  const visibleStatus = visibleProjectStatus(status)
+  return visibleStatus === 'completed' ? 'Selesai' : visibleStatus === 'cancelled' ? 'Dibatalkan' : 'Aktif'
 }
 
 export function directionLabel(direction: TransactionDirection) {
@@ -37,7 +39,7 @@ export function directionLabel(direction: TransactionDirection) {
 }
 
 export function scopeLabel(scope: TransactionScope) {
-  return scope === 'project' ? 'Proyek' : 'Operasional Kantor'
+  return scope === 'project' ? 'Project' : 'Operasional Kantor'
 }
 
 export function walletBalances(workspace: FinanceWorkspace) {
@@ -126,16 +128,16 @@ export function buildReportModel(workspace: FinanceWorkspace, filters: ReportFil
     })
   const income = sumMoney(rows.filter((row) => row.direction === 'income').map((row) => row.amount), 'pemasukan laporan')
   const expense = sumMoney(rows.filter((row) => row.direction === 'expense').map((row) => row.amount), 'pengeluaran laporan')
-  const projectExpense = sumMoney(rows.filter((row) => row.scope === 'project' && row.direction === 'expense').map((row) => row.amount), 'biaya proyek laporan')
+  const projectExpense = sumMoney(rows.filter((row) => row.scope === 'project' && row.direction === 'expense').map((row) => row.amount), 'biaya Project laporan')
   const officeExpense = sumMoney(rows.filter((row) => row.scope === 'office').map((row) => row.amount), 'biaya kantor laporan')
   const scopeText = [
     filters.dateFrom || filters.dateTo ? `${filters.dateFrom ? dateLabel(filters.dateFrom) : 'Awal'} – ${filters.dateTo ? dateLabel(filters.dateTo) : 'Sekarang'}` : 'Semua tanggal',
     filters.wallet === 'all' ? 'Semua dompet' : filters.wallet,
     filters.company === 'all' ? 'Semua perusahaan' : filters.company,
     filters.scope === 'all' ? 'Semua aktivitas' : scopeLabel(filters.scope),
-    filters.projectId === 'all' ? 'Semua proyek' : `Proyek: ${workspace.projects.find((project) => project.id === filters.projectId)?.name ?? 'Tidak ditemukan'}`,
+    filters.projectId === 'all' ? 'Semua Project' : `Project: ${workspace.projects.find((project) => project.id === filters.projectId)?.name ?? 'Tidak ditemukan'}`,
     filters.direction === 'all' ? 'Pemasukan & pengeluaran' : directionLabel(filters.direction),
-    filters.projectStatus === 'all' ? 'Semua status proyek' : `Status: ${projectStatusLabel(filters.projectStatus)}`,
+    filters.projectStatus === 'all' ? 'Semua status Project' : `Status: ${projectStatusLabel(filters.projectStatus)}`,
   ]
   return { mode: workspace.mode, generatedAt, filters, rows, totals: { income, expense, net: income - expense, projectExpense, officeExpense }, scopeText }
 }
@@ -226,7 +228,7 @@ export function chartProjects(workspace: FinanceWorkspace): ProjectSummary[] {
       last_activity_on: dates.at(-1),
       started_on: project.started_on,
       completed_on: project.completed_on,
-      lifecycle_status: project.status === 'planned' ? 'unmarked' : project.status,
+      lifecycle_status: visibleProjectStatus(project.status),
       source_key_first: project.id,
       source_key_latest: project.id,
     }

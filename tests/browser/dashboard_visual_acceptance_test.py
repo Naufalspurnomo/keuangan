@@ -324,7 +324,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
 
     def assert_clean_render(self, page, errors):
         page.goto(self.base_url, wait_until="domcontentloaded", timeout=90_000)
-        page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
+        page.get_by_role("heading", name="Dashboard", exact=True).wait_for()
         page.locator(".recharts-responsive-container, .business-empty").first.wait_for()
         self.assertEqual(errors, [])
         metrics = page.evaluate("""() => ({
@@ -388,10 +388,10 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 navigation = page.get_by_role("navigation", name="Menu utama")
                 self.assertEqual(navigation.get_by_role("button").count(), 7)
                 expect(navigation.get_by_role("button", name=re.compile(r"^Transaksi"))).to_have_count(0)
-                navigation.get_by_role("button", name=re.compile(r"^Proyek")).click()
-                page.get_by_role("heading", name="Umur dan status proyek").wait_for()
+                navigation.get_by_role("button", name=re.compile(r"^Project")).click()
+                page.get_by_role("heading", name="Umur dan status Project").wait_for()
                 breadcrumb = page.locator(".breadcrumbs strong")
-                expect(breadcrumb).to_have_text("Proyek")
+                expect(breadcrumb).to_have_text("Project")
                 breadcrumb_metrics = breadcrumb.evaluate("node => ({ client: node.clientWidth, scroll: node.scrollWidth })")
                 self.assertGreaterEqual(breadcrumb_metrics["client"], breadcrumb_metrics["scroll"], breadcrumb_metrics)
                 overflow = page.evaluate("document.documentElement.scrollWidth > document.documentElement.clientWidth")
@@ -417,11 +417,11 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             with self.subTest(width=width):
                 context, page, errors = self.new_page(width, height, "dark")
                 page.goto(self.base_url, wait_until="domcontentloaded", timeout=90_000)
-                page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
+                page.get_by_role("heading", name="Dashboard", exact=True).wait_for()
                 if width <= 760:
                     page.get_by_role("button", name="Buka navigasi").click()
-                page.locator(".sidebar nav button").filter(has_text="Proyek").click()
-                page.get_by_role("heading", name="Umur dan status proyek", exact=True).wait_for()
+                page.locator(".sidebar nav button").filter(has_text="Project").click()
+                page.get_by_role("heading", name="Umur dan status Project", exact=True).wait_for()
                 metrics = page.evaluate("""() => {
                   const visible = element => element.offsetParent !== null;
                   const report = document.querySelector('.project-market-report');
@@ -430,7 +430,8 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                   const targets = [...document.querySelectorAll('.project-market-toolbar button, .project-market-global-toolbar button, .project-register button, .project-ledger-pagination button')]
                     .filter(visible)
                     .map(element => element.getBoundingClientRect().height);
-                  const viewports = [...document.querySelectorAll('.project-market-viewport')].filter(visible);
+                  const populatedViewports = [...document.querySelectorAll('.project-market-canvas:not(.is-empty) .project-market-viewport')].filter(visible);
+                  const emptyViewports = [...document.querySelectorAll('.project-market-canvas.is-empty .project-market-viewport')].filter(visible);
                   const completed = [...document.querySelectorAll('.project-market-candle.is-completed')].filter(visible);
                   return {
                     viewport: document.documentElement.clientWidth,
@@ -444,7 +445,8 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                     rows: document.querySelectorAll('.project-register > article').length,
                     quickComplete: document.querySelectorAll('button.complete-project-action[aria-label^="Selesaikan "]').length,
                     ordered: Boolean(report && controls && register && (report.compareDocumentPosition(controls) & Node.DOCUMENT_POSITION_FOLLOWING) && (controls.compareDocumentPosition(register) & Node.DOCUMENT_POSITION_FOLLOWING)),
-                    internalHorizontalOverflow: viewports.every(element => element.scrollWidth > element.clientWidth),
+                    internalHorizontalOverflow: populatedViewports.every(element => element.scrollWidth > element.clientWidth),
+                    emptyChartFits: emptyViewports.every(element => element.scrollWidth <= element.clientWidth),
                     minTarget: targets.length ? Math.min(...targets) : 0,
                   };
                 }""")
@@ -461,16 +463,17 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
                 self.assertTrue(metrics["ordered"])
                 if width <= 760:
                     self.assertTrue(metrics["internalHorizontalOverflow"], metrics)
+                    self.assertTrue(metrics["emptyChartFits"], metrics)
                     self.assertGreaterEqual(metrics["minTarget"], 44)
                 context.close()
 
     def test_cashflow_and_wallet_routes_are_operational_and_paginated(self):
         context, page, errors = self.new_page(390, 844, "light")
         page.goto(self.base_url, wait_until="domcontentloaded", timeout=90_000)
-        page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
+        page.get_by_role("heading", name="Dashboard", exact=True).wait_for()
         page.get_by_role("button", name="Buka navigasi").click()
         page.locator(".sidebar nav button").filter(has_text="Arus Kas").click()
-        page.get_by_role("heading", name="Aliran kas, bukan sekadar saldo", exact=True).wait_for()
+        page.get_by_role("heading", name="Arus Kas", exact=True).wait_for()
         expect(page.locator(".cashflow-workspace")).to_have_count(1)
         expect(page.get_by_text("Kas masuk eksternal")).to_be_visible()
         expect(page.locator(".ops-metric-strip article").filter(has_text="Transfer internal terbuka")).to_be_visible()
@@ -502,12 +505,12 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
     def test_dark_routes_keep_readable_text_contrast(self):
         context, page, errors = self.new_page(1440, 1000, "dark")
         page.goto(self.base_url, wait_until="domcontentloaded", timeout=90_000)
-        page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
+        page.get_by_role("heading", name="Dashboard", exact=True).wait_for()
         routes = (
             (None, ".executive-overview"),
             ("Arus Kas", ".cashflow-workspace"),
             ("Dompet", ".wallet-workspace"),
-            ("Proyek", ".project-command-center"),
+            ("Project", ".project-command-center"),
         )
         for route_name, selector in routes:
             if route_name:
@@ -574,7 +577,7 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             }""")
             self.assertEqual(failures, [], {"route": route_name or "Ringkasan", "failures": failures})
 
-        page.locator(".sidebar nav button").filter(has_text="Proyek").click()
+        page.locator(".sidebar nav button").filter(has_text="Project").click()
         page.locator(".project-command-center").wait_for()
         titles = page.locator(".project-market-candle").evaluate_all("elements => elements.map(element => element.title)")
         self.assertTrue(titles)
@@ -585,14 +588,14 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
     def test_light_filled_color_surfaces_use_white_text(self):
         context, page, errors = self.new_page(1440, 1000, "light")
         page.goto(self.base_url, wait_until="domcontentloaded", timeout=90_000)
-        page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
+        page.get_by_role("heading", name="Dashboard", exact=True).wait_for()
         routes = (
             (None, (
                 ".workspace-switch", ".sidebar nav button.active", ".sidebar nav button b",
                 ".business-mode-switch button.is-active", ".unit-option.is-active",
                 ".new-project-button", ".vertical-project-bar",
             )),
-            ("Proyek", (
+            ("Project", (
                 ".year-command nav button.active", ".project-market-candle:not(.is-planned) .project-market-body", ".project-market-completed",
             )),
             ("Arus Kas", (".ops-filter-block button.active",)),
@@ -635,12 +638,12 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
             (1440, 900, "light"),
             (1920, 1080, "dark"),
         )
-        routes = ("Dashboard", "Arus Kas", "Dompet", "Proyek", "Operasional Kantor", "Hutang", "Laporan")
+        routes = ("Dashboard", "Arus Kas", "Dompet", "Project", "Operasional Kantor", "Hutang", "Laporan")
         for width, height, theme in viewports:
             with self.subTest(width=width, height=height, theme=theme):
                 context, page, errors = self.new_page(width, height, theme)
                 page.goto(self.base_url, wait_until="domcontentloaded", timeout=90_000)
-                page.get_by_role("heading", name="Pusat kendali keuangan Hollawall", exact=True).wait_for()
+                page.get_by_role("heading", name="Dashboard", exact=True).wait_for()
                 for route_name in routes:
                     page.locator(".sidebar nav button").filter(has_text=route_name).dispatch_event("click")
                     page.wait_for_timeout(25)
@@ -725,8 +728,8 @@ class DashboardVisualAcceptanceTests(unittest.TestCase):
         expect(page.locator(".project-detail-head").get_by_role("button", name="Tambah transaksi", exact=True)).to_have_count(0)
         self.assertIsNone(page.evaluate("localStorage.getItem('hollawall-finance-demo-v3')"))
 
-        page.get_by_role("button", name="Kembali ke Proyek").click()
-        page.get_by_role("heading", name="Umur dan status proyek", exact=True).wait_for()
+        page.get_by_role("button", name="Kembali ke Project").click()
+        page.get_by_role("heading", name="Umur dan status Project", exact=True).wait_for()
         self.assertEqual(page.evaluate("window.location.hash"), "#projects")
         self.assertEqual(errors, [])
         context.close()

@@ -40,7 +40,9 @@ export function normalizeCanonicalPair(wallet: string, company: string) {
   return canonicalPair(canonicalWallet, canonicalCompany)
 }
 
-export const PROJECT_WRITE_CATEGORIES = ['Operasi Kantor', 'Bahan Alat', 'Gaji', 'Lain-lain'] as const
+export const PROJECT_EXPENSE_WRITE_CATEGORIES = ['Operasi Project', 'Bahan Alat', 'Gaji', 'Lain-lain'] as const
+export const PROJECT_INCOME_WRITE_CATEGORIES = ['DP', 'DP 1', 'DP 2', 'Pelunasan'] as const
+export const PROJECT_WRITE_CATEGORIES = PROJECT_EXPENSE_WRITE_CATEGORIES
 export const OFFICE_WRITE_CATEGORIES = ['Gaji', 'ListrikAir', 'Konsumsi', 'Peralatan', 'Lain Lain'] as const
 
 export function isCanonicalWalletCompanyPair(wallet: string, company: string) {

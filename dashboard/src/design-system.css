@@ -936,7 +936,6 @@ html[data-theme='dark'] .danger-button {
   color: var(--negative-strong);
 }
 
-.status-chip.planned,
 .document-status.draft,
 .health-label.unmarked,
 .health-badge.unmarked {

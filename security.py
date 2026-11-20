@@ -79,6 +79,7 @@ def _get_app_logger() -> logging.Logger:
 
 ALLOWED_CATEGORIES = [
     "Operasi Kantor",  # Office operations: listrik, air, internet, sewa, admin, pulsa
+    "Operasi Project", # Project operations: project-level logistics and site costs
     "Bahan Alat",      # Materials & tools: semen, cat, paku, gerinda, meteran, kayu, besi
     "Gaji",            # Wages: upah tukang, honor, lembur, fee, mandor
     "Lain-lain",       # Others: transport, makan, parkir, bensin, dll
