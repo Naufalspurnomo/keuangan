@@ -44,7 +44,7 @@ def _project_identity(value: Any) -> tuple[str, str | None]:
     raw = str(value or "").strip()
     match = _PROJECT_MARKER_RE.search(raw)
     marker = match.group(1).casefold() if match else None
-    name = _PROJECT_MARKER_RE.sub("", raw).strip() or "Tanpa Proyek"
+    name = _PROJECT_MARKER_RE.sub("", raw).strip() or "Tanpa Project"
     return name, marker
 
 
@@ -72,7 +72,7 @@ def _build_project_summaries(rows: Sequence[Mapping[str, Any]], observed_at: dat
         if row["internal_movement"]:
             continue
         name, marker = _project_identity(row.get("project_raw") or row["project"])
-        if name.casefold() in {"operasional", "tanpa proyek"}:
+        if name.casefold() in {"operasional", "tanpa project", "tanpa proyek"}:
             continue
         project_id = row.get("project_id")
         project_key = str(project_id or name)
@@ -205,7 +205,7 @@ def build_live_snapshot(
         project_raw = str(raw.get("nama_projek") or raw.get("project") or "").strip()
         project_name, _marker = _project_identity(project_raw)
         internal_movement = bool(raw.get("internal_movement"))
-        office_row = project_name.casefold() in {"operasional", "tanpa proyek"}
+        office_row = project_name.casefold() in {"operasional", "tanpa project", "tanpa proyek"}
         scope = "internal_transfer" if internal_movement else "office" if office_row else "project"
         valid_rows.append(
             {
@@ -298,7 +298,7 @@ def build_live_snapshot(
     total_rows = len(valid_rows) + invalid_rows
     completeness = round((len(valid_rows) / total_rows) * 100, 1) if total_rows else 0.0
     project_cashflow = sum(
-        amount for name, amount in project_totals.items() if name.casefold() not in {"operasional", "tanpa proyek"}
+        amount for name, amount in project_totals.items() if name.casefold() not in {"operasional", "tanpa project", "tanpa proyek"}
     )
     return {
         "version": "dashboard.snapshot.v1",

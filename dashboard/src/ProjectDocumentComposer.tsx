@@ -70,7 +70,9 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
     finally { setImageProcessing(false); input.value = '' }
   }
   const changeLine = (index: number, key: keyof ProjectDocumentDraft['lines'][number], value: string | number | null) => {
-    change('lines', draft.lines.map((line, lineIndex) => lineIndex === index ? { ...line, [key]: value } : line))
+    setDraft((current) => ({ ...current, lines: current.lines.map((line, lineIndex) => lineIndex === index ? { ...line, [key]: value, ...(key === 'display_quantity' ? { quantity: String(value) } : {}), ...(key === 'billed_area_m2' ? { quantity: String(value), width: null, height: null, raw_area_m2: null, dimension_unit: null, area_rounding: 'half_up' as const, area_override_reason: null } : {}) } : line) }))
+    setDirty(true)
+    setError('')
   }
   const toggleAllocation = (sourceKey: string, enabled: boolean) => {
     const candidate = receiptOptions?.transactions.find((item) => item.source_key === sourceKey)
@@ -124,14 +126,10 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
 
   return <section className="document-composer document-workspace" aria-label="Penyusun dokumen">
     <header className="document-composer-head">
-      <div><p className="eyebrow">DOKUMEN KOMERSIAL</p><h2>{document.id ? `Ubah ${typeName}` : `Buat ${typeName}`}</h2><p>{subtitle}</p><div className="document-context"><span>{project.name}</span><span>{project.client_name}</span></div></div>
+      <div><h2>{document.id ? `Ubah ${typeName}` : `Buat ${typeName}`}</h2><p>{subtitle}</p><div className="document-context"><span>{project.name}</span><span>{project.client_name}</span></div></div>
       <button type="button" className="icon-button" aria-label="Tutup penyusun dokumen" onClick={close}><X size={20} /></button>
     </header>
-    <ol className="document-workflow" aria-label={`Alur pembuatan ${typeName}`}>
-      <li><span>1</span><strong>{draft.type === 'invoice' ? 'Detail invoice' : draft.type === 'receipt' ? 'Detail kuitansi' : 'Detail dokumen'}</strong></li>
-      <li><span>2</span><strong>{draft.type === 'receipt' ? 'Alokasi pembayaran' : 'Item & harga'}</strong></li>
-      <li><span>3</span><strong>{draft.type === 'receipt' ? 'Keterangan' : 'Ketentuan'}</strong></li>
-    </ol>
+
     {receiptIsNew && !hasReceiptSources ? <section className="receipt-blocked-state" aria-labelledby="receipt-blocked-title">
       <span className="receipt-blocked-icon"><ReceiptText size={28} /></span>
       <div><p className="eyebrow">PEMBAYARAN BELUM TERSEDIA</p><h3 id="receipt-blocked-title">Kuitansi belum bisa dibuat</h3><p>Catat pemasukan Project terlebih dahulu. Nominal kuitansi selalu diambil dari transaksi pemasukan terverifikasi, bukan dari catatan atau input manual.</p></div>
@@ -163,16 +161,18 @@ export default function ProjectDocumentComposer({ project, document, writesEnabl
               <label>Kuantitas<input aria-label={`Kuantitas item ${index + 1}`} inputMode="decimal" value={line.quantity} onChange={(event) => changeLine(index, 'quantity', event.target.value)} /></label>
               <label>Satuan<input aria-label={`Satuan item ${index + 1}`} value={line.unit} onChange={(event) => changeLine(index, 'unit', event.target.value)} /></label>
             </> : policy.pricing_mode === 'fixed_artwork' ? <>
-              <label>Jumlah artwork<input aria-label={`Jumlah artwork item ${index + 1}`} type="number" min="1" step="1" value={line.display_quantity ?? line.quantity} onChange={(event) => { changeLine(index, 'display_quantity', event.target.value); changeLine(index, 'quantity', event.target.value) }} /></label>
-              <label>Dimensi (m)<input aria-label={`Lebar item ${index + 1}`} inputMode="decimal" value={line.width ?? ''} onChange={(event) => changeLine(index, 'width', event.target.value)} placeholder="Lebar" /></label>
+              <label>Jumlah artwork<input aria-label={`Jumlah artwork item ${index + 1}`} type="number" min="1" step="1" value={line.display_quantity ?? line.quantity} onChange={(event) => changeLine(index, 'display_quantity', event.target.value)} /></label>
+
               <RupiahAmountInput label={`Harga awal item ${index + 1}`} value={line.original_price ?? null} required={false} disabled={saving || imageProcessing} onChange={(amount) => changeLine(index, 'original_price', amount)} />
             </> : <>
-              <label>Lebar (m)<input aria-label={`Lebar item ${index + 1}`} inputMode="decimal" value={line.width ?? ''} onChange={(event) => changeLine(index, 'width', event.target.value)} /></label>
-              <label>Tinggi (m)<input aria-label={`Tinggi item ${index + 1}`} inputMode="decimal" value={line.height ?? ''} onChange={(event) => changeLine(index, 'height', event.target.value)} /></label>
-              <label>Pembulatan<select aria-label={`Pembulatan luas item ${index + 1}`} value={line.area_rounding ?? 'half_up'} onChange={(event) => changeLine(index, 'area_rounding', event.target.value)}><option value="exact">Exact</option><option value="half_up">Half-up</option><option value="truncate">Potong</option><option value="manual_override">Override</option></select></label>
+              <label>Luas tagihan (m²)<input aria-label={`Luas tagihan item ${index + 1} (m²)`} inputMode="decimal" value={line.billed_area_m2 ?? line.quantity} onChange={(event) => changeLine(index, 'billed_area_m2', event.target.value)} /></label>
+              {(Boolean(line.width && line.height) || line.area_rounding === 'manual_override') && <>
+                <label>Pembulatan<select aria-label={`Pembulatan luas item ${index + 1}`} value={line.area_rounding ?? 'half_up'} onChange={(event) => changeLine(index, 'area_rounding', event.target.value as 'exact' | 'half_up' | 'truncate' | 'manual_override')}><option value="exact">Exact</option><option value="half_up">Half-up</option><option value="truncate">Potong</option><option value="manual_override">Override manual</option></select></label>
+                {line.area_rounding === 'manual_override' && <label>Alasan penyesuaian luas<input aria-label={`Alasan penyesuaian luas item ${index + 1}`} value={line.area_override_reason ?? ''} onChange={(event) => changeLine(index, 'area_override_reason', event.target.value)} required /></label>}
+              </>}
             </>}
             <RupiahAmountInput label={`${policy.labels.unit_price} item ${index + 1}`} value={line.unit_price} required={false} disabled={saving || imageProcessing} onChange={(amount) => changeLine(index, 'unit_price', amount ?? 0)} />
-            <label>Diskon %<input aria-label={`Diskon item ${index + 1}`} inputMode="decimal" value={line.discount_percent} onChange={(event) => changeLine(index, 'discount_percent', event.target.value)} /></label>
+            {policy.pricing_mode !== 'fixed_artwork' && <label>Diskon %<input aria-label={`Diskon item ${index + 1}`} inputMode="decimal" value={line.discount_percent} onChange={(event) => changeLine(index, 'discount_percent', event.target.value)} /></label>}
             <button type="button" className="icon-button danger" aria-label={`Hapus item ${index + 1}`} disabled={draft.lines.length === 1} onClick={() => change('lines', draft.lines.filter((_, lineIndex) => lineIndex !== index))}><Trash2 size={17} /></button>
           </div>)}
           <button type="button" className="secondary-button" onClick={() => change('lines', [...draft.lines, draftFrom({ ...draft, id: null, lines: [createEmptyDocumentLine()] }, project).lines[0]])}><Plus size={16} /> Tambah item</button>

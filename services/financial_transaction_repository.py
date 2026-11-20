@@ -51,6 +51,40 @@ def _root_id(records: Mapping[str, dict[str, Any]], transaction_id: str) -> str:
     return str(current["id"])
 
 
+def _legacy_replay_matches(
+    stored: Mapping[str, Any], *, operation: str | None,
+    command_target_id: str | None, read_record: Callable[[str], Mapping[str, Any]],
+) -> bool:
+    """Old hashes bind only the body; prove operation and target from audit links.
+
+    Legacy commands resolved any requested ancestor to the latest revision.
+    Only ancestors of the stored command's parent are valid, never the result
+    itself or later descendants. No persisted audit data is rewritten.
+    """
+    revision = stored.get("revision_of_id")
+    reversal = stored.get("reversal_of_id")
+    if operation == "create":
+        return (command_target_id is None and stored.get("status") == "posted"
+                and revision is None and reversal is None)
+    if operation == "correct" and stored.get("status") == "correction" and not reversal:
+        parent = revision
+    elif operation == "reverse" and stored.get("status") == "reversal" and not revision:
+        parent = reversal
+    else:
+        return False
+    seen = {str(stored["id"])}
+    while parent is not None:
+        parent_id = str(parent)
+        if parent_id in seen:
+            return False
+        seen.add(parent_id)
+        if parent_id == command_target_id:
+            return True
+        ancestor = read_record(parent_id)
+        parent = ancestor.get("revision_of_id") or ancestor.get("reversal_of_id")
+    return False
+
+
 class InMemoryFinancialRepository:
     """Thread-safe repository used for unit tests and local deterministic replay."""
 
@@ -71,6 +105,9 @@ class InMemoryFinancialRepository:
         *,
         idempotency_key_hash: str,
         request_hash: str,
+        legacy_request_hash: str | None = None,
+        operation: str | None = None,
+        command_target_id: str | None = None,
         target_id: str | None = None,
         expected_version: int | None = None,
         outbox_payload: Mapping[str, Any],
@@ -79,7 +116,14 @@ class InMemoryFinancialRepository:
             existing = self._idempotency.get(idempotency_key_hash)
             if existing is not None:
                 existing_hash, existing_id = existing
-                if existing_hash != request_hash:
+                stored = self._records[existing_id]
+                if existing_hash != request_hash and not (
+                    legacy_request_hash is not None and existing_hash == legacy_request_hash
+                    and _legacy_replay_matches(
+                        stored, operation=operation, command_target_id=command_target_id,
+                        read_record=self.get,
+                    )
+                ):
                     raise FinancialRepositoryConflict(
                         "idempotency key was already used with a different request"
                     )
@@ -215,6 +259,9 @@ class PostgresFinancialTransactionRepository:
         *,
         idempotency_key_hash: str,
         request_hash: str,
+        legacy_request_hash: str | None = None,
+        operation: str | None = None,
+        command_target_id: str | None = None,
         target_id: str | None = None,
         expected_version: int | None = None,
         outbox_payload: Mapping[str, Any],
@@ -235,11 +282,17 @@ class PostgresFinancialTransactionRepository:
                 )
                 existing = cursor.fetchone()
                 if existing is not None:
-                    if str(existing[1]) != request_hash:
+                    result = self._read_record(cursor, str(existing[0]))
+                    if str(existing[1]) != request_hash and not (
+                        legacy_request_hash is not None and str(existing[1]) == legacy_request_hash
+                        and _legacy_replay_matches(
+                            result, operation=operation, command_target_id=command_target_id,
+                            read_record=lambda identifier: self._read_record(cursor, identifier),
+                        )
+                    ):
                         raise FinancialRepositoryConflict(
                             "idempotency key was already used with a different request"
                         )
-                    result = self._read_record(cursor, str(existing[0]))
                     connection.commit()
                     return result, True
 

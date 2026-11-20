@@ -108,19 +108,16 @@ afterEach(() => {
 })
 
 describe('ProjectQuotationPanel', () => {
-  it('guides quotation creation and keeps the live commercial summary visible', async () => {
+  it('uses direct billed area and keeps the live commercial summary visible', async () => {
     render(<ProjectQuotationPanel project={project} session={session} api={api()} onApplied={vi.fn()} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Buat quotation' }))
 
     expect(screen.getByRole('heading', { name: 'Buat quotation' })).toBeTruthy()
-    const workflow = screen.getByRole('list', { name: 'Alur pembuatan quotation' })
-    expect(within(workflow).getByText('Klien & Project')).toBeTruthy()
-    expect(within(workflow).getByText('Item & harga')).toBeTruthy()
-    expect(within(workflow).getByText('Ketentuan')).toBeTruthy()
+    expect(screen.queryByRole('list', { name: /Alur pembuatan/ })).toBeNull()
+    expect(screen.queryByLabelText(/Lebar|Tinggi/)).toBeNull()
 
     fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Backdrop premium' } })
-    fireEvent.change(screen.getByLabelText('Lebar item 1 (m)'), { target: { value: '2' } })
-    fireEvent.change(screen.getByLabelText('Tinggi item 1 (m)'), { target: { value: '0.5' } })
+    fireEvent.change(screen.getByLabelText('Luas tagihan item 1 (m²)'), { target: { value: '1' } })
     fireEvent.change(screen.getByLabelText('HARGA/M² item 1 *'), { target: { value: '5000000' } })
     expect(screen.getByRole('complementary', { name: 'Ringkasan quotation' })).toHaveTextContent(/Rp\s*5\.000\.000/)
   })
@@ -154,8 +151,7 @@ describe('ProjectQuotationPanel', () => {
     fireEvent.change(screen.getByLabelText('Subjek'), { target: { value: 'Penawaran backdrop premium' } })
     expect(screen.getByLabelText('Berlaku sampai')).toHaveValue('Ditetapkan 7 hari dari tanggal kirim')
     fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Backdrop premium' } })
-    fireEvent.change(screen.getByLabelText('Lebar item 1 (m)'), { target: { value: '2' } })
-    fireEvent.change(screen.getByLabelText('Tinggi item 1 (m)'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('Luas tagihan item 1 (m²)'), { target: { value: '2' } })
     fireEvent.change(screen.getByLabelText('HARGA/M² item 1 *'), { target: { value: '5000000' } })
     fireEvent.change(screen.getByLabelText('Diskon item 1 (%)'), { target: { value: '10' } })
     fireEvent.change(screen.getByLabelText('Pajak (%)'), { target: { value: '11' } })
@@ -170,7 +166,7 @@ describe('ProjectQuotationPanel', () => {
       template_key: 'hollawall',
       template_version: 'commercial-v3',
       payment_profile_key: 'hollawall',
-      lines: [expect.objectContaining({ description: 'Backdrop premium', pricing_mode: 'area_rate', width: '2', height: '1', quantity: '2', unit: 'm²', unit_price: 5_000_000, discount_percent: '10' })],
+      lines: [expect.objectContaining({ description: 'Backdrop premium', pricing_mode: 'area_rate', billed_area_m2: '2', quantity: '2', unit: 'm²', unit_price: 5_000_000, discount_percent: '10' })],
       tax_percent: '11',
       deposit_percent: 30,
     }), session, expect.any(String)))
@@ -200,6 +196,18 @@ describe('ProjectQuotationPanel', () => {
     expect(screen.getByText('Revisi dari versi 1')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Simpan sebagai revisi' }))
     await waitFor(() => expect(subject.revise).toHaveBeenCalledWith(expect.objectContaining({ id: draft.id }), expect.objectContaining({ subject: 'Draf diperbarui' }), session))
+  })
+
+  it('edits historical billed area without requiring dimension overrides', async () => {
+    const draft = { ...item, status: 'draft' as const, lines: [{ ...item.lines![0], pricing_mode: 'area_rate' as const, quantity: '6', billed_area_m2: '6', width: '3', height: '2', unit_price: 100000 }] }
+    const subject = api([draft])
+    render(<ProjectQuotationPanel project={project} session={session} api={subject} onApplied={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit versi 1' }))
+    fireEvent.change(screen.getByLabelText('Luas tagihan item 1 (m²)'), { target: { value: '5.5' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Simpan draf' }))
+    await waitFor(() => expect(subject.saveDraft).toHaveBeenCalledWith(draft, expect.objectContaining({ amount: 550000, lines: [expect.objectContaining({ quantity: '5.5', billed_area_m2: '5.5', width: null, height: null })] }), session))
+    expect(subject.deal).not.toHaveBeenCalled()
+    expect(subject.transition).not.toHaveBeenCalled()
   })
 
   it('shows exact DP allocation including rupiah remainder before creating deal documents', async () => {

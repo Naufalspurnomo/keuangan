@@ -1,0 +1,38 @@
+[
+  {
+    "width": 320,
+    "height": 720,
+    "scroll": 320,
+    "offenders": []
+  },
+  {
+    "width": 390,
+    "height": 844,
+    "scroll": 390,
+    "offenders": []
+  },
+  {
+    "width": 844,
+    "height": 390,
+    "scroll": 844,
+    "offenders": []
+  },
+  {
+    "width": 768,
+    "height": 1024,
+    "scroll": 768,
+    "offenders": []
+  },
+  {
+    "width": 1024,
+    "height": 768,
+    "scroll": 1024,
+    "offenders": []
+  },
+  {
+    "width": 1440,
+    "height": 1000,
+    "scroll": 1440,
+    "offenders": []
+  }
+]

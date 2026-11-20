@@ -525,7 +525,8 @@ export function readProjectDocumentRoute(hash = window.location.hash): ProjectDo
   if (page !== 'projects') return { tab: 'transactions' }
   const params = new URLSearchParams(query)
   const requestedTab = params.get('tab')
-  const tab: ProjectDetailTab = requestedTab === 'presensi' || requestedTab === 'documents' ? requestedTab : 'transactions'
+  const allowedTabs: ProjectDetailTab[] = ['overview', 'transactions', 'debts', 'profitability', 'presensi', 'documents', 'audit']
+  const tab: ProjectDetailTab = allowedTabs.includes(requestedTab as ProjectDetailTab) ? requestedTab as ProjectDetailTab : 'transactions'
   return {
     projectId: params.get('project') || undefined,
     tab,

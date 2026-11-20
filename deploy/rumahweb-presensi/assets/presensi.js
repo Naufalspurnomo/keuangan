@@ -63,7 +63,7 @@
   function updateCameraAvailability() {
     const ready = Boolean(authenticated && project.value && !cameraBusy && !statusBusy && !busy)
     openCameraButton.disabled = !ready
-    cameraRequirements.textContent = ready ? 'Kamera siap diaktifkan.' : 'Pilih proyek terlebih dahulu.'
+    cameraRequirements.textContent = ready ? 'Kamera siap diaktifkan.' : 'Pilih Project terlebih dahulu.'
   }
   const actionLabel = () => action.value === 'check_out' ? 'Check-out' : 'Check-in'
   function updateSubmit() {
@@ -102,10 +102,10 @@
     return payload
   }
   function populateProjects(rows) {
-    project.replaceChildren(new Option('Pilih proyek', ''))
+    project.replaceChildren(new Option('Pilih Project', ''))
     for (const row of rows) project.append(new Option(`${row.name} · ${row.company}`, row.id))
     hasActiveProjects = rows.length > 0
-    if (!hasActiveProjects) project.options[0].textContent = 'Tidak ada proyek aktif'
+    if (!hasActiveProjects) project.options[0].textContent = 'Tidak ada Project aktif'
   }
   async function loadBootstrap() {
     const payload = await requestJson('/absen/api/bootstrap.php')
@@ -152,12 +152,12 @@
       if (payload.active_project) {
         activeProject = payload.active_project
         if (![...project.options].some((option) => option.value === activeProject.id)) {
-          const historical = new Option(`${activeProject.name} · proyek ditutup`, activeProject.id)
+          const historical = new Option(`${activeProject.name} · Project ditutup`, activeProject.id)
           historical.dataset.historical = 'true'; project.append(historical)
         }
         project.value = activeProject.id
-        if (!preserveNotice) show(notice, `Anda sedang aktif di ${activeProject.name}. Lanjutkan Check-out pada proyek yang sama.`, 'info')
-      } else if (!hasActiveProjects) show(notice, 'Tidak ada proyek aktif untuk Check-in baru.', 'info')
+        if (!preserveNotice) show(notice, `Anda sedang aktif di ${activeProject.name}. Lanjutkan Check-out pada Project yang sama.`, 'info')
+      } else if (!hasActiveProjects) show(notice, 'Tidak ada Project aktif untuk Check-in baru.', 'info')
     } catch (error) {
       if (error?.status === 401) { showLogin('Sesi berakhir. Silakan masuk lagi.'); return }
       show(notice, error instanceof Error ? error.message : 'Status presensi belum tersedia.', 'error', () => loadStatus())

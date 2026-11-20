@@ -1,8 +1,9 @@
 import { X } from 'lucide-react'
-import { useMemo, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 
 import { useModalDialog } from './CanonicalDebtForms'
 import { createEmptyProjectDraft, validateProjectDraft, type ProjectDraft, type ProjectRecord } from './projectDocuments'
+import { jakartaToday } from './transactionApi'
 import { CANONICAL_WALLETS, CANONICAL_WALLET_COMPANY_PAIRS, canonicalCompaniesForWallet, canonicalIssuerKey } from './transactionMappings'
 import { visibleProjectStatus } from './projectStatus'
 
@@ -17,9 +18,13 @@ interface ProjectRecordFormProps {
 }
 
 export default function ProjectRecordForm({ project, clients = [], saving = false, onSave, onClose }: ProjectRecordFormProps) {
-  const dialog = useModalDialog(onClose)
+  const submitting = useRef(false)
+  const [pending, setPending] = useState(false)
+  const busy = saving || pending
+  const close = () => { if (!saving && !submitting.current) onClose() }
+  const dialog = useModalDialog(close, true, !busy)
   const [draft, setDraft] = useState<ProjectDraft>(() => project ? { ...project, status: visibleProjectStatus(project.status) } : {
-    ...createEmptyProjectDraft(new Date().toISOString().slice(0, 10)),
+    ...createEmptyProjectDraft(jakartaToday()),
     issuer_key: canonicalIssuerKey(DEFAULT_PAIR.wallet, DEFAULT_PAIR.company),
     wallet: DEFAULT_PAIR.wallet,
     company: DEFAULT_PAIR.company,
@@ -61,7 +66,7 @@ export default function ProjectRecordForm({ project, clients = [], saving = fals
     }))
   }
   const handleClientKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Escape') { setClientMenuOpen(false); return }
+    if (event.key === 'Escape' && clientMenuOpen) { event.preventDefault(); event.stopPropagation(); setClientMenuOpen(false); return }
     if (!clientMenuOpen || !filteredClients.length) return
     if (event.key === 'ArrowDown') { event.preventDefault(); setActiveClient((index) => (index + 1) % filteredClients.length) }
     else if (event.key === 'ArrowUp') { event.preventDefault(); setActiveClient((index) => (index - 1 + filteredClients.length) % filteredClients.length) }
@@ -69,20 +74,24 @@ export default function ProjectRecordForm({ project, clients = [], saving = fals
   }
   const submit = async (event: FormEvent) => {
     event.preventDefault()
+    if (saving || submitting.current) return
+    submitting.current = true
+    setPending(true)
     try {
       setError('')
       await onSave(validateProjectDraft(draft))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Project belum dapat disimpan.')
-    }
+    } finally { submitting.current = false; setPending(false) }
   }
   return <div className="modal-backdrop" role="presentation"><section ref={dialog.dialogRef} onKeyDown={dialog.onKeyDown} className="modal-card project-record-form" role="dialog" aria-modal="true" aria-label={project ? 'Ubah Project' : 'Buat Project'} tabIndex={-1}>
-    <header><div><p className="eyebrow">Project</p><h2>{project ? 'Ubah Project' : 'Buat Project baru'}</h2></div><button type="button" className="icon-button" aria-label="Tutup formulir Project" onClick={onClose}><X size={19} /></button></header>
+    <header><div><p className="eyebrow">Project</p><h2>{project ? 'Ubah Project' : 'Buat Project baru'}</h2></div><button type="button" className="icon-button" aria-label="Tutup formulir Project" disabled={busy} onClick={close}><X size={19} /></button></header>
     <form onSubmit={submit} noValidate>
       {error && <p className="form-error" role="alert">{error}</p>}
+      <fieldset disabled={busy} style={{ border: 0, margin: 0, padding: 0 }}>
       <div className="document-field-grid">
         <label>Nama Project<input autoFocus value={draft.name} onChange={(event) => change('name', event.target.value)} /></label>
-        <label className="client-autocomplete-label">Nama klien<div className="client-autocomplete"><input role="combobox" aria-autocomplete="list" aria-expanded={clientMenuOpen && filteredClients.length > 0} aria-controls="project-client-options" aria-activedescendant={clientMenuOpen && filteredClients[activeClient] ? `project-client-option-${activeClient}` : undefined} autoComplete="off" value={clientQuery} onFocus={() => setClientMenuOpen(true)} onKeyDown={handleClientKeyDown} onChange={(event) => { const value = event.target.value; setClientQuery(value); setClientMenuOpen(true); setActiveClient(0); setDraft((current) => ({ ...current, client_name: value, ...(value === current.client_name ? {} : { client_company: '', client_contact: '', client_address: '' }) })) }} />{clientMenuOpen && filteredClients.length > 0 && <ul id="project-client-options" role="listbox">{filteredClients.map((item, index) => <li key={`${item.id}-${index}`}><button id={`project-client-option-${index}`} type="button" role="option" aria-selected={activeClient === index} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveClient(index)} onClick={() => reuseClient(item)}><strong>{item.client_name}</strong><span>{[item.client_company, item.client_contact, item.client_address].filter(Boolean).join(' · ')}</span></button></li>)}</ul>}</div><small className="field-help">Cari klien lama atau masukkan nama baru.</small></label>
+        <label className="client-autocomplete-label">Nama klien<div className="client-autocomplete"><input role="combobox" aria-autocomplete="list" aria-expanded={clientMenuOpen && filteredClients.length > 0} aria-controls="project-client-options" aria-activedescendant={clientMenuOpen && filteredClients[activeClient] ? `project-client-option-${activeClient}` : undefined} autoComplete="off" value={clientQuery} onFocus={() => setClientMenuOpen(true)} onBlur={(event) => { if (!event.currentTarget.parentElement?.contains(event.relatedTarget as Node | null)) setClientMenuOpen(false) }} onKeyDown={handleClientKeyDown} onChange={(event) => { const value = event.target.value; setClientQuery(value); setClientMenuOpen(true); setActiveClient(0); setDraft((current) => ({ ...current, client_name: value, ...(value === current.client_name ? {} : { client_company: '', client_contact: '', client_address: '' }) })) }} />{clientMenuOpen && filteredClients.length > 0 && <ul id="project-client-options" role="listbox">{filteredClients.map((item, index) => <li key={`${item.id}-${index}`}><button id={`project-client-option-${index}`} type="button" role="option" aria-selected={activeClient === index} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveClient(index)} onClick={() => reuseClient(item)}><strong>{item.client_name}</strong><span>{[item.client_company, item.client_contact, item.client_address].filter(Boolean).join(' · ')}</span></button></li>)}</ul>}</div><small className="field-help">Cari klien lama atau masukkan nama baru.</small></label>
         <label>Perusahaan klien<input value={draft.client_company} onChange={(event) => change('client_company', event.target.value)} /></label>
         <label>Kontak klien<input value={draft.client_contact} onChange={(event) => change('client_contact', event.target.value)} /></label>
         <label>Dompet pencatatan<select aria-label="Dompet pencatatan" value={draft.wallet} onChange={(event) => changeWallet(event.target.value)}>{CANONICAL_WALLETS.map((wallet) => <option key={wallet} value={wallet}>{wallet}</option>)}</select><small className="field-help">Dompet sumber seluruh transaksi Project ini.</small></label>
@@ -92,7 +101,8 @@ export default function ProjectRecordForm({ project, clients = [], saving = fals
       </div>
       <label>Alamat klien<textarea value={draft.client_address} onChange={(event) => change('client_address', event.target.value)} /></label>
       <label>Catatan kontrak<textarea value={draft.contract_notes} onChange={(event) => change('contract_notes', event.target.value)} /></label>
-      <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Batal</button><button type="submit" className="primary-button" disabled={saving}>{saving ? 'Menyimpan…' : 'Simpan Project'}</button></div>
+      </fieldset>
+      <div className="modal-actions"><button type="button" className="secondary-button" disabled={busy} onClick={close}>Batal</button><button type="submit" className="primary-button" disabled={busy}>{busy ? 'Menyimpan…' : 'Simpan Project'}</button></div>
     </form>
   </section></div>
 }

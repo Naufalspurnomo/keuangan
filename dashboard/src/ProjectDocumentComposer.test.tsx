@@ -26,19 +26,16 @@ afterEach(() => {
 })
 
 describe('ProjectDocumentComposer', () => {
-  it('presents invoice creation as a guided workflow with a live total', () => {
+  it('presents direct billed area with a live invoice total', () => {
     const draft = createEmptyDocumentDraft(project.id, 'invoice', '2026-11-03')
     render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={vi.fn()} onClose={vi.fn()} />)
 
     expect(screen.getByRole('heading', { name: 'Buat invoice' })).toBeTruthy()
-    const workflow = screen.getByRole('list', { name: 'Alur pembuatan invoice' })
-    expect(within(workflow).getByText('Detail invoice')).toBeTruthy()
-    expect(within(workflow).getByText('Item & harga')).toBeTruthy()
-    expect(within(workflow).getByText('Ketentuan')).toBeTruthy()
+    expect(screen.queryByRole('list', { name: /Alur pembuatan/ })).toBeNull()
+    expect(screen.queryByLabelText(/Lebar|Tinggi/)).toBeNull()
 
     fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Panel akustik' } })
-    fireEvent.change(screen.getByLabelText('Lebar item 1'), { target: { value: '1' } })
-    fireEvent.change(screen.getByLabelText('Tinggi item 1'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('Luas tagihan item 1 (m²)'), { target: { value: '1' } })
     fireEvent.change(screen.getByLabelText('HARGA/M² item 1'), { target: { value: '100000' } })
     expect(screen.getByLabelText('Total invoice')).toHaveTextContent('Rp100.000')
   })
@@ -48,8 +45,7 @@ describe('ProjectDocumentComposer', () => {
     render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={vi.fn()} onClose={vi.fn()} />)
 
     fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Panel akustik' } })
-    fireEvent.change(screen.getByLabelText('Lebar item 1'), { target: { value: '1' } })
-    fireEvent.change(screen.getByLabelText('Tinggi item 1'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('Luas tagihan item 1 (m²)'), { target: { value: '1' } })
     const price = screen.getByLabelText('HARGA/M² item 1')
     const notes = screen.getByLabelText('Catatan')
     fireEvent.change(price, { target: { value: '10000' } })
@@ -64,8 +60,7 @@ describe('ProjectDocumentComposer', () => {
     const draft = createEmptyDocumentDraft(project.id, 'invoice', '2026-11-03')
     render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={vi.fn()} onClose={vi.fn()} />)
 
-    fireEvent.change(screen.getByLabelText('Lebar item 1'), { target: { value: 'abc' } })
-    fireEvent.change(screen.getByLabelText('Tinggi item 1'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('Luas tagihan item 1 (m²)'), { target: { value: 'abc' } })
 
     expect(screen.getByLabelText('Total invoice')).toHaveTextContent('Periksa nilai item')
     expect(screen.queryByRole('article', { name: 'Pratinjau A5 Invoice' })).toBeNull()
@@ -77,8 +72,7 @@ describe('ProjectDocumentComposer', () => {
     render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={vi.fn()} onClose={vi.fn()} />)
 
     fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Panel akustik' } })
-    fireEvent.change(screen.getByLabelText('Lebar item 1'), { target: { value: '2.5' } })
-    fireEvent.change(screen.getByLabelText('Tinggi item 1'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('Luas tagihan item 1 (m²)'), { target: { value: '2.5' } })
     fireEvent.change(screen.getByLabelText('HARGA/M² item 1'), { target: { value: '100000' } })
     fireEvent.change(screen.getByLabelText('Pajak persen'), { target: { value: '11' } })
 
@@ -179,8 +173,7 @@ describe('ProjectDocumentComposer', () => {
     render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={onSave} onClose={vi.fn()} />)
 
     fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Panel' } })
-    fireEvent.change(screen.getByLabelText('Lebar item 1'), { target: { value: '1' } })
-    fireEvent.change(screen.getByLabelText('Tinggi item 1'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('Luas tagihan item 1 (m²)'), { target: { value: '1' } })
     fireEvent.change(screen.getByLabelText('Gambar Project'), {
       target: { files: [new File(['svg'], 'project.svg', { type: 'image/svg+xml' })] },
     })
@@ -243,8 +236,7 @@ describe('ProjectDocumentComposer', () => {
     render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={onSave} onClose={onClose} />)
 
     fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Panel akustik' } })
-    fireEvent.change(screen.getByLabelText('Lebar item 1'), { target: { value: '1' } })
-    fireEvent.change(screen.getByLabelText('Tinggi item 1'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('Luas tagihan item 1 (m²)'), { target: { value: '1' } })
     fireEvent.change(screen.getByLabelText('HARGA/M² item 1'), { target: { value: '100000' } })
     fireEvent.click(screen.getByRole('button', { name: 'Simpan draf' }))
     await waitFor(() => expect(onSave).toHaveBeenCalled())

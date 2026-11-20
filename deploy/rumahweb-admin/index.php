@@ -255,7 +255,7 @@ if (!isset($_SESSION[SESSION_KEY])):
 <body>
 <header class="site-header"><a href="https://hollawall.com/en/" aria-label="Beranda Hollawall"><img src="<?= ADMIN_PATH ?>brand/hollawall-logo.png" alt="Hollawall"></a><a class="back-link" href="https://hollawall.com/en/">Kembali ke situs Hollawall</a></header>
 <main>
-  <section class="story" aria-label="Ruang finansial Hollawall"><div><h1>Ruang<br><span>Finansial</span></h1><p>Lanjutan dari ruang kerja Hollawall untuk membaca posisi kas, aktivitas unit, dan Project dalam satu snapshot yang dapat ditelusuri.</p></div></section>
+  <section class="story" aria-label="Ruang finansial Hollawall"><div><h1>Ruang<br><span>Finansial</span></h1><p>Akses dashboard keuangan Hollawall.</p></div></section>
   <section class="signin">
     <div class="signin-inner">
       <header><p class="eyebrow">Hollawall Group</p><h2>Masuk</h2><p class="intro">Gunakan akun ruang kerja finansial Hollawall.</p></header>

@@ -11,7 +11,10 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
+
+BUSINESS_TIMEZONE = ZoneInfo("Asia/Jakarta")
 
 SOURCE_NAME = "Hollawall PostgreSQL canonical ledger"
 
@@ -37,7 +40,7 @@ def _date(value: Any) -> str | None:
         return value.isoformat()
     if isinstance(value, str) and len(value) == 10:
         return date.fromisoformat(value).isoformat()
-    return _instant(value).date().isoformat()
+    return _instant(value).astimezone(BUSINESS_TIMEZONE).date().isoformat()
 
 
 def _effective_record(chain: Sequence[Mapping[str, Any]], cutoff: datetime) -> Mapping[str, Any] | None:
@@ -162,7 +165,7 @@ def build_canonical_dashboard_snapshot(
         occurred_at = _instant(record["occurred_at"])
         data_instants.append(occurred_at)
         if not internal:
-            monthly_movement[occurred_at.strftime("%Y-%m")] += cash_delta
+            monthly_movement[occurred_at.astimezone(BUSINESS_TIMEZONE).strftime("%Y-%m")] += cash_delta
 
         primary_cash = cash_postings[0] if cash_postings else None
         wallet_id = str(primary_cash.get("wallet_id") or "") if primary_cash else ""
@@ -178,7 +181,7 @@ def build_canonical_dashboard_snapshot(
             {
                 "id": len(transactions) + 1,
                 "source_key": f"postgresql:transaction:{record['id']}:v{record['version']}",
-                "transaction_date": occurred_at.date().isoformat(),
+                "transaction_date": occurred_at.astimezone(BUSINESS_TIMEZONE).date().isoformat(),
                 "transaction_type": "Pemasukan" if cash_delta > 0 else "Pengeluaran",
                 "amount": int(record["amount"]),
                 "wallet": wallets_by_id.get(wallet_id, ""),
@@ -227,7 +230,7 @@ def build_canonical_dashboard_snapshot(
             {
                 "source_key": f"postgresql:debt:{debt['id']}",
                 "debt_id": str(debt["id"]),
-                "date": occurred_at.date().isoformat(),
+                "date": occurred_at.astimezone(BUSINESS_TIMEZONE).date().isoformat(),
                 "due_at": _date(debt.get("due_at")),
                 "amount": debt["principal"],
                 "principal": debt["principal"],
@@ -249,7 +252,7 @@ def build_canonical_dashboard_snapshot(
         started_on = _date(project.get("start_date"))
         completed_on = _date(project.get("completion_date"))
         start_date = date.fromisoformat(started_on) if started_on else None
-        end_date = date.fromisoformat(completed_on) if completed_on else observed_at.date()
+        end_date = date.fromisoformat(completed_on) if completed_on else observed_at.astimezone(BUSINESS_TIMEZONE).date()
         age_days = max(0, (end_date - start_date).days) if start_date else None
         health = (
             "completed"
@@ -302,7 +305,7 @@ def build_canonical_dashboard_snapshot(
             {"month": month, "balance": running, "net_movement": movement}
         )
 
-    data_through = max(data_instants).date().isoformat() if data_instants else None
+    data_through = max(data_instants).astimezone(BUSINESS_TIMEZONE).date().isoformat() if data_instants else None
     return {
         "version": "dashboard.snapshot.v1",
         "meta": {

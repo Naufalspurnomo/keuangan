@@ -86,6 +86,7 @@ jobs:
           tests/browser/dashboard_visual_acceptance_test.py::DashboardVisualAcceptanceTests::test_cashflow_and_wallet_routes_are_operational_and_paginated
           tests/browser/dashboard_visual_acceptance_test.py::DashboardVisualAcceptanceTests::test_mobile_project_detail_keeps_title_actions_and_ledger_fully_usable
           tests/browser/dashboard_visual_acceptance_test.py::DashboardVisualAcceptanceTests::test_owner_review_route_is_read_only_and_responsive
+          tests/browser/commercial_responsive_regression_test.py
           -o addopts=''
 
   visual:

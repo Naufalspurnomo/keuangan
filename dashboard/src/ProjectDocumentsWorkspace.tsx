@@ -1,10 +1,11 @@
 import { Ban, Download, FilePlus2, Plus, RefreshCw, RotateCcw, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import ProjectDocumentComposer from './ProjectDocumentComposer'
 import ProjectDocumentPreview from './ProjectDocumentPreview'
 import ProjectQuotationPanel from './ProjectQuotationPanel'
 import { useModalDialog } from './CanonicalDebtForms'
+import { jakartaToday } from './transactionApi'
 import type { ProjectDocumentApi, ProjectDocumentCommand, ProjectDocumentSession } from './projectDocumentApi'
 import {
   createEmptyDocumentDraft,
@@ -48,16 +49,17 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
   const [active, setActive] = useState<ProjectDocumentRecord | ProjectDocumentDraft | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const mutationInFlight = useRef(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [retryCommand, setRetryCommand] = useState<RetryCommand>(null)
-  const [retryAfter, setRetryAfter] = useState<(() => Promise<void>) | null>(null)
+  const [retryAfter, setRetryAfter] = useState<((document: ProjectDocumentRecord) => Promise<void>) | null>(null)
   const [voiding, setVoiding] = useState(false)
   const [voidReason, setVoidReason] = useState('')
   const voidDialog = useModalDialog(() => setVoiding(false), voiding)
 
   const writesEnabled = session.capabilities.documentWrites
-  const today = new Date().toISOString().slice(0, 10)
+  const today = jakartaToday()
   const preparingReceipt = route.type === 'receipt' && loading && !active
 
   const loadList = useCallback(async () => {
@@ -136,6 +138,8 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
   }, [api, project.id])
 
   const execute = async (command: ProjectDocumentCommand<ProjectDocumentRecord>, after?: (document: ProjectDocumentRecord) => Promise<void>) => {
+    if (mutationInFlight.current) return false
+    mutationInFlight.current = true
     setBusy(true)
     setError('')
     setNotice('')
@@ -158,16 +162,18 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
         setError(`Hasil perubahan belum pasti: ${flags.message}`)
         if (flags.retryable) {
           setRetryCommand(command)
-          setRetryAfter(() => after ? () => after(active as ProjectDocumentRecord) : null)
+          setRetryAfter(() => after ?? null)
         }
       } else setError(flags.message)
       return false
     } finally {
+      mutationInFlight.current = false
       setBusy(false)
     }
   }
 
   const saveDraft = async (draft: ProjectDocumentDraft) => {
+    if (mutationInFlight.current || retryCommand) return false
     const record = active && 'status' in active ? active : null
     const command = record ? api.updateDocument(record.id, draft, record.lock_version) : api.createDocument(draft)
     return execute(command, async (saved) => {
@@ -244,7 +250,7 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
       <ProjectDocumentPreview project={project} document={active} />
     </> : <>
       {!writesEnabled && <p className="write-disabled-note">Perubahan dokumen belum diaktifkan.</p>}
-      <ProjectDocumentComposer project={project} document={active} writesEnabled={writesEnabled} saving={busy} receiptOptions={receiptOptions} onSave={saveDraft} onClose={close} onOpenTransactions={() => onRouteChange({ tab: 'transactions', projectId: project.id })} />
+      <ProjectDocumentComposer project={project} document={active} writesEnabled={writesEnabled} saving={busy || Boolean(retryCommand)} receiptOptions={receiptOptions} onSave={saveDraft} onClose={close} onOpenTransactions={() => onRouteChange({ tab: 'transactions', projectId: project.id })} />
       {'status' in active && <div className="document-issue-bar"><button type="button" className="primary-button" onClick={issue} disabled={!writesEnabled || busy}>Terbitkan dokumen</button></div>}
     </>}
     {voiding && <div className="modal-backdrop" role="presentation"><section ref={voidDialog.dialogRef} onKeyDown={voidDialog.onKeyDown} className="modal-card document-void-dialog" role="dialog" aria-modal="true" aria-label="Batalkan dokumen" tabIndex={-1}>
@@ -257,7 +263,6 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
   }
 
   return <section className="project-documents-workspace" aria-busy={loading}>
-    <header className="project-documents-head"><div><p className="eyebrow">PROJECT</p><h2>Dokumen Project</h2></div></header>
     {!writesEnabled && <p className="write-disabled-note">Perubahan dokumen belum diaktifkan.</p>}
     {error && <div role="alert" className="document-state-alert"><strong>{error}</strong><button type="button" className="secondary-button" onClick={() => void loadList()}><RefreshCw size={16} /> Coba lagi</button></div>}
     {notice && <p role="status" className="document-state-notice">{notice}</p>}
@@ -270,8 +275,8 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
         await authoritativeReadback(documentId)
         onRouteChange({ tab: 'documents', projectId: project.id, document: documentId })
       }}
+      additionalCreateActions={<><button type="button" className="secondary-button" onClick={() => create('invoice')} disabled={!writesEnabled || loading}><FilePlus2 size={16} /> Buat invoice</button><button type="button" className="secondary-button" onClick={() => create('receipt')} disabled={!writesEnabled || loading || preparingReceipt}>{preparingReceipt ? <RefreshCw className="is-spinning" size={16} /> : <Plus size={16} />} {preparingReceipt ? 'Menyiapkan kuitansi…' : 'Buat kuitansi'}</button></>}
     />
-    <section className="project-document-create-row" aria-label="Buat invoice atau kuitansi"><div><strong>Invoice dan kuitansi</strong><span>Keduanya tidak mencatat kas. Catat pembayaran pada Transaksi.</span></div><div className="project-document-create"><button type="button" className="secondary-button" onClick={() => create('invoice')} disabled={!writesEnabled || loading}><FilePlus2 size={16} /> Buat invoice</button><button type="button" className="secondary-button" onClick={() => create('receipt')} disabled={!writesEnabled || loading}>{preparingReceipt ? <RefreshCw className="is-spinning" size={16} /> : <Plus size={16} />} {preparingReceipt ? 'Menyiapkan kuitansi…' : 'Buat kuitansi'}</button></div></section>
     {paymentSummary && <section className="payment-summary" aria-label="Ringkasan pembayaran"><header><div><p className="eyebrow">STATUS PEMBAYARAN</p><h3>{paymentSummary.payment_status === 'NOT_CONTRACTED' ? 'Sales Order belum diterbitkan' : paymentSummary.payment_status === 'PAID' ? 'Lunas' : paymentSummary.payment_status === 'PARTIALLY_PAID' ? 'Dibayar sebagian' : 'Belum dibayar'}</h3></div></header><div className="payment-summary-grid"><span><small>Nilai kontrak</small><strong>{paymentSummary.contract_total === null ? '—' : IDR.format(paymentSummary.contract_total)}</strong></span><span><small>Sudah ditagihkan</small><strong>{IDR.format(paymentSummary.invoiced_total)}</strong></span><span><small>Sudah dibayar</small><strong>{IDR.format(paymentSummary.paid_total)}</strong></span><span><small>Belum dibayar</small><strong>{paymentSummary.contract_outstanding === null ? '—' : IDR.format(paymentSummary.contract_outstanding)}</strong></span><span><small>Belum ditagihkan</small><strong>{paymentSummary.unbilled_total === null ? '—' : IDR.format(paymentSummary.unbilled_total)}</strong></span></div>{paymentSummary.unapplied_total > 0 && <p className="payment-summary-warning">{IDR.format(paymentSummary.unapplied_total)} sudah diterima tetapi belum dialokasikan ke invoice aktif.</p>}{paymentSummary.overpaid_total > 0 && <p className="payment-summary-warning">Kelebihan pembayaran {IDR.format(paymentSummary.overpaid_total)} perlu direkonsiliasi.</p>}{paymentSummary.invoices.length > 0 && <div className="invoice-payment-list">{paymentSummary.invoices.map((invoice) => <article key={invoice.invoice_id}><div><strong>{invoice.invoice_kind} · {invoice.official_number}</strong><span>{invoice.payment_status === 'PAID' ? 'Lunas' : invoice.payment_status === 'PARTIALLY_PAID' ? 'Dibayar sebagian' : 'Belum dibayar'}</span></div><small>{IDR.format(invoice.paid_total)} dibayar · {IDR.format(invoice.outstanding)} tersisa</small></article>)}</div>}</section>}
     {!error && !sorted.length ? <div className="project-detail-empty project-document-empty"><strong>Belum ada Invoice atau kuitansi.</strong><span>Dokumen tersimpan dan dapat dibuka kembali dari daftar ini.</span></div> : <div className="project-document-list">{sorted.map((document) => <article key={document.id} className="project-document-card" aria-label={document.number ?? `${documentTypeLabel(document.type)} draf`}>
       <div><span className={`document-status ${document.status}`}>{documentStatusLabel(document.status)}</span><small>{documentTypeLabel(document.type)}</small><strong>{document.number ?? `${documentTypeLabel(document.type)} draf`}</strong><span>Diperbarui {displayDate(document.updated_at)}</span></div>

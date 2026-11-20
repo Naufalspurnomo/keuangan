@@ -45,7 +45,9 @@ def test_rumahweb_deploy_uses_scoped_secrets_and_atomic_readback():
     assert "staged_readback" in text
     assert "final_readback" in text
     assert "concurrency:" in text
-    assert "workflow_dispatch" in text
+    assert "workflow_dispatch" not in text
+    assert "github.event.workflow_run.conclusion == 'success'" in text
+    assert "github.event.workflow_run.head_branch == 'main'" in text
     assert "OTP" not in text
 
 

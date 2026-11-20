@@ -43,7 +43,7 @@ header('Cache-Control: no-store');
       <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
       <form id="presensi-form" novalidate>
         <div class="field-grid single-field">
-          <label><span>Proyek aktif</span><select id="project" name="project_id" required disabled><option value="">Pilih proyek</option></select></label>
+          <label><span>Project aktif</span><select id="project" name="project_id" required disabled><option value="">Pilih Project</option></select></label>
         </div>
         <section class="proof-panel" aria-labelledby="camera-title">
           <div class="proof-head"><div><span class="step-number">1</span><div><h2 id="camera-title">Selfie langsung</h2><p>Pastikan wajah terlihat jelas.</p></div></div><span id="camera-state" class="state-pill">Belum siap</span></div>
@@ -57,7 +57,7 @@ header('Cache-Control: no-store');
             <button id="capture-selfie" type="button" class="primary-button" disabled>Ambil selfie & lokasi</button>
             <button id="retake-selfie" type="button" class="text-button" hidden>Ambil ulang</button>
           </div>
-          <p id="camera-requirements" class="proof-requirements">Pilih proyek terlebih dahulu.</p>
+          <p id="camera-requirements" class="proof-requirements">Pilih Project terlebih dahulu.</p>
         </section>
         <section class="proof-panel" aria-labelledby="location-title">
           <div class="proof-head"><div><span class="step-number">2</span><div><h2 id="location-title">Lokasi aktual</h2><p>Dibaca saat selfie diambil.</p></div></div><span id="location-state" class="state-pill">Belum siap</span></div>

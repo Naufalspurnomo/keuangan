@@ -20,20 +20,21 @@ import {
 import AmountInput from './RupiahAmountInput'
 import { visibleProjectStatus } from './projectStatus'
 import { CANONICAL_WALLETS, OFFICE_WRITE_CATEGORIES, PROJECT_EXPENSE_WRITE_CATEGORIES, PROJECT_INCOME_WRITE_CATEGORIES, canonicalCompaniesForWallet, canonicalPair } from './transactionMappings'
+import { jakartaToday } from './transactionApi'
 
-const today = () => new Date().toISOString().slice(0, 10)
+const today = jakartaToday
 
-export function Modal({ title, copy, onClose, children, live = false }: { title: string; copy: string; onClose: () => void; children: ReactNode; live?: boolean }) {
+export function Modal({ title, copy, onClose, children, live = false, busy = false }: { title: string; copy: string; onClose: () => void; children: ReactNode; live?: boolean; busy?: boolean }) {
   const modalRef = useRef<HTMLElement>(null)
   const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
+  onCloseRef.current = () => { if (!busy) onClose() }
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const modal = modalRef.current
     const focusable = () => [...(modal?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? [])]
     window.requestAnimationFrame(() => { if (!modal?.contains(document.activeElement)) focusable()[0]?.focus() })
     const handleKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCloseRef.current()
+      if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); onCloseRef.current() }
       if (event.key !== 'Tab') return
       const items = focusable()
       if (!items.length) return
@@ -45,9 +46,9 @@ export function Modal({ title, copy, onClose, children, live = false }: { title:
     document.addEventListener('keydown', handleKey)
     return () => { document.removeEventListener('keydown', handleKey); previous?.focus() }
   }, [])
-  return <div className="finance-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose() }}>
+  return <div className="finance-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onCloseRef.current() }}>
     <section ref={modalRef} className="finance-modal" role="dialog" aria-modal="true" aria-labelledby="finance-modal-title">
-      <header><div>{!live && <p className="eyebrow">DATA DEMO</p>}<h2 id="finance-modal-title">{title}</h2><p>{copy}</p></div><button type="button" className="icon-button" onClick={onClose} aria-label="Tutup"><X size={20} /></button></header>
+      <header><div>{!live && <p className="eyebrow">DATA DEMO</p>}<h2 id="finance-modal-title">{title}</h2><p>{copy}</p></div><button type="button" className="icon-button" disabled={busy} onClick={() => onCloseRef.current()} aria-label="Tutup"><X size={20} /></button></header>
       {children}
     </section>
   </div>
@@ -160,12 +161,11 @@ export function TransactionForm({ projects, transaction, initialScope = 'project
         category: liveWrite ? writeCategory : undefined,
         notes,
       })
-      if (result instanceof Promise) result.then(onClose).catch(fail)
-      else onClose()
+      Promise.resolve(result).then(onClose).catch(fail)
     } catch (reason) { fail(reason) }
   }
   const title = transaction ? `Ubah transaksi${lockedProject ? ` · ${lockedProject.name}` : ''}` : lockedProject ? `Tambah transaksi · ${lockedProject.name}` : scope === 'office' ? 'Catat biaya kantor' : 'Tambah transaksi'
-  return <Modal title={title} copy={liveWrite ? 'Periksa kembali rincian transaksi sebelum menyimpan.' : 'Transaksi demo langsung memperbarui seluruh ringkasan dan laporan.'} onClose={onClose} live={liveWrite}>
+  return <Modal title={title} copy={liveWrite ? 'Periksa kembali rincian transaksi sebelum menyimpan.' : 'Transaksi demo langsung memperbarui seluruh ringkasan dan laporan.'} onClose={() => { if (!submitting.current) onClose() }} busy={busy} live={liveWrite}>
     <form className="finance-form" onSubmit={submit}>
       <fieldset disabled={busy || retryOnly} style={{ border: 0, margin: 0, padding: 0 }}>
       <div className="form-grid"><label><span>Tanggal *</span><input type="date" required value={date} min={projectScoped ? lockedProject?.started_on ?? selected?.started_on : undefined} max={liveWrite ? currentDate : lockedProject?.completed_on ?? undefined} onChange={(event) => setDate(event.target.value)} />{liveWrite && <small>Tanggal berlaku mengikuti waktu Asia/Jakarta. Tanggal mendatang tidak diizinkan.</small>}</label>

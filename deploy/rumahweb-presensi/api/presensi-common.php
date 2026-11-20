@@ -275,15 +275,15 @@ function presensi_active_projects(array $config): array
     $response = presensi_remote_request($config, 'GET', $url, 262144, 12, 20);
     $body = $response['body'];
     if (!is_string($body) || $response['status'] !== 200) {
-        presensi_error(503, 'project_catalog_unavailable', 'Daftar proyek aktif belum tersedia. Coba lagi.');
+        presensi_error(503, 'project_catalog_unavailable', 'Daftar Project aktif belum tersedia. Coba lagi.');
     }
     try {
         $payload = json_decode($body, true, 64, JSON_THROW_ON_ERROR);
     } catch (JsonException) {
-        presensi_error(503, 'project_catalog_unavailable', 'Daftar proyek aktif belum tersedia. Coba lagi.');
+        presensi_error(503, 'project_catalog_unavailable', 'Daftar Project aktif belum tersedia. Coba lagi.');
     }
     if (!is_array($payload) || ($payload['version'] ?? '') !== 'presensi.projects.v1' || !is_array($payload['projects'] ?? null)) {
-        presensi_error(503, 'project_catalog_unavailable', 'Daftar proyek aktif belum tersedia. Coba lagi.');
+        presensi_error(503, 'project_catalog_unavailable', 'Daftar Project aktif belum tersedia. Coba lagi.');
     }
     $projects = [];
     $ids = [];
@@ -298,7 +298,7 @@ function presensi_active_projects(array $config): array
             || $projectName === '' || $projectNameLength === null || $projectNameLength > 200
             || $company === '' || $companyLength === null || $companyLength > 120
             || isset($ids[$projectId])) {
-            presensi_error(503, 'project_catalog_invalid', 'Daftar proyek aktif tidak valid.');
+            presensi_error(503, 'project_catalog_invalid', 'Daftar Project aktif tidak valid.');
         }
         $ids[$projectId] = true;
         $projects[] = ['id' => $projectId, 'name' => $projectName, 'company' => $company];

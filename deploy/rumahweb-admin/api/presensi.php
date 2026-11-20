@@ -6,7 +6,7 @@ presensi_require_method('GET');
 presensi_admin_session();
 $projectId = trim((string) ($_GET['project_id'] ?? ''));
 if (!preg_match('/^[a-z0-9][a-z0-9-]{1,63}$/', $projectId)) {
-    presensi_error(422, 'project_invalid', 'Proyek tidak valid.');
+    presensi_error(422, 'project_invalid', 'Project tidak valid.');
 }
 $events = presensi_read_events(presensi_store_paths());
 presensi_json_response(200, [

@@ -687,7 +687,7 @@ def _notes_and_signatures(
         Spacer(1, 1.5 * mm),
         Paragraph(_paragraph_text(document.get("notes"), "Tidak ada catatan tambahan."), styles["body"]),
         Spacer(1, 1 * mm),
-        Paragraph(_paragraph_text(document.get("payment_terms"), "Sesuai kesepakatan proyek."), styles["body"]),
+        Paragraph(_paragraph_text(document.get("payment_terms"), "Sesuai kesepakatan Project."), styles["body"]),
     ]
     if bank:
         bank_text = " · ".join(_text(bank.get(field)) for field in ("bank", "account_number", "account_name"))
@@ -1033,7 +1033,7 @@ def _draw_master_receipt(
     receiver = document.get("client_signatory") or project.get("client_name") or _mapping(snapshot.get("issuer")).get("display_name") or brand.identity
     _canvas_paragraph(
         canvas, brand,
-        f"Telah diterima dari {payer} untuk pembayaran proyek {project.get('name') or '—'}.",
+        f"Telah diterima dari {payer} untuk pembayaran Project {project.get('name') or '—'}.",
         x, top, width, size=7.5, leading=10,
     )
     _canvas_text(canvas, brand, _idr(totals.get("total")), x, top + .085, size=12, bold=True)
@@ -1096,7 +1096,7 @@ def _draw_hollawall_master(canvas: Any, snapshot: Mapping[str, Any], brand: Bran
     default_terms = (
         "Pembayaran sesuai tanggal jatuh tempo yang tercantum."
         if _master_is_invoice(snapshot) else
-        f"Jika penawaran disetujui, pembayaran awal {percent}% mengurangi saldo proyek. Penawaran berlaku {policy['default_validity_days']} hari sejak diterbitkan."
+        f"Jika penawaran disetujui, pembayaran awal {percent}% mengurangi saldo Project. Penawaran berlaku {policy['default_validity_days']} hari sejak diterbitkan."
     )
     _canvas_paragraph(canvas, brand, document.get("payment_terms") or default_terms, .14, .70, .76, size=5.5, leading=7)
     bank = _mapping(issuer.get("bank_details"))
