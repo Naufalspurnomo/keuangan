@@ -23,6 +23,7 @@ from flask import Flask, g, request, jsonify
 from dotenv import load_dotenv
 
 from dashboard_api import register_dashboard
+from dashboard_api.runtime_capabilities import canonical_finance_lifecycle_ready
 from presensi_delivery_api import register_presensi_delivery_endpoint
 from services.dashboard_write_requests import (
     DashboardWriteRequestUnavailable,
@@ -557,9 +558,9 @@ def health_check():
             'writes_enabled': project_document_writes_enabled,
             'schema_ready': bool(project_schema.get('ready')),
             'ready': project_schema_ready,
-            'transaction_correction_reversal': bool(
-                app.config.get('CANONICAL_FINANCE_API_ENABLED', False)
-                and app.config.get('CANONICAL_FINANCE_WRITES_ENABLED', False)
+            'transaction_correction_reversal': canonical_finance_lifecycle_ready(
+                app.config,
+                app.extensions,
             ),
             'hard_delete': project_document_writes_enabled,
         }

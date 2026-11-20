@@ -144,6 +144,54 @@ def test_schema_compatibility_restores_all_hard_delete_gates_before_later_migrat
     assert "OLD.project_id = hollawall_project_hard_delete_target()" in executed[1]
 
 
+def test_startup_never_reexecutes_numbered_completion_contract(monkeypatch):
+    executed: list[str] = []
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, sql, _params=None):
+            executed.append(str(sql))
+
+        @staticmethod
+        def fetchone():
+            return (True, True, True, True, True)
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def cursor():
+            return Cursor()
+
+    monkeypatch.setenv("PROJECT_COMPLETION_CONSTRAINT_ENABLED", "1")
+    monkeypatch.setattr(
+        repository_module,
+        "_default_connection_factory",
+        lambda _dsn: Connection(),
+    )
+
+    health = repository_module.ensure_project_document_schema(
+        "postgresql://isolated-test"
+    )
+
+    assert health["ready"] is True
+    assert health["completion_constraint"] is True
+    assert not any(
+        "project.completion_date_backfilled" in statement
+        or "LOCK TABLE projects IN SHARE ROW EXCLUSIVE MODE" in statement
+        for statement in executed
+    )
+
+
 def test_receipt_allocation_count_is_bounded_before_io():
     allocations = [
         {"ledger_source_key": f"sheet:income:{index}", "amount": 1}

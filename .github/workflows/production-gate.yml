@@ -194,6 +194,7 @@ jobs:
       PROJECT_DOCUMENT_TEST_DATABASE_URL: postgresql://hollawall_test:ci_test_only@127.0.0.1:5432/project_document_test
       INBOX_REVIEW_TEST_DATABASE_URL: postgresql://hollawall_test:ci_test_only@127.0.0.1:5432/inbox_review_test
       FINANCIAL_EXPORT_TEST_DATABASE_URL: postgresql://hollawall_test:ci_test_only@127.0.0.1:5432/financial_export_test
+      FINANCIAL_SCHEMA_TEST_DATABASE_URL: postgresql://hollawall_test:ci_test_only@127.0.0.1:5432/financial_schema_test
       PRESENSI_GEOCODER_TEST_DATABASE_URL: postgresql://hollawall_test:ci_test_only@127.0.0.1:5432/presensi_geocoder_test
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -210,7 +211,7 @@ jobs:
         env:
           PGPASSWORD: ci_test_only
         run: |
-          for database in project_document_test inbox_review_test financial_export_test presensi_geocoder_test; do
+          for database in project_document_test inbox_review_test financial_export_test financial_schema_test presensi_geocoder_test; do
             createdb --host=127.0.0.1 --username=hollawall_test "$database"
           done
       - name: PostgreSQL authority tests
@@ -220,6 +221,7 @@ jobs:
             tests/project_document_service_postgres_test.py \
             tests/inbox_review_postgres_test.py \
             tests/canonical_financial_schema_test.py \
+            tests/financial_schema_postgres_test.py \
             tests/financial_export_postgres_race_test.py \
             tests/financial_transaction_idempotency_lock_test.py \
             tests/dashboard_login_throttle_postgres_test.py \

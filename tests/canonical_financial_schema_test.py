@@ -208,6 +208,48 @@ def test_staged_migration_target_defers_031_but_supports_it_for_rollback():
     assert migration_031.sql not in [sql for sql, _params in upgraded_cursor.executed]
 
 
+def test_runner_keeps_migration_sql_and_ledger_insert_in_one_transaction():
+    sql = """-- outer wrapper
+BEGIN;
+DO $$
+BEGIN
+    PERFORM 31;
+END;
+$$;
+SELECT 31;
+COMMIT;
+"""
+    migration = Migration(
+        31,
+        "031_test.sql",
+        sql,
+        hashlib.sha256(sql.encode()).hexdigest(),
+    )
+    cursor = _Cursor()
+    connection = _Connection(cursor)
+
+    result = apply_financial_migrations(
+        "postgres://test",
+        migrations=[migration],
+        connection_factory=lambda _dsn: connection,
+    )
+
+    executed = [statement for statement, _params in cursor.executed]
+    migration_statement = next(
+        statement for statement in executed if "SELECT 31;" in statement
+    )
+    assert "BEGIN;" not in migration_statement
+    assert "COMMIT;" not in migration_statement
+    assert "BEGIN\n    PERFORM 31;\nEND;" in migration_statement
+    assert executed.index(migration_statement) < next(
+        index
+        for index, statement in enumerate(executed)
+        if "INSERT INTO financial_schema_migrations" in statement
+    )
+    assert connection.commits == 1
+    assert result["applied"] == [31]
+
+
 def test_schema_readiness_is_read_only_and_rejects_checksum_drift():
     migration = Migration(9, "009_test.sql", "SELECT 1", hashlib.sha256(b"SELECT 1").hexdigest())
     cursor = _Cursor(applied=[(9, "0" * 64, "009_test.sql")])
