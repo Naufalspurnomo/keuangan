@@ -10,12 +10,12 @@ import {
   type ProjectDocumentCapabilities,
   type ProjectRecord,
 } from './projectDocuments'
+import { visibleProjectStatus } from './projectStatus'
 
 const TABS: Array<{ id: ProjectDetailTab; label: string }> = [
-  { id: 'overview', label: 'Ringkasan' },
+  { id: 'overview', label: 'Keuangan' },
   { id: 'transactions', label: 'Transaksi' },
   { id: 'debts', label: 'Pinjaman' },
-  { id: 'profitability', label: 'Profitabilitas' },
   { id: 'presensi', label: 'Presensi' },
   { id: 'documents', label: 'Quotation & Invoice' },
   { id: 'audit', label: 'Audit' },
@@ -53,7 +53,7 @@ interface ProjectDetailWorkspaceProps {
 }
 
 export default function ProjectDetailWorkspace({
-  project,
+  project: sourceProject,
   tab,
   onRouteChange,
   onBack,
@@ -72,6 +72,10 @@ export default function ProjectDetailWorkspace({
   onDelete,
   busy = false,
 }: ProjectDetailWorkspaceProps) {
+  const project = sourceProject.status === 'planned'
+    ? { ...sourceProject, status: visibleProjectStatus(sourceProject.status) }
+    : sourceProject
+  const activeTab: ProjectDetailTab = tab === 'profitability' ? 'overview' : tab
   const handleTabKey = (event: KeyboardEvent<HTMLButtonElement>) => {
     const tabs = [...event.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
     const current = tabs.indexOf(event.currentTarget)
@@ -82,10 +86,13 @@ export default function ProjectDetailWorkspace({
     event.preventDefault()
     tabs[next].focus()
     const nextTab = TABS[next].id
-    if (nextTab !== tab) onRouteChange({ tab: nextTab })
+    if (nextTab !== activeTab) onRouteChange({ tab: nextTab })
   }
 
-  const panel = tab === 'overview' ? overview
+  const panel = activeTab === 'overview' ? <>
+    {overview && <section aria-label="Ikhtisar Project">{overview}</section>}
+    {profitability && <section aria-label="Profitabilitas dan arus kas">{profitability}</section>}
+  </>
     : tab === 'transactions' ? transactions
       : tab === 'debts' ? debts
         : tab === 'profitability' ? profitability
@@ -95,30 +102,30 @@ export default function ProjectDetailWorkspace({
 
   return <section className="finance-page-stack project-detail-workspace">
     <header className="project-detail-head">
-      <button type="button" className="secondary-button project-detail-back" onClick={onBack}><ArrowLeft size={17} /> Kembali ke Proyek</button>
       <div className="project-detail-identity">
-        <p className="eyebrow">PROYEK</p>
-        <h1>{project.name}</h1>
-        <p>{project.client_name}{project.client_company ? ` · ${project.client_company}` : ''} · <span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span></p>
+        <button type="button" className="secondary-button project-detail-back" onClick={onBack}><ArrowLeft size={17} /> Kembali ke Project</button>
+        <div className="project-detail-copy"><p className="eyebrow">PROJECT</p>
+          <h1>{project.name}</h1>
+          <p>{project.client_name}{project.client_company ? ` · ${project.client_company}` : ''} · <span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span></p></div>
 
       </div>
       <div className="project-lifecycle-actions">
         {tab === 'transactions' && project.status === 'active' && onAddTransaction && <button type="button" className="primary-button" disabled={busy} onClick={() => onAddTransaction(project)} {...actionProps('projects.transaction-create')}><Plus size={16} /> Tambah transaksi</button>}
         {tab === 'debts' && onOpenDebt && <button type="button" className="primary-button" disabled={busy} onClick={() => onOpenDebt(project)} {...actionProps('projects.tab-debts')}><Landmark size={16} /> Buka Hutang</button>}
-        {capabilities.projectWrites && onEdit && <button type="button" className="secondary-button" disabled={busy} onClick={() => onEdit(project)} {...actionProps('projects.edit')}><Pencil size={16} /> Ubah proyek</button>}
+        {capabilities.projectWrites && onEdit && <button type="button" className="secondary-button" disabled={busy} onClick={() => onEdit(project)} {...actionProps('projects.edit')}><Pencil size={16} /> Ubah Project</button>}
       </div>
     </header>
 
-    <section className="project-status-control" aria-label="Status proyek">
-      <div><small>STATUS PROYEK</small><span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span></div>
+    <section className="project-status-control" aria-label="Status Project">
+      <div><small>STATUS Project</small><span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span></div>
       {capabilities.projectWrites ? <div className="project-lifecycle-actions">
-        {project.status === 'active' && <button type="button" className="secondary-button" disabled={busy} onClick={() => onStatusChange?.('completed')} {...actionProps('projects.status-change')}><CheckCircle2 size={16} /> Selesaikan proyek</button>}
-        {(project.status === 'planned' || project.status === 'completed' || project.status === 'cancelled') && <button type="button" className="secondary-button" disabled={busy} onClick={() => onStatusChange?.('active')} {...actionProps('projects.status-change')}><RotateCcw size={16} /> Aktifkan proyek</button>}
-        {(project.status === 'planned' || project.status === 'active') && <button type="button" className="secondary-button danger" disabled={busy} onClick={() => {
-          if (window.confirm(`Batalkan proyek ${project.name}? Proyek dapat diaktifkan kembali nanti.`)) onStatusChange?.('cancelled')
-        }} {...actionProps('projects.status-change')}><Ban size={16} /> Batalkan proyek</button>}
-        {capabilities.hardDelete && <button type="button" className="secondary-button danger" disabled={busy} onClick={onDelete} {...actionProps('projects.delete')}><Trash2 size={16} /> Hapus proyek permanen</button>}
-      </div> : <p className="write-disabled-note">Perubahan proyek belum diaktifkan.</p>}
+        {project.status === 'active' && <button type="button" className="secondary-button" disabled={busy} onClick={() => onStatusChange?.('completed')} {...actionProps('projects.status-change')}><CheckCircle2 size={16} /> Selesaikan Project</button>}
+        {(project.status === 'completed' || project.status === 'cancelled') && <button type="button" className="secondary-button" disabled={busy} onClick={() => onStatusChange?.('active')} {...actionProps('projects.status-change')}><RotateCcw size={16} /> Aktifkan Project</button>}
+        {project.status === 'active' && <button type="button" className="secondary-button danger" disabled={busy} onClick={() => {
+          if (window.confirm(`Batalkan Project ${project.name}? Project dapat diaktifkan kembali nanti.`)) onStatusChange?.('cancelled')
+        }} {...actionProps('projects.status-change')}><Ban size={16} /> Batalkan Project</button>}
+        {capabilities.hardDelete && <button type="button" className="secondary-button danger" disabled={busy} onClick={onDelete} {...actionProps('projects.delete')}><Trash2 size={16} /> Hapus Project permanen</button>}
+      </div> : <p className="write-disabled-note">Perubahan Project belum diaktifkan.</p>}
     </section>
 
     <div className="project-detail-tabs" role="tablist" aria-label={`Data ${project.name}`}>
@@ -128,15 +135,15 @@ export default function ProjectDetailWorkspace({
         type="button"
         role="tab"
         aria-label={item.label}
-        aria-selected={tab === item.id}
+        aria-selected={activeTab === item.id}
         aria-controls={`project-${item.id}-panel`}
-        tabIndex={tab === item.id ? 0 : -1}
+        tabIndex={activeTab === item.id ? 0 : -1}
         onKeyDown={handleTabKey}
         onClick={() => { if (item.id !== tab) onRouteChange({ tab: item.id }) }}
         {...actionProps(TAB_ACTION[item.id])}
       >{item.label}</button>)}
     </div>
-    <div id={`project-${tab}-panel`} role="tabpanel" aria-labelledby={`project-${tab}-tab`} tabIndex={0}>{panel}</div>
+    <div id={`project-${activeTab}-panel`} role="tabpanel" aria-labelledby={`project-${activeTab}-tab`} tabIndex={0}>{panel}</div>
   </section>
 }
 

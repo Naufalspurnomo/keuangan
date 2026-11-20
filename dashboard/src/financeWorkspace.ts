@@ -1,4 +1,5 @@
 import { seedDemoFinanceWorkspace } from './demoFinanceFixtures'
+import { PROJECT_STATUSES as PROJECT_STATUS_VALUES, visibleProjectStatus, type ProjectStatus as SharedProjectStatus } from './projectStatus'
 
 export const WALLETS = ['CV HB', 'TX SBY', 'TX Bali'] as const
 export type WalletId = typeof WALLETS[number]
@@ -6,8 +7,8 @@ export type WalletId = typeof WALLETS[number]
 export const COMPANIES = ['Holla', 'Hojja', 'Texturin Surabaya', 'Texturin Bali'] as const
 export type CompanyId = typeof COMPANIES[number]
 
-export const PROJECT_STATUSES = ['planned', 'active', 'completed', 'cancelled'] as const
-export type ProjectStatus = typeof PROJECT_STATUSES[number]
+export const PROJECT_STATUSES = PROJECT_STATUS_VALUES
+export type ProjectStatus = SharedProjectStatus
 export type TransactionDirection = 'income' | 'expense'
 export type TransactionScope = 'project' | 'office'
 
@@ -185,46 +186,46 @@ function projectNameTaken(projects: FinanceProject[], input: Pick<FinanceProject
 }
 
 export function validateProjectInput(input: ProjectInput, projects: FinanceProject[], exceptId?: string): ProjectInput {
-  const name = requiredText(input.name, 'Nama proyek')
+  const name = requiredText(input.name, 'Nama Project')
   const client = input.client.trim()
   const notes = input.notes.trim()
   const started_on = validDate(input.started_on, 'Tanggal mulai')
+  const status = visibleProjectStatus(input.status)
   if (!COMPANIES.includes(input.company)) throw new FinanceValidationError('Perusahaan tidak valid.')
-  if (!PROJECT_STATUSES.includes(input.status)) throw new FinanceValidationError('Status proyek tidak valid.')
-  if (projectNameTaken(projects, { name, company: input.company }, exceptId)) throw new FinanceValidationError('Nama proyek sudah dipakai pada perusahaan ini.')
-  const completed_on = input.status === 'completed' ? validDate(input.completed_on ?? '', 'Tanggal selesai') : null
+  if (!PROJECT_STATUSES.includes(input.status)) throw new FinanceValidationError('Status Project tidak valid.')
+  if (projectNameTaken(projects, { name, company: input.company }, exceptId)) throw new FinanceValidationError('Nama Project sudah dipakai pada perusahaan ini.')
+  const completed_on = status === 'completed' ? validDate(input.completed_on ?? '', 'Tanggal selesai') : null
   if (completed_on && completed_on < started_on) throw new FinanceValidationError('Tanggal selesai tidak boleh sebelum tanggal mulai.')
   const contract_value = input.contract_value === null ? null : validAmount(input.contract_value, 'Nilai kontrak', true)
-  return { name, company: input.company, status: input.status, started_on, completed_on, client, contract_value, notes }
+  return { name, company: input.company, status, started_on, completed_on, client, contract_value, notes }
 }
 
 export function createProject(workspace: FinanceWorkspace, input: ProjectInput): FinanceWorkspace {
-  const clean = validateProjectInput(input, workspace.projects)
+  const clean = validateProjectInput({ ...input, status: 'active', completed_on: null }, workspace.projects)
   const at = nowIso()
   const project: FinanceProject = { ...clean, id: uid('prj'), wallet: COMPANY_WALLET[clean.company], created_at: at, updated_at: at }
-  return commit(workspace, { projects: [...workspace.projects, project] }, audit('create', 'project', project.id, `Menambah proyek ${project.name}`))
+  return commit(workspace, { projects: [...workspace.projects, project] }, audit('create', 'project', project.id, `Menambah Project ${project.name}`))
 }
 
 export function updateProject(workspace: FinanceWorkspace, id: string, input: ProjectInput): FinanceWorkspace {
   const current = workspace.projects.find((project) => project.id === id)
-  if (!current) throw new FinanceValidationError('Proyek tidak ditemukan.')
+  if (!current) throw new FinanceValidationError('Project tidak ditemukan.')
   const clean = validateProjectInput(input, workspace.projects, id)
   const linkedTransactions = workspace.transactions.filter((row) => row.project_id === id)
-  if (clean.status === 'planned' && linkedTransactions.length) throw new FinanceValidationError('Proyek yang sudah memiliki transaksi tidak dapat berstatus Direncanakan.')
-  if (linkedTransactions.some((row) => row.date < clean.started_on)) throw new FinanceValidationError('Tanggal mulai proyek tidak boleh setelah transaksi pertamanya.')
+  if (linkedTransactions.some((row) => row.date < clean.started_on)) throw new FinanceValidationError('Tanggal mulai Project tidak boleh setelah transaksi pertamanya.')
   if (clean.completed_on && linkedTransactions.some((row) => row.date > clean.completed_on!)) throw new FinanceValidationError('Tanggal selesai tidak boleh sebelum transaksi terakhir.')
   const nextProject = { ...current, ...clean, wallet: COMPANY_WALLET[clean.company], updated_at: nowIso() }
   const transactions = workspace.transactions.map((transaction) => transaction.project_id === id
     ? { ...transaction, wallet: nextProject.wallet, company: nextProject.company, updated_at: nowIso() }
     : transaction)
-  return commit(workspace, { projects: workspace.projects.map((project) => project.id === id ? nextProject : project), transactions }, audit('update', 'project', id, `Memperbarui proyek ${nextProject.name}`))
+  return commit(workspace, { projects: workspace.projects.map((project) => project.id === id ? nextProject : project), transactions }, audit('update', 'project', id, `Memperbarui Project ${nextProject.name}`))
 }
 
 export function deleteProject(workspace: FinanceWorkspace, id: string): FinanceWorkspace {
   const project = workspace.projects.find((item) => item.id === id)
-  if (!project) throw new FinanceValidationError('Proyek tidak ditemukan.')
-  if (workspace.transactions.some((transaction) => transaction.project_id === id)) throw new FinanceValidationError('Proyek masih memiliki transaksi. Hapus atau pindahkan transaksinya lebih dulu.')
-  return commit(workspace, { projects: workspace.projects.filter((item) => item.id !== id) }, audit('delete', 'project', id, `Menghapus proyek ${project.name}`))
+  if (!project) throw new FinanceValidationError('Project tidak ditemukan.')
+  if (workspace.transactions.some((transaction) => transaction.project_id === id)) throw new FinanceValidationError('Project masih memiliki transaksi. Hapus atau pindahkan transaksinya lebih dulu.')
+  return commit(workspace, { projects: workspace.projects.filter((item) => item.id !== id) }, audit('delete', 'project', id, `Menghapus Project ${project.name}`))
 }
 
 export function validateTransactionInput(input: TransactionInput, workspace: FinanceWorkspace): TransactionInput & { wallet: WalletId; company: CompanyId | null } {
@@ -235,11 +236,11 @@ export function validateTransactionInput(input: TransactionInput, workspace: Fin
   const notes = requiredText(input.notes, 'Keterangan')
   if (input.scope === 'project') {
     const project = workspace.projects.find((item) => item.id === input.project_id)
-    if (!project) throw new FinanceValidationError('Proyek wajib dipilih.')
-    if (project.status === 'planned') throw new FinanceValidationError('Proyek Direncanakan belum dapat memiliki transaksi.')
-    if (project.status === 'cancelled') throw new FinanceValidationError('Proyek Dibatalkan tidak dapat memiliki transaksi baru.')
-    if (date < project.started_on) throw new FinanceValidationError('Tanggal transaksi tidak boleh sebelum proyek dimulai.')
-    if (project.completed_on && date > project.completed_on) throw new FinanceValidationError('Tanggal transaksi tidak boleh setelah proyek selesai.')
+    if (!project) throw new FinanceValidationError('Project wajib dipilih.')
+    const status = visibleProjectStatus(project.status)
+    if (status === 'cancelled') throw new FinanceValidationError('Project Dibatalkan tidak dapat memiliki transaksi baru.')
+    if (date < project.started_on) throw new FinanceValidationError('Tanggal transaksi tidak boleh sebelum Project dimulai.')
+    if (project.completed_on && date > project.completed_on) throw new FinanceValidationError('Tanggal transaksi tidak boleh setelah Project selesai.')
     return { ...input, date, amount, notes, wallet: project.wallet, company: project.company, project_id: project.id, office_category: null }
   }
   if (input.scope !== 'office') throw new FinanceValidationError('Aktivitas transaksi tidak valid.')
@@ -359,7 +360,7 @@ export function isFinanceWorkspace(value: unknown): value is FinanceWorkspace {
     if (!isRecord(row) || typeof row.id !== 'string' || transactionIds.has(row.id) || !validIsoDate(row.date) || !['income', 'expense'].includes(String(row.direction)) || !validMoney(row.amount, false) || !['project', 'office'].includes(String(row.scope)) || !WALLETS.includes(row.wallet as WalletId) || typeof row.notes !== 'string' || !validTimestamp(row.created_at) || !validTimestamp(row.updated_at)) return false
     const linkedProject = typeof row.project_id === 'string' ? projectMap.get(row.project_id) : undefined
     const rowDate = String(row.date)
-    if (row.scope === 'project' && (!linkedProject || linkedProject.status === 'planned' || linkedProject.status === 'cancelled' || rowDate < String(linkedProject.started_on) || (linkedProject.completed_on !== null && rowDate > String(linkedProject.completed_on)) || row.company !== linkedProject.company || row.wallet !== linkedProject.wallet || row.office_category !== null)) return false
+    if (row.scope === 'project' && (!linkedProject || visibleProjectStatus(linkedProject.status as ProjectStatus) === 'cancelled' || rowDate < String(linkedProject.started_on) || (linkedProject.completed_on !== null && rowDate > String(linkedProject.completed_on)) || row.company !== linkedProject.company || row.wallet !== linkedProject.wallet || row.office_category !== null)) return false
     if (row.scope === 'office' && (row.direction !== 'expense' || row.company !== null || row.project_id !== null || !OFFICE_CATEGORIES.includes(row.office_category as OfficeCategory))) return false
     transactionIds.add(row.id)
   }
@@ -385,8 +386,8 @@ export function projectYear(project: FinanceProject) {
 
 export function projectTotals(project: FinanceProject, transactions: FinanceTransaction[]) {
   const rows = transactions.filter((transaction) => transaction.project_id === project.id)
-  const income = sumMoney(rows.filter((row) => row.direction === 'income').map((row) => row.amount), 'pemasukan proyek')
-  const expense = sumMoney(rows.filter((row) => row.direction === 'expense').map((row) => row.amount), 'pengeluaran proyek')
+  const income = sumMoney(rows.filter((row) => row.direction === 'income').map((row) => row.amount), 'pemasukan Project')
+  const expense = sumMoney(rows.filter((row) => row.direction === 'expense').map((row) => row.amount), 'pengeluaran Project')
   return { income, expense, net: income - expense, transactions: rows.length }
 }
 

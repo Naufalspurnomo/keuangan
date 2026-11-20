@@ -8,6 +8,7 @@ import uuid
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any, NoReturn, Protocol
+from zoneinfo import ZoneInfo
 
 from services.financial_transaction_repository import (
     FinancialRepositoryConflict,
@@ -36,13 +37,14 @@ CREATE_FIELDS = frozenset(
 )
 CREATE_REQUIRED = CREATE_FIELDS - {"source_reference", "evidence"}
 CORRECTION_FIELDS = frozenset(
-    {"idempotency_key", "expected_version", "amount", "description", "category", "reason"}
+    {"idempotency_key", "expected_version", "amount", "description", "category", "occurred_at", "reason"}
 )
 REVERSAL_FIELDS = frozenset({"idempotency_key", "expected_version", "reason"})
 SCOPES = frozenset({"project", "office", "group"})
 TRANSACTION_TYPES = frozenset({"inflow", "outflow"})
 SOURCES = frozenset({"dashboard", "whatsapp", "telegram", "migration", "system"})
 ACTOR_ROLES = frozenset({"boss", "admin", "system"})
+BUSINESS_TIMEZONE = ZoneInfo("Asia/Jakarta")
 
 
 class FinanceValidationError(ValueError):
@@ -138,6 +140,15 @@ def _instant(value: Any, field: str) -> str:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         _fail(field, "must include a timezone")
     canonical = parsed.astimezone(timezone.utc).isoformat()
+    return canonical
+
+
+def _business_instant(value: Any, field: str) -> str:
+    canonical = _instant(value, field)
+    local_date = datetime.fromisoformat(canonical).astimezone(BUSINESS_TIMEZONE).date()
+    today = datetime.now(BUSINESS_TIMEZONE).date()
+    if local_date > today:
+        _fail(field, "must not be in the future in Asia/Jakarta")
     return canonical
 
 
@@ -293,7 +304,7 @@ class CanonicalFinanceService:
             "currency": "IDR",
             "category": category,
             "description": _text(payload.get("description"), "description"),
-            "occurred_at": _instant(payload.get("occurred_at"), "occurred_at"),
+            "occurred_at": _business_instant(payload.get("occurred_at"), "occurred_at"),
             "source": source,
             "source_reference": _text(
                 payload.get("source_reference"), "source_reference", maximum=300, optional=True
@@ -318,8 +329,8 @@ class CanonicalFinanceService:
             raise FinanceValidationError(f"unknown field(s): {', '.join(unknown)}")
         if missing:
             raise FinanceValidationError(f"missing field(s): {', '.join(missing)}")
-        if not any(field in payload for field in ("amount", "description", "category")):
-            _fail("request", "correction must change amount, description, or category")
+        if not any(field in payload for field in ("amount", "description", "category", "occurred_at")):
+            _fail("request", "correction must change amount, description, category, or occurred_at")
 
         target = self._get_latest_record(transaction_id)
         expected_version = _version(payload.get("expected_version"))
@@ -344,6 +355,8 @@ class CanonicalFinanceService:
             corrected["description"] = _text(payload["description"], "description")
         if "category" in payload:
             corrected["category"] = _text(payload["category"], "category", maximum=100)
+        if "occurred_at" in payload:
+            corrected["occurred_at"] = _business_instant(payload["occurred_at"], "occurred_at")
         corrected["postings"] = _postings(
             transaction_id=corrected["id"],
             wallet_id=corrected["wallet_id"],

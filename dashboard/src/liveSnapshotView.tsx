@@ -228,7 +228,7 @@ export function LiveSnapshotBanner({ endpoint, loader = loadLiveSnapshot }: Live
         </article>
       </div>
       <p className="live-snapshot__scope">
-        {view.wallets.length} dompet · {view.projects.length} proyek terproyeksi
+        {view.wallets.length} dompet · {view.projects.length} Project tercatat
       </p>
     </section>
   )

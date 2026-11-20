@@ -53,6 +53,6 @@ describe('project candle demo data', () => {
     const unmarked = { ...project('Tanpa Marker', 'Hollawall'), health: 'unmarked' as const, lifecycle_status: 'unmarked' as const, age_days: null }
     render(<ProjectHealthBoard projects={[unmarked]} asOf="2026-10-21" onOpen={vi.fn()} />)
     expect(screen.getAllByText('Belum ditandai').length).toBeGreaterThan(0)
-    expect(screen.getByRole('button', { name: /Buka transaksi proyek Tanpa Marker, Hollawall, 0 transaksi/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Buka transaksi Project Tanpa Marker, Hollawall, 0 transaksi/ })).toBeTruthy()
   })
 })

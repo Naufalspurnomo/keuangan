@@ -101,14 +101,14 @@ function SectionTimeline({ portfolio, projects, window, selected, onSelect, onNe
   useEffect(() => setPage(0), [mobile, portfolio, window.start.getTime()])
   const scroll = (direction: -1 | 1) => setPage((current) => Math.min(pageCount - 1, Math.max(0, current + direction)))
 
-  return <section className={`vertical-project-section ${portfolio.toLocaleLowerCase('id-ID')}`} aria-label={`Timeline proyek ${portfolio}`}>
+  return <section className={`vertical-project-section ${portfolio.toLocaleLowerCase('id-ID')}`} aria-label={`Timeline Project ${portfolio}`}>
     <header>
-      <div><p>{portfolio.toUpperCase()} SECTION</p><h3>{mobile ? 'Proyek periode ini' : `Rentang proyek ${portfolio}`}</h3></div>
-      <button type="button" hidden={!onNew} className="new-project-button" aria-label={`Tambah proyek ${portfolio}`} onClick={onNew}><Plus size={15} />Proyek Baru</button>
+      <div><p>{portfolio.toUpperCase()} SECTION</p><h3>{mobile ? 'Project periode ini' : `Rentang Project ${portfolio}`}</h3></div>
+      <button type="button" hidden={!onNew} className="new-project-button" aria-label={`Tambah Project ${portfolio}`} onClick={onNew}><Plus size={15} />Project Baru</button>
     </header>
-    {items.length > 0 && <div className="project-lane-navigation" aria-label={`Navigasi proyek ${portfolio}`}>
-      <span>{visibleRange.start}–{Math.min(visibleRange.end, items.length)} dari {items.length} proyek</span>
-      <div><button type="button" aria-label={`Proyek ${portfolio} sebelumnya`} onClick={() => scroll(-1)} disabled={safePage === 0}><ArrowLeft size={15} /></button><button type="button" aria-label={`Proyek ${portfolio} berikutnya`} onClick={() => scroll(1)} disabled={safePage >= pageCount - 1}><ArrowRight size={15} /></button></div>
+    {items.length > 0 && <div className="project-lane-navigation" aria-label={`Navigasi Project ${portfolio}`}>
+      <span>{visibleRange.start}–{Math.min(visibleRange.end, items.length)} dari {items.length} Project</span>
+      <div><button type="button" aria-label={`Project ${portfolio} sebelumnya`} onClick={() => scroll(-1)} disabled={safePage === 0}><ArrowLeft size={15} /></button><button type="button" aria-label={`Project ${portfolio} berikutnya`} onClick={() => scroll(1)} disabled={safePage >= pageCount - 1}><ArrowRight size={15} /></button></div>
     </div>}
     {mobile ? <div className="mobile-project-list" aria-live="polite">
       {visibleItems.map(({ project }) => <button
@@ -116,12 +116,12 @@ function SectionTimeline({ portfolio, projects, window, selected, onSelect, onNe
         key={project.name}
         className={selected === project.name ? 'is-selected' : ''}
         onClick={() => onSelect(project)}
-        aria-label={`Buka proyek ${project.name} dari timeline`}
+        aria-label={`Buka Project ${project.name} dari timeline`}
       >
         <span><strong>{project.name}</strong><small>{dateLabel(project.started_on ?? project.first_activity_on)} — {project.lifecycle_status === 'active' ? 'aktif' : dateLabel(project.completed_on ?? project.last_activity_on)}</small></span>
         <ArrowRight size={16} aria-hidden="true" />
       </button>)}
-      {!items.length && <div className="vertical-timeline-empty"><strong>Belum ada proyek pada kuartal ini</strong><small>Timeline mengikuti marker Start/Selesai dan aktivitas sumber.</small></div>}
+      {!items.length && <div className="vertical-timeline-empty"><strong>Belum ada Project pada kuartal ini</strong><small>Timeline mengikuti marker Start/Selesai dan aktivitas sumber.</small></div>}
     </div> : <div className="vertical-timeline-shell">
       <div className="vertical-month-axis" aria-hidden="true">
         {window.months.map((month) => <span key={month.name}><b>{month.name}</b><i /></span>)}
@@ -134,9 +134,9 @@ function SectionTimeline({ portfolio, projects, window, selected, onSelect, onNe
           style={style ?? undefined}
           className={`vertical-project-bar ${accent} ${selected === project.name ? 'is-selected' : ''}`}
           onClick={() => onSelect(project)}
-          aria-label={`Buka proyek ${project.name} dari timeline`}
+          aria-label={`Buka Project ${project.name} dari timeline`}
         ><strong>{project.name}</strong><small>{project.lifecycle_status === 'completed' ? 'Selesai' : 'Aktif'}</small></button>)}
-        {!items.length && <div className="vertical-timeline-empty"><strong>Belum ada proyek pada kuartal ini</strong><small>Timeline mengikuti marker Start/Selesai dan aktivitas sumber.</small></div>}
+        {!items.length && <div className="vertical-timeline-empty"><strong>Belum ada Project pada kuartal ini</strong><small>Timeline mengikuti marker Start/Selesai dan aktivitas sumber.</small></div>}
         </div>
       </div>
     </div>}
@@ -177,9 +177,9 @@ export default function ProjectReportTimeline({ transactions, projects, asOf, da
   const incoming = selectedTransactions.filter((row) => row.transaction_type === 'Pemasukan' && !isInternal(row)).reduce((sum, row) => sum + row.amount, 0)
   const outgoing = selectedTransactions.filter((row) => row.transaction_type === 'Pengeluaran' && !isInternal(row)).reduce((sum, row) => sum + row.amount, 0)
 
-  return <section className="project-report-module" aria-label="Laporan omzet dan timeline proyek">
+  return <section className="project-report-module" aria-label="Laporan omzet dan timeline Project">
     <div className="holla-report-head">
-      <div><p className="eyebrow">HOLLA REPORT</p><h2>Omzet dan rentang proyek</h2><span>Status proyek per {dateLabel(asOf)} · omzet transaksi s.d. {dateLabel(dataThrough)}</span></div>
+      <div><p className="eyebrow">HOLLA REPORT</p><h2>Omzet dan rentang Project</h2><span>Status Project per {dateLabel(asOf)} · omzet transaksi s.d. {dateLabel(dataThrough)}</span></div>
       <div className="revenue-matrix" role="table" aria-label={`Omzet ${revenueAnchor.toLocaleDateString('id-ID', { month: 'long' })} dan ${previous.toLocaleDateString('id-ID', { month: 'long' })}`}>
         <div role="row" className="matrix-head"><span role="columnheader">Periode</span>{(['HOLLA', 'TX', 'HOJJA'] as MatrixUnit[]).map((unit) => <b role="columnheader" key={unit} aria-label={matrixLabel[unit]}>{matrixCode[unit]}</b>)}</div>
         {([['current', 'Bulan ini'], ['previous', 'Bulan lalu']] as const).map(([period, label]) => <div role="row" key={period}><span role="rowheader">{label}<small>{periodLabels[period]}</small></span>{(['HOLLA', 'TX', 'HOJJA'] as MatrixUnit[]).map((unit) => <strong role="cell" data-label={matrixLabel[unit]} key={unit}>{formatMatrixValue(matrix[period][unit])}</strong>)}</div>)}
@@ -191,15 +191,15 @@ export default function ProjectReportTimeline({ transactions, projects, asOf, da
       <SectionTimeline portfolio="Texturin" projects={projects} window={window} selected={selected?.name} onSelect={setSelected} onNew={onAddProject ? () => onAddProject() : undefined} />
     </div>
 
-    {selected && <aside className="project-timeline-detail" aria-label={`Detail proyek ${selected.name}`}>
-      <header><div><p className="eyebrow">PROYEK TERPILIH</p><h3>{selected.name}</h3><span>{selected.portfolio} · {selected.transaction_count ?? selectedTransactions.length} transaksi</span></div><button type="button" className="icon-button" aria-label="Tutup detail proyek" onClick={() => setSelected(null)}><X size={17} /></button></header>
+    {selected && <aside className="project-timeline-detail" aria-label={`Detail Project ${selected.name}`}>
+      <header><div><p className="eyebrow">Project TERPILIH</p><h3>{selected.name}</h3><span>{selected.portfolio} · {selected.transaction_count ?? selectedTransactions.length} transaksi</span></div><button type="button" className="icon-button" aria-label="Tutup detail Project" onClick={() => setSelected(null)}><X size={17} /></button></header>
       <div className="project-detail-dates"><span><small>Mulai</small><strong>{dateLabel(selected.started_on ?? selected.first_activity_on)}</strong></span><span><small>Selesai</small><strong>{selected.lifecycle_status === 'active' ? 'Masih aktif' : dateLabel(selected.completed_on ?? selected.last_activity_on)}</strong></span><span><small>Aktivitas terakhir</small><strong>{dateLabel(selected.last_activity_on)}</strong></span></div>
       <div className="project-detail-money"><span><ArrowDownRight size={17} /><small>Masuk</small><strong className="positive">{IDR.format(incoming)}</strong></span><span><ArrowUpRight size={17} /><small>Keluar</small><strong className="negative">{IDR.format(outgoing)}</strong></span><span><small>Bersih</small><strong>{IDR.format(incoming - outgoing)}</strong></span></div>
       {showSourceDetails && <small className="project-source-key">{selected.source_key_latest ?? 'source key belum tersedia'}</small>}
     </aside>}
 
-    {readOnlyNotice && <div className="readonly-modal" role="dialog" aria-modal="true" aria-label="Informasi proyek">
-      <div><button type="button" className="icon-button" aria-label="Tutup pemberitahuan" onClick={() => setReadOnlyNotice(false)}><X size={18} /></button><p className="eyebrow">PROYEK</p><h3>Tambah proyek belum tersedia di sini</h3><p>Gunakan menu Proyek untuk membuat dan mengelola proyek.</p><button type="button" className="secondary-button" onClick={() => setReadOnlyNotice(false)}>Mengerti</button></div>
+    {readOnlyNotice && <div className="readonly-modal" role="dialog" aria-modal="true" aria-label="Informasi Project">
+      <div><button type="button" className="icon-button" aria-label="Tutup pemberitahuan" onClick={() => setReadOnlyNotice(false)}><X size={18} /></button><p className="eyebrow">Project</p><h3>Tambah Project belum tersedia di sini</h3><p>Gunakan menu Project untuk membuat dan mengelola Project.</p><button type="button" className="secondary-button" onClick={() => setReadOnlyNotice(false)}>Mengerti</button></div>
     </div>}
   </section>
 }

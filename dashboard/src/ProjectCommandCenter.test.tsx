@@ -1,17 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 
 import ProjectCommandCenter from './ProjectCommandCenter'
 import { seedFinanceWorkspace } from './financeWorkspace'
 
-let resizeCallback: ResizeObserverCallback
-
 beforeEach(() => {
-  vi.stubGlobal('ResizeObserver', class {
-    constructor(callback: ResizeObserverCallback) { resizeCallback = callback }
-    observe() {}
-    disconnect() {}
-  })
   Object.defineProperty(Element.prototype, 'scrollIntoView', {
     configurable: true,
     value: vi.fn(() => { Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 }) }),
@@ -37,11 +30,11 @@ describe('ProjectCommandCenter scroll stability', () => {
       busy
     />)
 
-    expect(screen.getByRole('status').textContent).toContain('Menyelesaikan proyek')
+    expect(screen.getByRole('status').textContent).toContain('Menyelesaikan Project')
     for (const button of screen.getAllByRole('button', { name: /^Selesaikan / })) expect((button as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('reveals the active year inside its horizontal rail without scrolling the page', () => {
+  it('selects the project year in a compact control without scrolling the page', () => {
     render(<ProjectCommandCenter
       workspace={seedFinanceWorkspace()}
       onAdd={vi.fn()}
@@ -52,22 +45,13 @@ describe('ProjectCommandCenter scroll stability', () => {
       onOpen={vi.fn()}
     />)
 
-    const activeYear = screen.getByRole('button', { current: 'page' })
-    const rail = activeYear.closest('nav') as HTMLElement
-    Object.defineProperties(rail, {
-      clientWidth: { configurable: true, value: 200 },
-      scrollLeft: { configurable: true, writable: true, value: 0 },
-    })
-    Object.defineProperties(activeYear, {
-      offsetLeft: { configurable: true, value: 420 },
-      offsetWidth: { configurable: true, value: 120 },
-    })
+    const selector = screen.getByRole('combobox', { name: 'Project per tahun' })
     Object.defineProperty(window, 'scrollY', { configurable: true, value: 1600 })
-
-    resizeCallback([], {} as ResizeObserver)
+    const nextYear = [...(selector as HTMLSelectElement).options].find((option) => option.value !== (selector as HTMLSelectElement).value)!
+    fireEvent.change(selector, { target: { value: nextYear.value } })
 
     expect(window.scrollY).toBe(1600)
-    expect(rail.scrollLeft).toBe(340)
+    expect(selector).toHaveValue(nextYear.value)
     expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled()
   })
 })

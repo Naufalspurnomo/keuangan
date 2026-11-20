@@ -8,10 +8,9 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { Check, CheckCircle2, ChevronsRight, Eye, Minus, Move, Plus, RotateCcw } from 'lucide-react'
-
 import { type CompanyId, type FinanceProject, type FinanceTransaction } from './financeWorkspace'
 import { dateLabel, IDR, projectStatusLabel } from './financeView'
+import { visibleProjectStatus } from './projectStatus'
 
 const DAY = 86_400_000
 const BASE_HEIGHT = 624
@@ -68,9 +67,6 @@ const AGE_COLORS: Record<ProjectAgeBand, string> = {
 }
 
 function candleTone(project: FinanceProject, asOf: Date) {
-  if (project.status === 'planned') {
-    return { '--bar-color': 'var(--chart-neutral-2)' } as CSSProperties
-  }
   if (project.status === 'cancelled') {
     return { '--bar-color': 'var(--negative)' } as CSSProperties
   }
@@ -116,19 +112,21 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
   const pointers = useRef(new Map<number, { x: number; y: number }>())
   const pinchDistance = useRef<number | null>(null)
   const [zoom, setZoom] = useState(1)
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const zoomRef = useRef(1)
   const zoomAnchor = useRef<ZoomAnchor | null>(null)
   const ordered = useMemo(() => projects
+    .map((project) => ({ ...project, status: visibleProjectStatus(project.status) }))
     .filter((project) => project.company === company)
     .sort((left, right) => left.started_on.localeCompare(right.started_on) || left.name.localeCompare(right.name, 'id-ID')),
   [company, projects])
   const model = yearModel(year, asOf)
   const active = ordered.filter((project) => project.status === 'active').length
   const completed = ordered.filter((project) => project.status === 'completed').length
-  const planned = ordered.filter((project) => project.status === 'planned').length
   const chartWidth = Math.max(620, 104 + Math.max(ordered.length, 7) * BASE_COLUMN * zoom)
-  const chartHeight = BASE_HEIGHT * zoom
+  const chartHeight = (ordered.length ? BASE_HEIGHT : 300) * zoom
   const meta = identity[company]
+  const selectedProject = ordered.find((project) => project.id === selectedProjectId)
 
   const stopMomentum = () => {
     if (momentumFrame.current == null) return
@@ -301,12 +299,12 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
     if (Math.hypot(velocityX, velocityY) >= .08) momentumFrame.current = requestAnimationFrame(glide)
   }
 
-  return <section className={`project-market-canvas company-${company.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`} data-project-company={company} role="region" aria-label={`Chart lifecycle ${company}`}>
+  return <section className={`project-market-canvas${ordered.length ? '' : ' is-empty'} company-${company.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`} data-project-company={company} role="region" aria-label={`Chart lifecycle ${company}`}>
     <header>
       <div className="project-market-identity"><i>{meta.mark}</i><div><p>{company}</p><h3>Project lifecycle</h3><span>{meta.copy}</span></div></div>
-      <div className="project-market-summary" aria-label={`Ringkasan ${company}`}><strong>{active} / {ordered.length}</strong><span>aktif / total {year}</span><em>{completed} selesai{planned ? ` · ${planned} rencana` : ''}</em></div>
+      <div className="project-market-summary" aria-label={`Ringkasan ${company}`}><strong>{active} / {ordered.length}</strong><span>aktif / total {year}</span><em>{completed} selesai</em></div>
     </header>
-    <div className="project-market-toolbar"><span><Move size={13} /> Seret untuk geser · Ctrl/⌘ + roda untuk zoom · zoom {Math.round(zoom * 100)}%</span><button type="button" onClick={latest} aria-label={`Kembali ke proyek terbaru ${company}`}><ChevronsRight size={15} /> Terbaru</button></div>
+    {ordered.length > 0 && <div className="project-market-toolbar"><span>Seret untuk geser · Ctrl/⌘ + roda untuk zoom · klik dua kali untuk membuka · zoom {Math.round(zoom * 100)}%</span>{selectedProject && <button type="button" className="selected-project-open" onClick={() => onOpen(selectedProject)} aria-label={`Buka Project ${selectedProject.name}`}>Buka Project</button>}<button type="button" onClick={latest} aria-label={`Kembali ke Project terbaru ${company}`}>Terbaru</button></div>}
     <div ref={viewportRef} className="project-market-viewport" onPointerDown={startPointer} onPointerMove={movePointer} onPointerUp={stopPointer} onPointerCancel={stopPointer}>
       <div className="project-market-chart" style={{ '--market-width': `${chartWidth}px`, '--market-height': `${chartHeight}px`, '--market-column': `${BASE_COLUMN * zoom}px` } as CSSProperties}>
         <div className="project-market-axis" aria-hidden="true">
@@ -318,11 +316,11 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
             const rows = transactions.filter((row) => row.project_id === project.id).sort((left, right) => left.date.localeCompare(right.date))
             const firstActivity = rows.at(0)?.date
             const lastActivity = rows.at(-1)?.date
-            const end = project.status === 'completed' ? (parseDate(project.completed_on) ?? asOf) : project.status === 'planned' || project.status === 'cancelled' ? (parseDate(project.started_on) ?? asOf) : asOf
+            const end = project.status === 'completed' ? (parseDate(project.completed_on) ?? asOf) : project.status === 'cancelled' ? (parseDate(project.started_on) ?? asOf) : asOf
             const startPosition = model.positionFor(project.started_on)
             const endPosition = model.positionFor(isoDate(end))
             const candleTop = Math.min(startPosition, endPosition)
-            const candleSpan = project.status === 'planned' || project.status === 'cancelled' ? 2.8 : Math.max(2.8, Math.abs(startPosition - endPosition))
+            const candleSpan = project.status === 'cancelled' ? 2.8 : Math.max(2.8, Math.abs(startPosition - endPosition))
             const activityStart = model.positionFor(firstActivity, parseDate(project.started_on) ?? asOf)
             const activityEnd = model.positionFor(lastActivity, end)
             const activityTop = Math.min(activityStart, activityEnd)
@@ -330,28 +328,36 @@ function CompanyCanvas({ company, projects, transactions, year, asOf, register, 
             const days = age(project, asOf)
             const income = rows.filter((row) => row.direction === 'income').reduce((sum, row) => sum + row.amount, 0)
             const expense = rows.filter((row) => row.direction === 'expense').reduce((sum, row) => sum + row.amount, 0)
-            const accessible = `${company}, ${projectStatusLabel(project.status)}, mulai ${dateLabel(project.started_on)}, ${project.status === 'completed' ? `selesai ${dateLabel(project.completed_on!)}` : project.status === 'planned' ? 'belum berjalan' : project.status === 'cancelled' ? 'dibatalkan' : `snapshot ${dateLabel(isoDate(asOf))}`}, umur ${days} hari, transaksi pertama ${firstActivity ? dateLabel(firstActivity) : 'belum ada'}, transaksi terakhir ${lastActivity ? dateLabel(lastActivity) : 'belum ada'}, ${rows.length} transaksi, arus kas ${IDR.format(income - expense)}`
+            const accessible = `${company}, ${projectStatusLabel(project.status)}, mulai ${dateLabel(project.started_on)}, ${project.status === 'completed' ? `selesai ${dateLabel(project.completed_on!)}` : project.status === 'cancelled' ? 'dibatalkan' : `snapshot ${dateLabel(isoDate(asOf))}`}, umur ${days} hari, transaksi pertama ${firstActivity ? dateLabel(firstActivity) : 'belum ada'}, transaksi terakhir ${lastActivity ? dateLabel(lastActivity) : 'belum ada'}, ${rows.length} transaksi, arus kas ${IDR.format(income - expense)}`
             return <button
               type="button"
               key={project.id}
               data-project-id={project.id}
               data-project-candle={project.name}
-              data-age-band={project.status === 'planned' ? undefined : ageBand(days)}
-              className={`project-market-candle is-${project.status}`}
+              data-age-band={ageBand(days)}
+              className={`project-market-candle is-${project.status}${selectedProjectId === project.id ? ' is-selected' : ''}`}
               style={{ '--candle-top': `${candleTop}%`, '--candle-span': `${candleSpan}%`, '--start-position': `${startPosition}%`, '--activity-top': `${activityTop}%`, '--activity-span': `${activitySpan}%`, ...candleTone(project, asOf) } as CSSProperties}
               onPointerDown={() => { drag.current.moved = false }}
-              onClick={(event) => { if (event.detail === 0 || !drag.current.moved) onOpen(project); drag.current.moved = false }}
+              onClick={(event) => {
+                const dragged = drag.current.moved
+                drag.current.moved = false
+                if (dragged) return
+                if (event.detail === 0) { onOpen(project); return }
+                setSelectedProjectId(project.id)
+              }}
+              onDoubleClick={() => onOpen(project)}
               onContextMenu={(event) => onContextMenu(event, project)}
               aria-label={`Buka ${project.name}, ${accessible}`}
-              title={`${project.name} · ${accessible}`}
+              aria-pressed={selectedProjectId === project.id}
+              title={`${project.name} · ${accessible}. Klik untuk memilih, klik dua kali untuk membuka.`}
             >
               {firstActivity && lastActivity && <span className="project-market-wick" aria-hidden="true" />}
-              <span className="project-market-body"><small>{project.status === 'planned' ? 'Rencana' : project.status === 'cancelled' ? 'Batal' : `${days} hari`}</small><strong>{project.name}</strong></span>
-              {project.status === 'completed' && <span className="project-market-completed" aria-label="Proyek selesai"><Check size={12} /> Selesai</span>}
+              <span className="project-market-body"><small>{project.status === 'cancelled' ? 'Batal' : `${days} hari`}</small><strong>{project.name}</strong></span>
+              {project.status === 'completed' && <span className="project-market-completed" aria-label="Project selesai">Selesai</span>}
               <span className="project-market-start" aria-hidden="true"><i /><small>{dateLabel(project.started_on)}</small></span>
             </button>
           })}
-          {!ordered.length && <div className="project-market-empty"><strong>Belum ada proyek {year}</strong><span>Canvas tetap siap menerima data {company}.</span></div>}
+          {!ordered.length && <div className="project-market-empty"><strong>Tidak ada Project {year}</strong><span>Pilih tahun lain untuk melihat periode berbeda.</span></div>}
         </div>
       </div>
     </div>
@@ -375,7 +381,7 @@ export default function ProjectLifecycleMarketChart({ projects, transactions, ye
   const zoomAll = (factor: number) => api.current.forEach((value) => value.zoomBy(factor))
   const resetAll = () => api.current.forEach((value) => value.reset())
   const latestAll = () => api.current.forEach((value) => value.latest())
-  const active = projects.filter((project) => project.status === 'active').length
+  const active = projects.filter((project) => visibleProjectStatus(project.status) === 'active').length
   const openContextMenu = (event: ReactMouseEvent<HTMLButtonElement>, project: FinanceProject) => {
     event.preventDefault()
     event.stopPropagation()
@@ -409,24 +415,23 @@ export default function ProjectLifecycleMarketChart({ projects, transactions, ye
   }, [contextMenu])
 
   return <section className="project-market-report" aria-label={`Project lifecycle market ${year}`}>
-    <header className="project-market-report-head"><div><p className="eyebrow">PROJECT LIFECYCLE MARKET · {year}</p><h3>Umur dan status proyek</h3><p>Empat canvas tahunan. Bulan terbaru di atas; proyek terbaru di kanan. Geser bebas, zoom, dan klik candle untuk melihat transaksi.</p></div><strong>{active} / {projects.length} aktif</strong></header>
+    <header className="project-market-report-head"><div><p className="eyebrow">PROJECT LIFECYCLE MARKET · {year}</p><h3>Umur dan status Project</h3><p>Empat canvas tahunan. Bulan terbaru di atas; Project terbaru di kanan. Geser bebas, zoom, dan klik candle untuk melihat transaksi.</p></div><strong>{active} / {projects.length} aktif</strong></header>
     <div className="project-market-global-toolbar" role="group" aria-label="Kontrol zoom semua chart">
       <span>Kontrol semua chart</span>
-      <button type="button" onClick={() => zoomAll(1 / 1.2)} aria-label="Perkecil semua chart"><Minus size={16} /></button>
-      <button type="button" onClick={() => zoomAll(1.2)} aria-label="Perbesar semua chart"><Plus size={16} /></button>
-      <button type="button" onClick={resetAll} aria-label="Reset tampilan semua chart"><RotateCcw size={15} /> Reset</button>
-      <button type="button" onClick={latestAll} aria-label="Kembali ke proyek terbaru semua chart"><ChevronsRight size={15} /> Terbaru</button>
+      <button type="button" onClick={() => zoomAll(1 / 1.2)} aria-label="Perkecil semua chart">−</button>
+      <button type="button" onClick={() => zoomAll(1.2)} aria-label="Perbesar semua chart">+</button>
+      <button type="button" onClick={resetAll} aria-label="Reset tampilan semua chart">Reset</button>
+      <button type="button" onClick={latestAll} aria-label="Kembali ke Project terbaru semua chart">Terbaru</button>
     </div>
     <div className="project-market-grid">{MARKET_COMPANIES.map((company) => <CompanyCanvas key={company} company={company} projects={projects} transactions={transactions} year={year} asOf={asOf} register={register} onOpen={onOpen} onContextMenu={openContextMenu} />)}</div>
     <footer className="project-market-legend" aria-label="Keterangan project lifecycle">
       <div><span className="age-band-swatches" aria-hidden="true"><i /><i /><i /><i /><i /></span><p><strong>Warna umur: hijau · toska · kuning · oranye · merah</strong><small>0–14 · 15–30 · 31–60 · 61–90 · 91+ hari</small></p></div>
-      <div><span className="completed-key" aria-hidden="true"><Check size={11} /></span><p><strong>Selesai</strong><small>Selesai: warna umur dipertahankan, tanda centang menunjukkan status</small></p></div>
-      <div><span className="planned-key" aria-hidden="true" /><p><strong>Direncanakan</strong><small>Marker putus-putus pada tanggal mulai</small></p></div>
+      <div><span className="completed-key" aria-hidden="true" /><p><strong>Selesai</strong><small>Tepi ganda menandai Project yang telah selesai</small></p></div>
       <div><span className="activity-key" aria-hidden="true" /><p><strong>Garis putih = rentang transaksi</strong><small>Transaksi pertama sampai transaksi terakhir</small></p></div>
     </footer>
     {contextMenu && <div ref={menuRef} className="project-context-menu" role="menu" aria-label={`Aksi ${contextMenu.project.name}`} style={{ left: contextMenu.x, top: contextMenu.y }}>
-      <button type="button" role="menuitem" onClick={() => { const project = contextMenu.project; setContextMenu(null); onOpen(project) }}><Eye size={16} /> Lihat detail</button>
-      {contextMenu.project.status === 'active' && onQuickComplete && <button type="button" role="menuitem" className="complete" onClick={() => { const project = contextMenu.project; setContextMenu(null); onQuickComplete(project) }}><CheckCircle2 size={16} /> Selesaikan proyek</button>}
+      <button type="button" role="menuitem" onClick={() => { const project = contextMenu.project; setContextMenu(null); onOpen(project) }}>Lihat detail</button>
+      {contextMenu.project.status === 'active' && onQuickComplete && <button type="button" role="menuitem" className="complete" onClick={() => { const project = contextMenu.project; setContextMenu(null); onQuickComplete(project) }}>Selesaikan Project</button>}
     </div>}
   </section>
 }

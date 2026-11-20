@@ -29,6 +29,7 @@ export interface CanonicalTransactionMutationInput {
   expectedVersion: number
   reason: string
   amount?: number
+  occurredAt?: string
   description?: string
   category?: string
 }
@@ -341,9 +342,10 @@ export function createCanonicalTransactionMutation(
   if (!reason) throw new TransactionWriteError('Alasan wajib diisi.', { code: 'reason_required' })
   if (input.action === 'correction'
       && input.amount === undefined
+      && input.occurredAt === undefined
       && input.description === undefined
       && input.category === undefined) {
-    throw new TransactionWriteError('Koreksi harus mengubah nominal, deskripsi, atau kategori.', { code: 'empty_correction' })
+    throw new TransactionWriteError('Koreksi harus mengubah tanggal, nominal, keterangan, atau kategori.', { code: 'empty_correction' })
   }
   const params = new URLSearchParams({ action: input.action, transaction_id: input.transactionId })
   const endpoint = sameOriginPath(`${options.endpoint ?? TRANSACTIONS_ENDPOINT}?${params.toString()}`)
@@ -357,6 +359,7 @@ export function createCanonicalTransactionMutation(
     expected_version: input.expectedVersion,
     reason,
     ...(input.amount === undefined ? {} : { amount: input.amount }),
+    ...(input.occurredAt === undefined ? {} : { occurred_at: input.occurredAt }),
     ...(input.description === undefined ? {} : { description: input.description }),
     ...(input.category === undefined ? {} : { category: input.category }),
   })

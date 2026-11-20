@@ -1,4 +1,5 @@
 import { isCanonicalWalletCompanyPair } from './transactionMappings'
+import { visibleProjectStatus } from './projectStatus'
 
 export const PROJECT_STATUSES = ['planned', 'active', 'completed', 'cancelled'] as const
 export const DOCUMENT_TYPES = ['sales_order', 'invoice', 'receipt'] as const
@@ -357,17 +358,17 @@ export function validateProjectDraft(input: ProjectDraft): ProjectDraft {
   const issuerKey = cleanText(input.issuer_key)
   const wallet = cleanText(input.wallet)
   const company = cleanText(input.company)
-  if (!name) throw new ProjectDocumentValidationError('Nama proyek wajib diisi.')
+  if (!name) throw new ProjectDocumentValidationError('Nama Project wajib diisi.')
   if (!clientName) throw new ProjectDocumentValidationError('Nama klien wajib diisi.')
   if (!issuerKey) throw new ProjectDocumentValidationError('Profil penerbit wajib dipilih.')
   if (!wallet) throw new ProjectDocumentValidationError('Dompet transaksi wajib dipilih.')
   if (!company) throw new ProjectDocumentValidationError('Perusahaan transaksi wajib dipilih.')
   if (!isCanonicalWalletCompanyPair(wallet, company)) throw new ProjectDocumentValidationError('Unit usaha tidak sesuai dengan dompet pencatatan.')
-  if (!PROJECT_STATUSES.includes(input.status)) throw new ProjectDocumentValidationError('Status proyek tidak valid.')
+  if (!PROJECT_STATUSES.includes(input.status)) throw new ProjectDocumentValidationError('Status Project tidak valid.')
   const startedOn = validDate(input.started_on, 'Tanggal mulai')!
   const completedOn = validDate(input.completed_on ?? '', 'Tanggal selesai', true)
   if (completedOn && completedOn < startedOn) throw new ProjectDocumentValidationError('Tanggal selesai tidak boleh sebelum tanggal mulai.')
-  if (input.status === 'completed' && !completedOn) throw new ProjectDocumentValidationError('Tanggal selesai wajib diisi untuk proyek selesai.')
+  if (input.status === 'completed' && !completedOn) throw new ProjectDocumentValidationError('Tanggal selesai wajib diisi untuk Project selesai.')
   return {
     ...input,
     name,
@@ -452,7 +453,7 @@ export function calculateDocumentTotals(input: ProjectDocumentDraft): DocumentTo
 }
 
 export function validateDocumentDraft(input: ProjectDocumentDraft): ProjectDocumentDraft {
-  if (!input.project_id) throw new ProjectDocumentValidationError('Identitas proyek wajib tersedia.')
+  if (!input.project_id) throw new ProjectDocumentValidationError('Identitas Project wajib tersedia.')
   if (!DOCUMENT_TYPES.includes(input.type)) throw new ProjectDocumentValidationError('Jenis dokumen tidak valid.')
   validDate(input.issue_date, 'Tanggal dokumen')
   if (input.due_date) validDate(input.due_date, 'Jatuh tempo')
@@ -483,9 +484,9 @@ export function validateDocumentDraft(input: ProjectDocumentDraft): ProjectDocum
   }
   const projectImage = input.project_image_url?.trim() || null
   if (projectImage) {
-    if (projectImage.length > 196_608) throw new ProjectDocumentValidationError('Gambar proyek terlalu besar.')
+    if (projectImage.length > 196_608) throw new ProjectDocumentValidationError('Gambar Project terlalu besar.')
     if (!/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(projectImage)) {
-      throw new ProjectDocumentValidationError('Gambar proyek harus berupa data PNG atau JPEG.')
+      throw new ProjectDocumentValidationError('Gambar Project harus berupa data PNG atau JPEG.')
     }
   }
   calculateDocumentTotals(input)
@@ -534,10 +535,8 @@ export function readProjectDocumentRoute(hash = window.location.hash): ProjectDo
 }
 
 export function projectStatusLabel(status: ProductionProjectStatus) {
-  return status === 'planned' ? 'Direncanakan'
-    : status === 'active' ? 'Aktif'
-      : status === 'completed' ? 'Selesai'
-        : 'Dibatalkan'
+  const visibleStatus = visibleProjectStatus(status)
+  return visibleStatus === 'active' ? 'Aktif' : visibleStatus === 'completed' ? 'Selesai' : 'Dibatalkan'
 }
 
 export function documentTypeLabel(type: ProjectDocumentType) {

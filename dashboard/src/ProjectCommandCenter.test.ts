@@ -34,7 +34,7 @@ describe('projectAsOf', () => {
     expect(projectSnapshotDate(workspace).getDate()).toBe(1)
     expect(projectYearOptions(workspace)).toContain(2026)
     render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onQuickComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
-    expect(screen.getByText('TAHUN PROYEK').parentElement?.textContent).toContain('2026')
+    expect(screen.getByRole('combobox', { name: 'Project per tahun' })).toHaveValue('2026')
     for (const company of ['Holla', 'Hojja', 'Texturin Bali', 'Texturin Surabaya']) {
       expect(screen.getByRole('region', { name: `Chart lifecycle ${company}` })).toBeTruthy()
     }
@@ -57,11 +57,11 @@ describe('projectAsOf', () => {
     const onOpen = vi.fn()
     render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onQuickComplete: vi.fn(), onDelete: vi.fn(), onOpen }))
 
-    expect(screen.getByRole('navigation', { name: 'Pagination proyek' })).toBeTruthy()
+    expect(screen.getByRole('navigation', { name: 'Pagination Project' })).toBeTruthy()
     expect(screen.getByText('Halaman 1 / 2')).toBeTruthy()
     expect(screen.getAllByRole('region', { name: /Chart lifecycle/ })).toHaveLength(4)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Halaman proyek berikutnya' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Halaman Project berikutnya' }))
     expect(screen.getByText('Halaman 2 / 2')).toBeTruthy()
     expect(screen.getAllByRole('region', { name: /Chart lifecycle/ })).toHaveLength(4)
   })
@@ -71,8 +71,8 @@ describe('projectAsOf', () => {
     render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onQuickComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
 
     const chart = screen.getByRole('region', { name: /Project lifecycle market/ })
-    const filters = screen.getByRole('region', { name: 'Filter daftar proyek' })
-    const registry = screen.getByRole('region', { name: /Daftar proyek/ })
+    const filters = screen.getByRole('region', { name: 'Filter daftar Project' })
+    const registry = screen.getByRole('region', { name: /Daftar Project/ })
     expect(chart.compareDocumentPosition(filters) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(filters.compareDocumentPosition(registry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
@@ -89,9 +89,9 @@ describe('projectAsOf', () => {
     const candleCount = document.querySelectorAll('[data-project-candle]').length
     fireEvent.change(screen.getByRole('combobox', { name: 'Perusahaan' }), { target: { value: company } })
 
-    const filters = screen.getByRole('region', { name: 'Filter daftar proyek' })
-    const registry = screen.getByRole('region', { name: `Daftar proyek ${snapshotYear}` })
-    expect(filters.textContent).toContain(`${expected} proyek`)
+    const filters = screen.getByRole('region', { name: 'Filter daftar Project' })
+    const registry = screen.getByRole('region', { name: `Daftar Project ${snapshotYear}` })
+    expect(filters.textContent).toContain(`${expected} Project`)
     expect(registry.querySelectorAll(':scope > article')).toHaveLength(Math.min(expected, 12))
     expect(document.querySelectorAll('[data-project-candle]')).toHaveLength(candleCount)
   })
@@ -100,10 +100,10 @@ describe('projectAsOf', () => {
     const workspace = seedFinanceWorkspace()
     render(createElement(ProjectCommandCenter, { workspace, onAdd: vi.fn(), onEdit: vi.fn(), onComplete: vi.fn(), onQuickComplete: vi.fn(), onDelete: vi.fn(), onOpen: vi.fn() }))
 
-    const registry = screen.getByRole('region', { name: /Daftar proyek/ })
+    const registry = screen.getByRole('region', { name: /Daftar Project/ })
     for (const row of registry.querySelectorAll(':scope > article')) {
       const projectName = row.querySelector('.project-register-main strong')?.textContent ?? ''
-      expect(within(row as HTMLElement).getByRole('button', { name: `Buka proyek ${projectName}` })).toBeTruthy()
+      expect(within(row as HTMLElement).getByRole('button', { name: `Buka Project ${projectName}` })).toBeTruthy()
       expect(within(row as HTMLElement).getByRole('button', { name: `Ubah ${projectName}` })).toBeTruthy()
       expect(within(row as HTMLElement).getByRole('button', { name: `Hapus ${projectName}` })).toBeTruthy()
       const completion = within(row as HTMLElement).queryByRole('button', { name: `Selesaikan ${projectName}` })
@@ -112,11 +112,11 @@ describe('projectAsOf', () => {
     }
   })
 
-  it('exposes exactly one quick-completion action only for active registry rows', () => {
+  it('shows legacy planned records as active and keeps planned out of the status filter', () => {
     const workspace = seedFinanceWorkspace()
     const active = workspace.projects.find((project) => project.status === 'active' && project.started_on.startsWith('2026'))!
     const completed = workspace.projects.find((project) => project.status === 'completed' && project.started_on.startsWith('2026'))!
-    const planned = workspace.projects.find((project) => project.status === 'planned' && project.started_on.startsWith('2026'))!
+    const planned = { ...active, id: 'legacy-planned-project', name: 'Project lama', status: 'planned' as const }
     workspace.projects = [active, completed, planned]
     workspace.updated_at = `${active.started_on.slice(0, 4)}-12-31T10:00:00.000Z`
     const onComplete = vi.fn()
@@ -125,7 +125,10 @@ describe('projectAsOf', () => {
     const action = screen.getByRole('button', { name: `Selesaikan ${active.name}` })
     expect(screen.getAllByRole('button', { name: `Selesaikan ${active.name}` })).toHaveLength(1)
     expect(screen.queryByRole('button', { name: `Selesaikan ${completed.name}` })).toBeNull()
-    expect(screen.queryByRole('button', { name: `Selesaikan ${planned.name}` })).toBeNull()
+    expect(screen.getByRole('button', { name: `Selesaikan ${planned.name}` })).toBeTruthy()
+    expect(screen.getAllByText('Aktif', { selector: '.status-chip' })).toHaveLength(2)
+    const statusFilter = screen.getByRole('combobox', { name: 'Status' }) as HTMLSelectElement
+    expect([...statusFilter.options].map((option) => option.textContent)).not.toContain('Direncanakan')
     fireEvent.click(action)
     expect(onComplete).toHaveBeenCalledWith(active)
   })

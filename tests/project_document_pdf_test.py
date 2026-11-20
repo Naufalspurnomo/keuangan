@@ -427,13 +427,16 @@ def test_renderer_embeds_valid_small_project_data_image_deterministically():
 @pytest.mark.parametrize(
     "image_url",
     [
-        "https://attacker.example/project.png",
-        "file:///etc/passwd",
-        "data:image/gif;base64,R0lGODlhAQABAIAAAAUEBA==",
-        "data:image/png;base64,not-valid-base64!",
-        "data:image/png;base64,Zm9v",
-        "data:image/png;base64," + ("A" * 196_609),
-        "data:image/png;base64," + base64.b64encode(b"x" * (144 * 1024 + 1)).decode("ascii"),
+        pytest.param("https://attacker.example/project.png", id="remote-url"),
+        pytest.param("file:///etc/passwd", id="local-file"),
+        pytest.param("data:image/gif;base64,R0lGODlhAQABAIAAAAUEBA==", id="unsupported-mime"),
+        pytest.param("data:image/png;base64,not-valid-base64!", id="invalid-base64"),
+        pytest.param("data:image/png;base64,Zm9v", id="invalid-png"),
+        pytest.param("data:image/png;base64," + ("A" * 196_609), id="encoded-over-limit"),
+        pytest.param(
+            "data:image/png;base64," + base64.b64encode(b"x" * (144 * 1024 + 1)).decode("ascii"),
+            id="decoded-over-limit",
+        ),
     ],
 )
 def test_renderer_ignores_invalid_oversized_or_remote_project_images_without_io(

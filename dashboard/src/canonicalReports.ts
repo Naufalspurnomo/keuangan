@@ -13,8 +13,8 @@ export type CanonicalReportType =
 export const CANONICAL_REPORT_TYPES: ReadonlyArray<{ value: CanonicalReportType; label: string }> = [
   { value: 'cashflow', label: 'Arus kas' },
   { value: 'wallet-position', label: 'Posisi dompet' },
-  { value: 'project-profitability', label: 'Profitabilitas proyek' },
-  { value: 'project-lifecycle', label: 'Lifecycle proyek' },
+  { value: 'project-profitability', label: 'Profitabilitas Project' },
+  { value: 'project-lifecycle', label: 'Lifecycle Project' },
   { value: 'office-operations', label: 'Operasional kantor' },
   { value: 'debt-aging', label: 'Aging hutang' },
   { value: 'transaction-audit', label: 'Audit transaksi' },
@@ -33,12 +33,12 @@ export interface CanonicalReportDataset {
 }
 
 const money = (value: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value)
-const status = (value: string) => value === 'active' ? 'Aktif' : value === 'completed' ? 'Selesai' : value === 'cancelled' ? 'Dibatalkan' : 'Direncanakan'
+const status = (value: string) => value === 'completed' ? 'Selesai' : value === 'cancelled' ? 'Dibatalkan' : 'Aktif'
 
 function transactionRows(model: ReportModel) {
   return model.rows.map((row) => [
     row.date,
-    row.scope === 'office' ? 'Operasional Kantor' : 'Proyek',
+    row.scope === 'office' ? 'Operasional Kantor' : 'Project',
     row.wallet,
     row.company ?? '—',
     row.project ?? '—',
@@ -67,11 +67,11 @@ export function buildCanonicalReportDataset(workspace: FinanceWorkspace, model: 
       const expense = transactions.filter((row) => row.direction === 'expense').reduce((sum, row) => sum + row.amount, 0)
       return [project.id, project.name, project.company, project.wallet, money(income), money(expense), money(income - expense)]
     })
-    return { ...base, title: 'Profitabilitas Proyek', headers: ['UUID', 'Proyek', 'Unit', 'Dompet', 'Pemasukan', 'Pengeluaran', 'Profit'], rows, totals: [['Jumlah proyek', String(rows.length)]] }
+    return { ...base, title: 'Profitabilitas Project', headers: ['UUID', 'Project', 'Unit', 'Dompet', 'Pemasukan', 'Pengeluaran', 'Profit'], rows, totals: [['Jumlah Project', String(rows.length)]] }
   }
   if (type === 'project-lifecycle') {
     const rows = workspace.projects.map((project) => [project.id, project.name, status(project.status), project.started_on, project.completed_on ?? '—', project.company, project.wallet])
-    return { ...base, title: 'Lifecycle Proyek', headers: ['UUID', 'Proyek', 'Status', 'Mulai', 'Selesai', 'Unit', 'Dompet'], rows, totals: [['Jumlah proyek', String(rows.length)]] }
+    return { ...base, title: 'Lifecycle Project', headers: ['UUID', 'Project', 'Status', 'Mulai', 'Selesai', 'Unit', 'Dompet'], rows, totals: [['Jumlah Project', String(rows.length)]] }
   }
   if (type === 'debt-aging') {
     const today = new Date(`${workspace.live_data_through ?? new Date().toISOString().slice(0, 10)}T00:00:00Z`).getTime()
@@ -81,7 +81,7 @@ export function buildCanonicalReportDataset(workspace: FinanceWorkspace, model: 
       const project = workspace.projects.find((item) => item.id === debt.project_id)
       return [debt.id, debt.date, debt.due_at ?? '—', age, debt.lender, debt.borrower, project?.name ?? '—', money(debt.amount), money(debt.repaid), money(debt.amount - debt.repaid)]
     })
-    return { ...base, title: 'Aging Hutang', headers: ['UUID', 'Pencairan', 'Jatuh tempo', 'Aging', 'Pemberi dana', 'Peminjam', 'Proyek', 'Principal', 'Terbayar', 'Outstanding'], rows, totals: [['Outstanding', money(workspace.debts.reduce((sum, debt) => sum + debt.amount - debt.repaid, 0))]] }
+    return { ...base, title: 'Aging Hutang', headers: ['UUID', 'Pencairan', 'Jatuh tempo', 'Aging', 'Pemberi dana', 'Peminjam', 'Project', 'Principal', 'Terbayar', 'Outstanding'], rows, totals: [['Outstanding', money(workspace.debts.reduce((sum, debt) => sum + debt.amount - debt.repaid, 0))]] }
   }
   if (type === 'transaction-audit') {
     const rows = workspace.transactions.map((row) => [row.canonical_transaction_id ?? row.id, String(row.transaction_version ?? 1), row.date, row.scope, row.wallet, row.company ?? '—', row.direction, money(row.amount), row.recorded_by ?? '—', row.evidence_source ?? '—', row.notes])
@@ -94,7 +94,7 @@ export function buildCanonicalReportDataset(workspace: FinanceWorkspace, model: 
   return {
     ...base,
     title: type === 'office-operations' ? 'Operasional Kantor' : 'Arus Kas',
-    headers: ['Tanggal', 'Aktivitas', 'Dompet', 'Unit', 'Proyek', 'Jenis', 'Keterangan', 'Jumlah'],
+    headers: ['Tanggal', 'Aktivitas', 'Dompet', 'Unit', 'Project', 'Jenis', 'Keterangan', 'Jumlah'],
     rows,
     totals: [['Pemasukan', money(income)], ['Pengeluaran', money(expense)], ['Bersih', money(income - expense)], ['Jumlah record', String(rows.length)]],
   }

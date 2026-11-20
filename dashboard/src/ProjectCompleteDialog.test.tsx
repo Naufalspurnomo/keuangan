@@ -19,7 +19,7 @@ describe('ProjectCompleteDialog', () => {
     expect(date.value).toBe('2026-10-30')
     expect(date.min).toBe(project.started_on)
     fireEvent.change(date, { target: { value: '2026-10-29' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Selesaikan proyek' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Selesaikan Project' }))
 
     expect(onSave).toHaveBeenCalledWith({
       name: project.name,
@@ -38,7 +38,7 @@ describe('ProjectCompleteDialog', () => {
     const onSave = vi.fn()
     render(<ProjectCompleteDialog project={project} onSave={onSave} onClose={vi.fn()} />)
     fireEvent.change(screen.getByLabelText('Tanggal selesai *'), { target: { value: '2026-10-19' } })
-    fireEvent.submit(screen.getByRole('button', { name: 'Selesaikan proyek' }).closest('form')!)
+    fireEvent.submit(screen.getByRole('button', { name: 'Selesaikan Project' }).closest('form')!)
 
     expect(onSave).not.toHaveBeenCalled()
     expect(screen.getByRole('alert').textContent).toContain('Tanggal selesai tidak boleh sebelum tanggal mulai')

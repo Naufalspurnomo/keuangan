@@ -81,6 +81,20 @@ const document = {
 const meta = { capabilities: { reads_enabled: true, project_document_writes_enabled: true, transaction_correction_reversal: false } }
 
 describe('project/document API', () => {
+  it('normalizes legacy project status and always creates as active', async () => {
+    const legacyProject = { ...backendProject, status: 'planned' }
+    const request = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => init?.method === 'POST'
+      ? json({ api_version: 'dashboard.v1', data: { project: legacyProject }, meta })
+      : json({ api_version: 'dashboard.v1', data: { items: [legacyProject] }, meta }))
+    const api = createProjectDocumentApi({ request, keyFactory: () => 'idem-key-1234567890' })
+
+    expect((await api.listProjects()).projects[0].status).toBe('active')
+    const created = await api.createProject({ ...project, status: 'planned' }).submit(session)
+    expect(created.status).toBe('active')
+    const payload = JSON.parse(String(request.mock.calls[1][1]?.body)) as { values: { status: string } }
+    expect(payload.values.status).toBe('active')
+  })
+
   it('reads same-origin projects with credentials and validates dashboard.v1', async () => {
     const request = vi.fn(async () => json({ api_version: 'dashboard.v1', data: { items: [backendProject] }, meta }))
     const api = createProjectDocumentApi({ request })

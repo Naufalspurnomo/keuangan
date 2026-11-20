@@ -38,7 +38,7 @@ describe('transaction tools', () => {
   it('exports traceable semicolon CSV with spreadsheet-injection protection', () => {
     const malicious = [{ ...rows[0], notes: '=HYPERLINK("https://evil.invalid")' }]
     const csv = transactionsToCsv(malicious)
-    expect(csv).toContain('Tanggal;Jenis;Jumlah;Dompet;Perusahaan;Proyek;Keterangan;Source Key')
+    expect(csv).toContain('Tanggal;Jenis;Jumlah;Dompet;Perusahaan;Project;Keterangan;Source Key')
     expect(csv).toContain("'=HYPERLINK")
     expect(csv).toContain('WA-001|1')
     expect(csv.startsWith('\uFEFF')).toBe(true)

@@ -49,14 +49,14 @@ describe('ProjectDetailWorkspace', () => {
     const onStatusChange = vi.fn()
     const onDelete = vi.fn()
     const { rerender } = render(<ProjectDetailWorkspace project={project} tab="documents" onRouteChange={vi.fn()} onBack={vi.fn()} transactions={null} presensi={null} documents={null} capabilities={{ projectWrites: false, documentWrites: false, transactionCorrections: false, transactionReversals: false, hardDelete: false }} onEdit={onEdit} onStatusChange={onStatusChange} onDelete={onDelete} />)
-    expect(screen.queryByRole('button', { name: 'Ubah proyek' })).toBeNull()
-    expect(screen.getByText('Perubahan proyek belum diaktifkan.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Ubah Project' })).toBeNull()
+    expect(screen.getByText('Perubahan Project belum diaktifkan.')).toBeTruthy()
 
     rerender(<ProjectDetailWorkspace project={project} tab="documents" onRouteChange={vi.fn()} onBack={vi.fn()} transactions={null} presensi={null} documents={null} capabilities={{ projectWrites: true, documentWrites: true, transactionCorrections: false, transactionReversals: false, hardDelete: true }} onEdit={onEdit} onStatusChange={onStatusChange} onDelete={onDelete} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Ubah proyek' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ubah Project' }))
     vi.spyOn(window, 'confirm').mockReturnValue(true)
-    fireEvent.click(screen.getByRole('button', { name: 'Batalkan proyek' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Hapus proyek permanen' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Batalkan Project' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Hapus Project permanen' }))
     expect(onEdit).toHaveBeenCalledWith(project)
     expect(onStatusChange).toHaveBeenCalledWith('cancelled')
     expect(onDelete).toHaveBeenCalled()
@@ -77,14 +77,33 @@ describe('ProjectDetailWorkspace', () => {
     }
     const { rerender } = render(<ProjectDetailWorkspace {...props} project={project} />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Batalkan proyek' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Batalkan Project' }))
     expect(onStatusChange).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'Batalkan proyek' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Batalkan Project' }))
     expect(confirmation).toHaveBeenCalledTimes(2)
     expect(onStatusChange).toHaveBeenCalledWith('cancelled')
 
     rerender(<ProjectDetailWorkspace {...props} project={{ ...project, status: 'cancelled' }} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Aktifkan proyek' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aktifkan Project' }))
     expect(onStatusChange).toHaveBeenLastCalledWith('active')
+  })
+
+  it('presents a legacy planned record as active with the active-project actions', () => {
+    render(<ProjectDetailWorkspace
+      project={{ ...project, status: 'planned' }}
+      tab="overview"
+      onRouteChange={vi.fn()}
+      onBack={vi.fn()}
+      transactions={null}
+      presensi={null}
+      documents={null}
+      capabilities={{ projectWrites: true, documentWrites: false, transactionCorrections: false, transactionReversals: false, hardDelete: false }}
+      onStatusChange={vi.fn()}
+    />)
+
+    expect(screen.getAllByText('Aktif', { selector: '.status-chip' })).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Selesaikan Project' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Aktifkan Project' })).toBeNull()
+    expect(screen.queryByText('Direncanakan')).toBeNull()
   })
 })

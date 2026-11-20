@@ -106,7 +106,7 @@ export function CanonicalDebtCreateForm({ projects, saving, initialProjectId = n
     <div className="form-grid">
       <label>Dompet pemberi dana<select value={lender} onChange={(event) => setLender(event.target.value)}>{CANONICAL_WALLETS.map((wallet) => <option key={wallet}>{wallet}</option>)}</select></label>
       <label>Dompet peminjam<select value={borrower} onChange={(event) => setBorrower(event.target.value)}>{CANONICAL_WALLETS.map((wallet) => <option key={wallet}>{wallet}</option>)}</select></label>
-      <label>Proyek terkait<select value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">Tanpa proyek</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
+      <label>Project terkait<select value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">Tanpa Project</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
       <label>Jumlah<input inputMode="numeric" value={principal} onChange={(event) => setPrincipal(event.target.value.replace(/\D/g, ''))} /></label>
       <label>Tanggal pencairan<input type="date" value={occurredOn} onChange={(event) => setOccurredOn(event.target.value)} /></label>
       <label>Jatuh tempo<input type="date" value={dueOn} onChange={(event) => setDueOn(event.target.value)} /></label>

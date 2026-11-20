@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent 
 
 import { useModalDialog } from './CanonicalDebtForms'
 import ProjectDocumentPreview from './ProjectDocumentPreview'
+import RupiahAmountInput from './RupiahAmountInput'
 import { commercialPolicy, normalizeCommercialLine } from './commercialDocumentPolicy'
 import { projectTemplateKey } from './commercialDocumentViewModel'
+import { compressProjectImage } from './projectDocumentImage'
 import { ProjectDocumentApiError, type ProjectDocumentSession } from './projectDocumentApi'
 import { createProjectQuotationApi, type ProjectQuotationApi } from './projectQuotationApi'
 import {
@@ -21,9 +23,6 @@ import {
 const IDR = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })
 const compactIDR = (value: number) => IDR.format(value).replace(/\s/g, '')
 const labels = { draft: 'Draf', sent: 'Terkirim', revised: 'Direvisi', accepted: 'Deal', rejected: 'Ditolak' }
-const MAX_IMAGE_DATA_URL = 196_608
-const MAX_IMAGE_BYTES = 144 * 1024
-const MAX_IMAGE_DIMENSION = 1600
 const MAX_INSTALLMENTS = 24
 
 type EditorMode = 'create' | 'edit' | 'revise'
@@ -164,6 +163,7 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
 }) {
   const [values, setValues] = useState(state.values)
   const [error, setError] = useState('')
+  const [imageProcessing, setImageProcessing] = useState(false)
   const policy = commercialPolicy(values.template_key || projectTemplateKey(project))
   const calculation = useMemo(() => {
     try { return { value: calculatedValues(project, values), error: '' } }
@@ -179,55 +179,26 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
       lines: current.lines.map((line, lineIndex) => lineIndex === index ? { ...line, [name]: value } : line),
     }))
   }
-  const uploadImage = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
+  const uploadImage = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget
+    const file = input.files?.[0]
     if (!file) return
-    if (!['image/png', 'image/jpeg'].includes(file.type)) {
-      setError('Gambar proyek harus PNG atau JPEG.')
-      event.target.value = ''
-      return
-    }
-    const reader = new FileReader()
-    reader.onerror = () => setError('Gambar proyek gagal dibaca.')
-    reader.onload = () => {
-      const source = String(reader.result || '')
-      const image = new Image()
-      image.onerror = () => setError('Gambar proyek gagal diproses.')
-      image.onload = () => {
-        const scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(image.naturalWidth, image.naturalHeight))
-        const canvas = document.createElement('canvas')
-        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
-        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
-        const context = canvas.getContext('2d')
-        if (!context) { setError('Gambar proyek gagal diproses.'); return }
-        context.drawImage(image, 0, 0, canvas.width, canvas.height)
-        let data = canvas.toDataURL('image/jpeg', 0.86)
-        if (data.length > MAX_IMAGE_DATA_URL) data = canvas.toDataURL('image/jpeg', 0.68)
-        const approximateBytes = Math.ceil((data.split(',')[1]?.length ?? 0) * 0.75)
-        if (
-          data.length > MAX_IMAGE_DATA_URL
-          || approximateBytes > MAX_IMAGE_BYTES
-          || !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(data)
-        ) {
-          setError('Gambar masih terlalu besar setelah dikompresi. Gunakan gambar yang lebih sederhana.')
-          return
-        }
-        setError('')
-        field('project_image_url', data)
-      }
-      image.src = source
-    }
-    reader.readAsDataURL(file)
+    setImageProcessing(true)
+    setError('')
+    try { field('project_image_url', await compressProjectImage(file)) }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Gambar Project gagal diproses.') }
+    finally { setImageProcessing(false); input.value = '' }
   }
   const submit = async (event: FormEvent) => {
     event.preventDefault()
+    if (imageProcessing || busy) return
     setError('')
     try {
       if (!values.recipient_name.trim()) throw new Error('Nama penerima wajib diisi.')
-      if (!values.project_name.trim()) throw new Error('Nama proyek wajib diisi.')
+      if (!values.project_name.trim()) throw new Error('Nama Project wajib diisi.')
       if (!values.subject.trim()) throw new Error('Subjek penawaran wajib diisi.')
-      if (!values.project_image_url) throw new Error('Gambar proyek wajib diunggah.')
-      if (!/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(values.project_image_url)) throw new Error('Gambar proyek harus berupa data PNG atau JPEG.')
+      if (!values.project_image_url) throw new Error('Gambar Project wajib diunggah.')
+      if (!/^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(values.project_image_url)) throw new Error('Gambar Project harus berupa data PNG atau JPEG.')
       if (!values.lines.length) throw new Error('Tambahkan minimal satu item.')
       for (const line of values.lines) {
         if (!line.description.trim() || !line.unit.trim()) throw new Error('Deskripsi dan satuan setiap item wajib diisi.')
@@ -241,24 +212,24 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
   const editorTitle = state.mode === 'revise' ? `Revisi dari versi ${state.source?.version}` : state.mode === 'edit' ? `Edit versi ${state.source?.version}` : 'Buat quotation'
   return <form className="quotation-editor quotation-workspace" onSubmit={submit} aria-label={state.mode === 'create' ? 'Quotation baru' : 'Editor quotation'}>
     <header>
-      <div><span className="eyebrow">DOKUMEN KOMERSIAL</span><h4>{editorTitle}</h4><p>Susun penawaran yang siap dikirim tanpa berpindah halaman.</p></div>
+      <div><span className="eyebrow">DOKUMEN KOMERSIAL</span><h4>{editorTitle}</h4><p>Simpan draf, periksa PDF, lalu kirim manual ke klien.</p></div>
       <label className="quotation-brand-field">Template merek<input value={`${policy.template_key.toUpperCase()} · ${policy.page_size}`} readOnly aria-readonly="true" /></label>
     </header>
-    <ol className="document-workflow" aria-label="Alur pembuatan quotation"><li><span>1</span><strong>Klien & proyek</strong></li><li><span>2</span><strong>Item & harga</strong></li><li><span>3</span><strong>Ketentuan</strong></li></ol>
+    <ol className="document-workflow" aria-label="Alur pembuatan quotation"><li><span>1</span><strong>Klien & Project</strong></li><li><span>2</span><strong>Item & harga</strong></li><li><span>3</span><strong>Ketentuan</strong></li></ol>
     <div className="quotation-editor-layout"><div className="quotation-editor-main">
     <fieldset disabled={busy}>
-      <legend>Data penerima dan proyek</legend>
+      <legend>Data penerima dan Project</legend>
       <div className="quotation-field-grid">
         <label>Nama penerima<input value={values.recipient_name} onChange={(event) => field('recipient_name', event.target.value)} required /></label>
         <label>Perusahaan penerima<input value={values.recipient_company} onChange={(event) => field('recipient_company', event.target.value)} /></label>
         <label className="wide">Alamat penerima<textarea value={values.recipient_address} onChange={(event) => field('recipient_address', event.target.value)} /></label>
         <label>Kontak penerima<input value={values.recipient_contact} onChange={(event) => field('recipient_contact', event.target.value)} /></label>
-        <label>Nama proyek<input value={values.project_name} onChange={(event) => field('project_name', event.target.value)} required /></label>
+        <label>Nama Project<input value={values.project_name} onChange={(event) => field('project_name', event.target.value)} required /></label>
         <label className="wide">Subjek<input value={values.subject} onChange={(event) => field('subject', event.target.value)} required /></label>
         <label>Berlaku sampai<input value={`Ditetapkan ${policy.default_validity_days} hari dari tanggal kirim`} readOnly aria-readonly="true" /></label>
-        <label>Gambar proyek (PNG/JPEG)<input aria-label="Gambar proyek" type="file" accept="image/png,image/jpeg" required={!values.project_image_url} onChange={uploadImage} /></label>
+        <label>Gambar Project (PNG/JPEG)<input aria-label="Gambar Project" type="file" accept="image/png,image/jpeg" required={!values.project_image_url} onChange={uploadImage} />{imageProcessing && <small role="status">Memproses gambar…</small>}</label>
       </div>
-      {values.project_image_url && <div className="quotation-image-preview"><img src={values.project_image_url} alt="Pratinjau gambar proyek" /><button type="button" onClick={() => field('project_image_url', null)}>Hapus gambar</button></div>}
+      {values.project_image_url && <div className="quotation-image-preview"><img src={values.project_image_url} alt="Pratinjau gambar Project" /><button type="button" onClick={() => field('project_image_url', null)}>Hapus gambar</button></div>}
     </fieldset>
 
     <fieldset disabled={busy}>
@@ -274,14 +245,14 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
             <label>Jumlah artwork item {index + 1}<input type="number" min="1" step="1" value={line.display_quantity ?? line.quantity} onChange={(event) => { lineField(index, 'display_quantity', event.target.value); lineField(index, 'quantity', event.target.value) }} required /></label>
             <label>Lebar item {index + 1}<input type="number" min="0" step="any" value={line.width ?? ''} onChange={(event) => lineField(index, 'width', event.target.value)} /></label>
             <label>Tinggi item {index + 1}<input type="number" min="0" step="any" value={line.height ?? ''} onChange={(event) => lineField(index, 'height', event.target.value)} /></label>
-            <label>Harga awal item {index + 1}<input type="number" min="0" step="1" value={line.original_price ?? ''} onChange={(event) => lineField(index, 'original_price', event.target.value ? Number(event.target.value) : null)} /></label>
+            <RupiahAmountInput label={`Harga awal item ${index + 1}`} value={line.original_price ?? null} required={false} disabled={busy || imageProcessing} onChange={(amount) => lineField(index, 'original_price', amount)} />
           </> : <>
             <label>Lebar item {index + 1} (m)<input type="number" min="0.0001" step="any" value={line.width ?? ''} onChange={(event) => lineField(index, 'width', event.target.value)} required /></label>
             <label>Tinggi item {index + 1} (m)<input type="number" min="0.0001" step="any" value={line.height ?? ''} onChange={(event) => lineField(index, 'height', event.target.value)} required /></label>
             <label>Pembulatan luas item {index + 1}<select value={line.area_rounding ?? 'half_up'} onChange={(event) => lineField(index, 'area_rounding', event.target.value as ProjectQuotationLine['area_rounding'])}><option value="exact">Exact 4 desimal</option><option value="half_up">Half-up 2 desimal</option><option value="truncate">Potong 2 desimal</option><option value="manual_override">Override manual</option></select></label>
             {line.area_rounding === 'manual_override' && <label>Luas tagihan item {index + 1} (m²)<input type="number" min="0.0001" step="any" value={line.billed_area_m2 ?? ''} onChange={(event) => lineField(index, 'billed_area_m2', event.target.value)} required /></label>}
           </>}
-          <label>{policy.labels.unit_price} item {index + 1}<input type="number" min="0" step="1" value={line.unit_price} onChange={(event) => lineField(index, 'unit_price', Number(event.target.value))} required /></label>
+            <RupiahAmountInput label={`${policy.labels.unit_price} item ${index + 1}`} value={line.unit_price} disabled={busy || imageProcessing} onChange={(amount) => lineField(index, 'unit_price', amount ?? 0)} />
           <label>Diskon item {index + 1} (%)<input type="number" min="0" max="100" step="0.01" value={line.discount_percent} onChange={(event) => lineField(index, 'discount_percent', event.target.value)} /></label>
           {values.lines.length > 1 && <button type="button" className="danger-secondary" onClick={() => setValues((current) => ({ ...current, lines: current.lines.filter((_, lineIndex) => lineIndex !== index) }))}>Hapus item {index + 1}</button>}
         </article>)}
@@ -293,9 +264,11 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
       <legend>Ringkasan dan ketentuan</legend>
       <div className="quotation-field-grid">
         <label>Jenis diskon dokumen<select value={values.discount_mode} onChange={(event) => field('discount_mode', event.target.value as ProjectQuotationValues['discount_mode'])}><option value="none">Tanpa diskon</option><option value="percent">Persen</option><option value="fixed">Rupiah</option></select></label>
-        <label>Nilai diskon dokumen<input type="number" min="0" step={values.discount_mode === 'fixed' ? '1' : '0.01'} value={values.discount_value} disabled={values.discount_mode === 'none'} onChange={(event) => field('discount_value', event.target.value)} /></label>
+        {values.discount_mode === 'fixed'
+          ? <RupiahAmountInput label="Nilai diskon dokumen" value={Number.isSafeInteger(Number(values.discount_value)) ? Number(values.discount_value) : null} required={false} disabled={busy || imageProcessing} onChange={(amount) => field('discount_value', String(amount ?? ''))} />
+          : <label>Nilai diskon dokumen (%)<input type="number" min="0" step="0.01" value={values.discount_value} disabled={values.discount_mode === 'none' || busy || imageProcessing} onChange={(event) => field('discount_value', event.target.value)} /></label>}
         <label>Pajak (%)<input type="number" min="0" max="100" step="0.01" value={values.tax_percent} onChange={(event) => field('tax_percent', event.target.value)} /></label>
-        <label>DP proyek (%)<input type="number" min="1" max="99" step="1" value={values.deposit_percent} onChange={(event) => field('deposit_percent', Number(event.target.value))} required /><small>Default merek {policy.default_deposit_percent}%; boleh disesuaikan per proyek.</small></label>
+        <label>DP Project (%)<input type="number" min="1" max="99" step="1" value={values.deposit_percent} onChange={(event) => field('deposit_percent', Number(event.target.value))} required /><small>Default merek {policy.default_deposit_percent}%; boleh disesuaikan per Project.</small></label>
         <label className="wide">Ketentuan pembayaran<textarea value={values.payment_terms} onChange={(event) => field('payment_terms', event.target.value)} /></label>
         <label className="wide">Catatan quotation<textarea value={values.content_notes} onChange={(event) => field('content_notes', event.target.value)} /></label>
       </div>
@@ -313,8 +286,8 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
       {calculation.value && <div className="quotation-paper-proof"><span className="eyebrow">BUKTI KERTAS · {policy.page_size}</span><ProjectDocumentPreview project={project} document={quotationDraft(project, calculation.value.values)} title="Quotation" /></div>}
     </aside></div>
     <footer className="quotation-actions quotation-save-bar">
-      <span>{state.mode === 'revise' ? 'Versi sebelumnya tetap tersimpan.' : 'Simpan sekarang, kirim setelah diperiksa.'}</span>
-      <div><button type="button" className="secondary" onClick={onCancel}>Batal</button><button type="submit" disabled={busy}>{busy ? 'Menyimpan…' : state.mode === 'revise' ? 'Simpan sebagai revisi' : 'Simpan draf'}</button></div>
+      <span>{state.mode === 'revise' ? 'Versi sebelumnya tetap tersimpan.' : 'Simpan draf sebelum mengunduh PDF.'}</span>
+      <div><button type="button" className="secondary" onClick={onCancel} disabled={busy || imageProcessing}>Batal</button><button type="submit" disabled={busy || imageProcessing}>{imageProcessing ? 'Memproses gambar…' : busy ? 'Menyimpan…' : state.mode === 'revise' ? 'Simpan sebagai revisi' : 'Simpan draf'}</button></div>
     </footer>
   </form>
 }
@@ -444,7 +417,7 @@ export default function ProjectQuotationPanel({ project, salesOrder, session, ap
   const deal = async (dpPercent: number, remainingInstallments: number) => {
     if (!dealItem) return
     if (!salesOrder || salesOrder.status !== 'draft') {
-      setError('Sales Order draf proyek tidak tersedia. Muat ulang proyek sebelum menandai Deal.')
+      setError('Sales Order draf Project tidak tersedia. Muat ulang Project sebelum menandai Deal.')
       return
     }
     setBusy(true); setError(''); setNotice('')
@@ -477,11 +450,11 @@ export default function ProjectQuotationPanel({ project, salesOrder, session, ap
   }
 
   return <section className="quotation-panel" aria-labelledby="quotation-title">
-    <header><div><span className="eyebrow">Komersial</span><h3 id="quotation-title">Quotation proyek</h3><p>Susun penawaran, simpan riwayat versi, lalu kunci versi yang disepakati.</p></div><div><span className="status-pill">Template {commercialPolicy(projectTemplateKey(project)).template_key.toUpperCase()}</span><button type="button" onClick={() => setEditor({ mode: 'create', source: null, values: projectValues(project) })} disabled={busy || Boolean(editor)}>Buat quotation</button></div></header>
+    <header><div><span className="eyebrow">PENAWARAN</span><h3 id="quotation-title">Quotation</h3><p>Admin mengunduh PDF, mengirim manual ke klien, lalu mencatat statusnya di sini.</p></div><div><span className="status-pill">Template {commercialPolicy(projectTemplateKey(project)).template_key.toUpperCase()}</span><button type="button" className="primary-button" onClick={() => setEditor({ mode: 'create', source: null, values: projectValues(project) })} disabled={busy || Boolean(editor)}>Buat quotation</button></div></header>
     {error && <p className="document-state-alert" role="alert">{error} <button type="button" className="secondary" onClick={() => void load()}>Muat ulang</button></p>}
     {notice && <p className="document-state-notice" role="status">{notice}</p>}
     {editor && <QuotationEditor project={project} state={editor} busy={busy} onCancel={() => setEditor(null)} onSave={save} />}
-    {loading ? <p role="status">Memuat riwayat quotation…</p> : items.length === 0 ? <p className="empty-state">Belum ada quotation. Buat draf terstruktur pertama untuk proyek ini.</p> : <div className="quotation-history" aria-label="Riwayat versi quotation">
+    {loading ? <p role="status">Memuat riwayat quotation…</p> : items.length === 0 ? <p className="empty-state">Belum ada quotation. Buat draf terstruktur pertama untuk Project ini.</p> : <div className="quotation-history" aria-label="Riwayat versi quotation">
       {items.map((item) => <article key={item.id} className={item.status === 'accepted' ? 'accepted' : ''}>
         <div className="quotation-version"><strong>Versi {item.version}</strong><span className={`status-pill status-${item.status}`}>{labels[item.status]}</span></div>
         <div><span>{item.subject || `Quotation ${project.name}`}</span><strong>{IDR.format(item.accepted_snapshot?.amount ?? item.amount)}</strong></div>
@@ -493,7 +466,7 @@ export default function ProjectQuotationPanel({ project, salesOrder, session, ap
             : null}
           {item.status === 'draft' && <button type="button" className="secondary" aria-label={`Edit versi ${item.version}`} onClick={() => setEditor({ mode: 'edit', source: item, values: valuesFromItem(project, item) })} disabled={busy || Boolean(editor)}>Edit</button>}
           {(item.status === 'draft' || item.status === 'sent') && <button type="button" className="secondary" aria-label={`Buat revisi versi ${item.version}`} onClick={() => setEditor({ mode: 'revise', source: item, values: valuesFromItem(project, item) })} disabled={busy || Boolean(editor)}>Buat revisi</button>}
-          {item.status === 'draft' && <button type="button" className="secondary" onClick={() => void transition(item, 'sent')} disabled={busy}>Tandai terkirim</button>}
+          {item.status === 'draft' && <button type="button" className="secondary" onClick={() => void transition(item, 'sent')} disabled={busy}>Catat sudah dikirim</button>}
           {item.status === 'sent' && <button type="button" aria-label={`Tandai Deal versi ${item.version}`} onClick={() => setDealItem(item)} disabled={busy}>Tandai Deal</button>}
           {item.status === 'sent' && <button type="button" className="danger-secondary" onClick={() => { setRejectItem(item); setRejectNote('') }} disabled={busy}>Tandai ditolak</button>}
         </div>

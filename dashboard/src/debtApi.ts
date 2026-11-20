@@ -94,7 +94,7 @@ export function createDebtAttempt(input: CreateDebtInput, options: ApiOptions = 
   validateUuid(input.borrowerWalletId, 'Dompet peminjam')
   validateUuid(input.lenderBusinessUnitId, 'Unit pemberi dana')
   validateUuid(input.borrowerBusinessUnitId, 'Unit peminjam')
-  if (input.projectId) validateUuid(input.projectId, 'Proyek')
+  if (input.projectId) validateUuid(input.projectId, 'Project')
   if (input.lenderWalletId === input.borrowerWalletId) throw new DebtWriteError('Dompet peminjam dan pemberi dana harus berbeda.', { code: 'invalid_wallets' })
   validMoney(input.principal)
   const idempotencyKey = key()

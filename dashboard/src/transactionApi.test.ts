@@ -247,7 +247,12 @@ describe('authenticated transaction API', () => {
       transactionId: '00000000-0000-4000-8000-000000000010',
       expectedVersion: 1,
       reason: 'Bukti transaksi dikonfirmasi ulang',
-      ...(action === 'correction' ? { amount: 150_000 } : {}),
+      ...(action === 'correction' ? {
+        amount: 150_000,
+        occurredAt: '2026-10-31T17:00:00.000Z',
+        description: 'Termin kedua',
+        category: 'DP 1',
+      } : {}),
     }, { request, keyFactory: () => 'canonical-mutation-key-0001' })
     const session = {
       csrfToken: 'csrf-owner-session-token-0001',
@@ -272,7 +277,12 @@ describe('authenticated transaction API', () => {
       idempotency_key: 'canonical-mutation-key-0001',
       expected_version: 1,
       reason: 'Bukti transaksi dikonfirmasi ulang',
-      ...(action === 'correction' ? { amount: 150_000 } : {}),
+      ...(action === 'correction' ? {
+        amount: 150_000,
+        occurred_at: '2026-10-31T17:00:00.000Z',
+        description: 'Termin kedua',
+        category: 'DP 1',
+      } : {}),
     })
   })
 

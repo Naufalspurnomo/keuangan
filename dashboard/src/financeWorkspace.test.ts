@@ -51,11 +51,22 @@ describe('demo finance workspace', () => {
     expect(() => createProject(next, newProject({ company: 'Texturin Bali' }))).not.toThrow()
   })
 
-  it('requires completion dates only for completed projects', () => {
+  it('creates every new project as active and keeps legacy planned records transaction-ready', () => {
     const workspace = seedFinanceWorkspace()
-    expect(() => createProject(workspace, newProject({ status: 'completed' }))).toThrow('Tanggal selesai wajib diisi')
-    expect(() => createProject(workspace, newProject({ status: 'completed', completed_on: '2026-05-01' }))).toThrow('sebelum tanggal mulai')
-    expect(createProject(workspace, newProject({ status: 'completed', completed_on: '2026-06-30' })).projects.at(-1)?.completed_on).toBe('2026-06-30')
+    const created = createProject(workspace, newProject({ status: 'planned', completed_on: '2026-06-30' }))
+    expect(created.projects.at(-1)?.status).toBe('active')
+    expect(created.projects.at(-1)?.completed_on).toBeNull()
+
+    const source = workspace.projects.find((project) => project.status === 'active')!
+    const legacy = { ...source, status: 'planned' as const }
+    const legacyWorkspace = { ...workspace, projects: workspace.projects.map((project) => project.id === source.id ? legacy : project) }
+    expect(isFinanceWorkspace(legacyWorkspace)).toBe(true)
+    const withTransaction = createTransaction(legacyWorkspace, {
+      date: legacy.started_on, direction: 'expense', amount: 500_000, scope: 'project', wallet: legacy.wallet,
+      company: legacy.company, project_id: legacy.id, office_category: null, notes: 'Biaya pelaksanaan',
+    })
+    expect(withTransaction.transactions.some((row) => row.project_id === legacy.id && row.notes === 'Biaya pelaksanaan')).toBe(true)
+    expect(updateProject(legacyWorkspace, legacy.id, { ...legacy, status: 'planned' }).projects.find((project) => project.id === legacy.id)?.status).toBe('active')
   })
 
   it('rejects impossible calendar dates instead of normalizing them', () => {
@@ -101,17 +112,6 @@ describe('demo finance workspace', () => {
     expect(next.transactions.filter((item) => item.project_id === project.id).every((item) => item.wallet === 'TX SBY' && item.company === 'Texturin Surabaya')).toBe(true)
   })
 
-  it('prevents planned projects from carrying actual transactions', () => {
-    const workspace = seedFinanceWorkspace()
-    const active = workspace.projects.find((item) => item.status === 'active' && workspace.transactions.some((row) => row.project_id === item.id))!
-    expect(() => updateProject(workspace, active.id, { ...active, status: 'planned' })).toThrow('tidak dapat berstatus Direncanakan')
-    const planned = workspace.projects.find((item) => item.status === 'planned')!
-    expect(() => createTransaction(workspace, {
-      date: planned.started_on, direction: 'expense', amount: 500_000, scope: 'project', wallet: planned.wallet,
-      company: planned.company, project_id: planned.id, office_category: null, notes: 'Belum boleh',
-    })).toThrow('belum dapat memiliki transaksi')
-  })
-
   it('cannot complete a project before its latest transaction', () => {
     const created = createProject(seedFinanceWorkspace(), newProject({ name: 'Batas Selesai' }))
     const project = created.projects.at(-1)!
@@ -135,7 +135,7 @@ describe('demo finance workspace', () => {
     expect(() => createTransaction(workspace, {
       date: '2026-12-31', direction: 'income', amount: 500_000, scope: 'project', wallet: project.wallet,
       company: project.company, project_id: project.id, office_category: null, notes: 'Pembayaran terlambat',
-    })).toThrow('Tanggal transaksi tidak boleh setelah proyek selesai.')
+    })).toThrow('Tanggal transaksi tidak boleh setelah Project selesai.')
   })
 
   it('blocks deletion of a project that still has financial records', () => {

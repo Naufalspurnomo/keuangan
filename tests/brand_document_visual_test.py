@@ -2,8 +2,10 @@ from contextlib import contextmanager
 from pathlib import Path
 import os
 import signal
+import shutil
 import socket
 import subprocess
+import sys
 import time
 from urllib.request import urlopen
 
@@ -20,12 +22,17 @@ def visual_server():
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
+    npm = shutil.which("npm") or "npm"
+    command = [npm, "run", "dev", "--", "--host", "127.0.0.1", "--port", str(port)]
+    if os.name == "nt" and npm.lower().endswith((".cmd", ".bat")):
+        command = [os.environ.get("COMSPEC", "cmd.exe"), "/c", *command]
     process = subprocess.Popen(
-        ["npm", "run", "dev", "--", "--host", "127.0.0.1", "--port", str(port)],
+        command,
         cwd=DASHBOARD,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.STDOUT,
-        start_new_session=True,
+        start_new_session=os.name != "nt",
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
     )
     url = f"http://127.0.0.1:{port}/tests/visual/brand-documents.html"
     try:
@@ -43,18 +50,25 @@ def visual_server():
                 time.sleep(0.1)
         yield url
     finally:
-        os.killpg(process.pid, signal.SIGTERM)
+        if os.name == "nt":
+            process.terminate()
+        else:
+            os.killpg(process.pid, signal.SIGTERM)
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
+            if os.name == "nt":
+                process.kill()
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=5)
 
 
 def test_brand_document_pages_have_distinct_geometry_and_no_overflow():
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     with visual_server() as url, sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True, executable_path="/usr/bin/google-chrome")
+        executable = os.environ.get("CHROMIUM_PATH") or shutil.which("google-chrome") or shutil.which("chromium")
+        browser = playwright.chromium.launch(headless=True, executable_path=executable)
         page = browser.new_page(viewport={"width": 1440, "height": 1100}, device_scale_factor=1)
         console_errors: list[str] = []
         page.on("console", lambda message: console_errors.append(message.text) if message.type == "error" else None)

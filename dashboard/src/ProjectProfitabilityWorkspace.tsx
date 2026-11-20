@@ -155,37 +155,37 @@ export default function ProjectProfitabilityWorkspace({ project, rows, api, sess
 
   return <section className="project-profitability" aria-busy={loading}>
     <header className="project-profitability-head">
-      <div><p className="eyebrow">KINERJA KAS PROYEK</p><h2>Kas masuk dan pengeluaran tercatat</h2><p>Angka kas berasal dari transaksi proyek. Nilai kontrak berasal dari Sales Order terbit.</p></div>
+      <div><p className="eyebrow">KINERJA KAS Project</p><h2>Kas masuk dan pengeluaran tercatat</h2><p>Angka kas berasal dari transaksi Project. Nilai kontrak berasal dari Sales Order terbit.</p></div>
       <button type="button" className="secondary-button" onClick={() => void load()} disabled={loading}><RefreshCw size={15} /> Perbarui</button>
     </header>
     {error && <p role="alert" className="document-state-alert">{error}</p>}
     <section className="project-profitability-metrics" aria-label={`Ringkasan kas ${project.name}`}>
       <article><small>Nilai kontrak</small><strong>{contract === null ? '—' : IDR.format(contract)}</strong></article>
       <article><small>Kas masuk</small><strong className="positive">{IDR.format(report.income)}</strong></article>
-      <article><small>Pengeluaran proyek tercatat</small><strong className="negative">{IDR.format(report.expense)}</strong></article>
+      <article><small>Pengeluaran Project tercatat</small><strong className="negative">{IDR.format(report.expense)}</strong></article>
       <article><small>Gaji/upah tercatat</small><strong>{IDR.format(report.salary)}</strong></article>
       <article><small>Arus kas bersih</small><strong className={report.net >= 0 ? 'positive' : 'negative'}>{IDR.format(report.net)}</strong></article>
       <article><small>Sisa kontrak setelah kas keluar</small><strong className={margin === null || margin >= 0 ? 'positive' : 'negative'}>{margin === null ? '—' : IDR.format(margin)}</strong>{marginPct !== null && <span>{marginPct.toLocaleString('id-ID', { maximumFractionDigits: 1 })}%</span>}</article>
     </section>
     <p className="payment-summary-warning">Bukan laba akuntansi: angka ini hanya mengurangi nilai kontrak dengan pengeluaran kas yang sudah tercatat. Overhead kantor, pajak, kewajiban belum dibayar, dan biaya yang belum dialokasikan tidak termasuk.</p>
     <div className="project-profitability-grid">
-      <section className="project-profitability-chart" aria-label="Tren pemasukan dan biaya proyek">
+      <section className="project-profitability-chart" aria-label="Tren pemasukan dan biaya Project">
         <h3>Tren bulanan</h3>
         {report.monthly.length ? <>
           <ResponsiveContainer width="100%" height={260}><BarChart data={report.monthly} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}><CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" /><XAxis dataKey="month" tickFormatter={monthLabel} axisLine={false} tickLine={false} /><YAxis width={58} tickFormatter={(value) => COMPACT.format(Number(value))} axisLine={false} tickLine={false} /><Tooltip formatter={(value) => IDR.format(Number(value))} labelFormatter={(value) => monthLabel(String(value))} /><Legend /><Bar dataKey="income" name="Pemasukan" fill="var(--positive)" radius={[4, 4, 0, 0]} /><Bar dataKey="expense" name="Pengeluaran" fill="var(--negative)" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer>
           <table className="project-monthly-table"><caption>Data tren bulanan</caption><thead><tr><th>Bulan</th><th>Pemasukan</th><th>Pengeluaran</th><th>Arus kas bersih</th></tr></thead><tbody>{report.monthly.map((item) => <tr key={item.month}><td>{monthLabel(item.month)}</td><td>{IDR.format(item.income)}</td><td>{IDR.format(item.expense)}</td><td>{IDR.format(item.income - item.expense)}</td></tr>)}</tbody></table>
         </> : <p>Belum ada tren transaksi.</p>}
       </section>
-      <section className="project-cost-breakdown" aria-label="Rincian biaya proyek"><h3>Rincian biaya</h3>{report.categories.length ? report.categories.map(([category, amount]) => <div key={category}><span>{category}</span><strong>{IDR.format(amount)}</strong></div>) : <p>Belum ada biaya proyek.</p>}</section>
+      <section className="project-cost-breakdown" aria-label="Rincian biaya Project"><h3>Rincian biaya</h3>{report.categories.length ? report.categories.map(([category, amount]) => <div key={category}><span>{category}</span><strong>{IDR.format(amount)}</strong></div>) : <p>Belum ada biaya Project.</p>}</section>
     </div>
-    <section className="project-evidence-list" aria-label="Bukti transaksi proyek">
+    <section className="project-evidence-list" aria-label="Bukti transaksi Project">
       <header><div><ShieldCheck size={17} /><strong>Bukti transaksi</strong></div><span>File privat · review manual</span></header>
       {evidenceError && <p role="alert" className="document-state-alert">{evidenceError}</p>}
       {rows.map((row) => {
         const item = evidenceBySource.get(row.id)
         return <article key={row.id}>
           <ScanLine size={16} />
-          <div><strong>{row.notes || row.category || 'Transaksi proyek'}</strong><span>{evidenceLabel(row)}{row.recorded_by ? ` · ${row.recorded_by}` : ''}</span>{item && <span>SHA-256 {item.sha256.slice(0, 12)}… · {item.review_status === 'pending' ? 'Menunggu review' : item.review_status === 'approved' ? 'Disetujui' : 'Ditolak'}</span>}</div>
+          <div><strong>{row.notes || row.category || 'Transaksi Project'}</strong><span>{evidenceLabel(row)}{row.recorded_by ? ` · ${row.recorded_by}` : ''}</span>{item && <span>SHA-256 {item.sha256.slice(0, 12)}… · {item.review_status === 'pending' ? 'Menunggu review' : item.review_status === 'approved' ? 'Disetujui' : 'Ditolak'}</span>}</div>
           <b className={row.direction === 'income' ? 'positive' : 'negative'}>{row.direction === 'income' ? '+' : '−'}{IDR.format(row.amount)}</b>
           <div className="project-evidence-actions">
             {item ? <>

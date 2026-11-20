@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 import time
 
 from flask import Flask
@@ -104,7 +105,7 @@ def request_parts(path, payload, *, role="admin", actor_id="admin-1", nonce=None
         "method": "POST",
         "path": path,
         "body_sha256": hashlib.sha256(body).hexdigest(),
-        "nonce": nonce or f"route-nonce-{time.time_ns()}",
+        "nonce": nonce or f"route-nonce-{secrets.token_hex(16)}",
     }
     token = build_upstream_actor_assertion(claims, SECRET)
     return body, {

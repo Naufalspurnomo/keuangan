@@ -137,8 +137,8 @@ export default function ProjectHealthBoard({ projects, asOf, onOpen }: { project
 
   return <section className="project-health-board project-portfolio-ledger">
     <header className="project-register-head">
-      <div><p className="eyebrow">UNIT USAHA</p><h2>Hollawall &amp; Texturin</h2><p>Pilih unit usaha untuk melihat proyek, status, umur, dan arus kas dari sumber yang sama.</p></div>
-      <div className="project-summary-stats" aria-label="Ringkasan kesehatan proyek">
+      <div><p className="eyebrow">UNIT USAHA</p><h2>Hollawall &amp; Texturin</h2><p>Pilih unit usaha untuk melihat Project, status, umur, dan arus kas dari sumber yang sama.</p></div>
+      <div className="project-summary-stats" aria-label="Ringkasan kesehatan Project">
         {[
           { key: 'healthy', count: counts.healthy, label: 'Baru · Sehat' },
           { key: 'watch', count: counts.watch, label: 'Pantau' },
@@ -151,19 +151,19 @@ export default function ProjectHealthBoard({ projects, asOf, onOpen }: { project
 
     <div className="project-explorer">
       <div className="project-query-row">
-        <label className="project-search"><Search size={18} /><span className="sr-only">Cari proyek</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari nama proyek…" /></label>
-        <span className="result-count"><strong>{filtered.length.toLocaleString('id-ID')}</strong> proyek</span>
+        <label className="project-search"><Search size={18} /><span className="sr-only">Cari Project</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari nama Project…" /></label>
+        <span className="result-count"><strong>{filtered.length.toLocaleString('id-ID')}</strong> Project</span>
       </div>
 
       <div className="portfolio-switcher" role="group" aria-label="Filter portfolio">
         <button type="button" className={portfolio === 'all' ? 'active portfolio-all' : 'portfolio-all'} onClick={() => setPortfolio('all')} aria-pressed={portfolio === 'all'} aria-label="Filter portfolio Semua portfolio">
-          <i>∑</i><span><strong>Semua unit</strong><small>{projects.length.toLocaleString('id-ID')} proyek</small></span>
+          <i>∑</i><span><strong>Semua unit</strong><small>{projects.length.toLocaleString('id-ID')} Project</small></span>
         </button>
         {portfolioOptions.map((value) => {
           const identity = portfolioIdentity[value] ?? { mark: value.charAt(0), copy: 'Portfolio' }
           const count = projects.filter((project) => project.portfolio === value).length
           return <button type="button" key={value} className={`${portfolio === value ? 'active ' : ''}${portfolioClass(value)}`} onClick={() => setPortfolio(value)} aria-pressed={portfolio === value} aria-label={`Filter portfolio ${value}`}>
-            <i>{identity.mark}</i><span><strong>{value}</strong><small>{count.toLocaleString('id-ID')} proyek · {identity.copy}</small></span>
+            <i>{identity.mark}</i><span><strong>{value}</strong><small>{count.toLocaleString('id-ID')} Project · {identity.copy}</small></span>
           </button>
         })}
       </div>
@@ -172,34 +172,34 @@ export default function ProjectHealthBoard({ projects, asOf, onOpen }: { project
 
     {filter !== 'completed' && <>
       <section className="candle-demo-control" aria-label="Sumber umur project candle">
-        <div><p>{candleMode === 'demo' ? 'SIMULASI UMUR' : 'DATA AKTUAL'}</p><strong>{candleMode === 'demo' ? 'Variasi warna untuk uji visual' : 'Umur proyek dari snapshot'}</strong><span>{candleMode === 'demo' ? 'Nama proyek dan tujuan klik tetap asli. Hanya umur, tanggal, serta rentang garis pada candle yang dibuat bervariasi.' : 'Candle memakai umur dan tanggal aktual. Proyek lama dapat terlihat dominan merah.'}</span></div>
+        <div><p>{candleMode === 'demo' ? 'SIMULASI UMUR' : 'DATA AKTUAL'}</p><strong>{candleMode === 'demo' ? 'Variasi warna untuk uji visual' : 'Umur Project dari snapshot'}</strong><span>{candleMode === 'demo' ? 'Nama Project dan tujuan klik tetap asli. Hanya umur, tanggal, serta rentang garis pada candle yang dibuat bervariasi.' : 'Candle memakai umur dan tanggal aktual. Project lama dapat terlihat dominan merah.'}</span></div>
         <div role="group" aria-label="Pilih sumber umur candle"><button type="button" className={candleMode === 'demo' ? 'active' : ''} aria-pressed={candleMode === 'demo'} onClick={() => setCandleMode('demo')}>Demo variasi</button><button type="button" className={candleMode === 'actual' ? 'active' : ''} aria-pressed={candleMode === 'actual'} onClick={() => setCandleMode('actual')}>Data aktual</button></div>
       </section>
       <ActiveProjectAgeChart projects={candleProjects} portfolios={chartPortfolios} query={query} asOf={asOf} onOpen={onOpen} />
     </>}
 
     <div className="project-ledger-filter-block">
-      <p>FILTER DAFTAR PROYEK</p>
-      <div className="project-filter-rail" role="group" aria-label="Filter daftar proyek">
+      <p>FILTER DAFTAR Project</p>
+      <div className="project-filter-rail" role="group" aria-label="Filter daftar Project">
         {([
           ['all', 'Semua'], ['active', 'Aktif'], ['attention', 'Perlu perhatian'], ['completed', 'Selesai'],
         ] as const).map(([value, label]) => <button key={value} type="button" className={filter === value ? 'active' : ''} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}
       </div>
     </div>
 
-    {filtered.length ? <section className="project-ledger-results" aria-label="Daftar proyek per perusahaan">
-      <header><div><p className="eyebrow">DAFTAR PROYEK · DATA AKTUAL</p><h2>Proyek per unit usaha</h2><p>Klik satu baris untuk membuka transaksi proyek. Umur dihitung sejak marker Mulai; arus kas bersih adalah pemasukan dikurangi pengeluaran proyek.</p></div><span>{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} dari {filtered.length.toLocaleString('id-ID')}</span></header>
+    {filtered.length ? <section className="project-ledger-results" aria-label="Daftar Project per perusahaan">
+      <header><div><p className="eyebrow">DAFTAR Project · DATA AKTUAL</p><h2>Project per unit usaha</h2><p>Klik satu baris untuk membuka transaksi Project. Umur dihitung sejak marker Mulai; arus kas bersih adalah pemasukan dikurangi pengeluaran Project.</p></div><span>{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} dari {filtered.length.toLocaleString('id-ID')}</span></header>
       <div className="portfolio-project-groups">
         {[...groupedVisible, ...(unmappedVisible.length ? [{ name: 'Belum dipetakan' as Portfolio, projects: unmappedVisible }] : [])].map((group) => {
           const identity = portfolioIdentity[group.name] ?? { mark: group.name.charAt(0), copy: 'Portfolio' }
           return <section className={`portfolio-project-group ${portfolioClass(group.name)}`} key={group.name}>
             <header><i>{identity.mark}</i><div><h3>{group.name}</h3><p>{identity.copy}</p></div><span>{group.projects.length} tampil</span></header>
-            <div className="project-ledger-column-head" aria-hidden="true"><span>Proyek &amp; aktivitas terakhir</span><span>Status umur</span><span>Umur berjalan</span><span>Arus kas bersih</span></div>
+            <div className="project-ledger-column-head" aria-hidden="true"><span>Project &amp; aktivitas terakhir</span><span>Status umur</span><span>Umur berjalan</span><span>Arus kas bersih</span></div>
             <div className="project-ledger-rows">{group.projects.map((project) => {
               const health = projectHealth(project)
               const meta = healthMeta[health]
               const accessibleDescription = `${project.portfolio ?? 'Belum dipetakan'}, ${project.transaction_count ?? 0} transaksi, aktivitas terakhir ${dateLabel(project.last_activity_on)}, ${meta.label}, umur ${project.age_days ?? 'belum tersedia'} hari, arus kas bersih ${IDR.format(project.net_cashflow)}`
-              return <button type="button" className={`project-ledger-row ${health}`} key={`${project.portfolio ?? 'unmapped'}-${project.name}`} onClick={() => onOpen(project.name, project.portfolio)} aria-label={`Buka transaksi proyek ${project.name}, ${accessibleDescription}`}>
+              return <button type="button" className={`project-ledger-row ${health}`} key={`${project.portfolio ?? 'unmapped'}-${project.name}`} onClick={() => onOpen(project.name, project.portfolio)} aria-label={`Buka transaksi Project ${project.name}, ${accessibleDescription}`}>
                 <span className="project-ledger-main"><strong>{project.name}</strong><small>{project.portfolio ?? 'Belum dipetakan'} · {project.transaction_count ?? 0} transaksi · aktivitas terakhir {dateLabel(project.last_activity_on)}</small></span>
                 <span className={`health-label ${health}`}>{meta.label}</span>
                 <span className="project-ledger-age"><small>Umur</small><strong>{project.age_days === null || project.age_days === undefined ? '—' : `${project.age_days} hari`}</strong></span>
@@ -209,7 +209,7 @@ export default function ProjectHealthBoard({ projects, asOf, onOpen }: { project
           </section>
         })}
       </div>
-      {pageCount > 1 && <nav className="project-ledger-pagination" aria-label="Pagination proyek"><button type="button" onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={page === 0}><ArrowLeft size={16} /> Sebelumnya</button><span>Halaman {page + 1} / {pageCount}</span><button type="button" onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))} disabled={page === pageCount - 1}>Berikutnya <ArrowRight size={16} /></button></nav>}
-    </section> : <div className="project-empty"><strong>Proyek tidak ditemukan</strong><p>Ubah pencarian, perusahaan, atau status.</p></div>}
+      {pageCount > 1 && <nav className="project-ledger-pagination" aria-label="Pagination Project"><button type="button" onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={page === 0}><ArrowLeft size={16} /> Sebelumnya</button><span>Halaman {page + 1} / {pageCount}</span><button type="button" onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))} disabled={page === pageCount - 1}>Berikutnya <ArrowRight size={16} /></button></nav>}
+    </section> : <div className="project-empty"><strong>Project tidak ditemukan</strong><p>Ubah pencarian, perusahaan, atau status.</p></div>}
   </section>
 }

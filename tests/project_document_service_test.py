@@ -20,7 +20,7 @@ def test_commercial_policy_matches_cross_runtime_fixture():
     policy_path = Path(__file__).parents[1] / "config" / "commercial_document_policies.json"
     assert policy_module._POLICY_PATH == policy_path
     assert "tests" not in policy_module._POLICY_PATH.parts
-    fixture = json.loads(policy_path.read_text())
+    fixture = json.loads(policy_path.read_text(encoding="utf-8"))
     assert commercial_policies() == fixture
     assert commercial_policy("TEXTURIN-Bali") == fixture["texturin-bali"]
     assert commercial_policy("TEXTURIN-Surabaya") == fixture["texturin-surabaya"]

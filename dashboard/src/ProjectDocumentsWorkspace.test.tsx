@@ -127,8 +127,8 @@ describe('ProjectDocumentsWorkspace', () => {
     const { rerender } = render(<ProjectDocumentsWorkspace project={project} api={subject} session={session} route={{ tab: 'documents' }} onRouteChange={vi.fn()} />)
     expect(screen.getByRole('status')).toHaveTextContent('Memuat dokumen')
     loading.resolve({ documents: [], capabilities: session.capabilities })
-    expect(await screen.findByText('Belum ada dokumen tambahan.')).toBeTruthy()
-    expect(screen.getByText(/Sales Order dibuat otomatis/)).toBeTruthy()
+    expect(await screen.findByText('Belum ada Invoice atau kuitansi.')).toBeTruthy()
+    expect(screen.getByText('Belum ada Invoice atau kuitansi.')).toBeTruthy()
 
     const broken = api({ listDocuments: vi.fn(async () => { throw new Error('offline') }) })
     rerender(<ProjectDocumentsWorkspace project={project} api={broken} session={session} route={{ tab: 'documents' }} onRouteChange={vi.fn()} />)
@@ -141,8 +141,8 @@ describe('ProjectDocumentsWorkspace', () => {
     const onRouteChange = vi.fn()
     render(<ProjectDocumentsWorkspace project={project} api={api()} session={session} route={{ tab: 'documents' }} onRouteChange={onRouteChange} />)
     expect(await screen.findByText('INV/HW/2026/000001')).toBeTruthy()
-    expect(screen.getByRole('heading', { name: 'Quotation, invoice, dan kuitansi' })).toBeTruthy()
-    expect(screen.getByText(/Template otomatis mengikuti identitas proyek, klien, perusahaan, issuer, dan dompet proyek ini/)).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Dokumen Project' })).toBeTruthy()
+    expect(screen.getByText('Keduanya tidak mencatat kas. Catat pembayaran pada Transaksi.')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Buat invoice' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Buat kuitansi' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Sales Order baru/ })).toBeNull()
@@ -185,7 +185,7 @@ describe('ProjectDocumentsWorkspace', () => {
     const target = await screen.findByRole('combobox', { name: 'Invoice tujuan' })
     fireEvent.change(target, { target: { value: issued.id } })
     fireEvent.click(screen.getByRole('checkbox'))
-    expect(screen.getByLabelText('Nominal Transfer DP BCA')).toHaveValue(200_000)
+    expect(screen.getByLabelText('Nominal kuitansi Transfer DP BCA')).toHaveValue('Rp 200.000')
     fireEvent.click(screen.getByRole('button', { name: 'Simpan draf' }))
     await waitFor(() => expect(subject.createDocument).toHaveBeenCalledWith(expect.objectContaining({
       type: 'receipt',

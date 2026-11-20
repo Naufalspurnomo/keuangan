@@ -16,7 +16,7 @@ const project: ProjectRecord = {
   issuer_key: 'hollawall',
   wallet: 'CV HB(101)',
   company: 'HOLLA',
-  status: 'planned',
+  status: 'active',
   lock_version: 1,
   archived_at: null,
   created_at: '2026-11-10T00:00:00Z',
@@ -114,14 +114,14 @@ describe('ProjectQuotationPanel', () => {
 
     expect(screen.getByRole('heading', { name: 'Buat quotation' })).toBeTruthy()
     const workflow = screen.getByRole('list', { name: 'Alur pembuatan quotation' })
-    expect(within(workflow).getByText('Klien & proyek')).toBeTruthy()
+    expect(within(workflow).getByText('Klien & Project')).toBeTruthy()
     expect(within(workflow).getByText('Item & harga')).toBeTruthy()
     expect(within(workflow).getByText('Ketentuan')).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Backdrop premium' } })
     fireEvent.change(screen.getByLabelText('Lebar item 1 (m)'), { target: { value: '2' } })
     fireEvent.change(screen.getByLabelText('Tinggi item 1 (m)'), { target: { value: '0.5' } })
-    fireEvent.change(screen.getByLabelText('HARGA/M² item 1'), { target: { value: '5000000' } })
+    fireEvent.change(screen.getByLabelText('HARGA/M² item 1 *'), { target: { value: '5000000' } })
     expect(screen.getByRole('complementary', { name: 'Ringkasan quotation' })).toHaveTextContent(/Rp\s*5\.000\.000/)
   })
 
@@ -134,7 +134,7 @@ describe('ProjectQuotationPanel', () => {
     expect(screen.getByLabelText('Template merek')).toHaveValue('HOLLAWALL · A5')
     expect(screen.getByLabelText('Nama penerima')).toHaveValue('Ibu Rani')
     expect(screen.queryByLabelText(/pilih.*merek/i)).toBeNull()
-    expect(screen.getByLabelText('Gambar proyek')).toBeRequired()
+    expect(screen.getByLabelText('Gambar Project')).toBeRequired()
     const imageDataUrl = 'data:image/jpeg;base64,/9j/2Q=='
     class MockImage {
       naturalWidth = 1
@@ -146,17 +146,17 @@ describe('ProjectQuotationPanel', () => {
     vi.stubGlobal('Image', MockImage)
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D)
     vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue(imageDataUrl)
-    fireEvent.change(screen.getByLabelText('Gambar proyek'), {
+    fireEvent.change(screen.getByLabelText('Gambar Project'), {
       target: { files: [new File(['jpeg'], 'project.jpg', { type: 'image/jpeg' })] },
     })
-    await screen.findByAltText('Pratinjau gambar proyek')
+    await screen.findByAltText('Pratinjau gambar Project')
 
     fireEvent.change(screen.getByLabelText('Subjek'), { target: { value: 'Penawaran backdrop premium' } })
     expect(screen.getByLabelText('Berlaku sampai')).toHaveValue('Ditetapkan 7 hari dari tanggal kirim')
     fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Backdrop premium' } })
     fireEvent.change(screen.getByLabelText('Lebar item 1 (m)'), { target: { value: '2' } })
     fireEvent.change(screen.getByLabelText('Tinggi item 1 (m)'), { target: { value: '1' } })
-    fireEvent.change(screen.getByLabelText('HARGA/M² item 1'), { target: { value: '5000000' } })
+    fireEvent.change(screen.getByLabelText('HARGA/M² item 1 *'), { target: { value: '5000000' } })
     fireEvent.change(screen.getByLabelText('Diskon item 1 (%)'), { target: { value: '10' } })
     fireEvent.change(screen.getByLabelText('Pajak (%)'), { target: { value: '11' } })
     expect(screen.getAllByText(/Rp\s*9\.990\.000/)).toHaveLength(2)
@@ -271,7 +271,7 @@ describe('ProjectQuotationPanel', () => {
     render(<ProjectQuotationPanel project={project} session={session} api={api()} onApplied={vi.fn()} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Buat quotation' }))
     const file = new File(['hello'], 'project.svg', { type: 'image/svg+xml' })
-    fireEvent.change(screen.getByLabelText('Gambar proyek'), { target: { files: [file] } })
+    fireEvent.change(screen.getByLabelText('Gambar Project'), { target: { files: [file] } })
     expect(await screen.findByRole('alert')).toHaveTextContent('PNG atau JPEG')
   })
 

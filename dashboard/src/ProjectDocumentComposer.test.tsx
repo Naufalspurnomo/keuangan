@@ -19,7 +19,11 @@ const project: ProjectRecord = {
   updated_at: '2026-11-03T10:00:00Z',
 }
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 
 describe('ProjectDocumentComposer', () => {
   it('presents invoice creation as a guided workflow with a live total', () => {
@@ -50,7 +54,7 @@ describe('ProjectDocumentComposer', () => {
     const notes = screen.getByLabelText('Catatan')
     fireEvent.change(price, { target: { value: '10000' } })
 
-    expect(price).toHaveValue(10000)
+    expect(price).toHaveValue('Rp 10.000')
     expect(notes).toHaveValue('')
     expect(screen.getByLabelText('Total invoice')).toHaveTextContent('Rp10.000')
     expect(screen.getByRole('article', { name: 'Pratinjau A5 Invoice' })).toHaveTextContent('Rp10.000')
@@ -120,7 +124,7 @@ describe('ProjectDocumentComposer', () => {
     expect(screen.getByText(/Nominal kuitansi selalu diambil dari transaksi pemasukan/)).toBeTruthy()
     expect(screen.queryByRole('article', { name: 'Pratinjau A5 Kuitansi' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Simpan draf' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Buka transaksi proyek' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Buka transaksi Project' })).toBeTruthy()
   })
 
   it('shows a receipt preview only after an income transaction is selected', () => {
@@ -169,7 +173,7 @@ describe('ProjectDocumentComposer', () => {
     expect(screen.queryByRole('checkbox')).toBeNull()
   })
 
-  it('accepts only a capped PNG or JPEG data URL for the project image', async () => {
+  it('rejects unsupported files and stores a compressed PNG/JPEG preview', async () => {
     const draft = createEmptyDocumentDraft(project.id, 'invoice', '2026-11-03')
     const onSave = vi.fn()
     render(<ProjectDocumentComposer project={project} document={draft} writesEnabled onSave={onSave} onClose={vi.fn()} />)
@@ -177,14 +181,29 @@ describe('ProjectDocumentComposer', () => {
     fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Panel' } })
     fireEvent.change(screen.getByLabelText('Lebar item 1'), { target: { value: '1' } })
     fireEvent.change(screen.getByLabelText('Tinggi item 1'), { target: { value: '1' } })
-    fireEvent.change(screen.getByLabelText('Gambar proyek'), { target: { value: 'https://example.com/project.png' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Simpan draf' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('data PNG atau JPEG')
+    fireEvent.change(screen.getByLabelText('Gambar Project'), {
+      target: { files: [new File(['svg'], 'project.svg', { type: 'image/svg+xml' })] },
+    })
+    expect(await screen.findByRole('alert')).toHaveTextContent('PNG atau JPEG')
     expect(onSave).not.toHaveBeenCalled()
 
-    fireEvent.change(screen.getByLabelText('Gambar proyek'), { target: { value: 'data:image/jpeg;base64,Zm9v' } })
+    const imageDataUrl = 'data:image/jpeg;base64,/9j/2Q=='
+    class MockImage {
+      naturalWidth = 1
+      naturalHeight = 1
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      set src(_value: string) { this.onload?.() }
+    }
+    vi.stubGlobal('Image', MockImage)
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D)
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue(imageDataUrl)
+    fireEvent.change(screen.getByLabelText('Gambar Project'), {
+      target: { files: [new File(['jpeg'], 'project.jpg', { type: 'image/jpeg' })] },
+    })
+    await screen.findByAltText('Pratinjau gambar Project')
     fireEvent.click(screen.getByRole('button', { name: 'Simpan draf' }))
-    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ project_image_url: 'data:image/jpeg;base64,Zm9v' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ project_image_url: imageDataUrl })))
   })
 
   it('validates before save, focuses the error, and exposes write-disabled reason beside the action', async () => {

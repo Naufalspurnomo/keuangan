@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 
 import { DebtForm, ProjectForm, TransactionForm } from './FinanceForms'
+import CanonicalTransactionMutationDialog, { type TransactionMutationDraft } from './CanonicalTransactionMutationDialog'
 import { CanonicalDebtCreateForm, CanonicalDebtRepaymentForm, type CanonicalDebtCreateInput } from './CanonicalDebtForms'
 import { actionProps, type ActionId } from './actionRegistry'
 import {
@@ -109,11 +110,11 @@ function currentRoute(): AppRoute {
 
 const pageMeta: Record<Page, { eyebrow: string; title: string; copy: string }> = {
   overview: { eyebrow: 'DASHBOARD', title: 'Dashboard', copy: 'Posisi keuangan dari seluruh sumber data.' },
-  cashflow: { eyebrow: 'ARUS KAS', title: 'Arus Kas', copy: 'Pemasukan dan pengeluaran per bulan.' },
+  cashflow: { eyebrow: 'KEUANGAN', title: 'Arus Kas', copy: 'Pemasukan dan pengeluaran per periode.' },
   wallets: { eyebrow: 'SUMBER DANA', title: 'Dompet', copy: 'Posisi CV HB, TX SBY, dan TX Bali.' },
 
-  projects: { eyebrow: 'PORTOFOLIO', title: 'Proyek', copy: 'Kinerja proyek per tahun, perusahaan, dan status.' },
-  office: { eyebrow: 'KEBUTUHAN KANTOR', title: 'Operasional Kantor', copy: 'Biaya kantor yang terpisah dari proyek.' },
+  projects: { eyebrow: 'PROJECT', title: 'Project', copy: 'Kinerja Project per tahun, perusahaan, dan status.' },
+  office: { eyebrow: 'KEBUTUHAN KANTOR', title: 'Operasional Kantor', copy: 'Biaya kantor yang terpisah dari Project.' },
   debts: { eyebrow: 'PERGERAKAN INTERNAL', title: 'Hutang', copy: 'Hutang antar-dompet tanpa mengubah kas konsolidasi.' },
   reports: { eyebrow: 'PELAPORAN', title: 'Laporan', copy: 'Filter, pratinjau, dan ekspor PDF.' },
   'inbox-reviews': { eyebrow: 'KOTAK MASUK', title: 'Perlu Ditinjau', copy: 'Pesan tahan gagal yang memerlukan keputusan owner.' },
@@ -135,7 +136,7 @@ function Sidebar({ active, open, mobile, live, close, navigate }: { active: Page
   useEffect(() => { if (mobile && open) closeButtonRef.current?.focus() }, [mobile, open])
   const items: ReadonlyArray<readonly [Page, string, typeof LayoutDashboard]> = [
     ['overview', 'Dashboard', LayoutDashboard], ['cashflow', 'Arus Kas', BarChart3], ['wallets', 'Dompet', WalletCards],
-    ['projects', 'Proyek', BriefcaseBusiness], ['office', 'Operasional Kantor', Building2],
+    ['projects', 'Project', BriefcaseBusiness], ['office', 'Operasional Kantor', Building2],
     ['debts', 'Hutang', Landmark], ['reports', 'Laporan', FileBarChart],
   ]
   const navAction: Record<Exclude<Page, 'inbox-reviews'>, ActionId> = {
@@ -191,7 +192,7 @@ function canonicalProjectWallet(project: ProjectRecord) {
   return normalizeCanonicalPair(project.wallet, project.company)?.wallet ?? null
 }
 
-export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession, liveWriteStatus, onCreateLiveTransaction, onMutateLiveTransaction, onCreateLiveDebt, onRepayLiveDebt, onMutateLiveDebt, projectApi, inboxReviewApi }: { suppliedWorkspace?: Readonly<FinanceWorkspace>; liveSnapshotError?: Error | null; liveWriteSession?: TransactionWriteSession; liveWriteStatus?: string; onCreateLiveTransaction?: (input: TransactionFormInput) => Promise<RecordedTransaction>; onMutateLiveTransaction?: (row: FinanceTransaction, action: 'correction' | 'reversal', reason: string, amount?: number) => Promise<void>; onCreateLiveDebt?: (input: CanonicalDebtCreateInput) => Promise<void>; onRepayLiveDebt?: (debt: FinanceDebt, amount: number, occurredOn: string, description: string) => Promise<void>; onMutateLiveDebt?: (debt: FinanceDebt, action: 'correction' | 'reversal') => Promise<void>; projectApi?: ProjectDocumentApi; inboxReviewApi?: InboxReviewApi } = {}) {
+export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession, liveWriteStatus, onCreateLiveTransaction, onMutateLiveTransaction, onCreateLiveDebt, onRepayLiveDebt, onMutateLiveDebt, projectApi, inboxReviewApi }: { suppliedWorkspace?: Readonly<FinanceWorkspace>; liveSnapshotError?: Error | null; liveWriteSession?: TransactionWriteSession; liveWriteStatus?: string; onCreateLiveTransaction?: (input: TransactionFormInput) => Promise<RecordedTransaction>; onMutateLiveTransaction?: (row: FinanceTransaction, action: 'correction' | 'reversal', draft: TransactionMutationDraft) => Promise<{ readbackFailed: boolean }>; onCreateLiveDebt?: (input: CanonicalDebtCreateInput) => Promise<void>; onRepayLiveDebt?: (debt: FinanceDebt, amount: number, occurredOn: string, description: string) => Promise<void>; onMutateLiveDebt?: (debt: FinanceDebt, action: 'correction' | 'reversal') => Promise<void>; projectApi?: ProjectDocumentApi; inboxReviewApi?: InboxReviewApi } = {}) {
   const finance = useFinanceWorkspace(suppliedWorkspace)
   const readOnly = finance.readOnly
   const canCreateTransactions = readOnly && liveWriteSession?.canonicalWritesEnabled === true && Boolean(onCreateLiveTransaction)
@@ -213,6 +214,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
   const [projectApiError, setProjectApiError] = useState('')
   const [projectBusy, setProjectBusy] = useState(false)
   const [transactionLifecycleBusyId, setTransactionLifecycleBusyId] = useState<string | null>(null)
+  const [transactionMutationTarget, setTransactionMutationTarget] = useState<{ row: FinanceTransaction; action: 'correction' | 'reversal' } | null>(null)
   const [debtBusy, setDebtBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const [theme, setTheme] = useState(() => document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light')
@@ -253,7 +255,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
         if (pending?.savedId && projects.some((project) => project.id === pending.savedId)) {
           pendingProjectSave.current = null
           setProjectModal(null)
-          setNotice(pending.creating ? 'Proyek tersimpan dan berhasil dipulihkan.' : 'Perubahan proyek tersimpan dan berhasil dipulihkan.')
+          setNotice(pending.creating ? 'Project tersimpan dan berhasil dipulihkan.' : 'Perubahan Project tersimpan dan berhasil dipulihkan.')
         }
         setProjectCapabilities(result.capabilities)
         setProjectApiAvailable(true)
@@ -261,7 +263,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
       .catch((error: unknown) => {
         if (sequence !== projectLoadSequence.current) return
         setProjectCapabilities(NO_PROJECT_DOCUMENT_WRITES)
-        setProjectApiError(error instanceof Error ? error.message : 'Data proyek belum tersedia.')
+        setProjectApiError(error instanceof Error ? error.message : 'Data Project belum tersedia.')
       })
       .finally(() => {
         if (sequence === projectLoadSequence.current) setProjectDataLoading(false)
@@ -351,7 +353,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
     if (active !== 'projects' || !projectFilter || projectDataLoading || selectedProject || productionProject) return
     window.history.replaceState({ page: 'projects', scrollY: 0 }, '', routeHash('projects'))
     setRoute({ page: 'projects' })
-    setNotice('Proyek tidak ditemukan.')
+    setNotice('Project tidak ditemukan.')
   }, [active, productionProject, projectDataLoading, projectFilter, selectedProject])
 
   const pushRoute = (page: Page, projectId?: string) => {
@@ -381,20 +383,20 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
   const commit = (action: () => void, success: string) => { if (readOnly) throw new Error('Data ini hanya dapat dilihat.'); action(); setNotice(success) }
   const safe = (action: () => void, success: string) => { try { commit(action, success) } catch (error) { setNotice(error instanceof Error ? error.message : 'Tindakan belum dapat diproses.') } }
   const saveProject = (input: ProjectInput) => {
-    if (modal?.kind === 'project' && modal.value) return commit(() => finance.editProject(modal.value!.id, input), 'Proyek diperbarui.')
+    if (modal?.kind === 'project' && modal.value) return commit(() => finance.editProject(modal.value!.id, input), 'Project diperbarui.')
     if (readOnly) throw new Error('Data ini hanya dapat dilihat.')
     const created = finance.addProject(input)
-    setNotice('Proyek aktif dibuat. Lanjutkan dengan mencatat transaksi proyek.')
+    setNotice('Project aktif dibuat. Lanjutkan dengan mencatat transaksi Project.')
     pushRoute('projects', created.id)
   }
   const completeProject = (input: ProjectInput) => modal?.kind === 'complete-project'
-    && commit(() => finance.editProject(modal.value.id, input), 'Proyek diselesaikan.')
+    && commit(() => finance.editProject(modal.value.id, input), 'Project diselesaikan.')
   const completeProjectNow = (project: FinanceProject) => {
     const latestTransaction = finance.workspace.transactions.filter((row) => row.project_id === project.id).reduce((latest, row) => row.date > latest ? row.date : latest, project.started_on)
     const completedOn = [localIsoDate(), project.started_on, latestTransaction].sort().at(-1)!
-    safe(() => finance.editProject(project.id, projectStatusInput(project, 'completed', completedOn)), 'Proyek diselesaikan.')
+    safe(() => finance.editProject(project.id, projectStatusInput(project, 'completed', completedOn)), 'Project diselesaikan.')
   }
-  const reactivateProject = (project: FinanceProject) => safe(() => finance.editProject(project.id, projectStatusInput(project, 'active', null)), 'Proyek diaktifkan kembali.')
+  const reactivateProject = (project: FinanceProject) => safe(() => finance.editProject(project.id, projectStatusInput(project, 'active', null)), 'Project diaktifkan kembali.')
   const saveTransaction = (input: TransactionFormInput) => {
     if (readOnly) {
       if (!canCreateTransactions || !onCreateLiveTransaction) throw new Error('Pencatatan transaksi belum tersedia.')
@@ -411,32 +413,21 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
       ? commit(() => finance.editTransaction(modal.value!.id, demoInput as TransactionInput), 'Transaksi diperbarui.')
       : commit(() => finance.addTransaction(demoInput as TransactionInput), 'Transaksi ditambahkan.')
   }
-  const mutateLiveTransaction = async (row: FinanceTransaction, action: 'correction' | 'reversal') => {
+  const openTransactionMutation = (row: FinanceTransaction, action: 'correction' | 'reversal') => {
     if (!canMutateTransactions || !onMutateLiveTransaction || !row.canonical_transaction_id || !row.transaction_version) return
     if (transactionLifecycleBusyId) return
-    let amount: number | undefined
-    if (action === 'correction') {
-      const rawAmount = window.prompt('Nominal koreksi (rupiah)', String(row.amount))
-      if (rawAmount === null) return
-      amount = Number(rawAmount)
-      if (!Number.isSafeInteger(amount) || amount <= 0 || amount === row.amount) {
-        setNotice('Nominal koreksi harus berupa rupiah bulat, lebih dari nol, dan berbeda.')
-        return
-      }
-    } else if (!window.confirm(`Balik transaksi ${row.notes}? Dampak efektif transaksi akan menjadi nol.`)) return
-    const reason = window.prompt(action === 'correction' ? 'Alasan koreksi' : 'Alasan pembalikan', '')
-    if (reason === null) return
-    const cleanReason = reason.trim()
-    if (!cleanReason) {
-      setNotice('Alasan wajib diisi.')
-      return
-    }
-    setTransactionLifecycleBusyId(row.id)
+    setTransactionMutationTarget({ row, action })
+  }
+  const submitTransactionMutation = async (draft: TransactionMutationDraft) => {
+    const target = transactionMutationTarget
+    if (!target || !onMutateLiveTransaction) throw new Error('Transaksi yang dipilih sudah tidak tersedia.')
+    setTransactionLifecycleBusyId(target.row.id)
     try {
-      await onMutateLiveTransaction(row, action, cleanReason, amount)
-      setNotice(action === 'correction' ? 'Koreksi tercatat dan data diperbarui.' : 'Pembalikan tercatat dan data diperbarui.')
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Perubahan transaksi belum dapat diproses.')
+      const result = await onMutateLiveTransaction(target.row, target.action, draft)
+      setTransactionMutationTarget(null)
+      setNotice(result.readbackFailed
+        ? 'Perubahan sudah tersimpan, tetapi pembacaan ulang gagal. Muat ulang data; jangan kirim koreksi atau pembalikan lagi.'
+        : target.action === 'correction' ? 'Koreksi tercatat dan data diperbarui.' : 'Pembalikan tercatat dan data diperbarui.')
     } finally {
       setTransactionLifecycleBusyId(null)
     }
@@ -470,7 +461,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
       const creating = projectModal === 'create'
       const signature = JSON.stringify({ creating, projectId: creating ? null : projectModal!.id, version: creating ? null : projectModal!.lock_version, draft })
       if (pendingProjectSave.current && pendingProjectSave.current.signature !== signature) {
-        throw new Error('Hasil penyimpanan sebelumnya belum pasti. Ulangi data yang sama atau muat ulang proyek sebelum mengubah isian.')
+        throw new Error('Hasil penyimpanan sebelumnya belum pasti. Ulangi data yang sama atau muat ulang Project sebelum mengubah isian.')
       }
       const command = pendingProjectSave.current?.command ?? (creating
         ? projectApi.createProject(draft)
@@ -490,10 +481,10 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
         : [current, ...projects])
       setProjectModal(null)
       if (creating) openProjectDetail(current.id)
-      setNotice(creating ? 'Proyek aktif dibuat. Lanjutkan dengan mencatat transaksi proyek.' : 'Proyek diperbarui.')
+      setNotice(creating ? 'Project aktif dibuat. Lanjutkan dengan mencatat transaksi Project.' : 'Project diperbarui.')
     } catch (error) {
       if (!pendingProjectSave.current?.savedId && !(error instanceof Error && 'uncertain' in error && error.uncertain)) pendingProjectSave.current = null
-      throw error instanceof Error ? error : new Error('Proyek belum dapat disimpan.')
+      throw error instanceof Error ? error : new Error('Project belum dapat disimpan.')
     } finally { setProjectBusy(false) }
   }
   const changeProductionProjectStatusById = async (projectId: string, status: ProductionProjectStatus) => {
@@ -508,9 +499,9 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
       activeProjectLoad.current = null
       setProjectDataLoading(false)
       setProductionProjects((projects) => projects.map((item) => item.id === current.id ? current : item))
-      setNotice('Status proyek diperbarui.')
+      setNotice('Status Project diperbarui.')
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Status proyek belum dapat diperbarui.')
+      setNotice(error instanceof Error ? error.message : 'Status Project belum dapat diperbarui.')
     } finally { setProjectBusy(false) }
   }
   const changeProductionProjectStatus = async (status: ProductionProjectStatus) => {
@@ -521,12 +512,12 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
     const project = productionProjects.find((item) => item.id === projectId)
     if (!project) return
     const confirmed = window.confirm(
-      `Hapus proyek ${project.name} secara permanen? Semua transaksi, dokumen, bukti, quotation, dan audit proyek ini ikut dihapus. Tindakan ini tidak dapat dibatalkan dari dashboard.`,
+      `Hapus Project ${project.name} secara permanen? Semua transaksi, dokumen, bukti, quotation, dan audit Project ini ikut dihapus. Tindakan ini tidak dapat dibatalkan dari dashboard.`,
     )
     if (!confirmed) return
-    const typedName = window.prompt(`Ketik nama proyek persis untuk konfirmasi:\n${project.name}`, '')
+    const typedName = window.prompt(`Ketik nama Project persis untuk konfirmasi:\n${project.name}`, '')
     if (typedName !== project.name) {
-      setNotice('Penghapusan dibatalkan karena nama proyek tidak cocok.')
+      setNotice('Penghapusan dibatalkan karena nama Project tidak cocok.')
       return
     }
     setProjectBusy(true)
@@ -535,7 +526,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
       setProductionProjects((projects) => projects.filter((item) => item.id !== project.id))
       await loadProductionProjects(true)
       pushRoute('projects')
-      setNotice('Proyek dan seluruh data turunannya dihapus permanen.')
+      setNotice('Project dan seluruh data turunannya dihapus permanen.')
     } catch (error) {
       try {
         const reconciled = await projectApi.listProjects()
@@ -545,20 +536,20 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
         setProjectCapabilities(reconciled.capabilities)
         if (!targetStillExists) {
           pushRoute('projects')
-          setNotice('Proyek dan seluruh data turunannya dihapus permanen.')
+          setNotice('Project dan seluruh data turunannya dihapus permanen.')
           return
         }
       } catch {
         // Preserve the original command error when authoritative reconciliation is unavailable.
       }
-      setNotice(error instanceof Error ? error.message : 'Proyek belum dapat dihapus.')
+      setNotice(error instanceof Error ? error.message : 'Project belum dapat dihapus.')
     } finally { setProjectBusy(false) }
   }
   const deleteProductionProject = async () => {
     if (productionProject) await deleteProductionProjectById(productionProject.id)
   }
   const addAction = active === 'projects'
-    ? { label: 'Tambah proyek', run: () => readOnly ? setProjectModal('create') : setModal({ kind: 'project' } as Modal) }
+    ? { label: 'Tambah Project', run: () => readOnly ? setProjectModal('create') : setModal({ kind: 'project' } as Modal) }
     : active === 'office'
       ? { label: 'Biaya kantor', run: () => setModal({ kind: 'transaction', scope: 'office' } as Modal) }
       : active === 'debts'
@@ -574,11 +565,11 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
     ? finance.workspace.transactions.filter((row) => row.project_id === productionProject.id)
     : []
   const productionTransactions = productionFinance
-    ? <section className="recent-command"><header><div><p className="eyebrow">TRANSAKSI PROYEK</p><h2>Aktivitas tercatat</h2></div></header><TransactionRows
+    ? <section className="recent-command"><header><div><p className="eyebrow">TRANSAKSI Project</p><h2>Aktivitas tercatat</h2></div></header><TransactionRows
         rows={productionRows}
         projects={transactionProjects}
-        onCorrect={canMutateTransactions ? (row) => void mutateLiveTransaction(row, 'correction') : undefined}
-        onReverse={canMutateTransactions ? (row) => void mutateLiveTransaction(row, 'reversal') : undefined}
+        onCorrect={canMutateTransactions ? (row) => openTransactionMutation(row, 'correction') : undefined}
+        onReverse={canMutateTransactions ? (row) => openTransactionMutation(row, 'reversal') : undefined}
         lifecycleBusyId={transactionLifecycleBusyId}
       /></section>
     : null
@@ -591,7 +582,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
       />
     : null
   const content = active === 'projects' && projectDataLoading && !projectApiAvailable
-    ? <section className="application-state" role="status"><span className="application-state-mark" aria-hidden="true" /><div><p className="eyebrow">DATA PROYEK</p><h2>Memuat data proyek</h2><p>Mengambil registry proyek terbaru dari server.</p></div></section>
+    ? <section className="application-state" role="status"><span className="application-state-mark" aria-hidden="true" /><div><p className="eyebrow">DATA Project</p><h2>Memuat data Project</h2><p>Mengambil registry Project terbaru dari server.</p></div></section>
     : active === 'overview'
     ? <OverviewWorkspace workspace={finance.workspace} readOnly={readOnly} onOpenProjects={() => navigate('projects')} onAddProject={!readOnly ? () => setModal({ kind: 'project' }) : projectCapabilities.projectWrites ? () => setProjectModal('create') : undefined} onOpenOffice={() => navigate('office')} onOpenReviews={inboxReviewApi ? () => navigate('inbox-reviews') : undefined} />
     : active === 'cashflow' ? <CashflowWorkspacePage workspace={finance.workspace} onOpenProject={openProjectByName} />
@@ -613,7 +604,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
             onAddTransaction={productionProject.status === 'active' && canCreateTransactions ? (project) => setModal({ kind: 'transaction', projectId: project.id }) : undefined}
             onOpenDebt={(project) => {
               const borrower = canonicalProjectWallet(project)
-              if (!borrower) { setNotice('Dompet proyek belum memiliki pemetaan kanonis. Perbarui proyek sebelum mencatat hutang.'); return }
+              if (!borrower) { setNotice('Dompet Project belum memiliki pemetaan kanonis. Perbarui Project sebelum mencatat hutang.'); return }
               navigate('debts')
               setModal({ kind: 'debt', projectId: project.id, borrower })
             }}
@@ -636,11 +627,12 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
               canAdd={projectCapabilities.projectWrites}
               destructiveActionLabel="Hapus permanen"
               busy={projectBusy}
+              headerAction={readOnly ? <div className="project-registry-refresh"><button type="button" className="secondary-button" onClick={() => void loadProductionProjects()} disabled={projectDataLoading} aria-label="Muat ulang Project"><RefreshCw size={16} /> {projectDataLoading ? 'Memuat Project…' : 'Muat ulang Project'}</button>{projectApiError && projectApiAvailable && <span role="alert">Pembaruan Project gagal: {projectApiError}. Registry terakhir tetap ditampilkan sebagai data lama, bukan sumber terbaru yang otoritatif.</span>}</div> : undefined}
             />
-            : active === 'projects' && readOnly ? <section className="application-state application-state-error" role="alert"><div><p className="eyebrow">DATA PROYEK</p><h2>Data proyek belum tersedia</h2><p>{projectApiError || 'Layanan proyek belum siap. Data snapshot tidak dipakai sebagai pengganti.'}</p><button className="primary-button" onClick={() => void loadProductionProjects()}>Coba lagi</button></div></section>
+            : active === 'projects' && readOnly ? <section className="application-state application-state-error" role="alert"><div><p className="eyebrow">DATA Project</p><h2>Data Project belum tersedia</h2><p>{projectApiError || 'Layanan Project belum siap. Data snapshot tidak dipakai sebagai pengganti.'}</p><button className="primary-button" onClick={() => void loadProductionProjects()}>Coba lagi</button></div></section>
               : active === 'projects' && selectedProject ? <ProjectTransactionsWorkspace workspace={finance.workspace} project={selectedProject} onBack={backToProjects} onAdd={(project) => setModal({ kind: 'transaction', projectId: project.id })} onEdit={(value) => setModal({ kind: 'transaction', value, projectId: selectedProject.id })} onDelete={(value) => confirmDelete('transaksi', () => finance.removeTransaction(value.id))} onComplete={completeProjectNow} onReactivate={reactivateProject} readOnly={false} canCreateTransactions />
-                : active === 'projects' ? <ProjectCommandCenter workspace={finance.workspace} onAdd={() => setModal({ kind: 'project' })} onEdit={(value) => setModal({ kind: 'project', value })} onComplete={(value) => setModal({ kind: 'complete-project', value })} onQuickComplete={completeProjectNow} onDelete={(value) => confirmDelete(`proyek ${value.name}`, () => finance.removeProject(value.id))} onOpen={openProject} readOnly={false} />
-            : active === 'office' ? <OfficeWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'transaction', scope: 'office' })} onEdit={(value) => setModal({ kind: 'transaction', value })} onDelete={(value) => confirmDelete('biaya kantor', () => finance.removeTransaction(value.id))} onCorrect={canMutateTransactions ? (row) => void mutateLiveTransaction(row, 'correction') : undefined} onReverse={canMutateTransactions ? (row) => void mutateLiveTransaction(row, 'reversal') : undefined} lifecycleBusyId={transactionLifecycleBusyId} readOnly={readOnly} canCreateTransactions={canCreateTransactions} />
+                : active === 'projects' ? <ProjectCommandCenter workspace={finance.workspace} onAdd={() => setModal({ kind: 'project' })} onEdit={(value) => setModal({ kind: 'project', value })} onComplete={(value) => setModal({ kind: 'complete-project', value })} onQuickComplete={completeProjectNow} onDelete={(value) => confirmDelete(`Project ${value.name}`, () => finance.removeProject(value.id))} onOpen={openProject} readOnly={false} />
+            : active === 'office' ? <OfficeWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'transaction', scope: 'office' })} onEdit={(value) => setModal({ kind: 'transaction', value })} onDelete={(value) => confirmDelete('biaya kantor', () => finance.removeTransaction(value.id))} onCorrect={canMutateTransactions ? (row) => openTransactionMutation(row, 'correction') : undefined} onReverse={canMutateTransactions ? (row) => openTransactionMutation(row, 'reversal') : undefined} lifecycleBusyId={transactionLifecycleBusyId} readOnly={readOnly} canCreateTransactions={canCreateTransactions} />
               : active === 'debts' ? <DebtWorkspace workspace={finance.workspace} onAdd={() => setModal({ kind: 'debt' })} onEdit={readOnly ? undefined : (value) => setModal({ kind: 'debt', value })} onDelete={readOnly ? undefined : (value) => confirmDelete('hutang internal', () => finance.removeDebt(value.id))} onRepay={readOnly && liveWriteSession?.debtWritesEnabled && onRepayLiveDebt ? (value) => setModal({ kind: 'debt', value }) : undefined} onCorrect={readOnly && liveWriteSession?.debtWritesEnabled && onMutateLiveDebt ? (value) => void onMutateLiveDebt(value, 'correction').then(() => setNotice('Koreksi hutang tersimpan.')).catch((error: unknown) => setNotice(error instanceof Error ? error.message : 'Koreksi hutang gagal.')) : undefined} onReverse={readOnly && liveWriteSession?.debtWritesEnabled && onMutateLiveDebt ? (value) => void onMutateLiveDebt(value, 'reversal').then(() => setNotice('Reversal hutang tersimpan.')).catch((error: unknown) => setNotice(error instanceof Error ? error.message : 'Reversal hutang gagal.')) : undefined} canCreate={!readOnly || Boolean(liveWriteSession?.debtWritesEnabled && onCreateLiveDebt)} />
                 : active === 'inbox-reviews' && inboxReviewApi ? <InboxReviewWorkspace api={inboxReviewApi} csrfToken={liveWriteSession?.csrfToken ?? ''} />
                   : <ReportsWorkspace workspace={finance.workspace} />
@@ -664,7 +656,6 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
           {!readOnly && <p className="demo-mode-label">Mode demo · data browser</p>}
           {readOnly && !canCreateTransactions && active !== 'inbox-reviews' && <p className="form-error">{liveWriteStatus ?? 'Pencatatan transaksi belum tersedia.'}</p>}
           {!readOnly && <DemoBanner updatedAt={finance.workspace.updated_at} onReset={reset} />}
-          {readOnly && active === 'projects' && <div className="project-registry-refresh"><button type="button" className="secondary-button" onClick={() => void loadProductionProjects()} disabled={projectDataLoading} aria-label="Muat ulang proyek"><RefreshCw size={16} /> {projectDataLoading ? 'Memuat proyek…' : 'Muat ulang proyek'}</button>{projectApiError && projectApiAvailable && <span role="alert">Pembaruan proyek gagal: {projectApiError}. Registry terakhir tetap ditampilkan sebagai data lama, bukan sumber terbaru yang otoritatif.</span>}</div>}
           {!['overview', 'projects', 'reports', 'inbox-reviews'].includes(active) && <header className="page-heading"><div><p className="eyebrow">{meta.eyebrow}</p><h1>{meta.title}</h1><p>{meta.copy}</p></div>{!readOnly && <span className="demo-badge">DATA DEMO</span>}</header>}
           {content}
         </div>
@@ -676,6 +667,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
       {!readOnly && modal?.kind === 'debt' && <DebtForm debt={modal.value} onSave={saveDebt} onClose={() => setModal(null)} />}
       {readOnly && modal?.kind === 'debt' && !modal.value && <CanonicalDebtCreateForm projects={transactionProjects} initialProjectId={modal.projectId} initialBorrower={modal.borrower} saving={debtBusy} onSave={saveLiveDebt} onClose={() => setModal(null)} />}
       {readOnly && modal?.kind === 'debt' && modal.value && <CanonicalDebtRepaymentForm debt={modal.value} saving={debtBusy} onSave={(amount, occurredOn, description) => repayLiveDebt(modal.value!, amount, occurredOn, description)} onClose={() => setModal(null)} />}
+      {readOnly && transactionMutationTarget && <CanonicalTransactionMutationDialog row={transactionMutationTarget.row} action={transactionMutationTarget.action} currentDate={jakartaToday()} saving={transactionLifecycleBusyId === transactionMutationTarget.row.id} onSubmit={submitTransactionMutation} onClose={() => { if (!transactionLifecycleBusyId) setTransactionMutationTarget(null) }} />}
       {projectModal && <ProjectRecordForm project={projectModal === 'create' ? undefined : projectModal} clients={productionProjects} saving={projectBusy} onSave={saveProductionProject} onClose={() => setProjectModal(null)} />}
     </div>
   )
@@ -692,6 +684,7 @@ function LiveDashboardApp() {
   const [writeSession, setWriteSession] = useState<TransactionWriteSession>()
   const [writeStatus, setWriteStatus] = useState('Memeriksa kemampuan pencatatan transaksi…')
   const pendingAttempt = useRef<TransactionWriteAttempt | null>(null)
+  const pendingMutation = useRef<{ signature: string; command: ReturnType<typeof createCanonicalTransactionMutation> } | null>(null)
   const workspace = useMemo(() => state.status === 'ready' ? snapshotFinanceWorkspace(state.data) : null, [state])
 
   useEffect(() => {
@@ -713,7 +706,7 @@ function LiveDashboardApp() {
   const createLiveTransaction = async (input: TransactionFormInput) => {
     if (!writeSession?.canonicalWritesEnabled) throw new Error(writeStatus || 'Pencatatan transaksi belum tersedia.')
     if (!Number.isSafeInteger(input.amount) || input.amount <= 0) throw new Error('Jumlah harus berupa rupiah bulat lebih dari nol.')
-    if (input.date !== jakartaToday()) throw new Error('Tanggal transaksi harus tanggal Jakarta hari ini.')
+    if (input.date > jakartaToday()) throw new Error('Tanggal transaksi tidak boleh melewati hari ini di Asia/Jakarta.')
     if (!input.wallet || !input.company || !input.category) throw new Error('Pilihan transaksi belum lengkap.')
     const description = input.notes
     if (!description || description !== description.trim() || description !== description.split(/\s+/).join(' ')) {
@@ -721,7 +714,7 @@ function LiveDashboardApp() {
     }
     if (/^[=+\-@]/.test(description)) throw new Error('Keterangan tidak boleh diawali =, +, -, atau @.')
     const projectId = input.scope === 'project' ? input.project_id?.trim() : null
-    if (input.scope === 'project' && !projectId) throw new Error('Proyek ini belum tersedia untuk pencatatan.')
+    if (input.scope === 'project' && !projectId) throw new Error('Project ini belum tersedia untuk pencatatan.')
     const payload: TransactionWritePayload = {
       date: input.date,
       scope: input.scope,
@@ -756,19 +749,38 @@ function LiveDashboardApp() {
     }
   }
 
-  const mutateLiveTransaction = async (row: FinanceTransaction, action: 'correction' | 'reversal', reason: string, amount?: number) => {
+  const mutateLiveTransaction = async (row: FinanceTransaction, action: 'correction' | 'reversal', draft: TransactionMutationDraft) => {
     if (!writeSession?.canonicalWritesEnabled || !row.canonical_transaction_id || !row.transaction_version) {
       throw new Error('Lifecycle transaksi belum tersedia.')
     }
-    const mutation = createCanonicalTransactionMutation({
+    const input = {
       action,
       transactionId: row.canonical_transaction_id,
       expectedVersion: row.transaction_version,
-      reason,
-      amount,
-    })
-    await mutation.submit(writeSession)
-    await state.reload()
+      ...draft,
+    }
+    const signature = JSON.stringify(input)
+    if (pendingMutation.current && pendingMutation.current.signature !== signature) {
+      throw new Error('Perubahan sebelumnya belum dapat dipastikan. Coba lagi dengan isian yang sama atau muat ulang data sebelum membuat perubahan lain.')
+    }
+    if (!pendingMutation.current) {
+      pendingMutation.current = { signature, command: createCanonicalTransactionMutation(input) }
+    }
+    try {
+      await pendingMutation.current.command.submit(writeSession)
+      pendingMutation.current = null
+      try {
+        await state.reload()
+        return { readbackFailed: false }
+      } catch {
+        return { readbackFailed: true }
+      }
+    } catch (error) {
+      if (!(error && typeof error === 'object' && 'uncertain' in error && error.uncertain)) {
+        pendingMutation.current = null
+      }
+      throw error
+    }
   }
 
   const createLiveDebt = async (input: CanonicalDebtCreateInput) => {
@@ -820,7 +832,7 @@ function LiveDashboardApp() {
     await state.reload()
   }
 
-  if (state.status === 'loading') return <main className="application-state" role="status"><span className="application-state-mark" aria-hidden="true" /><div><p className="eyebrow">RUANG FINANSIAL</p><h1>Memuat data keuangan</h1><p>Menyiapkan posisi kas, proyek, dan laporan terbaru.</p></div></main>
+  if (state.status === 'loading') return <main className="application-state" role="status"><span className="application-state-mark" aria-hidden="true" /><div><p className="eyebrow">RUANG FINANSIAL</p><h1>Memuat data keuangan</h1><p>Menyiapkan posisi kas, Project, dan laporan terbaru.</p></div></main>
   if (state.status === 'error') return <main className="application-state application-state-error" role="alert"><div><p className="eyebrow">DATA PRODUKSI</p><h1>Data belum tersedia</h1><p>Data demo tidak ditampilkan sebagai pengganti. Periksa koneksi, lalu coba lagi.</p><button className="primary-button" onClick={() => void state.reload()}>Coba lagi</button></div></main>
   return workspace ? <DemoApp suppliedWorkspace={workspace} liveSnapshotError={state.error} liveWriteSession={writeSession} liveWriteStatus={writeStatus} onCreateLiveTransaction={createLiveTransaction} onMutateLiveTransaction={mutateLiveTransaction} onCreateLiveDebt={createLiveDebt} onRepayLiveDebt={repayLiveDebt} onMutateLiveDebt={mutateLiveDebt} projectApi={projectApi} inboxReviewApi={inboxReviewApi} /> : null
 }

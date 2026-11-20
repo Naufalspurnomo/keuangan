@@ -40,7 +40,7 @@ function safeCsvCell(value: unknown): string {
 }
 
 export function transactionsToCsv(rows: Transaction[]): string {
-  const header = ['Tanggal', 'Jenis', 'Jumlah', 'Dompet', 'Perusahaan', 'Proyek', 'Keterangan', 'Source Key']
+  const header = ['Tanggal', 'Jenis', 'Jumlah', 'Dompet', 'Perusahaan', 'Project', 'Keterangan', 'Source Key']
   const body = rows.map((row) => [
     row.transaction_date,
     row.transaction_type,

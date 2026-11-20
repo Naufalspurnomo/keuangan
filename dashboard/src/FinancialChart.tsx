@@ -24,6 +24,12 @@ function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: 
   </div>
 }
 
+function ProjectNameTick({ x = 0, y = 0, payload }: { x?: number; y?: number; payload?: { value?: string | number } }) {
+  const name = String(payload?.value ?? '')
+  const label = name.length > 19 ? `${name.slice(0, 17)}…` : name
+  return <g transform={`translate(${x},${y})`}><title>{name}</title><text x={0} y={0} dy={4} textAnchor="end" fill="var(--text-secondary)" fontSize={10}>{label}</text></g>
+}
+
 export default function FinancialChart({ kind, cashTrend = [], cashLabel = 'Saldo kas', projects = [], wallets = [], debts = [], transactions = [] }: {
   kind: 'cash' | 'projects' | 'wallets' | 'monthly' | 'debts' | 'waterfall'
   cashTrend?: CashTrendPoint[]
@@ -55,13 +61,13 @@ export default function FinancialChart({ kind, cashTrend = [], cashLabel = 'Sald
   if (kind === 'projects') {
     const rows = [...projects].sort((a, b) => Math.abs(b.net_cashflow) - Math.abs(a.net_cashflow)).slice(0, 5)
     return <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={rows} layout="vertical" margin={{ top: 8, right: 62, bottom: 18, left: 0 }}>
+      <BarChart data={rows} layout="vertical" margin={{ top: 8, right: 74, bottom: 18, left: 0 }}>
         <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: 'var(--text-secondary)', fontSize: 10 }} tickFormatter={(value) => compact.format(value)} />
-        <YAxis type="category" dataKey="name" width={112} axisLine={false} tickLine={false} tick={{ fill: 'var(--text-secondary)', fontSize: 11 }} />
+        <YAxis type="category" dataKey="name" width={148} axisLine={false} tickLine={false} tick={<ProjectNameTick />} />
         <Tooltip cursor={{ fill: 'var(--surface-muted)' }} content={<ChartTooltip />} />
         <Bar dataKey="net_cashflow" name="Arus kas bersih" radius={[0, 5, 5, 0]} barSize={18}>
           {rows.map((row, index) => <Cell key={row.name} fill={row.net_cashflow < 0 ? 'var(--negative)' : index === 0 ? 'var(--chart-primary)' : 'var(--chart-secondary)'} />)}
-          <LabelList dataKey="net_cashflow" position="right" formatter={(value) => compact.format(Number(value ?? 0))} fill="var(--text-secondary)" fontSize={10} />
+          <LabelList dataKey="net_cashflow" position="right" formatter={(value) => compact.format(Number(value ?? 0))} fill="var(--text-secondary)" fontSize={9} />
         </Bar>
       </BarChart>
     </ResponsiveContainer>

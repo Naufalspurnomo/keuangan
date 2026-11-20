@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Download, Eye, FileText, SlidersHorizontal } from 'lucide-react'
 
 import { actionProps } from './actionRegistry'
@@ -108,17 +108,19 @@ function Filters({ filters, setFilters, workspace }: { filters: ReportFilters; s
   const options = availableReportOptions(workspace)
   const set = <K extends keyof ReportFilters>(key: K, value: ReportFilters[K]) => setFilters({ ...filters, [key]: value })
   return <section className="report-filter-panel">
-    <header><SlidersHorizontal size={18} /><div><h3>Filter laporan</h3><p>Filter diterapkan ke dataset, CSV, dan PDF.</p></div><button type="button" className="text-button" onClick={() => setFilters(defaultReportFilters(workspace))} {...actionProps('reports.filters-reset')}>Reset filter</button></header>
-    <div className="report-filter-grid">
+    <header><SlidersHorizontal size={18} /><div><h3>Cakupan laporan</h3><p>Atur periode dan Project yang ingin diperiksa.</p></div><button type="button" className="text-button" onClick={() => setFilters(defaultReportFilters(workspace))} {...actionProps('reports.filters-reset')}>Reset</button></header>
+    <div className="report-filter-grid report-primary-filters">
       <label><span>Dari tanggal</span><input type="date" value={filters.dateFrom} onChange={(event) => set('dateFrom', event.target.value)} /></label>
       <label><span>Sampai tanggal</span><input type="date" min={filters.dateFrom} value={filters.dateTo} onChange={(event) => set('dateTo', event.target.value)} /></label>
-      <label><span>Aktivitas</span><select value={filters.scope} onChange={(event) => set('scope', event.target.value as 'all' | TransactionScope)}><option value="all">Semua aktivitas</option><option value="project">Proyek</option><option value="office">Operasional Kantor</option></select></label>
-      <label><span>Dompet</span><select value={filters.wallet} onChange={(event) => set('wallet', event.target.value as 'all' | WalletId)}><option value="all">Semua dompet</option>{options.wallets.map((item) => <option key={item}>{item}</option>)}</select></label>
       <label><span>Perusahaan</span><select value={filters.company} onChange={(event) => set('company', event.target.value as 'all' | CompanyId)}><option value="all">Semua perusahaan</option>{options.companies.map((item) => <option key={item}>{item}</option>)}</select></label>
-      <label><span>Proyek</span><select value={filters.projectId} onChange={(event) => set('projectId', event.target.value)}><option value="all">Semua proyek</option>{options.projects.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.company}</option>)}</select></label>
-      <label><span>Jenis</span><select value={filters.direction} onChange={(event) => set('direction', event.target.value as 'all' | TransactionDirection)}><option value="all">Pemasukan & pengeluaran</option><option value="income">Pemasukan</option><option value="expense">Pengeluaran</option></select></label>
-      <label><span>Status proyek</span><select value={filters.projectStatus} onChange={(event) => set('projectStatus', event.target.value as 'all' | ProjectStatus)}><option value="all">Semua status</option>{PROJECT_STATUSES.map((item) => <option key={item} value={item}>{projectStatusLabel(item)}</option>)}</select></label>
+      <label><span>Project</span><select value={filters.projectId} onChange={(event) => set('projectId', event.target.value)}><option value="all">Semua Project</option>{options.projects.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.company}</option>)}</select></label>
     </div>
+    <details className="report-extra-filters"><summary>Filter tambahan</summary><div className="report-filter-grid">
+      <label><span>Lingkup</span><select value={filters.scope} onChange={(event) => set('scope', event.target.value as 'all' | TransactionScope)}><option value="all">Semua aktivitas</option><option value="project">Project</option><option value="office">Operasional kantor</option></select></label>
+      <label><span>Dompet</span><select value={filters.wallet} onChange={(event) => set('wallet', event.target.value as 'all' | WalletId)}><option value="all">Semua dompet</option>{options.wallets.map((item) => <option key={item}>{item}</option>)}</select></label>
+      <label><span>Jenis transaksi</span><select value={filters.direction} onChange={(event) => set('direction', event.target.value as 'all' | TransactionDirection)}><option value="all">Pemasukan & pengeluaran</option><option value="income">Pemasukan</option><option value="expense">Pengeluaran</option></select></label>
+      <label><span>Status Project</span><select value={filters.projectStatus} onChange={(event) => set('projectStatus', event.target.value as 'all' | ProjectStatus)}><option value="all">Semua status</option>{PROJECT_STATUSES.map((item) => <option key={item} value={item}>{projectStatusLabel(item)}</option>)}</select></label>
+    </div></details>
   </section>
 }
 
@@ -127,24 +129,43 @@ export default function ReportsWorkspace({ workspace }: { workspace: FinanceWork
   const [reportType, setReportType] = useState<CanonicalReportType>('cashflow')
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState('')
+  const [exportStatus, setExportStatus] = useState('')
+  const [datasetHash, setDatasetHash] = useState('')
   const model = useMemo(() => buildReportModel(workspace, filters), [filters, workspace])
   const dataset = useMemo(() => buildCanonicalReportDataset(workspace, model, reportType), [model, reportType, workspace])
+  const invalidRange = Boolean(filters.dateFrom && filters.dateTo && filters.dateFrom > filters.dateTo)
+  useEffect(() => {
+    let current = true
+    setDatasetHash('')
+    void canonicalDatasetHash(dataset).then((hash) => { if (current) setDatasetHash(hash) }).catch(() => { if (current) setDatasetHash('') })
+    return () => { current = false }
+  }, [dataset])
+  const exportCsv = () => {
+    setError('')
+    setExportStatus('')
+    try { exportReportCsv(dataset); setExportStatus('CSV berhasil disiapkan.') }
+    catch { setError('CSV belum dapat dibuat. Coba lagi.') }
+  }
   const exportPdf = async () => {
     setExporting(true)
     setError('')
-    try { await exportReportPdf(dataset) } catch { setError('PDF belum dapat dibuat. Coba lagi.') } finally { setExporting(false) }
+    setExportStatus('')
+    try { await exportReportPdf(dataset); setExportStatus('PDF dan manifest berhasil disiapkan.') } catch { setError('PDF belum dapat dibuat. Coba lagi.') } finally { setExporting(false) }
   }
   const demoSuffix = workspace.mode === 'demo' ? ' · DATA DEMO' : ''
+  const canExport = !invalidRange && dataset.rows.length > 0
   return <section className="finance-page-stack report-workspace">
-    <header className="command-head"><div><p className="eyebrow">LAPORAN{demoSuffix}</p><h1>Pusat laporan kanonis</h1><p>Pilih dataset, periksa provenance, lalu ekspor CSV atau PDF terverifikasi.</p></div><div className="report-export-actions"><button className="secondary-button export-button" disabled={!dataset.rows.length} onClick={() => exportReportCsv(dataset)} {...actionProps('reports.export-csv')}><Download size={16} /> Ekspor CSV</button><button className="primary-button" disabled={exporting || !dataset.rows.length} onClick={exportPdf} {...actionProps('reports.export-pdf')}><Download size={17} /> {exporting ? 'Membuat PDF…' : 'Ekspor PDF'}</button></div></header>
-    <label className="field"><span>Jenis laporan</span><select aria-label="Jenis laporan" value={reportType} onChange={(event) => setReportType(event.target.value as CanonicalReportType)}>{CANONICAL_REPORT_TYPES.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label>
+    <header className="command-head"><div><p className="eyebrow">LAPORAN{demoSuffix}</p><h1>Laporan</h1><p>Pilih jenis, periode, dan cakupan. Periksa hasilnya sebelum ekspor.</p></div></header>
+    <label className="field"><span>Jenis laporan</span><select aria-label="Jenis laporan" value={reportType} onChange={(event) => { setReportType(event.target.value as CanonicalReportType); setExportStatus('') }}>{CANONICAL_REPORT_TYPES.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label>
     <Filters filters={filters} setFilters={setFilters} workspace={workspace} />
     {error && <p className="form-error" role="alert">{error}</p>}
+    {exportStatus && <p className="form-guidance" role="status">{exportStatus}</p>}
     <section className="report-preview" aria-label="Pratinjau laporan">
-      <header><div><span><Eye size={16} /> PRATINJAU DATASET KANONIS</span><h2>{dataset.title}</h2><p>{dataset.source}</p><p>Data sampai {dataset.dataThrough ? dateTimeLabel(dataset.dataThrough) : 'belum ada transaksi'} · Dibuat {dateTimeLabel(dataset.generatedAt)}</p></div><FileText aria-hidden="true" size={32} /></header>
+      <header><div><span><Eye size={16} /> PRATINJAU LAPORAN</span><h2>{dataset.title}</h2><p>{dataset.rows.length} record · Data sampai {dataset.dataThrough ? dateTimeLabel(dataset.dataThrough) : 'belum ada transaksi'}</p></div><div className="report-export-actions"><button className="secondary-button" disabled={!canExport || exporting} onClick={exportCsv} {...actionProps('reports.export-csv')}><Download size={16} /> Ekspor CSV</button><button className="primary-button" disabled={!canExport || exporting} onClick={exportPdf} {...actionProps('reports.export-pdf')}><Download size={17} /> {exporting ? 'Membuat PDF…' : 'Ekspor PDF'}</button></div></header>
       <div className="preview-scope" aria-label="Filter aktif">{dataset.scope.map((item) => <span key={item}>{item}</span>)}</div>
       <div className="preview-metrics">{dataset.totals.map(([label, value]) => <article key={label}><small>{label}</small><strong>{value}</strong></article>)}</div>
-      {dataset.rows.length ? <div className="workspace-table-wrap"><table className="workspace-table preview-table"><thead><tr>{dataset.headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{dataset.rows.map((row, index) => <tr key={`${reportType}-${index}`}>{row.map((cell, cellIndex) => <td key={`${cellIndex}-${cell}`}>{cell}</td>)}</tr>)}</tbody></table></div> : <div className="empty-report"><FileText size={26} /><strong>Tidak ada data pada filter ini.</strong><span>Ubah filter atau tambahkan data kanonis terlebih dahulu.</span></div>}
+      <details className="report-provenance"><summary>Detail dataset</summary><p>{dataset.source}</p><p>Dibuat {dateTimeLabel(dataset.generatedAt)} · SHA-256: {datasetHash || 'menghitung…'}</p></details>
+      {invalidRange ? <div className="empty-report"><FileText size={26} /><strong>Rentang tanggal tidak valid.</strong><span>Tanggal mulai harus sama dengan atau sebelum tanggal akhir.</span></div> : dataset.rows.length ? <div className="workspace-table-wrap"><table className="workspace-table preview-table"><thead><tr>{dataset.headers.map((header) => <th key={header}>{header}</th>)}</tr></thead><tbody>{dataset.rows.map((row, index) => <tr key={`${reportType}-${index}`}>{row.map((cell, cellIndex) => <td key={`${cellIndex}-${cell}`}>{cell}</td>)}</tr>)}</tbody></table></div> : <div className="empty-report"><FileText size={26} /><strong>Tidak ada data pada filter ini.</strong><span>Ubah filter atau tambahkan data untuk cakupan tersebut.</span></div>}
     </section>
   </section>
 }

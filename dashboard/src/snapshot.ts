@@ -1,6 +1,7 @@
 import type { DashboardMeta, Overview, QualityRow, Transaction } from './types'
 import type { CompanyId, FinanceDebtEvent, FinanceWorkspace, OfficeCategory, WalletId } from './financeWorkspace'
 import { normalizeCanonicalPair } from './transactionMappings'
+import { visibleProjectStatus } from './projectStatus'
 
 export interface WalletSnapshot { source_key: string; name: string; balance: number }
 export interface DebtSnapshot { source_key: string; debt_id?: string; date: string | null; due_at?: string | null; amount: number; repaid?: number; outstanding?: number; notes: string; borrower: string; lender: string; status: string; version?: number; events?: FinanceDebtEvent[]; project_id?: string | null }
@@ -63,13 +64,10 @@ export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWo
     const writeMapping = mappings.size === 1 ? [...mappings.values()][0] : undefined
     const startedOn = project.started_on || project.first_activity_on || matching.map((row) => row.transaction_date).sort()[0]
       || snapshot.meta.data_through || updatedAt.slice(0, 10)
-    const status = project.lifecycle_status === 'completed'
-      ? 'completed' as const
-      : project.lifecycle_status === 'cancelled'
-        ? 'cancelled' as const
-        : project.lifecycle_status === 'active'
-          ? 'active' as const
-          : 'planned' as const
+    const rawStatus = project.lifecycle_status === 'completed' || project.lifecycle_status === 'cancelled' || project.lifecycle_status === 'active'
+      ? project.lifecycle_status
+      : 'planned'
+    const status = visibleProjectStatus(rawStatus)
     const terminal = status === 'completed' || status === 'cancelled'
     return {
       id: project.project_id,

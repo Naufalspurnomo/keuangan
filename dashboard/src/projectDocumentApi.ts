@@ -14,6 +14,7 @@ import {
 } from './projectDocuments'
 import { COMMERCIAL_META_FIELDS } from './commercialDocumentPolicy'
 import { normalizeCanonicalPair } from './transactionMappings'
+import { visibleProjectStatus } from './projectStatus'
 
 export const PROJECTS_ENDPOINT = '/admin/api/projects.php'
 export const DOCUMENTS_ENDPOINT = '/admin/api/documents.php'
@@ -186,7 +187,7 @@ function normalizeProject(value: unknown): ProjectRecord {
       || typeof item.client_name !== 'string' || typeof item.issuer_key !== 'string'
       || !['planned', 'active', 'completed', 'cancelled'].includes(String(item.status))
       || typeof item.lock_version !== 'number') {
-    throw new ProjectDocumentApiError('Data proyek dari server tidak lengkap.', { code: 'invalid_project' })
+    throw new ProjectDocumentApiError('Data Project dari server tidak lengkap.', { code: 'invalid_project' })
   }
   const binding = normalizeCanonicalPair(text(item.wallet), text(item.company))
   return {
@@ -197,7 +198,7 @@ function normalizeProject(value: unknown): ProjectRecord {
     client_address: text(item.client_address),
     client_contact: text(item.client_contact),
     issuer_key: item.issuer_key,
-    status: item.status as ProductionProjectStatus,
+    status: visibleProjectStatus(item.status as ProductionProjectStatus),
     started_on: text(item.start_date || item.started_on),
     completed_on: nullableText(item.completion_date ?? item.completed_on),
     contract_notes: text(item.contract_notes),
@@ -385,7 +386,7 @@ function projectValues(project: ProjectDraft) {
     issuer_key: project.issuer_key,
     wallet: project.wallet,
     company: project.company,
-    status: project.status,
+    status: visibleProjectStatus(project.status),
     start_date: project.started_on,
     completion_date: project.completed_on,
     contract_notes: project.contract_notes,
@@ -468,7 +469,7 @@ export function createProjectDocumentApi(options: ApiOptions = {}) {
       payload: bodyPayload,
       async submit(session: ProjectDocumentSession) {
         if (!session.capabilities[capability]) {
-          throw new ProjectDocumentApiError(capability === 'projectWrites' ? 'Perubahan proyek belum diaktifkan.' : 'Perubahan dokumen belum diaktifkan.', { code: 'writes_disabled' })
+          throw new ProjectDocumentApiError(capability === 'projectWrites' ? 'Perubahan Project belum diaktifkan.' : 'Perubahan dokumen belum diaktifkan.', { code: 'writes_disabled' })
         }
         if (typeof session.csrfToken !== 'string' || session.csrfToken.length < 16) {
           throw new ProjectDocumentApiError('Sesi perubahan tidak valid.', { code: 'invalid_write_session' })
@@ -498,7 +499,7 @@ export function createProjectDocumentApi(options: ApiOptions = {}) {
   return {
     async listProjects(): Promise<ProjectListResult> {
       const result = await read(query(projectsEndpoint, { action: 'list' }))
-      if (!Array.isArray(result.data.items)) throw new ProjectDocumentApiError('Daftar proyek dari server tidak lengkap.', { code: 'invalid_projects' })
+      if (!Array.isArray(result.data.items)) throw new ProjectDocumentApiError('Daftar Project dari server tidak lengkap.', { code: 'invalid_projects' })
       return { projects: result.data.items.map(normalizeProject), capabilities: result.capabilities }
     },
     async getProject(projectId: string): Promise<ProjectRecord> {
@@ -506,7 +507,7 @@ export function createProjectDocumentApi(options: ApiOptions = {}) {
       return normalizeProject(result.data)
     },
     createProject(project: ProjectDraft) {
-      return command(projectsEndpoint, { action: 'create', values: projectValues(project) }, undefined, 'projectWrites', (data) => normalizeProject(data.project))
+      return command(projectsEndpoint, { action: 'create', values: projectValues({ ...project, status: 'active', completed_on: null }) }, undefined, 'projectWrites', (data) => normalizeProject(data.project))
     },
     updateProject(projectId: string, changes: Partial<ProjectDraft>, expectedVersion: number) {
       uuid(projectId)
@@ -516,7 +517,7 @@ export function createProjectDocumentApi(options: ApiOptions = {}) {
         'wallet', 'company', 'status', 'contract_notes',
       ] as const
       fields.forEach((field) => {
-        if (field in changes) mapped[field] = changes[field]
+        if (field in changes) mapped[field] = field === 'status' && changes.status ? visibleProjectStatus(changes.status) : changes[field]
       })
       if ('started_on' in changes) mapped.start_date = changes.started_on
       if ('completed_on' in changes) mapped.completion_date = changes.completed_on
@@ -524,15 +525,15 @@ export function createProjectDocumentApi(options: ApiOptions = {}) {
     },
     setProjectStatus(projectId: string, status: ProductionProjectStatus, expectedVersion: number) {
       uuid(projectId)
-      return command(projectsEndpoint, { action: 'status', project_id: projectId, status }, expectedVersion, 'projectWrites', normalizeProject)
+      return command(projectsEndpoint, { action: 'status', project_id: projectId, status: visibleProjectStatus(status) }, expectedVersion, 'projectWrites', normalizeProject)
     },
     deleteProject(projectId: string, expectedVersion: number, expectedName: string) {
       const canonicalProjectId = uuid(projectId)
-      if (!expectedName || expectedName !== expectedName.trim()) throw new ProjectDocumentApiError('Nama proyek untuk konfirmasi tidak valid.', { code: 'invalid_project_name' })
+      if (!expectedName || expectedName !== expectedName.trim()) throw new ProjectDocumentApiError('Nama Project untuk konfirmasi tidak valid.', { code: 'invalid_project_name' })
       return command(projectsEndpoint, { action: 'delete', project_id: canonicalProjectId, expected_name: expectedName }, expectedVersion, 'projectWrites', (data) => {
         const result = record(data)
         if (!result || result.project_id !== canonicalProjectId || result.deleted !== true) {
-          throw new ProjectDocumentApiError('Konfirmasi penghapusan proyek dari server tidak valid.', { code: 'invalid_project_delete' })
+          throw new ProjectDocumentApiError('Konfirmasi penghapusan Project dari server tidak valid.', { code: 'invalid_project_delete' })
         }
         return { projectId: canonicalProjectId, deleted: true as const }
       })
@@ -556,7 +557,7 @@ export function createProjectDocumentApi(options: ApiOptions = {}) {
     },
     createDocument(document: ProjectDocumentDraft) {
       uuid(document.project_id)
-      if (document.type === 'sales_order') throw new ProjectDocumentApiError('Sales Order dibuat otomatis bersama proyek.', { code: 'unsupported_document_create' })
+      if (document.type === 'sales_order') throw new ProjectDocumentApiError('Sales Order dibuat otomatis bersama Project.', { code: 'unsupported_document_create' })
       if (document.type === 'receipt') {
         return command(documentsEndpoint, {
           action: 'create_receipt', project_id: document.project_id, invoice_id: document.applies_to_invoice_id,

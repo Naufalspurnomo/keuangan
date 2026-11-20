@@ -152,10 +152,10 @@ function ActiveCalendarSection({ portfolio, projects, asOf, onOpen }: { portfoli
     viewportRef.current.classList.remove('is-panning')
   }
 
-  return <section className={`active-age-section portfolio-${portfolio.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`} aria-label={`Timeline proyek aktif ${portfolio}`}>
+  return <section className={`active-age-section portfolio-${portfolio.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`} aria-label={`Timeline Project aktif ${portfolio}`}>
     <header>
       <div className="active-age-identity"><i>{unit.mark}</i><div><p>{portfolio} Section</p><h3>Project candles</h3><span>{unit.copy}</span></div></div>
-      <div className="active-age-summary"><strong>{ordered.length}</strong><span>proyek aktif</span><em>Tertua {oldestAge} hari</em></div>
+      <div className="active-age-summary"><strong>{ordered.length}</strong><span>Project aktif</span><em>Tertua {oldestAge} hari</em></div>
     </header>
     {visible.length ? <>
       <div className="active-calendar-toolbar"><span><Move size={14} /> Seret area kosong · klik candle untuk detail</span><b>Snapshot {calendar.snapshotLabel} · {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, ordered.length)} dari {ordered.length}</b></div>
@@ -181,7 +181,7 @@ function ActiveCalendarSection({ portfolio, projects, asOf, onOpen }: { portfoli
               return <button type="button" key={`${portfolio}-${project.name}`} data-project-candle={project.name} className="active-calendar-bar" style={{ '--project-calendar-span': calendar.spanFor(project.started_on), ...candleTone(age) } as CSSProperties} onPointerDown={() => { drag.current.moved = false }} onClick={(event) => {
                 if (event.detail === 0 || !drag.current.moved) onOpen(project.name, project.portfolio)
                 drag.current.moved = false
-              }} aria-label={`Buka detail proyek ${project.name}, mulai ${shortDate(project.started_on)}, umur ${age} hari, ${activityDescription}`} title={`Klik untuk buka ${project.name} · mulai ${shortDate(project.started_on)} · umur ${age} hari · ${activityDescription}`}>
+              }} aria-label={`Buka detail Project ${project.name}, mulai ${shortDate(project.started_on)}, umur ${age} hari, ${activityDescription}`} title={`Klik untuk buka ${project.name} · mulai ${shortDate(project.started_on)} · umur ${age} hari · ${activityDescription}`}>
                 {(project.first_activity_on || project.last_activity_on) && <span className="active-calendar-activity" style={activityStyle} title={`Rentang transaksi: pertama ${shortDate(project.first_activity_on)}, terakhir ${shortDate(project.last_activity_on)}`} />}
                 <span className="active-calendar-fill">
                   <small>{age} hari</small>
@@ -206,7 +206,7 @@ function ActiveCalendarSection({ portfolio, projects, asOf, onOpen }: { portfoli
         </div>
         {pageCount > 1 && <nav aria-label={`Pagination chart ${portfolio}`}><button type="button" onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={page === 0} aria-label={`Halaman sebelumnya ${portfolio}`}><ArrowLeft size={15} /></button><span>{page + 1} / {pageCount}</span><button type="button" onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))} disabled={page === pageCount - 1} aria-label={`Halaman berikutnya ${portfolio}`}><ArrowRight size={15} /></button></nav>}
       </footer>
-    </> : <p className="active-age-empty">Tidak ada proyek aktif pada unit ini.</p>}
+    </> : <p className="active-age-empty">Tidak ada Project aktif pada unit ini.</p>}
   </section>
 }
 
@@ -221,8 +221,8 @@ export default function ActiveProjectAgeChart({ projects, portfolios, query, asO
     .map((portfolio) => ({ portfolio, projects: chartProjects.filter((project) => project.portfolio === portfolio) }))
     .filter((section) => section.projects.length)
 
-  return <section className="active-project-age-report" aria-label="Timeline kalender proyek aktif">
-    <header className="active-project-age-head"><div><p className="eyebrow">ACTIVE PROJECT MARKET</p><h2>Timeline kalender proyek aktif</h2><span>Setiap candle adalah proyek. Posisi bulan, tanggal mulai, panjang durasi, dan warna umur memakai data snapshot yang sama.</span></div><strong>{chartProjects.length} proyek aktif</strong></header>
-    {sections.length ? <div className="active-age-sections">{sections.map((section) => <ActiveCalendarSection key={section.portfolio} {...section} asOf={asOf} onOpen={onOpen} />)}</div> : <p className="active-age-empty">Tidak ada proyek aktif untuk filter ini.</p>}
+  return <section className="active-project-age-report" aria-label="Timeline kalender Project aktif">
+    <header className="active-project-age-head"><div><p className="eyebrow">ACTIVE PROJECT MARKET</p><h2>Timeline kalender Project aktif</h2><span>Setiap candle adalah Project. Posisi bulan, tanggal mulai, panjang durasi, dan warna umur memakai data snapshot yang sama.</span></div><strong>{chartProjects.length} Project aktif</strong></header>
+    {sections.length ? <div className="active-age-sections">{sections.map((section) => <ActiveCalendarSection key={section.portfolio} {...section} asOf={asOf} onOpen={onOpen} />)}</div> : <p className="active-age-empty">Tidak ada Project aktif untuk filter ini.</p>}
   </section>
 }
