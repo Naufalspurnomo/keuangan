@@ -23,7 +23,7 @@ def replies(monkeypatch, *, sha=SHA, schema=True, status=422, code="invalid_json
         if url.endswith("/api/health/release"):
             return 200, {"release_sha": sha}
         if url.endswith("/snapshot"):
-            return 200, {"data": {}}
+            return 200, {"version": "dashboard.snapshot.v1"}
         if url.endswith("/health"):
             return 200, {"dashboard_write_schema": {"ready": schema}, "project_document_schema": {"ready": True}}
         return status, {"error": {"code": code}}
@@ -40,6 +40,21 @@ def test_accepts_only_ready_backend_and_checks_all_mutation_routes(monkeypatch):
     assert run()["ok"] is True
     assert len(calls) == 7
     assert [method for _, method in calls] == ["GET", "GET", "GET", "POST", "POST", "POST", "GET"]
+
+
+@pytest.mark.parametrize("payload", [{"data": {}}, {}, {"version": "dashboard.snapshot.v0"}])
+def test_blocks_obsolete_or_invalid_snapshot_contract(monkeypatch, payload):
+    replies(monkeypatch)
+    synthetic = module.probe_json
+
+    def combined(url, token, *, method="GET"):
+        if url.endswith("/snapshot"):
+            return 200, payload
+        return synthetic(url, token, method=method)
+
+    monkeypatch.setattr(module, "probe_json", combined)
+    with pytest.raises(RuntimeError, match="authenticated snapshot unavailable"):
+        run()
 
 
 @pytest.mark.parametrize("change", [{"sha": "b" * 40}, {"schema": False}, {"schema": "true"}, {"status": 404}, {"status": 401}, {"status": 503}, {"status": 200}, {"code": "canonical_writes_disabled"}, {"code": "canonical_authority_unavailable"}])

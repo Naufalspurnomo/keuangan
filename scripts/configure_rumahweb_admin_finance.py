@@ -272,7 +272,7 @@ def preflight_backend(canonical_url: str, snapshot_url: str, expected_sha: str, 
         # parsing JSON. Only invalid_json/422 proves both gates plus route presence;
         # OPTIONS/401/404/503 or a generic 200 cannot establish write readiness.
         status, snapshot_payload = probe_json(snapshot_url, token)
-        if status != 200 or not isinstance(snapshot_payload.get("data"), dict):
+        if status != 200 or snapshot_payload.get("version") != "dashboard.snapshot.v1":
             raise RuntimeError("backend preflight authenticated snapshot unavailable")
         for suffix in ("", "/__release_preflight__/corrections", "/__release_preflight__/reversals"):
             status, payload = probe_json(canonical_url + suffix, token, method="POST")
