@@ -51,6 +51,7 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const mutationInFlight = useRef(false)
+  const listRequestSequence = useRef(0)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [retryCommand, setRetryCommand] = useState<RetryCommand>(null)
@@ -68,27 +69,38 @@ export default function ProjectDocumentsWorkspace({ project, api, session, route
   }, [onNotice])
 
   const loadList = useCallback(async () => {
+    const sequence = ++listRequestSequence.current
+    const isCurrent = () => sequence === listRequestSequence.current
     setLoading(true)
     setError('')
     setNotice('')
-    const appendError = (message: string) => setError((current) => current ? `${current} ${message}` : message)
+    const appendError = (message: string) => {
+      if (isCurrent()) setError((current) => current ? `${current} ${message}` : message)
+    }
     const documentsRequest = api.listDocuments(project.id).then((result) => {
-      setDocuments(result.documents)
+      if (isCurrent()) setDocuments(result.documents)
     }).catch(() => {
-      setDocuments([])
-      appendError('Dokumen belum dapat dimuat. Periksa koneksi lalu coba lagi.')
+      if (isCurrent()) {
+        setDocuments([])
+        appendError('Dokumen belum dapat dimuat. Periksa koneksi lalu coba lagi.')
+      }
     })
     const paymentRequest = api.getPaymentSummary(project.id).then((summary) => {
-      setPaymentSummary(summary)
+      if (isCurrent()) setPaymentSummary(summary)
     }).catch(() => {
-      setPaymentSummary(null)
-      appendError('Ringkasan pembayaran belum dapat dimuat.')
+      if (isCurrent()) {
+        setPaymentSummary(null)
+        appendError('Ringkasan pembayaran belum dapat dimuat.')
+      }
     })
     await Promise.all([documentsRequest, paymentRequest])
-    setLoading(false)
+    if (isCurrent()) setLoading(false)
   }, [api, project.id])
 
-  useEffect(() => { void loadList() }, [loadList])
+  useEffect(() => {
+    void loadList()
+    return () => { listRequestSequence.current += 1 }
+  }, [loadList])
 
   useEffect(() => {
     let cancelled = false
