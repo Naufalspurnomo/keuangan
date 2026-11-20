@@ -119,6 +119,36 @@ body.translatepress-en_US #menu-primary-menu-1 li.menu-item-2054 a::after {{
         margin-top: 8px;
     }}
 }}
+/* Reset Blocksy menu-indicator styling; keep the switch compact. */
+#menu-primary-menu li.menu-item-2054 {{ align-self: center; }}
+#menu-primary-menu li.menu-item-2054 a.ct-menu-link,
+#menu-primary-menu-1 li.menu-item-2054 a.ct-menu-link {{
+    height: 44px !important;
+    min-height: 44px !important;
+    max-height: 44px !important;
+    align-self: center;
+    padding: 0 14px !important;
+    gap: 10px;
+    border-radius: 8px;
+    color: #292929;
+    background-color: transparent;
+    border-color: #dedede;
+}}
+#menu-primary-menu li.menu-item-2054 a::before,
+#menu-primary-menu li.menu-item-2054 a::after,
+#menu-primary-menu-1 li.menu-item-2054 a::before,
+#menu-primary-menu-1 li.menu-item-2054 a::after {{
+    background-color: transparent !important;
+    color: inherit !important;
+    transform: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+    flex: 0 0 auto;
+}}
+#menu-primary-menu li.menu-item-2054 a::after,
+#menu-primary-menu-1 li.menu-item-2054 a::after {{ opacity: .55 !important; }}
+#menu-primary-menu-1 li.menu-item-2054 a.ct-menu-link {{ color: #fff; border-color: rgba(255,255,255,.55); }}
 {MARKER_END}"""
 
 
