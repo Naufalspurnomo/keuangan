@@ -93,7 +93,7 @@ export default function ProjectCommandCenter({ workspace, onAdd, onEdit, onCompl
   const asOf = projectAsOf(year, projectSnapshotDate(workspace))
 
   return <section className="project-command-center" aria-busy={busy}>
-    <header className="command-head project-command-heading"><div><p className="eyebrow">PROJECT{workspace.mode === 'demo' ? ' · DATA DEMO' : ''}</p><h1>Project</h1></div><div className="project-header-actions">{headerAction}{canAdd && <button type="button" className="primary-button" disabled={busy} onClick={onAdd}>Buat Project</button>}</div></header>
+    <header className="command-head project-command-heading"><div><h1>Project</h1></div><div className="project-header-actions">{headerAction}{canAdd && <button type="button" className="primary-button" disabled={busy} onClick={onAdd}>Buat Project</button>}</div></header>
 
     <div className="project-year-selector"><label><span>Project per tahun</span><select value={year} onChange={(event) => changeYear(Number(event.target.value))} aria-label="Project per tahun">{years.map((item) => <option value={item} key={item}>{item}</option>)}</select></label><span aria-live="polite">{filtered.length} Project · {completed} selesai</span></div>
 

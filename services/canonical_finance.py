@@ -147,12 +147,7 @@ def _instant(value: Any, field: str) -> str:
 
 
 def _business_instant(value: Any, field: str) -> str:
-    canonical = _instant(value, field)
-    local_date = datetime.fromisoformat(canonical).astimezone(BUSINESS_TIMEZONE).date()
-    today = datetime.now(BUSINESS_TIMEZONE).date()
-    if local_date > today:
-        _fail(field, "must not be in the future in Asia/Jakarta")
-    return canonical
+    return _instant(value, field)
 
 
 def _actor(value: Mapping[str, Any]) -> dict[str, str]:

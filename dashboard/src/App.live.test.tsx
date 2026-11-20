@@ -305,7 +305,7 @@ describe('production live source mode', () => {
     expect(within(dialog).getByLabelText('Unit usaha Project')).toHaveValue('HOLLA')
     fireEvent.change(within(dialog).getByLabelText('Jumlah *'), { target: { value: '500000' } })
     fireEvent.change(within(dialog).getByLabelText('Keterangan *'), { target: { value: 'Biaya proyek pertama' } })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Simpan transaksi' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Tambah Transaksi' }))
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
 
     expect(postedBody).toMatchObject({
@@ -745,12 +745,17 @@ describe('production live source mode', () => {
     expect(screen.queryByText('Project dan seluruh data turunannya dihapus permanen.')).toBeNull()
   })
 
-  it('refreshes immediately after a transaction write and again on the next poll', async () => {
+  it('closes after the committed write while refresh runs, warns on refresh failure, then polls again', async () => {
     vi.useFakeTimers()
     let snapshotRequests = 0
+    const refresh = deferred<Response>()
     const request = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/admin/api/snapshot.php') { snapshotRequests += 1; return liveResponse() }
+      if (url === '/admin/api/snapshot.php') {
+        snapshotRequests += 1
+        if (snapshotRequests === 2) return refresh.promise
+        return liveResponse()
+      }
       if (url === '/admin/api/write-session.php') return writeSessionResponse()
       if (url === '/admin/api/transactions.php') return recordedTransactionResponse()
       if (url.startsWith('/admin/api/projects.php?action=list')) return productionProjectsResponse()
@@ -762,12 +767,17 @@ describe('production live source mode', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Operasional kantor' }))
     fireEvent.click(screen.getAllByRole('button', { name: /Biaya kantor|Catat biaya/ })[0])
-    expect(within(screen.getByRole('dialog')).queryByRole('group', { name: 'Pilih aktivitas' })).toBeNull()
     fireEvent.change(screen.getByLabelText('Jumlah *'), { target: { value: '500000' } })
     fireEvent.change(screen.getByLabelText('Keterangan *'), { target: { value: 'Biaya kantor hari ini' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Simpan transaksi' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Tambah Transaksi' }))
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+
+    expect(screen.queryByRole('dialog')).toBeNull()
     expect(snapshotRequests).toBe(2)
+    expect(screen.getByRole('status')).toHaveTextContent('Data sedang diperbarui')
+
+    await act(async () => { refresh.reject(new Error('snapshot offline')); await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByRole('status')).toHaveTextContent('Transaksi sudah tercatat, tetapi data terbaru belum dapat dimuat')
 
     await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
     expect(snapshotRequests).toBe(3)

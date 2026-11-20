@@ -402,10 +402,11 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
       if (!canCreateTransactions || !onCreateLiveTransaction) throw new Error('Pencatatan transaksi belum tersedia.')
       return onCreateLiveTransaction(input).then((result) => {
         setNotice(result.authority === 'postgresql'
-          ? result.readbackFailed
-            ? `Transaksi tercatat dengan ID ${result.transactionId}, tetapi tampilan belum berhasil dimuat ulang. Gunakan Muat ulang; jangan catat ulang transaksi.`
-            : `Transaksi tercatat dengan ID ${result.transactionId}. Tampilan sudah diperbarui.`
+          ? `Transaksi tercatat dengan ID ${result.transactionId}. Data sedang diperbarui.`
           : `Transaksi tercatat di ${result.sheetName}, baris ${result.sheetRow}. Tampilan sedang diperbarui.`)
+        if (result.readback) {
+          void result.readback.catch(() => setNotice('Transaksi sudah tercatat, tetapi data terbaru belum dapat dimuat. Muat ulang halaman; jangan kirim transaksi yang sama lagi.'))
+        }
       })
     }
     const { category: _category, ...demoInput } = input
@@ -597,7 +598,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
             debts={productionFinance ? <ProjectDebtPanel project={productionFinance} workspace={finance.workspace} /> : null}
             profitability={productionProfitability}
             presensi={<ProjectPresensiPanel project={productionProject} />}
-            documents={<ProjectDocumentsWorkspace project={productionProject} api={projectApi} session={projectSession} route={{ projectId: productionProject.id, tab: route.tab ?? 'documents', document: route.document, type: route.type }} onRouteChange={setProjectDetailRoute} />}
+            documents={<ProjectDocumentsWorkspace project={productionProject} api={projectApi} session={projectSession} route={{ projectId: productionProject.id, tab: route.tab ?? 'documents', document: route.document, type: route.type }} onRouteChange={setProjectDetailRoute} onNotice={setNotice} />}
             audit={productionFinance ? <ProjectAuditPanel project={productionFinance} workspace={finance.workspace} /> : null}
             capabilities={projectCapabilities}
             onEdit={setProjectModal}
@@ -656,18 +657,18 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
           {!readOnly && <p className="demo-mode-label">Mode demo · data browser</p>}
           {readOnly && !canCreateTransactions && active !== 'inbox-reviews' && <p className="form-error">{liveWriteStatus ?? 'Pencatatan transaksi belum tersedia.'}</p>}
           {!readOnly && <DemoBanner updatedAt={finance.workspace.updated_at} onReset={reset} />}
-          {!['overview', 'projects', 'reports', 'inbox-reviews'].includes(active) && <header className="page-heading"><div><p className="eyebrow">{meta.eyebrow}</p><h1>{meta.title}</h1><p>{meta.copy}</p></div>{!readOnly && <span className="demo-badge">DATA DEMO</span>}</header>}
+          {!['overview', 'projects', 'reports', 'inbox-reviews'].includes(active) && <header className="page-heading"><div><h1>{meta.title}</h1><p>{meta.copy}</p></div>{!readOnly && <span className="demo-badge">DATA DEMO</span>}</header>}
           {content}
         </div>
       </main>
-      {notice && <div className="finance-toast" role="status">{notice}</div>}
+      {notice && <div className="finance-toast" role="status" aria-live="polite" aria-atomic="true">{notice}</div>}
       {!readOnly && modal?.kind === 'project' && <ProjectForm project={modal.value} onSave={saveProject} onClose={() => setModal(null)} />}
       {!readOnly && modal?.kind === 'complete-project' && <ProjectCompleteDialog project={modal.value} onSave={completeProject} onClose={() => setModal(null)} />}
       {(!readOnly || canCreateTransactions) && modal?.kind === 'transaction' && <TransactionForm projects={transactionProjects} transaction={modal.value} initialScope={modal.scope} lockedProjectId={modal.projectId} onSave={saveTransaction} onClose={() => setModal(null)} liveWrite={readOnly} currentDate={readOnly ? jakartaToday() : undefined} />}
       {!readOnly && modal?.kind === 'debt' && <DebtForm debt={modal.value} onSave={saveDebt} onClose={() => setModal(null)} />}
       {readOnly && modal?.kind === 'debt' && !modal.value && <CanonicalDebtCreateForm projects={transactionProjects} initialProjectId={modal.projectId} initialBorrower={modal.borrower} saving={debtBusy} onSave={saveLiveDebt} onClose={() => setModal(null)} />}
       {readOnly && modal?.kind === 'debt' && modal.value && <CanonicalDebtRepaymentForm debt={modal.value} saving={debtBusy} onSave={(amount, occurredOn, description) => repayLiveDebt(modal.value!, amount, occurredOn, description)} onClose={() => setModal(null)} />}
-      {readOnly && transactionMutationTarget && <CanonicalTransactionMutationDialog row={transactionMutationTarget.row} action={transactionMutationTarget.action} currentDate={jakartaToday()} saving={transactionLifecycleBusyId === transactionMutationTarget.row.id} onSubmit={submitTransactionMutation} onClose={() => { if (!transactionLifecycleBusyId) setTransactionMutationTarget(null) }} />}
+      {readOnly && transactionMutationTarget && <CanonicalTransactionMutationDialog row={transactionMutationTarget.row} action={transactionMutationTarget.action} saving={transactionLifecycleBusyId === transactionMutationTarget.row.id} onSubmit={submitTransactionMutation} onClose={() => { if (!transactionLifecycleBusyId) setTransactionMutationTarget(null) }} />}
       {projectModal && <ProjectRecordForm project={projectModal === 'create' ? undefined : projectModal} clients={productionProjects} saving={projectBusy} onSave={saveProductionProject} onClose={() => setProjectModal(null)} />}
     </div>
   )
@@ -706,7 +707,6 @@ function LiveDashboardApp() {
   const createLiveTransaction = async (input: TransactionFormInput) => {
     if (!writeSession?.canonicalWritesEnabled) throw new Error(writeStatus || 'Pencatatan transaksi belum tersedia.')
     if (!Number.isSafeInteger(input.amount) || input.amount <= 0) throw new Error('Jumlah harus berupa rupiah bulat lebih dari nol.')
-    if (input.date > jakartaToday()) throw new Error('Tanggal transaksi tidak boleh melewati hari ini di Asia/Jakarta.')
     if (!input.wallet || !input.company || !input.category) throw new Error('Pilihan transaksi belum lengkap.')
     const description = input.notes
     if (!description || description !== description.trim() || description !== description.split(/\s+/).join(' ')) {
@@ -735,12 +735,7 @@ function LiveDashboardApp() {
     try {
       const result = await pendingAttempt.current.submit(writeSession)
       pendingAttempt.current = null
-      try {
-        await state.reload()
-        return result
-      } catch {
-        return { ...result, readbackFailed: true }
-      }
+      return { ...result, readback: state.reload().then(() => undefined) }
     } catch (error) {
       if (!(error && typeof error === 'object' && 'uncertain' in error && error.uncertain)) {
         pendingAttempt.current = null

@@ -239,8 +239,6 @@ export function validateTransactionInput(input: TransactionInput, workspace: Fin
     if (!project) throw new FinanceValidationError('Project wajib dipilih.')
     const status = visibleProjectStatus(project.status)
     if (status === 'cancelled') throw new FinanceValidationError('Project Dibatalkan tidak dapat memiliki transaksi baru.')
-    if (date < project.started_on) throw new FinanceValidationError('Tanggal transaksi tidak boleh sebelum Project dimulai.')
-    if (project.completed_on && date > project.completed_on) throw new FinanceValidationError('Tanggal transaksi tidak boleh setelah Project selesai.')
     return { ...input, date, amount, notes, wallet: project.wallet, company: project.company, project_id: project.id, office_category: null }
   }
   if (input.scope !== 'office') throw new FinanceValidationError('Aktivitas transaksi tidak valid.')

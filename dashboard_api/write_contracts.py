@@ -129,8 +129,6 @@ def _validate_date(value: Any, current_date: date) -> date:
         _fail("date", "must be a valid ISO date in YYYY-MM-DD format")
     if value != request_date.isoformat():
         _fail("date", "must use canonical ISO format YYYY-MM-DD")
-    if request_date > current_date:
-        _fail("date", "must not be in the future in Asia/Jakarta")
     return request_date
 
 

@@ -93,6 +93,40 @@ describe('ProjectDocumentPreview brand renderers', () => {
     expect(page).toHaveTextContent('Rp3.367.500')
     expect(page).toHaveTextContent('30% signature fee')
     expect(page.querySelector('.texturin-terms')).toBeTruthy()
+    expect(within(page).getByAltText('Texturin sign-off Evanvun')).toBeTruthy()
+  })
+
+  it('keeps a two-item Texturin paper proof complete, aligned, and signed', () => {
+    const project = {
+      ...baseProject,
+      name: 'Gatau',
+      client_name: 'GGWP',
+      issuer_key: 'texturin-surabaya',
+      wallet: 'TX SBY(216)',
+      company: 'TEXTURIN-Surabaya',
+    }
+    const document = documentFor(project, 'texturin-surabaya', {
+      id: 'line-land', description: 'Tanah', quantity: '300', unit: 'm²', unit_price: 10_000,
+      discount_percent: '0', pricing_mode: 'ppm_area', billed_area_m2: '300',
+    })
+    document.issue_date = '2026-11-20'
+    document.lines.push({
+      ...document.lines[0], id: 'line-water', description: 'Air', quantity: '200',
+      billed_area_m2: '200', unit_price: 40_000,
+    })
+
+    render(<ProjectDocumentPreview project={project} document={document} title="Quotation" />)
+
+    const page = screen.getByRole('article', { name: 'Pratinjau A4 Quotation Texturin Surabaya' })
+    expect(page).toHaveTextContent('20 November 2026')
+    expect(page).toHaveTextContent('Tanah')
+    expect(page).toHaveTextContent('Rp3.000.000')
+    expect(page).toHaveTextContent('Air')
+    expect(page).toHaveTextContent('Rp8.000.000')
+    expect(page).toHaveTextContent('Rp11.000.000')
+    const signoff = within(page).getByAltText('Texturin sign-off Evanvun')
+    expect(signoff).toHaveClass('texturin-signoff-art')
+    expect(page.querySelector('.live-closing')).toContainElement(signoff)
   })
 
   it('renders Texturin Bali as the reduced invoice-like variant without Surabaya terms or signature-fee band', () => {
@@ -110,6 +144,7 @@ describe('ProjectDocumentPreview brand renderers', () => {
     expect(page).toHaveTextContent('BANK DETAILS')
     expect(page.querySelector('.texturin-terms')).toBeNull()
     expect(page.querySelector('.texturin-deposit')).toBeNull()
+    expect(within(page).getByAltText('Texturin sign-off Evanvun')).toBeTruthy()
   })
 
   it('shows every Hojja billed artwork when a document has three lines', () => {

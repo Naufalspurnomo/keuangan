@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
+import { Plus, Trash2 } from 'lucide-react'
 
 import { useModalDialog } from './CanonicalDebtForms'
 import ProjectDocumentPreview from './ProjectDocumentPreview'
@@ -219,7 +220,8 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
 
     <div className="quotation-editor-layout"><div className="quotation-editor-main">
     <fieldset disabled={busy}>
-      <legend>Data penerima dan Project</legend>
+      <legend className="sr-only">Data penerima dan Project</legend>
+      <div className="quotation-section-heading"><h3>Data penerima dan Project</h3></div>
       <div className="quotation-field-grid">
         <label>Nama penerima<input value={values.recipient_name} onChange={(event) => field('recipient_name', event.target.value)} required /></label>
         <label>Perusahaan penerima<input value={values.recipient_company} onChange={(event) => field('recipient_company', event.target.value)} /></label>
@@ -234,7 +236,8 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
     </fieldset>
 
     <fieldset disabled={busy}>
-      <legend>Rincian item</legend>
+      <legend className="sr-only">Rincian item</legend>
+      <div className="quotation-section-heading"><h3>Rincian item</h3></div>
       <div className="quotation-lines">
         {values.lines.map((line, index) => <article key={line.id} className="quotation-line">
           <strong>Item {index + 1}</strong>
@@ -254,14 +257,15 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
           </>}
             <RupiahAmountInput label={`${policy.labels.unit_price} item ${index + 1}`} value={line.unit_price} disabled={busy || imageProcessing} onChange={(amount) => lineField(index, 'unit_price', amount ?? 0)} />
           {policy.pricing_mode !== 'fixed_artwork' && <label>Diskon item {index + 1} (%)<input type="number" min="0" max="100" step="0.01" value={line.discount_percent} onChange={(event) => lineField(index, 'discount_percent', event.target.value)} /></label>}
-          {values.lines.length > 1 && <button type="button" className="danger-secondary" onClick={() => setValues((current) => ({ ...current, lines: current.lines.filter((_, lineIndex) => lineIndex !== index) }))}>Hapus item {index + 1}</button>}
+          {values.lines.length > 1 && <button type="button" className="icon-button danger" aria-label={`Hapus item ${index + 1}`} onClick={() => setValues((current) => ({ ...current, lines: current.lines.filter((_, lineIndex) => lineIndex !== index) }))}><Trash2 size={17} /></button>}
         </article>)}
       </div>
-      <button type="button" className="secondary" onClick={() => setValues((current) => ({ ...current, lines: [...current.lines, newLine(project, current.lines.length)] }))}>Tambah item</button>
+      <button type="button" className="icon-button quotation-add-item" aria-label="Tambah item" onClick={() => setValues((current) => ({ ...current, lines: [...current.lines, newLine(project, current.lines.length)] }))}><Plus size={18} /></button>
     </fieldset>
 
     <fieldset disabled={busy}>
-      <legend>Ringkasan dan ketentuan</legend>
+      <legend className="sr-only">Ringkasan dan ketentuan</legend>
+      <div className="quotation-section-heading"><h3>Ringkasan dan ketentuan</h3></div>
       <div className="quotation-field-grid">
         <label>Jenis diskon dokumen<select value={values.discount_mode} onChange={(event) => field('discount_mode', event.target.value as ProjectQuotationValues['discount_mode'])}><option value="none">Tanpa diskon</option><option value="percent">Persen</option><option value="fixed">Rupiah</option></select></label>
         {values.discount_mode === 'fixed'
@@ -335,12 +339,13 @@ function DealDialog({ item, busy, onCancel, onConfirm }: {
   </div>
 }
 
-export default function ProjectQuotationPanel({ project, salesOrder, session, api: suppliedApi, onApplied, additionalCreateActions }: {
+export default function ProjectQuotationPanel({ project, salesOrder, session, api: suppliedApi, onApplied, onNotice, additionalCreateActions }: {
   project: ProjectRecord
   salesOrder?: ProjectDocumentRecord
   session: ProjectDocumentSession
   api?: ProjectQuotationApi
   onApplied: (documentId: string) => void | Promise<void>
+  onNotice?: (message: string) => void
   additionalCreateActions?: ReactNode
 }) {
   const api = useMemo(() => suppliedApi ?? createProjectQuotationApi(), [suppliedApi])
@@ -354,6 +359,10 @@ export default function ProjectQuotationPanel({ project, salesOrder, session, ap
   const [rejectItem, setRejectItem] = useState<ProjectQuotation | null>(null)
   const [rejectNote, setRejectNote] = useState('')
   const pendingCreate = useRef<{ signature: string; idempotencyKey: string; savedId?: string } | null>(null)
+  const announce = (message: string) => {
+    setNotice(message)
+    onNotice?.(message)
+  }
   const closeReject = () => { setRejectItem(null); setRejectNote('') }
   const rejectDialog = useModalDialog(closeReject, Boolean(rejectItem), !busy)
 
@@ -366,7 +375,7 @@ export default function ProjectQuotationPanel({ project, salesOrder, session, ap
       if (pending?.savedId && loaded.some((item) => item.id === pending.savedId)) {
         pendingCreate.current = null
         setEditor(null)
-        setNotice('Quotation tersimpan dan berhasil dipulihkan.')
+        announce('Quotation tersimpan dan berhasil dipulihkan.')
       }
     }
     catch (reason) { setError(messageFrom(reason)) }
@@ -399,7 +408,7 @@ export default function ProjectQuotationPanel({ project, salesOrder, session, ap
       setItems((current) => [saved, ...current.filter((item) => item.id !== saved.id)].sort((left, right) => right.version - left.version))
       if (editor.mode === 'create') pendingCreate.current = null
       setEditor(null)
-      setNotice(editor.mode === 'revise' ? `Versi ${saved.version} dibuat. Versi sebelumnya tetap tersimpan.` : `Draf versi ${saved.version} tersimpan.`)
+      announce(editor.mode === 'revise' ? `Versi ${saved.version} dibuat. Versi sebelumnya tetap tersimpan.` : `Draf versi ${saved.version} tersimpan.`)
     } catch (reason) {
       if (editor.mode === 'create' && !pendingCreate.current?.savedId && !(reason instanceof ProjectDocumentApiError && reason.uncertain)) pendingCreate.current = null
       const message = messageFrom(reason); setError(message); throw reason instanceof Error ? reason : new Error(message)
@@ -412,6 +421,7 @@ export default function ProjectQuotationPanel({ project, salesOrder, session, ap
       const saved = await api.transition(item, status, note, session)
       setItems((current) => current.map((entry) => entry.id === saved.id ? saved : entry))
       if (status === 'rejected') { setRejectItem(null); setRejectNote('') }
+      announce(status === 'rejected' ? `Quotation versi ${saved.version} ditandai ditolak.` : `Quotation versi ${saved.version} ditandai sudah dikirim.`)
     } catch (reason) { setError(messageFrom(reason)) }
     finally { setBusy(false) }
   }
@@ -431,7 +441,7 @@ export default function ProjectQuotationPanel({ project, salesOrder, session, ap
       }, session)
       setItems((current) => current.map((entry) => entry.id === result.quotation.id ? result.quotation : entry))
       setDealItem(null)
-      setNotice('Deal dikonfirmasi. Sales Order dan draf invoice DP dibuat; jadwal tagihan tersimpan.')
+      announce('Deal dikonfirmasi. Sales Order dan draf invoice DP dibuat; jadwal tagihan tersimpan.')
       await onApplied(result.sales_order_id)
     } catch (reason) { setError(messageFrom(reason)); throw reason }
     finally { setBusy(false) }
@@ -446,6 +456,7 @@ export default function ProjectQuotationPanel({ project, salesOrder, session, ap
       anchor.download = `quotation-v${item.version}.pdf`
       anchor.click()
       URL.revokeObjectURL(url)
+      announce(`Unduhan PDF quotation versi ${item.version} disiapkan.`)
     } catch (reason) { setError(messageFrom(reason)) }
     finally { setBusy(false) }
   }
@@ -457,7 +468,7 @@ export default function ProjectQuotationPanel({ project, salesOrder, session, ap
   </section>
 
   return <section className="quotation-panel" aria-labelledby="quotation-title">
-    <header><div><span className="eyebrow">DOKUMEN</span><h3 id="quotation-title">Buat dokumen</h3><p>Quotation dan invoice tidak mencatat kas. Kuitansi memakai transaksi pemasukan yang sudah tercatat.</p></div><div><span className="status-pill">Template {commercialPolicy(projectTemplateKey(project)).template_key.toUpperCase()}</span><button type="button" className="primary-button" onClick={() => setEditor({ mode: 'create', source: null, values: projectValues(project) })} disabled={busy}>Buat quotation</button>{additionalCreateActions}</div></header>
+    <header><div><span className="eyebrow">DOKUMEN</span><h3 id="quotation-title">Buat dokumen</h3><p>Quotation dan invoice tidak mencatat kas. Kuitansi memakai transaksi pemasukan yang sudah tercatat.</p></div><div><span className="status-pill">Template {commercialPolicy(projectTemplateKey(project)).template_key.toUpperCase()}</span><button type="button" className="primary-button" onClick={() => setEditor({ mode: 'create', source: null, values: projectValues(project) })} disabled={busy || loading}>Buat quotation</button>{additionalCreateActions}</div></header>
     {error && <p className="document-state-alert" role="alert">{error} <button type="button" className="secondary" onClick={() => void load()}>Muat ulang</button></p>}
     {notice && <p className="document-state-notice" role="status">{notice}</p>}
 

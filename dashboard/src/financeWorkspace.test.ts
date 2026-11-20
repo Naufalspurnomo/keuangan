@@ -128,14 +128,14 @@ describe('demo finance workspace', () => {
     })).not.toThrow()
   })
 
-  it('rejects project transactions after completion', () => {
+  it('allows admin-selected project transaction dates outside the project lifecycle', () => {
     const workspace = seedFinanceWorkspace()
     const project = workspace.projects.find((item) => item.status === 'completed')!
 
     expect(() => createTransaction(workspace, {
       date: '2026-12-31', direction: 'income', amount: 500_000, scope: 'project', wallet: project.wallet,
       company: project.company, project_id: project.id, office_category: null, notes: 'Pembayaran terlambat',
-    })).toThrow('Tanggal transaksi tidak boleh setelah Project selesai.')
+    })).not.toThrow()
   })
 
   it('blocks deletion of a project that still has financial records', () => {

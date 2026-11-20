@@ -53,6 +53,7 @@ export type RecordedTransaction = {
   transactionVersion?: never
   duplicate: boolean
   readbackFailed?: boolean
+  readback?: Promise<void>
 } | {
   recorded: true
   authority: 'postgresql'
@@ -65,6 +66,7 @@ export type RecordedTransaction = {
   projectionStatus?: never
   duplicate: boolean
   readbackFailed?: boolean
+  readback?: Promise<void>
 }
 
 export interface TransactionWriteAttempt {

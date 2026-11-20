@@ -1,6 +1,7 @@
 import hojjaMaster from './assets/hojja-master.png'
 import hollawallMaster from './assets/hollawall-master.png'
 import texturinBaliMaster from './assets/texturin-bali-master.png'
+import texturinSignoff from './assets/texturin-evanvun-signoff.png'
 import texturinSurabayaMaster from './assets/texturin-surabaya-master.png'
 import { buildCommercialDocumentViewModel, type CommercialDocumentViewModel } from './commercialDocumentViewModel'
 import {
@@ -54,6 +55,10 @@ function DueOrValidity({ document }: { document: PreviewProps['document'] }) {
   return <><b>{isInvoice(document) ? 'Jatuh tempo' : 'Berlaku sampai'}</b><span>{dateLabel(date)}</span></>
 }
 
+function TexturinSignoff() {
+  return <img className="texturin-signoff-art" src={texturinSignoff} alt="Texturin sign-off Evanvun" draggable={false} />
+}
+
 function ReceiptOverlay({ project, document, vm }: ResolvedPreviewProps) {
   return <section className="live-receipt"><p>Telah diterima dari <strong>{project.client_name}</strong> untuk pembayaran Project <strong>{project.name}</strong>.</p><b>{money(vm.totals.total)}</b><small>Diterima oleh</small><strong>{document.client_signatory || project.client_name}</strong></section>
 }
@@ -97,7 +102,7 @@ function TexturinSurabayaPreview(props: ResolvedPreviewProps) {
     <section className="live-meta live-meta-left"><b>TO</b><span>{project.client_name}</span><b>PROJECT</b><span>{project.name}</span></section>
     <section className="live-meta live-meta-right"><b>NO.</b><span>{vm.number ?? '—'}</span><b>DATE</b><span>{dateLabel(document.issue_date)}</span><DueOrValidity document={document} /></section>
     {isReceipt(document) ? <ReceiptOverlay {...props} /> : <><div className="live-lines">{vm.totals.lines.slice(0, 3).map((line, index) => <div className="live-line" key={line.id}><span>{index + 1}</span><span>{line.description}</span><span>{money(line.unit_price)}</span><span>{line.quantity} {line.unit}</span><strong>{money(line.total)}</strong></div>)}</div>{document.project_image_url && <figure className="live-project-image"><img src={document.project_image_url} alt={`Diagram teknis ${project.name}`} /></figure>}<dl className="live-totals"><div><dt>Subtotal</dt><dd>{money(vm.totals.subtotal)}</dd></div><div className="discount"><dt>Diskon</dt><dd>{vm.totals.document_discount > 0 ? `−${money(vm.totals.document_discount)}` : money(0)}</dd></div>{vm.totals.tax > 0 && <div><dt>{taxLabel(document)}</dt><dd>{money(vm.totals.tax)}</dd></div>}<div className="grand"><dt>Total</dt><dd>{money(vm.totals.total)}</dd></div></dl><section className="live-payment live-terms texturin-terms">{!isInvoice(document) && (vm.policy.default_terms ?? []).map((term) => <p key={term}>{term}</p>)}{document.payment_terms && <p>{document.payment_terms}</p>}{document.notes && <p>{document.notes}</p>}</section><section className="live-bank"><b>BANK DETAILS</b><span>Payment profile: {document.payment_profile_key || project.issuer_key}</span></section>{hasDeposit(document) && <div className="live-deposit"><b>{vm.policy.labels.deposit} {vm.policy.default_deposit_percent}%</b><strong>{money(Math.round(vm.totals.total * vm.policy.default_deposit_percent / 100))}</strong></div>}</>}
-    <p className="live-closing"><b>THANK YOU</b><strong>Texturin</strong></p>
+    <p className="live-closing"><TexturinSignoff /></p>
   </article>
 }
 
@@ -112,7 +117,7 @@ function TexturinBaliPreview(props: ResolvedPreviewProps) {
     <section className="live-meta live-meta-right"><b>NO.</b><span>{vm.number ?? '—'}</span><b>DATE</b><span>{dateLabel(document.issue_date)}</span><DueOrValidity document={document} /></section>
     {isReceipt(document) ? <ReceiptOverlay {...props} /> : <><div className="live-lines">{vm.totals.lines.slice(0, 3).map((line, index) => <div className="live-line" key={line.id}><span>{index + 1}</span><span>{line.description}</span><span>{money(line.unit_price)}</span><span>{line.quantity} {line.unit}</span><strong>{money(line.total)}</strong></div>)}</div><dl className="live-totals"><div><dt>Subtotal</dt><dd>{money(vm.totals.subtotal)}</dd></div>{vm.totals.document_discount > 0 && <div className="discount"><dt>Diskon</dt><dd>−{money(vm.totals.document_discount)}</dd></div>}{vm.totals.tax > 0 && <div><dt>{taxLabel(document)}</dt><dd>{money(vm.totals.tax)}</dd></div>}<div className="grand"><dt>Total</dt><dd>{money(vm.totals.total)}</dd></div></dl></>}
     {!isReceipt(document) && <section className="live-bank"><b>BANK DETAILS</b><span>Payment profile: {document.payment_profile_key || project.issuer_key}</span></section>}
-    <p className="live-closing"><b>THANK YOU</b><strong>Texturin</strong></p>
+    <p className="live-closing"><TexturinSignoff /></p>
   </article>
 }
 

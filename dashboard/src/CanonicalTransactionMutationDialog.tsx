@@ -13,10 +13,10 @@ export interface TransactionMutationDraft {
   category?: string
 }
 
-export default function CanonicalTransactionMutationDialog({ row, action, currentDate, saving, onSubmit, onClose }: {
+export default function CanonicalTransactionMutationDialog({ row, action, saving, onSubmit, onClose }: {
   row: FinanceTransaction
   action: 'correction' | 'reversal'
-  currentDate: string
+
   saving: boolean
   onSubmit: (draft: TransactionMutationDraft) => Promise<void>
   onClose: () => void
@@ -44,7 +44,7 @@ export default function CanonicalTransactionMutationDialog({ row, action, curren
       return
     }
     if (amount === null || !description.trim() || !category) { setError('Nominal, keterangan, dan kategori wajib diisi.'); return }
-    if (date > currentDate) { setError('Tanggal transaksi tidak boleh melewati hari ini.'); return }
+
     if (amount === row.amount && date === row.date && description.trim() === row.notes && category === initialCategory) {
       setError('Ubah setidaknya satu nilai sebelum menyimpan koreksi.')
       return
@@ -70,7 +70,7 @@ export default function CanonicalTransactionMutationDialog({ row, action, curren
   >
     <form className="finance-form" onSubmit={submit} aria-busy={saving}>
       {action === 'correction' && <fieldset disabled={saving} className="transaction-correction-fields"><div className="form-grid">
-        <label><span>Tanggal transaksi *</span><input type="date" required value={date} max={currentDate} onChange={(event) => setDate(event.target.value)} /><small>Tanggal mengikuti kalender Asia/Jakarta.</small></label>
+        <label><span>Tanggal transaksi *</span><input type="date" required value={date} onChange={(event) => setDate(event.target.value)} /></label>
         <RupiahAmountInput label="Jumlah" value={amount} onChange={setAmount} disabled={saving} />
         <label><span>Kategori *</span><select required value={category} onChange={(event) => setCategory(event.target.value)}>{categoryOptions.map((item) => <option value={item} key={item}>{item}</option>)}</select></label>
         <label className="wide"><span>Keterangan *</span><textarea required maxLength={200} rows={3} value={description} onChange={(event) => setDescription(event.target.value)} /></label>

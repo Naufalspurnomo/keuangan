@@ -74,6 +74,24 @@ describe('ProjectRecordForm', () => {
     expect(screen.queryByRole('option', { name: 'CV HB' })).toBeNull()
   })
 
+  it('stacks client address and contract notes as full-width fields in order', () => {
+    render(<ProjectRecordForm onSave={vi.fn()} onClose={vi.fn()} />)
+
+    const address = screen.getByLabelText('Alamat klien')
+    const notes = screen.getByLabelText('Catatan kontrak')
+    const addressLabel = address.closest('label')!
+    const notesLabel = notes.closest('label')!
+    const grid = addressLabel.parentElement!
+
+    expect(grid).toHaveClass('document-field-grid')
+    expect(notesLabel.parentElement).toBe(grid)
+    expect(addressLabel).toHaveClass('wide')
+    expect(notesLabel).toHaveClass('wide')
+    expect(addressLabel.compareDocumentPosition(notesLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(addressLabel.firstChild?.textContent).toBe('Alamat klien')
+    expect(notesLabel.firstChild?.textContent).toBe('Catatan kontrak')
+  })
+
   it('traps focus, closes on Escape, and returns focus to the opener', async () => {
     function Harness() {
       const [open, setOpen] = React.useState(false)

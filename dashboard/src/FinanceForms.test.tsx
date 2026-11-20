@@ -19,10 +19,11 @@ describe('TransactionForm project lock', () => {
     expect(within(dialog).queryByLabelText('Project *')).toBeNull()
     expect((within(dialog).getByLabelText('Perusahaan') as HTMLInputElement).value).toBe(project.company)
     expect((within(dialog).getByLabelText('Dompet') as HTMLInputElement).value).toBe(project.wallet)
+    expect(within(dialog).queryByText('Transaksi mengikuti dompet dan unit usaha Project.')).toBeNull()
 
     fireEvent.change(within(dialog).getByLabelText('Jumlah *'), { target: { value: '1250000' } })
     fireEvent.change(within(dialog).getByLabelText('Keterangan *'), { target: { value: 'Biaya terkunci QA' } })
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Simpan transaksi' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Tambah Transaksi' }))
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ scope: 'project', project_id: project.id, company: project.company, wallet: project.wallet, notes: 'Biaya terkunci QA' }))
   })
 
@@ -47,7 +48,7 @@ describe('TransactionForm project lock', () => {
     fireEvent.change(screen.getByLabelText('Dompet *'), { target: { value: 'TX Bali' } })
     fireEvent.change(screen.getByLabelText('Jumlah *'), { target: { value: '500000' } })
     fireEvent.change(screen.getByLabelText('Keterangan *'), { target: { value: 'Biaya kantor Bali' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Simpan transaksi' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Tambah Transaksi' }))
 
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ scope: 'office', wallet: 'TX Bali', company: null, project_id: null }))
   })
@@ -65,7 +66,7 @@ describe('TransactionForm project lock', () => {
     expect(screen.getByLabelText('Unit usaha Project')).toHaveValue('')
     fireEvent.change(screen.getByLabelText('Jumlah *'), { target: { value: '500000' } })
     fireEvent.change(screen.getByLabelText('Keterangan *'), { target: { value: 'Bahan proyek pertama' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Simpan transaksi' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Tambah Transaksi' }))
 
     expect(screen.getByText('Pencatatan belum tersedia untuk pilihan ini.')).toBeTruthy()
     expect(onSave).not.toHaveBeenCalled()
@@ -83,12 +84,12 @@ describe('TransactionForm project lock', () => {
     expect(screen.queryByText('TX SBY', { selector: 'option' })).toBeNull()
     fireEvent.change(screen.getByLabelText('Jumlah *'), { target: { value: '500000' } })
     fireEvent.change(screen.getByLabelText('Keterangan *'), { target: { value: 'Bahan proyek pertama' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Simpan transaksi' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Tambah Transaksi' }))
 
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ wallet: 'TX SBY(216)', company: 'TEXTURIN-Surabaya', project_id: mapped.id }))
   })
 
-  it('accepts a past live transaction date and formats the Rupiah amount', () => {
+  it('accepts any canonical transaction date without helper text or hidden bounds', () => {
     const workspace = seedFinanceWorkspace()
     const activeProject = workspace.projects.find((item) => item.status === 'active')!
     const project = {
@@ -99,13 +100,17 @@ describe('TransactionForm project lock', () => {
     const onSave = vi.fn()
     render(<TransactionForm projects={[project]} lockedProjectId={project.id} liveWrite currentDate="2026-11-10" onSave={onSave} onClose={vi.fn()} />)
 
-    fireEvent.change(screen.getByLabelText(/Tanggal/), { target: { value: '2026-11-04' } })
+    const dateInput = screen.getByLabelText(/Tanggal/) as HTMLInputElement
+    expect(dateInput).not.toHaveAttribute('min')
+    expect(dateInput).not.toHaveAttribute('max')
+    expect(screen.queryByText(/Tanggal berlaku mengikuti waktu Asia\/Jakarta/)).toBeNull()
+    fireEvent.change(dateInput, { target: { value: '2030-11-04' } })
     fireEvent.change(screen.getByLabelText('Jumlah *'), { target: { value: '1250000' } })
-    fireEvent.change(screen.getByLabelText('Keterangan *'), { target: { value: 'Biaya bertanggal mundur' } })
+    fireEvent.change(screen.getByLabelText('Keterangan *'), { target: { value: 'Biaya tanggal pilihan admin' } })
     expect(screen.getByLabelText('Jumlah *')).toHaveValue('Rp 1.250.000')
-    fireEvent.click(screen.getByRole('button', { name: 'Simpan transaksi' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Tambah Transaksi' }))
 
-    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ date: '2026-11-04', amount: 1_250_000 }))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ date: '2030-11-04', amount: 1_250_000 }))
   })
 
   it('selects the first active project when production projects arrive after the modal opens', () => {
@@ -130,7 +135,7 @@ describe('TransactionForm project lock', () => {
     render(<TransactionForm projects={workspace.projects} lockedProjectId="missing" onSave={onSave} onClose={vi.fn()} />)
     fireEvent.change(screen.getByLabelText('Jumlah *'), { target: { value: '1' } })
     fireEvent.change(screen.getByLabelText('Keterangan *'), { target: { value: 'Tidak boleh' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Simpan transaksi' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Tambah Transaksi' }))
     expect(screen.getByRole('alert').textContent).toContain('Project terkunci tidak tersedia')
     expect(onSave).not.toHaveBeenCalled()
   })
