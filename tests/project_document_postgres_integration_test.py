@@ -4219,6 +4219,66 @@ def test_structured_quotation_renders_selected_version_with_production_renderer(
     assert "Lobby Cakrawala" in content
 
 
+def test_texturin_draft_quotation_renders_policy_validity_without_persisting_it(dsn):
+    repository = ProjectDocumentRepository(
+        dsn,
+        now=lambda: FIXED_NOW,
+        renderer=render_project_document_artifact,
+        receipt_authority_reader=deterministic_receipt_authority,
+    )
+    profile = issuer(
+        repository,
+        issuer_key="texturin-surabaya",
+        number_code="TXS",
+        key="texturin-validity-fallback-issuer-0001",
+    )
+    created = repository.create_project_with_sales_order(
+        {
+            "name": "Validity Fallback",
+            "client_name": "PT Client",
+            "issuer_key": profile["issuer_key"],
+            "wallet": "TX SBY(216)",
+            "company": "TEXTURIN-Surabaya",
+            "status": "planned",
+            "start_date": "2026-11-17",
+        },
+        idempotency_key="texturin-validity-fallback-project-0001",
+        actor=ACTOR,
+    )
+    quotation = repository.create_project_quotation(
+        created["project"]["id"],
+        values={
+            "template_key": "TEXTURIN-SURABAYA",
+            "template_version": "commercial-v3",
+            "payment_profile_key": profile["issuer_key"],
+            "project_image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            "lines": [{
+                "description": "Decorative finish",
+                "quantity": "6",
+                "unit": "m²",
+                "unit_price": 200_000,
+                "commercial_meta": {
+                    "pricing_mode": "area_rate",
+                    "billed_area_m2": "6",
+                    "area_rounding": "exact",
+                },
+            }],
+        },
+        idempotency_key="texturin-validity-fallback-quotation-0001",
+        actor=ACTOR,
+    )
+
+    rendered = repository.render_project_quotation(quotation["id"])
+    content = " ".join(
+        (PdfReader(io.BytesIO(rendered["bytes"])).pages[0].extract_text() or "").split()
+    )
+
+    assert quotation["valid_until"] is None
+    assert "VALID UNTIL" in content
+    assert "15 Januari 2027" in content
+    assert repository.list_project_quotations(created["project"]["id"])[0]["valid_until"] is None
+
+
 def test_quotation_schema_rerun_repairs_malformed_named_objects(dsn):
     import psycopg
 
