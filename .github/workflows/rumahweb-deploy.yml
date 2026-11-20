@@ -5,12 +5,6 @@ on:
     workflows: ["Production Gate"]
     types: [completed]
     branches: [main]
-  workflow_dispatch:
-    inputs:
-      revision:
-        description: "Exact main commit to deploy"
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -25,10 +19,8 @@ env:
 jobs:
   deploy:
     if: >-
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main') ||
-      github.event_name == 'workflow_dispatch'
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -36,10 +28,9 @@ jobs:
         id: revision
         env:
           WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
-          MANUAL_SHA: ${{ inputs.revision }}
         run: |
           set -euo pipefail
-          revision="${WORKFLOW_SHA:-${MANUAL_SHA:-}}"
+          revision="${WORKFLOW_SHA:-}"
           test -n "$revision"
           printf 'sha=%s\n' "$revision" >> "$GITHUB_OUTPUT"
 
@@ -113,6 +104,19 @@ jobs:
             --provenance /tmp/provenance.json \
             --artifact-revision "$RELEASE_SHA"
 
+      - name: Require compatible backend before publishing frontend
+        env:
+          RELEASE_SHA: ${{ steps.revision.outputs.sha }}
+          RW_FTP_HOST: ${{ secrets.RUMAHWEB_FTP_HOST }}
+          RW_FTP_USER: ${{ secrets.RUMAHWEB_FTP_USER }}
+          RW_FTP_PASSWORD: ${{ secrets.RUMAHWEB_FTP_PASSWORD }}
+          DASHBOARD_ACTOR_ASSERTION_SECRET: ${{ secrets.HOLLAWALL_DASHBOARD_ACTOR_ASSERTION_SECRET }}
+          HOLLAWALL_LIVE_API_PROXY_TOKEN: ${{ secrets.HOLLAWALL_LIVE_API_PROXY_TOKEN }}
+          HOLLAWALL_OWNER_EMAIL: ${{ vars.HOLLAWALL_OWNER_EMAIL }}
+        run: |
+          set -euo pipefail
+          python scripts/configure_rumahweb_admin_finance.py --preflight-only
+
       - name: Atomically deploy verified release pair
         env:
           RW_FTP_HOST: ${{ secrets.RUMAHWEB_FTP_HOST }}
@@ -140,6 +144,7 @@ jobs:
 
       - name: Synchronize private finance routing
         env:
+          RELEASE_SHA: ${{ steps.revision.outputs.sha }}
           RW_FTP_HOST: ${{ secrets.RUMAHWEB_FTP_HOST }}
           RW_FTP_USER: ${{ secrets.RUMAHWEB_FTP_USER }}
           RW_FTP_PASSWORD: ${{ secrets.RUMAHWEB_FTP_PASSWORD }}
@@ -154,6 +159,7 @@ jobs:
           import json
           evidence = json.load(open('/tmp/rumahweb-finance-config.json'))
           assert evidence['success'] is True, evidence
+          assert evidence['backend_preflight']['ok'] is True, evidence
           assert evidence['staged_readback'] is True, evidence
           assert evidence['final_readback'] is True, evidence
           assert evidence['snapshot_url_configured'] is True, evidence

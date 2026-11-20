@@ -1,5 +1,5 @@
 import { ArrowLeft, Ban, CheckCircle2, Landmark, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react'
-import { type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
 
 import { actionProps, type ActionId } from './actionRegistry'
 import {
@@ -76,6 +76,10 @@ export default function ProjectDetailWorkspace({
     ? { ...sourceProject, status: visibleProjectStatus(sourceProject.status) }
     : sourceProject
   const activeTab: ProjectDetailTab = tab === 'profitability' ? 'overview' : tab
+  const activeTabRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    activeTabRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'center' })
+  }, [activeTab])
   const handleTabKey = (event: KeyboardEvent<HTMLButtonElement>) => {
     const tabs = [...event.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
     const current = tabs.indexOf(event.currentTarget)
@@ -106,7 +110,7 @@ export default function ProjectDetailWorkspace({
         <button type="button" className="secondary-button project-detail-back" onClick={onBack}><ArrowLeft size={17} /> Kembali ke Project</button>
         <div className="project-detail-copy"><p className="eyebrow">PROJECT</p>
           <h1>{project.name}</h1>
-          <p>{project.client_name}{project.client_company ? ` · ${project.client_company}` : ''} · <span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span></p></div>
+          <p>{project.client_name}{project.client_company ? ` · ${project.client_company}` : ''}</p></div>
 
       </div>
       <div className="project-lifecycle-actions">
@@ -117,7 +121,7 @@ export default function ProjectDetailWorkspace({
     </header>
 
     <section className="project-status-control" aria-label="Status Project">
-      <div><small>STATUS Project</small><span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span></div>
+      <div><small>STATUS PROJECT</small><span className={`status-chip ${project.status}`}>{projectStatusLabel(project.status)}</span></div>
       {capabilities.projectWrites ? <div className="project-lifecycle-actions">
         {project.status === 'active' && <button type="button" className="secondary-button" disabled={busy} onClick={() => onStatusChange?.('completed')} {...actionProps('projects.status-change')}><CheckCircle2 size={16} /> Selesaikan Project</button>}
         {(project.status === 'completed' || project.status === 'cancelled') && <button type="button" className="secondary-button" disabled={busy} onClick={() => onStatusChange?.('active')} {...actionProps('projects.status-change')}><RotateCcw size={16} /> Aktifkan Project</button>}
@@ -131,6 +135,7 @@ export default function ProjectDetailWorkspace({
     <div className="project-detail-tabs" role="tablist" aria-label={`Data ${project.name}`}>
       {TABS.map((item) => <button
         id={`project-${item.id}-tab`}
+        ref={activeTab === item.id ? activeTabRef : undefined}
         key={item.id}
         type="button"
         role="tab"

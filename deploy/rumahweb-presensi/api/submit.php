@@ -59,19 +59,19 @@ try {
     presensi_rate_limit($events, $employeeId, $now);
     $open = presensi_open_event($events, $employeeId);
     if ($action === 'check_in' && $open !== null) {
-        presensi_error(409, 'already_checked_in', 'Pegawai masih aktif di proyek ' . (string) $open['project_name'] . '.');
+        presensi_error(409, 'already_checked_in', 'Pegawai masih aktif di Project ' . (string) $open['project_name'] . '.');
     }
     if ($action === 'check_in') {
         $project = presensi_find_named($activeProjects, $projectId);
         if ($project === null) {
-            presensi_error(422, 'project_invalid', 'Proyek aktif tidak valid.');
+            presensi_error(422, 'project_invalid', 'Project aktif tidak valid.');
         }
     }
     if ($action === 'check_out' && $open === null) {
         presensi_error(409, 'check_in_required', 'Check-in wajib dilakukan lebih dulu.');
     }
     if ($action === 'check_out' && !hash_equals((string) $open['project_id'], $projectId)) {
-        presensi_error(409, 'project_mismatch', 'Check-out wajib pada proyek yang sama.');
+        presensi_error(409, 'project_mismatch', 'Check-out wajib pada Project yang sama.');
     }
     if ($action === 'check_out') {
         $project = ['id' => (string) $open['project_id'], 'name' => (string) $open['project_name']];

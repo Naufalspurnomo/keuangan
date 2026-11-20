@@ -101,7 +101,7 @@ describe('ProjectDetailWorkspace', () => {
       onStatusChange={vi.fn()}
     />)
 
-    expect(screen.getAllByText('Aktif', { selector: '.status-chip' })).toHaveLength(2)
+    expect(screen.getAllByText('Aktif', { selector: '.status-chip' })).toHaveLength(1)
     expect(screen.getByRole('button', { name: 'Selesaikan Project' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Aktifkan Project' })).toBeNull()
     expect(screen.queryByText('Direncanakan')).toBeNull()

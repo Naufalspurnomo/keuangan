@@ -1435,7 +1435,7 @@ class ProjectDocumentRepository:
                             SELECT ledger.source_key,
                                    ledger.transaction_date,
                                    ledger.amount,
-                                   COALESCE(NULLIF(ledger.description, ''), NULLIF(ledger.project, ''), 'Pemasukan proyek') AS description
+                                   COALESCE(NULLIF(ledger.description, ''), NULLIF(ledger.project, ''), 'Pemasukan Project') AS description
                             FROM financial_ledger ledger
                             WHERE ledger.project_id = %s
                               AND ledger.transaction_type = 'Pemasukan'
@@ -2300,7 +2300,7 @@ class ProjectDocumentRepository:
                         values=dp_values, actor_json=actor_json,
                     )
                     self._replace_lines(cursor, dp_invoice_id, [{
-                        "description": f"DP {rate}% — {quotation.get('subject') or 'Proyek'}",
+                        "description": f"DP {rate}% — {quotation.get('subject') or 'Project'}",
                         "quantity": "1", "unit": "termin", "unit_price": dp_amount,
                         "line_discount_percent": "0",
                     }])
@@ -2567,10 +2567,10 @@ class ProjectDocumentRepository:
                     if lock_version != expected_document_version:
                         raise ProjectDocumentConflict("Sales Order version is stale")
                     cursor.execute("SELECT name FROM projects WHERE id = %s", (project_id,))
-                    project_name = str((cursor.fetchone() or ("Proyek",))[0])
+                    project_name = str((cursor.fetchone() or ("Project",))[0])
                     self._replace_lines(cursor, document_id, [{
                         "description": f"Penawaran Canva v{quotation_version} — {project_name}",
-                        "quantity": "1", "unit": "proyek", "unit_price": int(amount),
+                        "quantity": "1", "unit": "project", "unit_price": int(amount),
                         "line_discount_percent": "0",
                     }])
                     cursor.execute(
@@ -3175,6 +3175,29 @@ class ProjectDocumentRepository:
                         raise ProjectDocumentConflict("project name confirmation mismatch")
                     if int(current[1]) != expected_version:
                         raise ProjectDocumentConflict("optimistic lock version conflict")
+
+                    # The project row lock also serializes FK-backed financial
+                    # inserts. Reversed/settled history remains history: never
+                    # enable the destructive trigger bypass for such projects.
+                    cursor.execute(
+                        """SELECT EXISTS (
+                            SELECT 1 FROM financial_transactions WHERE project_id = %s
+                            UNION ALL
+                            SELECT 1 FROM financial_ledger WHERE project_id = %s
+                            UNION ALL
+                            SELECT 1 FROM interwallet_debts WHERE project_id = %s
+                            UNION ALL
+                            SELECT 1 FROM project_documents
+                            WHERE project_id = %s AND status <> 'draft'
+                            UNION ALL
+                            SELECT 1 FROM project_transaction_evidence WHERE project_id = %s
+                        )""",
+                        (project_id, project_id, project_id, project_id, project_id),
+                    )
+                    if cursor.fetchone()[0]:
+                        raise ProjectDocumentConflict(
+                            "project with financial history cannot be deleted; archive it instead"
+                        )
 
                     cursor.execute(
                         "SELECT set_config('hollawall.project_hard_delete_target', %s, true)",

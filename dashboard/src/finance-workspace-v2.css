@@ -258,7 +258,7 @@ html[data-theme='dark'] .year-command nav button.active { color: #0c2028; }
 .quotation-image-preview { display: flex; align-items: flex-start; gap: 12px; margin-top: 12px; }
 .quotation-image-preview img { width: min(240px, 100%); aspect-ratio: 16 / 10; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); }
 .quotation-lines { display: grid; gap: 10px; margin-bottom: 10px; }
-.quotation-line { display: grid; grid-template-columns: auto minmax(220px, 2fr) repeat(4, minmax(110px, 1fr)) auto; gap: 10px; align-items: end; padding: 12px; border: 1px solid var(--border-subtle); border-radius: 11px; background: var(--surface-raised); }
+.quotation-line { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 10px; align-items: end; padding: 12px; border: 1px solid var(--border-subtle); border-radius: 11px; background: var(--surface-raised); }
 .quotation-line > strong { align-self: center; white-space: nowrap; }
 .quotation-totals { display: grid; gap: 7px; margin: 14px 0 0 auto; width: min(420px, 100%); }
 .quotation-totals > div { display: flex; justify-content: space-between; gap: 20px; margin: 0; padding: 8px 0; border-bottom: 1px solid var(--border-subtle); }
@@ -315,7 +315,7 @@ html[data-theme='dark'] .year-command nav button.active { color: #0c2028; }
 .document-view-tabs button { display: flex; flex: 1; align-items: center; justify-content: center; gap: 7px; min-height: 44px; border: 0; background: transparent; color: var(--text-secondary); }
 .document-view-tabs button[aria-selected="true"] { background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-soft); }
 .document-workspace > .document-workflow, .document-workspace > .document-view-tabs, .document-workspace > .document-composer-layout { margin-inline: 28px; }
-.document-composer-layout { display: grid; grid-template-columns: minmax(580px, 1.08fr) minmax(420px, .92fr); gap: 28px; align-items: start; padding-bottom: 30px; }
+.document-composer-layout { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr); gap: 28px; align-items: start; padding-bottom: 30px; }
 .document-editor { display: grid; gap: 16px; min-width: 0; }
 .document-editor-fields { display: grid; gap: 16px; width: 100%; min-width: 0; min-inline-size: 0; margin: 0; padding: 0; border: 0; }
 .document-form-section { min-width: 0; margin: 0; padding: 22px; border: 1px solid var(--border); background: var(--surface-raised); }
@@ -647,6 +647,14 @@ html[data-theme='dark'] .year-command nav button.active { color: #0c2028; }
   .receipt-blocked-actions button { width: 100%; }
   .receipt-candidates > .receipt-candidate { grid-template-columns: 1fr; }
   .document-preview-empty { min-height: 300px; }
+}
+
+/* Keep all six project tabs reachable without widening tablet workspaces. */
+.project-detail-tabs { min-width: 0; max-width: 100%; overflow-x: auto; }
+.project-detail-tabs > button[role='tab'] { flex: 0 0 auto; min-width: max-content; }
+@media (max-width: 760px) {
+  /* A sticky save footer otherwise covers recipient inputs in tall editors. */
+  .quotation-editor .quotation-save-bar { position: static; }
 }
 
 .project-command-heading { align-items: center; }

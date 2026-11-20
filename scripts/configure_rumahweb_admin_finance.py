@@ -11,6 +11,9 @@ import os
 import re
 import ssl
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from ftplib import FTP_TLS  # nosec B402 -- TLS-only deployer with certificate verification
 from pathlib import PurePosixPath
 from typing import cast
@@ -212,6 +215,73 @@ def exists(ftp: FTP_TLS, path: str) -> bool:
         return False
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def probe_json(url: str, token: str, *, method: str = "GET") -> tuple[int, dict]:
+    # Invalid JSON stops before actor verification or any service mutation.
+    request = urllib.request.Request(
+        url, data=b"{" if method == "POST" else None, method=method,
+        headers={"X-Hollawall-Proxy-Token": token, "Content-Type": "application/json",
+                 "Cache-Control": "no-cache"},
+    )
+    try:
+        response = urllib.request.build_opener(NoRedirect()).open(request, timeout=30)
+    except urllib.error.HTTPError as error:
+        response = error
+    except Exception:
+        raise RuntimeError("backend preflight transport failed") from None
+    try:
+        with response:
+            payload = json.loads(response.read(1024 * 1024))
+            if not isinstance(payload, dict):
+                raise ValueError()
+            return response.code, payload
+    except Exception:
+        raise RuntimeError("backend preflight invalid JSON response") from None
+
+
+def preflight_backend(canonical_url: str, snapshot_url: str, expected_sha: str, token: str) -> dict:
+    if not re.fullmatch(r"[0-9a-f]{40}", expected_sha):
+        raise RuntimeError("backend preflight requires a 40-character lowercase commit SHA")
+    canonical = urllib.parse.urlsplit(canonical_url)
+    snapshot = urllib.parse.urlsplit(snapshot_url)
+    for parts, path in ((canonical, "/api/dashboard/v1/canonical-transactions"),
+                        (snapshot, "/api/dashboard/v1/snapshot")):
+        if (parts.scheme != "https" or not parts.netloc or parts.username or parts.password
+                or parts.query or parts.fragment or parts.path != path):
+            raise RuntimeError("backend preflight requires exact HTTPS API routes")
+    if canonical.netloc != snapshot.netloc:
+        raise RuntimeError("backend preflight requires a single backend origin")
+    origin = f"https://{canonical.netloc}"
+    for phase in ("before", "after"):
+        status, release = probe_json(origin + "/api/health/release", token)
+        if status != 200 or release.get("release_sha") != expected_sha:
+            raise RuntimeError("backend preflight release SHA mismatch")
+        if phase == "after":
+            break
+        status, health = probe_json(origin + "/health", token)
+        if status != 200 or any(
+            not isinstance(health.get(key), dict) or health[key].get("ready") is not True
+            for key in ("dashboard_write_schema", "project_document_schema")
+        ):
+            raise RuntimeError("backend preflight schema not ready")
+        # These routes check the enabled flag and PostgreSQL authority latch BEFORE
+        # parsing JSON. Only invalid_json/422 proves both gates plus route presence;
+        # OPTIONS/401/404/503 or a generic 200 cannot establish write readiness.
+        status, snapshot_payload = probe_json(snapshot_url, token)
+        if status != 200 or not isinstance(snapshot_payload.get("data"), dict):
+            raise RuntimeError("backend preflight authenticated snapshot unavailable")
+        for suffix in ("", "/__release_preflight__/corrections", "/__release_preflight__/reversals"):
+            status, payload = probe_json(canonical_url + suffix, token, method="POST")
+            if status != 422 or payload.get("error", {}).get("code") != "invalid_json":
+                raise RuntimeError("backend preflight canonical authority/routes not ready")
+    return {"release_sha": expected_sha, "schema_ready": True,
+            "authority": "postgresql", "routes_ready": True, "ok": True}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--remote", default=DEFAULT_REMOTE)
@@ -221,6 +291,8 @@ def main() -> int:
     parser.add_argument("--snapshot-url", default=DEFAULT_SNAPSHOT_URL)
     parser.add_argument("--audience", default=DEFAULT_AUDIENCE)
     parser.add_argument("--port", type=int, default=21)
+    parser.add_argument("--expected-backend-sha", default=os.environ.get("RELEASE_SHA", ""))
+    parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--evidence")
     args = parser.parse_args()
 
@@ -250,6 +322,13 @@ def main() -> int:
         "success": False,
         "rolled_back": False,
     }
+
+    evidence["backend_preflight"] = preflight_backend(
+        args.canonical_url, args.snapshot_url, args.expected_backend_sha, proxy_token
+    )
+    if args.preflight_only:
+        print(json.dumps({"backend_preflight": evidence["backend_preflight"]}, sort_keys=True))
+        return 0
 
     ftp = connect(host, user, password, args.port)
     try:

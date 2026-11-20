@@ -8,6 +8,11 @@ WORKFLOW = ROOT / ".github" / "workflows" / "rumahweb-config-sync.yml"
 def test_private_config_sync_is_manual_bounded_and_does_not_deploy_site() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "workflow_dispatch" in text
+    assert 'description: "Exact deployed backend commit and current main revision"' in text
+    assert "required: true" in text
+    assert "ref: ${{ inputs.revision }}" in text
+    assert "RELEASE_SHA: ${{ inputs.revision }}" in text
+    assert "backend_preflight" in text
     assert "timeout-minutes: 8" in text
     assert "configure_rumahweb_admin_finance.py" in text
     assert "snapshot_url_configured" in text

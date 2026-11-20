@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Download, Eye, FileText, SlidersHorizontal } from 'lucide-react'
 
 import { actionProps } from './actionRegistry'
@@ -100,7 +100,6 @@ export async function exportReportPdf(dataset: CanonicalReportDataset) {
     .map((byte) => byte.toString(16).padStart(2, '0')).join('')
   const baseName = `hollawall-${dataset.type}-${new Date().toISOString().slice(0, 10)}`
   downloadBlob(bytes, `${baseName}.pdf`, 'application/pdf')
-  downloadBlob(JSON.stringify({ dataset_hash: datasetHash, artifact_hash: artifactHash, report_type: dataset.type, generated_at: dataset.generatedAt }, null, 2), `${baseName}.manifest.json`, 'application/json')
   return { bytes, datasetHash, artifactHash }
 }
 
@@ -128,6 +127,8 @@ export default function ReportsWorkspace({ workspace }: { workspace: FinanceWork
   const [filters, setFilters] = useState(() => defaultReportFilters(workspace))
   const [reportType, setReportType] = useState<CanonicalReportType>('cashflow')
   const [exporting, setExporting] = useState(false)
+  const exportLock = useRef(false)
+  const scopeVersion = useRef(0)
   const [error, setError] = useState('')
   const [exportStatus, setExportStatus] = useState('')
   const [datasetHash, setDatasetHash] = useState('')
@@ -136,21 +137,37 @@ export default function ReportsWorkspace({ workspace }: { workspace: FinanceWork
   const invalidRange = Boolean(filters.dateFrom && filters.dateTo && filters.dateFrom > filters.dateTo)
   useEffect(() => {
     let current = true
+    setError('')
+    setExportStatus('')
     setDatasetHash('')
     void canonicalDatasetHash(dataset).then((hash) => { if (current) setDatasetHash(hash) }).catch(() => { if (current) setDatasetHash('') })
-    return () => { current = false }
+    return () => { current = false; scopeVersion.current += 1 }
   }, [dataset])
   const exportCsv = () => {
+    if (exportLock.current || !canExport) return
+    exportLock.current = true
     setError('')
     setExportStatus('')
     try { exportReportCsv(dataset); setExportStatus('CSV berhasil disiapkan.') }
     catch { setError('CSV belum dapat dibuat. Coba lagi.') }
+    finally { exportLock.current = false }
   }
   const exportPdf = async () => {
+    if (exportLock.current || !canExport) return
+    exportLock.current = true
+    const version = scopeVersion.current
     setExporting(true)
     setError('')
     setExportStatus('')
-    try { await exportReportPdf(dataset); setExportStatus('PDF dan manifest berhasil disiapkan.') } catch { setError('PDF belum dapat dibuat. Coba lagi.') } finally { setExporting(false) }
+    try {
+      await exportReportPdf(dataset)
+      if (version === scopeVersion.current) setExportStatus('PDF berhasil disiapkan.')
+    } catch {
+      if (version === scopeVersion.current) setError('PDF belum dapat dibuat. Coba lagi.')
+    } finally {
+      exportLock.current = false
+      setExporting(false)
+    }
   }
   const demoSuffix = workspace.mode === 'demo' ? ' · DATA DEMO' : ''
   const canExport = !invalidRange && dataset.rows.length > 0

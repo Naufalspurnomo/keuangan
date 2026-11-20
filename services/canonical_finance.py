@@ -66,6 +66,9 @@ class FinancialRepository(Protocol):
         *,
         idempotency_key_hash: str,
         request_hash: str,
+        legacy_request_hash: str | None = None,
+        operation: str | None = None,
+        command_target_id: str | None = None,
         target_id: str | None = None,
         expected_version: int | None = None,
         outbox_payload: Mapping[str, Any],
@@ -270,7 +273,7 @@ class CanonicalFinanceService:
             transaction_type=record["transaction_type"],
             status="posted",
         )
-        return self._append(record, command["idempotency_key"], payload)
+        return self._append(record, command["idempotency_key"], payload, operation="create")
 
     def _validate_create(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         scope = payload.get("scope")
@@ -369,6 +372,8 @@ class CanonicalFinanceService:
             corrected,
             _idempotency(payload.get("idempotency_key")),
             payload,
+            operation="correct",
+            command_target_id=str(uuid.UUID(transaction_id)),
             target_id=target["id"],
             expected_version=expected_version,
         )
@@ -418,6 +423,8 @@ class CanonicalFinanceService:
             reversal,
             _idempotency(payload.get("idempotency_key")),
             payload,
+            operation="reverse",
+            command_target_id=str(uuid.UUID(transaction_id)),
             target_id=target["id"],
             expected_version=expected_version,
         )
@@ -440,11 +447,19 @@ class CanonicalFinanceService:
         idempotency_key: str,
         request_payload: Mapping[str, Any],
         *,
+        operation: str,
+        command_target_id: str | None = None,
         target_id: str | None = None,
         expected_version: int | None = None,
     ) -> dict[str, Any]:
         key_hash = _sha256(idempotency_key)
-        request_hash = _sha256(_canonical_json(request_payload))
+        # Bind to the requested identity, not the changing latest revision, so
+        # exact retries still replay after the chain advances.
+        request_hash = _sha256(_canonical_json({
+            "operation": operation,
+            "target_id": command_target_id,
+            "payload": dict(request_payload),
+        }))
         serializable_record = _serialize(record)
         export_payload = {"schema_version": "canonical.finance.transaction.v1", **serializable_record}
         outbox_payload = {
@@ -458,6 +473,9 @@ class CanonicalFinanceService:
                 serializable_record,
                 idempotency_key_hash=key_hash,
                 request_hash=request_hash,
+                legacy_request_hash=_sha256(_canonical_json(request_payload)),
+                operation=operation,
+                command_target_id=command_target_id,
                 target_id=target_id,
                 expected_version=expected_version,
                 outbox_payload=outbox_payload,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
 
 import { useModalDialog } from './CanonicalDebtForms'
 import ProjectDocumentPreview from './ProjectDocumentPreview'
@@ -8,6 +8,7 @@ import { projectTemplateKey } from './commercialDocumentViewModel'
 import { compressProjectImage } from './projectDocumentImage'
 import { ProjectDocumentApiError, type ProjectDocumentSession } from './projectDocumentApi'
 import { createProjectQuotationApi, type ProjectQuotationApi } from './projectQuotationApi'
+import { jakartaToday } from './transactionApi'
 import {
   calculateDocumentTotals,
   type ProjectDocumentDraft,
@@ -98,7 +99,7 @@ function quotationDraft(project: ProjectRecord, values: ProjectQuotationValues):
     type: 'sales_order',
     invoice_kind: null,
     applies_to_invoice_id: null,
-    issue_date: new Date().toISOString().slice(0, 10),
+    issue_date: jakartaToday(),
     due_date: null,
     valid_until: values.valid_until,
     notes: values.content_notes,
@@ -176,7 +177,7 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
   const lineField = <K extends keyof ProjectQuotationLine>(index: number, name: K, value: ProjectQuotationLine[K]) => {
     setValues((current) => ({
       ...current,
-      lines: current.lines.map((line, lineIndex) => lineIndex === index ? { ...line, [name]: value } : line),
+      lines: current.lines.map((line, lineIndex) => lineIndex === index ? { ...line, [name]: value, ...(name === 'display_quantity' ? { quantity: String(value) } : {}), ...(name === 'billed_area_m2' ? { quantity: String(value), width: null, height: null, raw_area_m2: null, dimension_unit: null, area_rounding: 'half_up' as const, area_override_reason: null } : {}) } : line),
     }))
   }
   const uploadImage = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -212,10 +213,10 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
   const editorTitle = state.mode === 'revise' ? `Revisi dari versi ${state.source?.version}` : state.mode === 'edit' ? `Edit versi ${state.source?.version}` : 'Buat quotation'
   return <form className="quotation-editor quotation-workspace" onSubmit={submit} aria-label={state.mode === 'create' ? 'Quotation baru' : 'Editor quotation'}>
     <header>
-      <div><span className="eyebrow">DOKUMEN KOMERSIAL</span><h4>{editorTitle}</h4><p>Simpan draf, periksa PDF, lalu kirim manual ke klien.</p></div>
+      <div><h4>{editorTitle}</h4><p>Simpan draf, periksa PDF, lalu kirim manual ke klien.</p></div>
       <label className="quotation-brand-field">Template merek<input value={`${policy.template_key.toUpperCase()} · ${policy.page_size}`} readOnly aria-readonly="true" /></label>
     </header>
-    <ol className="document-workflow" aria-label="Alur pembuatan quotation"><li><span>1</span><strong>Klien & Project</strong></li><li><span>2</span><strong>Item & harga</strong></li><li><span>3</span><strong>Ketentuan</strong></li></ol>
+
     <div className="quotation-editor-layout"><div className="quotation-editor-main">
     <fieldset disabled={busy}>
       <legend>Data penerima dan Project</legend>
@@ -242,18 +243,17 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
             <label>Kuantitas item {index + 1}<input type="number" min="0.000001" step="any" value={line.quantity} onChange={(event) => lineField(index, 'quantity', event.target.value)} required /></label>
             <label>Satuan item {index + 1}<input value={line.unit} onChange={(event) => lineField(index, 'unit', event.target.value)} required /></label>
           </> : policy.pricing_mode === 'fixed_artwork' ? <>
-            <label>Jumlah artwork item {index + 1}<input type="number" min="1" step="1" value={line.display_quantity ?? line.quantity} onChange={(event) => { lineField(index, 'display_quantity', event.target.value); lineField(index, 'quantity', event.target.value) }} required /></label>
-            <label>Lebar item {index + 1}<input type="number" min="0" step="any" value={line.width ?? ''} onChange={(event) => lineField(index, 'width', event.target.value)} /></label>
-            <label>Tinggi item {index + 1}<input type="number" min="0" step="any" value={line.height ?? ''} onChange={(event) => lineField(index, 'height', event.target.value)} /></label>
+            <label>Jumlah artwork item {index + 1}<input type="number" min="1" step="1" value={line.display_quantity ?? line.quantity} onChange={(event) => lineField(index, 'display_quantity', event.target.value)} required /></label>
             <RupiahAmountInput label={`Harga awal item ${index + 1}`} value={line.original_price ?? null} required={false} disabled={busy || imageProcessing} onChange={(amount) => lineField(index, 'original_price', amount)} />
           </> : <>
-            <label>Lebar item {index + 1} (m)<input type="number" min="0.0001" step="any" value={line.width ?? ''} onChange={(event) => lineField(index, 'width', event.target.value)} required /></label>
-            <label>Tinggi item {index + 1} (m)<input type="number" min="0.0001" step="any" value={line.height ?? ''} onChange={(event) => lineField(index, 'height', event.target.value)} required /></label>
-            <label>Pembulatan luas item {index + 1}<select value={line.area_rounding ?? 'half_up'} onChange={(event) => lineField(index, 'area_rounding', event.target.value as ProjectQuotationLine['area_rounding'])}><option value="exact">Exact 4 desimal</option><option value="half_up">Half-up 2 desimal</option><option value="truncate">Potong 2 desimal</option><option value="manual_override">Override manual</option></select></label>
-            {line.area_rounding === 'manual_override' && <label>Luas tagihan item {index + 1} (m²)<input type="number" min="0.0001" step="any" value={line.billed_area_m2 ?? ''} onChange={(event) => lineField(index, 'billed_area_m2', event.target.value)} required /></label>}
+            <label>Luas tagihan (m²)<input aria-label={`Luas tagihan item ${index + 1} (m²)`} inputMode="decimal" value={line.billed_area_m2 ?? line.quantity} onChange={(event) => lineField(index, 'billed_area_m2', event.target.value)} /></label>
+            {(Boolean(line.width && line.height) || line.area_rounding === 'manual_override') && <>
+              <label>Pembulatan<select aria-label={`Pembulatan luas item ${index + 1}`} value={line.area_rounding ?? 'half_up'} onChange={(event) => lineField(index, 'area_rounding', event.target.value as 'exact' | 'half_up' | 'truncate' | 'manual_override')}><option value="exact">Exact</option><option value="half_up">Half-up</option><option value="truncate">Potong</option><option value="manual_override">Override manual</option></select></label>
+              {line.area_rounding === 'manual_override' && <label>Alasan penyesuaian luas<input aria-label={`Alasan penyesuaian luas item ${index + 1}`} value={line.area_override_reason ?? ''} onChange={(event) => lineField(index, 'area_override_reason', event.target.value)} required /></label>}
+            </>}
           </>}
             <RupiahAmountInput label={`${policy.labels.unit_price} item ${index + 1}`} value={line.unit_price} disabled={busy || imageProcessing} onChange={(amount) => lineField(index, 'unit_price', amount ?? 0)} />
-          <label>Diskon item {index + 1} (%)<input type="number" min="0" max="100" step="0.01" value={line.discount_percent} onChange={(event) => lineField(index, 'discount_percent', event.target.value)} /></label>
+          {policy.pricing_mode !== 'fixed_artwork' && <label>Diskon item {index + 1} (%)<input type="number" min="0" max="100" step="0.01" value={line.discount_percent} onChange={(event) => lineField(index, 'discount_percent', event.target.value)} /></label>}
           {values.lines.length > 1 && <button type="button" className="danger-secondary" onClick={() => setValues((current) => ({ ...current, lines: current.lines.filter((_, lineIndex) => lineIndex !== index) }))}>Hapus item {index + 1}</button>}
         </article>)}
       </div>
@@ -335,12 +335,13 @@ function DealDialog({ item, busy, onCancel, onConfirm }: {
   </div>
 }
 
-export default function ProjectQuotationPanel({ project, salesOrder, session, api: suppliedApi, onApplied }: {
+export default function ProjectQuotationPanel({ project, salesOrder, session, api: suppliedApi, onApplied, additionalCreateActions }: {
   project: ProjectRecord
   salesOrder?: ProjectDocumentRecord
   session: ProjectDocumentSession
   api?: ProjectQuotationApi
   onApplied: (documentId: string) => void | Promise<void>
+  additionalCreateActions?: ReactNode
 }) {
   const api = useMemo(() => suppliedApi ?? createProjectQuotationApi(), [suppliedApi])
   const [items, setItems] = useState<ProjectQuotation[]>([])
@@ -449,11 +450,17 @@ export default function ProjectQuotationPanel({ project, salesOrder, session, ap
     finally { setBusy(false) }
   }
 
-  return <section className="quotation-panel" aria-labelledby="quotation-title">
-    <header><div><span className="eyebrow">PENAWARAN</span><h3 id="quotation-title">Quotation</h3><p>Admin mengunduh PDF, mengirim manual ke klien, lalu mencatat statusnya di sini.</p></div><div><span className="status-pill">Template {commercialPolicy(projectTemplateKey(project)).template_key.toUpperCase()}</span><button type="button" className="primary-button" onClick={() => setEditor({ mode: 'create', source: null, values: projectValues(project) })} disabled={busy || Boolean(editor)}>Buat quotation</button></div></header>
+  if (editor) return <section className="quotation-panel quotation-panel-editor" aria-label="Penyusun quotation">
     {error && <p className="document-state-alert" role="alert">{error} <button type="button" className="secondary" onClick={() => void load()}>Muat ulang</button></p>}
     {notice && <p className="document-state-notice" role="status">{notice}</p>}
-    {editor && <QuotationEditor project={project} state={editor} busy={busy} onCancel={() => setEditor(null)} onSave={save} />}
+    <QuotationEditor project={project} state={editor} busy={busy} onCancel={() => setEditor(null)} onSave={save} />
+  </section>
+
+  return <section className="quotation-panel" aria-labelledby="quotation-title">
+    <header><div><span className="eyebrow">DOKUMEN</span><h3 id="quotation-title">Buat dokumen</h3><p>Quotation dan invoice tidak mencatat kas. Kuitansi memakai transaksi pemasukan yang sudah tercatat.</p></div><div><span className="status-pill">Template {commercialPolicy(projectTemplateKey(project)).template_key.toUpperCase()}</span><button type="button" className="primary-button" onClick={() => setEditor({ mode: 'create', source: null, values: projectValues(project) })} disabled={busy}>Buat quotation</button>{additionalCreateActions}</div></header>
+    {error && <p className="document-state-alert" role="alert">{error} <button type="button" className="secondary" onClick={() => void load()}>Muat ulang</button></p>}
+    {notice && <p className="document-state-notice" role="status">{notice}</p>}
+
     {loading ? <p role="status">Memuat riwayat quotation…</p> : items.length === 0 ? <p className="empty-state">Belum ada quotation. Buat draf terstruktur pertama untuk Project ini.</p> : <div className="quotation-history" aria-label="Riwayat versi quotation">
       {items.map((item) => <article key={item.id} className={item.status === 'accepted' ? 'accepted' : ''}>
         <div className="quotation-version"><strong>Versi {item.version}</strong><span className={`status-pill status-${item.status}`}>{labels[item.status]}</span></div>
