@@ -11,6 +11,7 @@ from scripts.benchmark_dashboard_performance import (
     nearest_rank_percentile,
     production_request_allowed,
     _release_sha,
+    _validated_release_url,
     summarize_samples,
     validate_release_provenance,
     write_evidence,
@@ -108,6 +109,30 @@ def test_release_sha_accepts_canonical_frontend_and_backend_manifest_fields() ->
     sha = "9b345bfb9d30e0ff3fa94849aedb376fb90c6f66"
     assert _release_sha({"artifact_revision": sha}) == sha
     assert _release_sha({"release_sha": sha}) == sha
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://hollawall.com/admin/release-manifest.json",
+        "file:///etc/passwd",
+        "https://other.example/release-manifest.json",
+        "https://hollawall.com/other/release-manifest.json",
+        "https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app/other",
+    ],
+)
+def test_release_fetch_rejects_noncanonical_urls(url: str) -> None:
+    with pytest.raises(BenchmarkContractError, match="not allowlisted"):
+        _validated_release_url(url)
+
+
+def test_release_fetch_accepts_only_canonical_https_surfaces() -> None:
+    assert _validated_release_url(
+        "https://hollawall.com/admin/release-manifest.json?performance=1"
+    ).hostname == "hollawall.com"
+    assert _validated_release_url(
+        "https://renewed-loreen-hollawalls-8d8f6f5c.koyeb.app/api/health/release"
+    ).path == "/api/health/release"
 
 
 def test_report_and_evidence_are_schema_stable_and_do_not_include_secrets(tmp_path: Path) -> None:

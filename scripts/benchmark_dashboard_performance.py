@@ -192,9 +192,36 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+_RELEASE_SURFACES = {
+    ("hollawall.com", "/admin/release-manifest.json"),
+    ("renewed-loreen-hollawalls-8d8f6f5c.koyeb.app", "/api/health/release"),
+}
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _validated_release_url(url: str):
+    parsed = urlparse(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.port is not None
+        or (parsed.hostname, parsed.path) not in _RELEASE_SURFACES
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        raise BenchmarkContractError("release endpoint is not allowlisted")
+    return parsed
+
+
 def _fetch_json(url: str) -> Mapping[str, Any]:
+    _validated_release_url(url)
     request = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "HollawallPerformance/1"})
-    with urllib.request.urlopen(request, timeout=30) as response:
+    opener = urllib.request.build_opener(_NoRedirect)
+    with opener.open(request, timeout=30) as response:  # nosec B310: exact HTTPS surfaces are allowlisted above.
         if response.status != 200:
             raise BenchmarkContractError(f"release endpoint returned {response.status}")
         return json.load(response)
