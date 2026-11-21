@@ -103,7 +103,6 @@ class PostgresConnectionPool:
             raise PostgresPoolConfigurationError("pool timeout must be between 0 and 30 seconds")
 
         factory = pool_factory or _default_pool_factory()
-        check = getattr(factory, "check_connection", None)
         self._timeout = float(timeout)
         self._closed = False
         self._opened = False
@@ -114,7 +113,9 @@ class PostgresConnectionPool:
             timeout=self._timeout,
             open=False,
             close_returns=True,
-            check=check,
+            check=None,
+            max_lifetime=900.0,
+            max_idle=300.0,
         )
         atexit.register(self.close)
 
