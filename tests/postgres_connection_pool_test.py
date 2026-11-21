@@ -21,6 +21,21 @@ class FakeConnection:
         self.rollbacks += 1
 
 
+class AutocommitFailureConnection(FakeConnection):
+    def __init__(self) -> None:
+        self.commits = 0
+        self.rollbacks = 0
+        self._autocommit = False
+
+    @property
+    def autocommit(self) -> bool:
+        return self._autocommit
+
+    @autocommit.setter
+    def autocommit(self, _value: bool) -> None:
+        raise OSError("connection reset failed")
+
+
 class FakePool:
     check_connection = object()
 
@@ -111,6 +126,18 @@ def test_lease_rolls_back_and_returns_connection_on_context_error() -> None:
     raw = factory.instances[0].connection
     assert raw.rollbacks == 1
     assert factory.instances[0].putconn_calls == [raw]
+
+
+def test_checkout_is_returned_when_autocommit_reset_fails() -> None:
+    factory = FakePoolFactory()
+    provider = PostgresConnectionPool("postgresql://pool-test", pool_factory=factory)
+    pool = factory.instances[0]
+    pool.connection = AutocommitFailureConnection()
+
+    with pytest.raises(PostgresPoolConfigurationError, match="OSError"):
+        provider.connect("postgresql://pool-test")
+
+    assert pool.putconn_calls == [pool.connection]
 
 
 def test_pool_rejects_cross_database_checkout_without_leaking_the_dsn() -> None:

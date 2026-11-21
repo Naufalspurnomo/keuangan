@@ -151,6 +151,7 @@ class PostgresConnectionPool:
             raise PostgresPoolConfigurationError("database pool DSN mismatch")
         if not self._opened:
             self.open()
+        connection = None
         try:
             connection = self._pool.getconn(timeout=self._timeout)
             connection.autocommit = bool(autocommit)
@@ -158,6 +159,8 @@ class PostgresConnectionPool:
         except PostgresPoolConfigurationError:
             raise
         except Exception as exc:
+            if connection is not None:
+                self._pool.putconn(connection)
             raise PostgresPoolConfigurationError(
                 f"database connection unavailable: {type(exc).__name__}"
             ) from exc

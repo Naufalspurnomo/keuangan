@@ -56,6 +56,16 @@ def test_container_gate_provides_postgres_to_canonical_activation():
     assert container.index('"tables", "constraints", "indexes", "triggers"') < container.index("seed_project_document_issuer.py")
 
 
+def test_postgresql_gate_exercises_real_dashboard_connection_pool() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "production-gate.yml").read_text(
+        encoding="utf-8"
+    )
+    postgresql = workflow.split("\n  postgresql:\n", 1)[1].split("\n  php:\n", 1)[0]
+
+    assert "TEST_POSTGRES_DSN:" in postgresql
+    assert "tests/postgres_connection_pool_integration_test.py" in postgresql
+
+
 def test_production_container_without_database_fails_closed_even_in_local_mode():
     with (
         patch.dict(
