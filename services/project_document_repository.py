@@ -1321,6 +1321,7 @@ class ProjectDocumentRepository:
     def list_projects(self) -> list[dict[str, Any]]:
         try:
             with self._connect() as connection:
+                connection.autocommit = True
                 with connection.cursor() as cursor:
                     cursor.execute("SELECT " + _SELECT_PROJECT + " FROM projects ORDER BY created_at DESC, id")  # nosec B608 -- selected columns are module constants
                     rows = cursor.fetchall()
@@ -1844,6 +1845,7 @@ class ProjectDocumentRepository:
     def list_project_quotations(self, project_id: str) -> list[dict[str, Any]]:
         try:
             with self._connect() as connection:
+                connection.autocommit = True
                 with connection.cursor() as cursor:
                     cursor.execute(
                         "SELECT " + _SELECT_QUOTATION +  # nosec B608 -- internal column constant
@@ -2842,6 +2844,7 @@ class ProjectDocumentRepository:
     def get_project_payment_summary(self, project_id: str) -> dict[str, Any]:
         try:
             with self._connect() as connection:
+                connection.autocommit = True
                 with connection.pipeline():
                     project_cursor = connection.cursor()
                     project_cursor.execute(
@@ -4132,6 +4135,7 @@ class ProjectDocumentRepository:
     def list_documents(self, project_id: str) -> list[dict[str, Any]]:
         try:
             with self._connect() as connection:
+                connection.autocommit = True
                 with connection.pipeline():
                     documents_cursor = connection.cursor()
                     documents_cursor.execute(

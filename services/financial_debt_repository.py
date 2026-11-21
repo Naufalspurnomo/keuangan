@@ -287,6 +287,7 @@ class PostgresInterwalletDebtRepository:
     def list_all(self) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
         connection = self._connect()
         try:
+            connection.autocommit = True
             with connection.pipeline():
                 debts_cursor = connection.cursor()
                 debts_cursor.execute(

@@ -42,8 +42,11 @@ def read_finance_authority(
     selected_dsn = str(dsn or "").strip()
     if not selected_dsn:
         raise FinanceAuthorityLatchError("finance authority latch requires a database DSN")
+    connection = None
     try:
-        with _connect(selected_dsn, connection_factory) as connection, connection.cursor() as cursor:
+        connection = _connect(selected_dsn, connection_factory)
+        connection.autocommit = True
+        with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT authority FROM finance_authority_state WHERE singleton = TRUE"
             )
@@ -52,6 +55,9 @@ def read_finance_authority(
         raise
     except Exception as exc:
         raise FinanceAuthorityLatchError("finance authority latch is unavailable") from exc
+    finally:
+        if connection is not None:
+            connection.close()
     if row is None or str(row[0]) not in {"google_sheets", "postgresql"}:
         raise FinanceAuthorityLatchError("finance authority latch readback is invalid")
     return str(row[0])

@@ -90,3 +90,48 @@ def test_real_pool_rolls_back_pipeline_abort_before_reuse() -> None:
                 assert cursor.fetchone() == (1,)
     finally:
         pool.close()
+
+
+@pytest.mark.skipif(not os.getenv("TEST_POSTGRES_DSN"), reason="TEST_POSTGRES_DSN unavailable")
+def test_real_pool_recovers_autocommit_pipeline_abort_and_resets_next_write() -> None:
+    dsn = os.environ["TEST_POSTGRES_DSN"]
+    pool = PostgresConnectionPool(dsn, min_size=1, max_size=1, timeout=5)
+    pool.open()
+    try:
+        aborted = pool.connect(dsn, autocommit=True)
+        raw = aborted.raw
+        with pytest.raises(psycopg.Error):
+            with aborted:
+                with aborted.pipeline():
+                    failing = aborted.cursor()
+                    failing.execute("SELECT 1 / 0")
+                    skipped = aborted.cursor()
+                    skipped.execute("SELECT 1")
+
+        assert raw.info.transaction_status is psycopg.pq.TransactionStatus.IDLE
+
+        committed = pool.connect(dsn)
+        assert committed.autocommit is False
+        with committed:
+            with committed.cursor() as cursor:
+                cursor.execute(
+                    "CREATE TEMP TABLE phase5_write_proof (value INTEGER NOT NULL) "
+                    "ON COMMIT PRESERVE ROWS"
+                )
+                cursor.execute("INSERT INTO phase5_write_proof (value) VALUES (1)")
+
+        failed = pool.connect(dsn)
+        assert failed.autocommit is False
+        with pytest.raises(RuntimeError, match="rollback proof"):
+            with failed:
+                with failed.cursor() as cursor:
+                    cursor.execute("INSERT INTO phase5_write_proof (value) VALUES (2)")
+                    raise RuntimeError("rollback proof")
+
+        verified = pool.connect(dsn, autocommit=True)
+        with verified:
+            with verified.cursor() as cursor:
+                cursor.execute("SELECT value FROM phase5_write_proof ORDER BY value")
+                assert cursor.fetchall() == [(1,)]
+    finally:
+        pool.close()

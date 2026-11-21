@@ -11,6 +11,7 @@ from services.finance_write_authority import (
     assert_finance_authority_configuration,
     canonical_finance_writes_enabled,
     legacy_sheets_finance_writes_fenced,
+    read_finance_authority,
 )
 
 
@@ -86,7 +87,9 @@ class FakeAuthorityCursor:
 
 class FakeAuthorityConnection:
     def __init__(self, authority):
+        self.autocommit = False
         self.authority = authority
+        self.closed = False
 
     def __enter__(self):
         return self
@@ -96,6 +99,9 @@ class FakeAuthorityConnection:
 
     def cursor(self):
         return FakeAuthorityCursor(self.authority)
+
+    def close(self):
+        self.closed = True
 
 
 def transaction_command(**overrides):
@@ -148,7 +154,8 @@ def test_flag_is_strict_and_defaults_false():
 
 
 def test_durable_authority_must_match_runtime_configuration():
-    factory = lambda _dsn: FakeAuthorityConnection("postgresql")
+    connection = FakeAuthorityConnection("postgresql")
+    factory = lambda _dsn: connection
 
     assert (
         assert_finance_authority_configuration(
@@ -158,12 +165,39 @@ def test_durable_authority_must_match_runtime_configuration():
         )
         == "postgresql"
     )
+    assert connection.autocommit is True
     with pytest.raises(FinanceAuthorityLatchError, match="mismatch"):
         assert_finance_authority_configuration(
             "postgresql://isolated-test",
             writes_enabled=False,
             connection_factory=factory,
         )
+
+
+def test_authority_read_closes_connection_when_autocommit_setup_fails():
+    class BrokenConnection:
+        closed = False
+
+        @property
+        def autocommit(self):
+            return False
+
+        @autocommit.setter
+        def autocommit(self, _value):
+            raise OSError("autocommit unavailable")
+
+        def close(self):
+            self.closed = True
+
+    connection = BrokenConnection()
+
+    with pytest.raises(FinanceAuthorityLatchError, match="unavailable"):
+        read_finance_authority(
+            "postgresql://isolated-test",
+            connection_factory=lambda _dsn: connection,
+        )
+
+    assert connection.closed is True
 
 
 @pytest.mark.parametrize(

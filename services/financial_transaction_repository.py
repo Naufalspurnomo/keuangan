@@ -496,6 +496,7 @@ class PostgresFinancialTransactionRepository:
 
         connection = self._connect()
         try:
+            connection.autocommit = True
             with connection.pipeline():
                 records_cursor = connection.cursor()
                 records_cursor.execute(
