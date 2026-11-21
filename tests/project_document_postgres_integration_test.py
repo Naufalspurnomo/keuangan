@@ -26,6 +26,9 @@ from services.financial_schema import (
     load_production_bootstrap_migrations,
 )
 from services.project_document_pdf import render_project_document_artifact
+from services.canonical_dashboard_repository import CanonicalDashboardRepository
+from services.financial_debt_repository import PostgresInterwalletDebtRepository
+from services.financial_transaction_repository import PostgresFinancialTransactionRepository
 from services.project_documents import ProjectDocumentService
 
 
@@ -197,6 +200,27 @@ def project(
                     (result["project"]["id"],),
                 )
     return result
+
+
+def test_pipeline_read_models_execute_against_real_postgresql(repository, dsn):
+    created = project(repository, key="pipeline-read-model-project-0001")
+    project_id = created["project"]["id"]
+
+    documents = repository.list_documents(project_id)
+    summary = repository.get_project_payment_summary(project_id)
+    registry = CanonicalDashboardRepository(dsn).registry()
+    transaction_chains = PostgresFinancialTransactionRepository(dsn).list_chains()
+    debts = PostgresInterwalletDebtRepository(dsn).list_all()
+
+    assert [document["id"] for document in documents] == [created["sales_order"]["id"]]
+    assert documents[0]["lines"] == []
+    assert documents[0]["allocations"] == []
+    assert summary["project_id"] == project_id
+    assert summary["payment_status"] == "NOT_CONTRACTED"
+    assert registry["wallets"]
+    assert registry["business_units"]
+    assert transaction_chains == []
+    assert debts == []
 
 
 def test_texturin_city_identity_survives_project_sales_order_and_quotation(repository):

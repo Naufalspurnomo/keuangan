@@ -28,53 +28,58 @@ class CanonicalDashboardRepository:
     def registry(self) -> dict[str, list[dict[str, Any]]]:
         connection = self._connect()
         try:
-            with connection.cursor() as cursor:
-                cursor.execute(
+            with connection.pipeline():
+                wallets_cursor = connection.cursor()
+                wallets_cursor.execute(
                     "SELECT id, display_name FROM wallets WHERE active = TRUE ORDER BY code"
                 )
-                wallets = [
-                    {"id": str(row[0]), "display_name": str(row[1])}
-                    for row in cursor.fetchall()
-                ]
-                cursor.execute(
+                units_cursor = connection.cursor()
+                units_cursor.execute(
                     "SELECT id, legal_name FROM business_units WHERE active = TRUE ORDER BY code"
                 )
-                units = [
-                    {"id": str(row[0]), "legal_name": str(row[1])}
-                    for row in cursor.fetchall()
-                ]
-                cursor.execute(
+                openings_cursor = connection.cursor()
+                openings_cursor.execute(
                     """
                     SELECT wallet_id, business_unit_id, amount, effective_at
                     FROM wallet_opening_balances
                     ORDER BY effective_at, id
                     """
                 )
-                openings = [
-                    {
-                        "wallet_id": str(row[0]),
-                        "business_unit_id": str(row[1]),
-                        "amount": int(row[2]),
-                        "effective_at": row[3],
-                    }
-                    for row in cursor.fetchall()
-                ]
-                cursor.execute(
+                adjustments_cursor = connection.cursor()
+                adjustments_cursor.execute(
                     """
                     SELECT wallet_id, business_unit_id, delta_amount, effective_at
                     FROM balance_adjustments
                     ORDER BY effective_at, id
                     """
                 )
-                adjustments = [
-                    {
-                        "wallet_id": str(row[0]),
-                        "business_unit_id": str(row[1]),
-                        "delta_amount": int(row[2]),
-                        "effective_at": row[3],
-                    }
-                    for row in cursor.fetchall()
-                ]
+
+            wallets = [
+                {"id": str(row[0]), "display_name": str(row[1])}
+                for row in wallets_cursor.fetchall()
+            ]
+            units = [
+                {"id": str(row[0]), "legal_name": str(row[1])}
+                for row in units_cursor.fetchall()
+            ]
+            openings = [
+                {
+                    "wallet_id": str(row[0]),
+                    "business_unit_id": str(row[1]),
+                    "amount": int(row[2]),
+                    "effective_at": row[3],
+                }
+                for row in openings_cursor.fetchall()
+            ]
+            adjustments = [
+                {
+                    "wallet_id": str(row[0]),
+                    "business_unit_id": str(row[1]),
+                    "delta_amount": int(row[2]),
+                    "effective_at": row[3],
+                }
+                for row in adjustments_cursor.fetchall()
+            ]
         finally:
             connection.close()
         return {

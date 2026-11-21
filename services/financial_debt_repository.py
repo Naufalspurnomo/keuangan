@@ -287,11 +287,90 @@ class PostgresInterwalletDebtRepository:
     def list_all(self) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
         connection = self._connect()
         try:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT id FROM interwallet_debts ORDER BY occurred_at DESC, id DESC"
+            with connection.pipeline():
+                debts_cursor = connection.cursor()
+                debts_cursor.execute(
+                    """
+                    SELECT id, lender_wallet_id, borrower_wallet_id,
+                           lender_business_unit_id, borrower_business_unit_id,
+                           project_id, principal, currency, occurred_at, due_at,
+                           description, actor, created_at
+                    FROM interwallet_debts
+                    ORDER BY occurred_at DESC, id DESC
+                    """
                 )
-                debt_ids = [str(row[0]) for row in cursor.fetchall()]
+                events_cursor = connection.cursor()
+                events_cursor.execute(
+                    """
+                    SELECT id, debt_id, event_type, amount, corrects_event_id,
+                           reverses_event_id, actor, occurred_at, description,
+                           reason, corrected_event_type, created_at
+                    FROM interwallet_debt_events
+                    ORDER BY debt_id, occurred_at, id
+                    """
+                )
+                postings_cursor = connection.cursor()
+                postings_cursor.execute(
+                    """
+                    SELECT event.id, posting.id, posting.wallet_id,
+                           posting.business_unit_id, posting.account_class,
+                           posting.signed_amount, posting.currency
+                    FROM interwallet_debt_events event
+                    JOIN financial_postings posting
+                      ON posting.transaction_id = event.id
+                    ORDER BY event.id, posting.id
+                    """
+                )
+
+            debt_rows = debts_cursor.fetchall()
+            event_rows = events_cursor.fetchall()
+            posting_rows = postings_cursor.fetchall()
         finally:
             connection.close()
-        return [self.get(debt_id) for debt_id in debt_ids]
+
+        debts: list[dict[str, Any]] = []
+        debts_by_id: dict[str, dict[str, Any]] = {}
+        for row in debt_rows:
+            debt: dict[str, Any] = dict(zip(self._DEBT_COLUMNS, row))
+            debt_id = str(debt.get("id") or "")
+            if not debt_id or debt_id in debts_by_id:
+                raise RuntimeError("invalid interwallet debt read model")
+            debts_by_id[debt_id] = debt
+            debts.append(debt)
+
+        events_by_debt: dict[str, list[dict[str, Any]]] = {
+            debt_id: [] for debt_id in debts_by_id
+        }
+        events_by_id: dict[str, dict[str, Any]] = {}
+        for row in event_rows:
+            event: dict[str, Any] = dict(zip(self._EVENT_COLUMNS, row))
+            event_id = str(event.get("id") or "")
+            debt_id = str(event.get("debt_id") or "")
+            if (
+                not event_id
+                or event_id in events_by_id
+                or debt_id not in debts_by_id
+            ):
+                raise RuntimeError("invalid interwallet debt event read model")
+            event["postings"] = []
+            events_by_id[event_id] = event
+            events_by_debt[debt_id].append(event)
+
+        posting_columns = (
+            "id", "wallet_id", "business_unit_id", "account_class",
+            "signed_amount", "currency",
+        )
+        for row in posting_rows:
+            if len(row) != len(posting_columns) + 1:
+                raise RuntimeError("invalid interwallet debt posting read model")
+            selected_event = events_by_id.get(str(row[0]))
+            if selected_event is None:
+                raise RuntimeError("orphan interwallet debt posting")
+            selected_event["postings"].append(
+                dict(zip(posting_columns, row[1:]))
+            )
+
+        return [
+            (debt, events_by_debt[str(debt["id"])])
+            for debt in debts
+        ]
