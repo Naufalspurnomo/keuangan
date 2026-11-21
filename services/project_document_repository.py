@@ -2842,11 +2842,13 @@ class ProjectDocumentRepository:
     def get_project_payment_summary(self, project_id: str) -> dict[str, Any]:
         try:
             with self._connect() as connection:
-                with connection.cursor() as cursor:
-                    cursor.execute("SELECT 1 FROM projects WHERE id = %s", (project_id,))
-                    if not cursor.fetchone():
-                        raise ProjectDocumentNotFound("project not found")
-                    cursor.execute(
+                with connection.pipeline():
+                    project_cursor = connection.cursor()
+                    project_cursor.execute(
+                        "SELECT 1 FROM projects WHERE id = %s", (project_id,)
+                    )
+                    documents_cursor = connection.cursor()
+                    documents_cursor.execute(
                         """
                         SELECT id, document_type, invoice_kind, official_number,
                                due_date, immutable_snapshot
@@ -2863,18 +2865,8 @@ class ProjectDocumentRepository:
                         """,
                         (project_id,),
                     )
-                    commercial_documents = cursor.fetchall()
-                    sales_orders = [row for row in commercial_documents if str(row[1]) == "sales_order"]
-                    if len(sales_orders) > 1:
-                        raise ProjectDocumentConflict(
-                            "payment summary requires at most one active issued Sales Order"
-                        )
-                    contract_total = (
-                        self._issued_snapshot_total(sales_orders[0][5], label="Sales Order")
-                        if sales_orders
-                        else None
-                    )
-                    cursor.execute(
+                    payments_cursor = connection.cursor()
+                    payments_cursor.execute(
                         """
                         SELECT receipt.applies_to_invoice_id,
                                COALESCE(SUM(allocation.amount), 0)
@@ -2888,10 +2880,27 @@ class ProjectDocumentRepository:
                         """,
                         (project_id,),
                     )
-                    paid_by_invoice = {
-                        str(invoice_id) if invoice_id is not None else None: int(amount or 0)
-                        for invoice_id, amount in cursor.fetchall()
-                    }
+
+                if not project_cursor.fetchone():
+                    raise ProjectDocumentNotFound("project not found")
+                commercial_documents = documents_cursor.fetchall()
+                sales_orders = [
+                    row for row in commercial_documents
+                    if str(row[1]) == "sales_order"
+                ]
+                if len(sales_orders) > 1:
+                    raise ProjectDocumentConflict(
+                        "payment summary requires at most one active issued Sales Order"
+                    )
+                contract_total = (
+                    self._issued_snapshot_total(sales_orders[0][5], label="Sales Order")
+                    if sales_orders
+                    else None
+                )
+                paid_by_invoice = {
+                    str(invoice_id) if invoice_id is not None else None: int(amount or 0)
+                    for invoice_id, amount in payments_cursor.fetchall()
+                }
             invoices = []
             issued_invoice_ids: set[str] = set()
             invoiced_total = 0
@@ -4123,14 +4132,106 @@ class ProjectDocumentRepository:
     def list_documents(self, project_id: str) -> list[dict[str, Any]]:
         try:
             with self._connect() as connection:
-                with connection.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT id FROM project_documents WHERE project_id = %s "
+                with connection.pipeline():
+                    documents_cursor = connection.cursor()
+                    documents_cursor.execute(
+                        "SELECT " + _SELECT_DOCUMENT +  # nosec B608 -- selected columns are module constants
+                        " FROM project_documents WHERE project_id = %s "
                         "ORDER BY CASE document_type WHEN 'sales_order' THEN 0 ELSE 1 END, created_at, id",
                         (project_id,),
                     )
-                    ids = [str(row[0]) for row in cursor.fetchall()]
-                    return [self._load_document(cursor, document_id) for document_id in ids]
+                    lines_cursor = connection.cursor()
+                    lines_cursor.execute(
+                        """
+                        SELECT line.document_id, line.id, line.position, line.description,
+                               line.quantity, line.unit, line.unit_price,
+                               line.line_discount_percent, line.line_gross,
+                               line.line_discount, line.line_total, line.commercial_meta
+                        FROM project_document_lines line
+                        JOIN project_documents document ON document.id = line.document_id
+                        WHERE document.project_id = %s
+                        ORDER BY line.document_id, line.position
+                        """,
+                        (project_id,),
+                    )
+                    allocations_cursor = connection.cursor()
+                    allocations_cursor.execute(
+                        """
+                        SELECT allocation.document_id, allocation.id,
+                               allocation.ledger_source_key, allocation.amount,
+                               allocation.ledger_amount, allocation.ledger_snapshot,
+                               allocation.created_at
+                        FROM project_document_allocations allocation
+                        JOIN project_documents document ON document.id = allocation.document_id
+                        WHERE document.project_id = %s
+                        ORDER BY allocation.document_id,
+                                 allocation.ledger_source_key, allocation.id
+                        """,
+                        (project_id,),
+                    )
+
+                document_rows = documents_cursor.fetchall()
+                line_rows = lines_cursor.fetchall()
+                allocation_rows = allocations_cursor.fetchall()
+
+            documents: list[dict[str, Any]] = []
+            documents_by_id: dict[str, dict[str, Any]] = {}
+            for row in document_rows:
+                document = _row_dict(None, _DOCUMENT_COLUMNS, row) or {}
+                document["immutable_snapshot"] = _safe_json_object(
+                    document.get("immutable_snapshot")
+                )
+                document["created_by"] = _safe_json_object(document.get("created_by"))
+                document["updated_by"] = _safe_json_object(document.get("updated_by"))
+                document["lines"] = []
+                document["allocations"] = []
+                document_id = str(document.get("id") or "")
+                if not document_id or document_id in documents_by_id:
+                    raise ProjectDocumentUnavailable(
+                        "database returned an invalid document read model"
+                    )
+                documents_by_id[document_id] = document
+                documents.append(document)
+
+            line_columns = (
+                "id", "position", "description", "quantity", "unit", "unit_price",
+                "line_discount_percent", "line_gross", "line_discount", "line_total",
+                "commercial_meta",
+            )
+            for row in line_rows:
+                if len(row) != len(line_columns) + 1:
+                    raise ProjectDocumentUnavailable(
+                        "database returned an invalid document line read model"
+                    )
+                document = documents_by_id.get(str(row[0]))
+                if document is None:
+                    raise ProjectDocumentUnavailable(
+                        "database returned an orphan document line"
+                    )
+                line = _row_dict(None, line_columns, row[1:]) or {}
+                line["commercial_meta"] = _safe_json_object(
+                    line.get("commercial_meta")
+                ) or {}
+                document["lines"].append(line)
+
+            allocation_columns = (
+                "id", "ledger_source_key", "amount", "ledger_amount",
+                "ledger_snapshot", "created_at",
+            )
+            for row in allocation_rows:
+                if len(row) != len(allocation_columns) + 1:
+                    raise ProjectDocumentUnavailable(
+                        "database returned an invalid document allocation read model"
+                    )
+                document = documents_by_id.get(str(row[0]))
+                if document is None:
+                    raise ProjectDocumentUnavailable(
+                        "database returned an orphan document allocation"
+                    )
+                document["allocations"].append(
+                    _row_dict(None, allocation_columns, row[1:]) or {}
+                )
+            return documents
         except ProjectDocumentError:
             raise
         except Exception as exc:

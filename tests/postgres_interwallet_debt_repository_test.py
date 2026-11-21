@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 from flask import Flask
 
 from dashboard_api import register_dashboard
@@ -42,6 +44,47 @@ class RecordingConnection:
 
     def rollback(self):
         self.rollbacks += 1
+
+    def close(self):
+        self.closed += 1
+
+
+class BatchedReadCursor:
+    def __init__(self, connection):
+        self.connection = connection
+        self.query = ""
+
+    def execute(self, sql, params=None):
+        self.query = " ".join(str(sql).split())
+        self.connection.executed.append((self.query, params))
+
+    def fetchall(self):
+        debt, event = debt_and_event()
+        if "FROM interwallet_debts" in self.query:
+            return [tuple({**debt, "created_at": debt["occurred_at"]}.get(key) for key in PostgresInterwalletDebtRepository._DEBT_COLUMNS)]
+        if "JOIN financial_postings" in self.query:
+            return [
+                (event["id"], posting["id"], posting["wallet_id"], posting["business_unit_id"], posting["account_class"], posting["signed_amount"], posting["currency"])
+                for posting in event["postings"]
+            ]
+        if "FROM interwallet_debt_events" in self.query:
+            return [tuple({**event, "created_at": event["occurred_at"]}.get(key) for key in PostgresInterwalletDebtRepository._EVENT_COLUMNS)]
+        raise AssertionError(f"unexpected query: {self.query}")
+
+
+class BatchedReadConnection:
+    def __init__(self):
+        self.executed = []
+        self.pipeline_entries = 0
+        self.closed = 0
+
+    @contextmanager
+    def pipeline(self):
+        self.pipeline_entries += 1
+        yield object()
+
+    def cursor(self):
+        return BatchedReadCursor(self)
 
     def close(self):
         self.closed += 1
@@ -91,6 +134,24 @@ def outbox(debt_id):
         "payload": {"debt_id": debt_id, "version": 1},
         "payload_sha256": "a" * 64,
     }
+
+
+def test_list_all_uses_one_pipeline_round_trip_and_one_checkout():
+    connection = BatchedReadConnection()
+    repository = PostgresInterwalletDebtRepository(
+        "postgresql://isolated-test",
+        connection_factory=lambda _dsn: connection,
+    )
+    debt, event = debt_and_event()
+
+    records = repository.list_all()
+
+    assert connection.pipeline_entries == 1
+    assert len(connection.executed) == 3
+    assert connection.closed == 1
+    assert records[0][0]["id"] == debt["id"]
+    assert records[0][1][0]["id"] == event["id"]
+    assert records[0][1][0]["postings"] == event["postings"]
 
 
 def test_create_persists_internal_transaction_postings_event_and_outbox_atomically():

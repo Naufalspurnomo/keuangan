@@ -66,3 +66,27 @@ def test_real_pool_reuses_connections_and_cleans_failed_transactions() -> None:
                 assert cursor.fetchone() == (1,)
     finally:
         pool.close()
+
+
+@pytest.mark.skipif(not os.getenv("TEST_POSTGRES_DSN"), reason="TEST_POSTGRES_DSN unavailable")
+def test_real_pool_rolls_back_pipeline_abort_before_reuse() -> None:
+    dsn = os.environ["TEST_POSTGRES_DSN"]
+    pool = PostgresConnectionPool(dsn, min_size=1, max_size=1, timeout=5)
+    pool.open()
+    try:
+        aborted = pool.connect(dsn)
+        with pytest.raises(psycopg.Error):
+            with aborted:
+                with aborted.pipeline():
+                    failing = aborted.cursor()
+                    failing.execute("SELECT 1 / 0")
+                    skipped = aborted.cursor()
+                    skipped.execute("SELECT 1")
+
+        recovered = pool.connect(dsn)
+        with recovered:
+            with recovered.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                assert cursor.fetchone() == (1,)
+    finally:
+        pool.close()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -32,10 +33,9 @@ def _record(record_id: str, *, status: str, version: int, revision_of: str | Non
 
 
 class _Cursor:
-    def __init__(self, records: list[tuple], postings: list[tuple]) -> None:
-        self.records = records
-        self.postings = postings
-        self.calls: list[str] = []
+    def __init__(self, connection: "_Connection") -> None:
+        self.connection = connection
+        self.query = ""
 
     def __enter__(self):
         return self
@@ -44,21 +44,31 @@ class _Cursor:
         return False
 
     def execute(self, query: str, _params=None) -> None:
-        self.calls.append(" ".join(query.split()))
+        self.query = " ".join(query.split())
+        self.connection.events.append(("execute", self.query))
 
     def fetchall(self):
-        if "FROM financial_postings" in self.calls[-1]:
-            return self.postings
-        return self.records
+        self.connection.events.append(("fetch", self.query))
+        if "FROM financial_postings" in self.query:
+            return self.connection.postings
+        return self.connection.records
 
 
 class _Connection:
-    def __init__(self, cursor: _Cursor) -> None:
-        self.selected = cursor
+    def __init__(self, records: list[tuple], postings: list[tuple]) -> None:
+        self.records = records
+        self.postings = postings
+        self.events: list[tuple[str, str]] = []
+        self.pipeline_entries = 0
         self.closed = False
 
     def cursor(self):
-        return self.selected
+        return _Cursor(self)
+
+    @contextmanager
+    def pipeline(self):
+        self.pipeline_entries += 1
+        yield object()
 
     def close(self) -> None:
         self.closed = True
@@ -82,8 +92,7 @@ def test_postgres_list_chains_batches_records_and_postings_in_two_queries() -> N
         (UUID("00000000-0000-4000-8000-000000009003"), UUID(correction), None, None, "expense", -1, "IDR"),
         (UUID("00000000-0000-4000-8000-000000009004"), UUID(reversal), None, None, "expense", 1, "IDR"),
     ]
-    cursor = _Cursor(records, postings)
-    connection = _Connection(cursor)
+    connection = _Connection(records, postings)
     repository = PostgresFinancialTransactionRepository(
         "postgresql://test",
         connection_factory=lambda _dsn: connection,
@@ -95,7 +104,10 @@ def test_postgres_list_chains_batches_records_and_postings_in_two_queries() -> N
         [active],
         [root, correction, reversal],
     ]
-    assert len(cursor.calls) == 2
+    assert connection.pipeline_entries == 1
+    assert [kind for kind, _query in connection.events] == [
+        "execute", "execute", "fetch", "fetch",
+    ]
     assert all(chain_item["postings"] for chain in chains for chain_item in chain)
     assert connection.closed is True
 
@@ -105,7 +117,7 @@ def test_postgres_list_chains_rejects_branching_successors() -> None:
     child_one = "00000000-0000-4000-8000-000000000102"
     child_two = "00000000-0000-4000-8000-000000000103"
     now = datetime(2026, 11, 14, tzinfo=timezone.utc)
-    cursor = _Cursor(
+    connection = _Connection(
         [
             _record(root, status="posted", version=1, occurred_at=now),
             _record(child_one, status="correction", version=2, revision_of=root, occurred_at=now),
@@ -115,7 +127,7 @@ def test_postgres_list_chains_rejects_branching_successors() -> None:
     )
     repository = PostgresFinancialTransactionRepository(
         "postgresql://test",
-        connection_factory=lambda _dsn: _Connection(cursor),
+        connection_factory=lambda _dsn: connection,
     )
 
     from services.financial_transaction_repository import FinancialRepositoryConflict

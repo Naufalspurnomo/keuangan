@@ -496,8 +496,9 @@ class PostgresFinancialTransactionRepository:
 
         connection = self._connect()
         try:
-            with connection.cursor() as cursor:
-                cursor.execute(
+            with connection.pipeline():
+                records_cursor = connection.cursor()
+                records_cursor.execute(
                     """
                     SELECT id, scope, project_id, transaction_type, flow_class, amount,
                            currency, category, description, occurred_at, source,
@@ -507,11 +508,8 @@ class PostgresFinancialTransactionRepository:
                     ORDER BY occurred_at DESC, id DESC
                     """
                 )
-                records: list[dict[str, Any]] = [
-                    dict(zip(self._RECORD_COLUMNS, row))
-                    for row in cursor.fetchall()
-                ]
-                cursor.execute(
+                postings_cursor = connection.cursor()
+                postings_cursor.execute(
                     """
                     SELECT id, transaction_id, wallet_id, business_unit_id,
                            account_class, signed_amount, currency
@@ -519,7 +517,12 @@ class PostgresFinancialTransactionRepository:
                     ORDER BY transaction_id, id
                     """
                 )
-                posting_rows = cursor.fetchall()
+
+            records: list[dict[str, Any]] = [
+                dict(zip(self._RECORD_COLUMNS, row))
+                for row in records_cursor.fetchall()
+            ]
+            posting_rows = postings_cursor.fetchall()
         finally:
             connection.close()
 
