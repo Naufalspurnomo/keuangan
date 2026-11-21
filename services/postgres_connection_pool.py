@@ -64,10 +64,11 @@ class _ConnectionLease:
         if self._returned:
             return
         try:
-            if exc_type is None:
-                self.raw.commit()
-            else:
-                self.raw.rollback()
+            if not self.raw.autocommit:
+                if exc_type is None:
+                    self.raw.commit()
+                else:
+                    self.raw.rollback()
         finally:
             self.close()
 

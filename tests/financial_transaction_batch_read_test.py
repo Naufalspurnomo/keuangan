@@ -56,6 +56,7 @@ class _Cursor:
 
 class _Connection:
     def __init__(self, records: list[tuple], postings: list[tuple]) -> None:
+        self.autocommit = False
         self.records = records
         self.postings = postings
         self.events: list[tuple[str, str]] = []
@@ -105,6 +106,7 @@ def test_postgres_list_chains_batches_records_and_postings_in_two_queries() -> N
         [root, correction, reversal],
     ]
     assert connection.pipeline_entries == 1
+    assert connection.autocommit is True
     assert [kind for kind, _query in connection.events] == [
         "execute", "execute", "fetch", "fetch",
     ]

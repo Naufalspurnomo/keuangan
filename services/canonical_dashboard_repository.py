@@ -28,6 +28,7 @@ class CanonicalDashboardRepository:
     def registry(self) -> dict[str, list[dict[str, Any]]]:
         connection = self._connect()
         try:
+            connection.autocommit = True
             with connection.pipeline():
                 wallets_cursor = connection.cursor()
                 wallets_cursor.execute(

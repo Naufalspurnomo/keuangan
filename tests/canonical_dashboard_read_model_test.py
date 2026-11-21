@@ -36,6 +36,7 @@ class _Cursor:
 
 class _Connection:
     def __init__(self) -> None:
+        self.autocommit = False
         self.events: list[tuple[str, str]] = []
         self.pipeline_entries = 0
         self.closed = False
@@ -62,6 +63,7 @@ def test_registry_uses_one_pipeline_round_trip_and_preserves_native_values() -> 
     result = repository.registry()
 
     assert connection.pipeline_entries == 1
+    assert connection.autocommit is True
     assert [kind for kind, _query in connection.events[:4]] == ["execute"] * 4
     assert [kind for kind, _query in connection.events[4:]] == ["fetch"] * 4
     assert connection.closed is True

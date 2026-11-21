@@ -130,6 +130,27 @@ def test_lease_rolls_back_and_returns_connection_on_context_error() -> None:
     assert factory.instances[0].putconn_calls == [raw]
 
 
+def test_autocommit_lease_returns_without_transaction_finalization() -> None:
+    factory = FakePoolFactory()
+    provider = PostgresConnectionPool("postgresql://pool-test", pool_factory=factory)
+
+    with provider.connect("postgresql://pool-test", autocommit=True):
+        pass
+
+    raw = factory.instances[0].connection
+    assert raw.commits == 0
+    assert raw.rollbacks == 0
+    assert factory.instances[0].putconn_calls == [raw]
+
+    with pytest.raises(RuntimeError):
+        with provider.connect("postgresql://pool-test", autocommit=True):
+            raise RuntimeError("autocommit failure")
+
+    assert raw.commits == 0
+    assert raw.rollbacks == 0
+    assert factory.instances[0].putconn_calls == [raw, raw]
+
+
 def test_checkout_is_returned_when_autocommit_reset_fails() -> None:
     factory = FakePoolFactory()
     provider = PostgresConnectionPool("postgresql://pool-test", pool_factory=factory)

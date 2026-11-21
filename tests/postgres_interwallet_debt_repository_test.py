@@ -31,6 +31,7 @@ class RecordingCursor:
 
 class RecordingConnection:
     def __init__(self, cursor):
+        self.autocommit = False
         self._cursor = cursor
         self.commits = 0
         self.rollbacks = 0
@@ -74,6 +75,7 @@ class BatchedReadCursor:
 
 class BatchedReadConnection:
     def __init__(self):
+        self.autocommit = False
         self.executed = []
         self.pipeline_entries = 0
         self.closed = 0
@@ -147,6 +149,7 @@ def test_list_all_uses_one_pipeline_round_trip_and_one_checkout():
     records = repository.list_all()
 
     assert connection.pipeline_entries == 1
+    assert connection.autocommit is True
     assert len(connection.executed) == 3
     assert connection.closed == 1
     assert records[0][0]["id"] == debt["id"]
@@ -175,6 +178,7 @@ def test_create_persists_internal_transaction_postings_event_and_outbox_atomical
     assert result == (debt["id"], False)
     assert connection.commits == 1
     assert connection.rollbacks == 0
+    assert connection.autocommit is False
     assert next(i for i, item in enumerate(sql) if "INSERT INTO financial_transactions" in item) < next(i for i, item in enumerate(sql) if "INSERT INTO interwallet_debt_events" in item)
     assert sum("INSERT INTO financial_postings" in item for item in sql) == 4
     assert any("INSERT INTO financial_export_outbox" in item for item in sql)

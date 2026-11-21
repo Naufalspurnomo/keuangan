@@ -27,6 +27,7 @@ from services.financial_schema import (
 )
 from services.project_document_pdf import render_project_document_artifact
 from services.canonical_dashboard_repository import CanonicalDashboardRepository
+from services.finance_write_authority import read_finance_authority
 from services.financial_debt_repository import PostgresInterwalletDebtRepository
 from services.financial_transaction_repository import PostgresFinancialTransactionRepository
 from services.project_documents import ProjectDocumentService
@@ -211,6 +212,9 @@ def test_pipeline_read_models_execute_against_real_postgresql(repository, dsn):
     registry = CanonicalDashboardRepository(dsn).registry()
     transaction_chains = PostgresFinancialTransactionRepository(dsn).list_chains()
     debts = PostgresInterwalletDebtRepository(dsn).list_all()
+    projects = repository.list_projects()
+    quotations = repository.list_project_quotations(project_id)
+    authority = read_finance_authority(dsn)
 
     assert [document["id"] for document in documents] == [created["sales_order"]["id"]]
     assert documents[0]["lines"] == []
@@ -221,6 +225,9 @@ def test_pipeline_read_models_execute_against_real_postgresql(repository, dsn):
     assert registry["business_units"]
     assert transaction_chains == []
     assert debts == []
+    assert [item["id"] for item in projects] == [project_id]
+    assert quotations == []
+    assert authority == "google_sheets"
 
 
 def test_texturin_city_identity_survives_project_sales_order_and_quotation(repository):

@@ -148,6 +148,7 @@ class _Cursor:
 
 class _Connection:
     def __init__(self) -> None:
+        self.autocommit = False
         self.calls: list[str] = []
         self.pipeline_entries = 0
 
@@ -179,6 +180,7 @@ def test_list_documents_uses_one_pipeline_round_trip_and_preserves_nested_record
     documents = _repository(connection).list_documents(PROJECT_ID)
 
     assert connection.pipeline_entries == 1
+    assert connection.autocommit is True
     assert len(connection.calls) == 3
     assert documents[0]["id"] == DOCUMENT_ID
     assert documents[0]["issue_date"] == "2026-11-21"
@@ -192,6 +194,7 @@ def test_payment_summary_uses_one_pipeline_round_trip_and_preserves_totals() -> 
     summary = _repository(connection).get_project_payment_summary(PROJECT_ID)
 
     assert connection.pipeline_entries == 1
+    assert connection.autocommit is True
     assert len(connection.calls) == 3
     assert summary["contract_total"] == 1_000_000
     assert summary["invoiced_total"] == 400_000
@@ -207,3 +210,24 @@ def test_payment_summary_uses_one_pipeline_round_trip_and_preserves_totals() -> 
         "outstanding": 300_000,
         "payment_status": "PARTIALLY_PAID",
     }]
+
+
+class _EmptyReadCursor(_Cursor):
+    def fetchall(self):
+        return []
+
+
+class _EmptyReadConnection(_Connection):
+    def cursor(self):
+        return _EmptyReadCursor(self)
+
+
+def test_project_and_quotation_collections_use_autocommit_reads() -> None:
+    for operation in (
+        lambda repository: repository.list_projects(),
+        lambda repository: repository.list_project_quotations(PROJECT_ID),
+    ):
+        connection = _EmptyReadConnection()
+
+        assert operation(_repository(connection)) == []
+        assert connection.autocommit is True
