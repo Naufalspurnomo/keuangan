@@ -398,6 +398,7 @@ def test_canonical_write_authority_selects_postgres_dashboard_service(monkeypatc
     monkeypatch.setenv("STATE_DATABASE_URL", "postgresql://isolated-test")
     verified = []
     selected = []
+    authority_factories = []
     monkeypatch.setattr(
         financial_schema,
         "verify_financial_schema",
@@ -406,12 +407,12 @@ def test_canonical_write_authority_selects_postgres_dashboard_service(monkeypatc
     monkeypatch.setattr(
         finance_write_authority,
         "assert_finance_authority_configuration",
-        lambda dsn, *, writes_enabled: (dsn, writes_enabled),
+        lambda dsn, *, writes_enabled, connection_factory=None: authority_factories.append(connection_factory) or (dsn, writes_enabled),
     )
     monkeypatch.setattr(
         finance_write_authority,
         "PostgresAuthorityResolver",
-        lambda dsn: ("resolver", dsn),
+        lambda dsn, *, connection_factory=None: authority_factories.append(connection_factory) or ("resolver", dsn),
     )
     monkeypatch.setattr(
         dashboard_transaction_service,
@@ -429,4 +430,8 @@ def test_canonical_write_authority_selects_postgres_dashboard_service(monkeypatc
 
     assert verified == ["postgresql://isolated-test"]
     assert len(selected) == 1
+    assert authority_factories == [
+        app.extensions["postgres_connection_pool"].connect,
+        app.extensions["postgres_connection_pool"].connect,
+    ]
     assert app.config["CANONICAL_FINANCE_WRITES_ENABLED"] is True

@@ -51,7 +51,7 @@ import { useLiveSnapshot } from './liveSnapshotView'
 import { createCanonicalTransactionMutation, createTransactionWriteAttempt, jakartaToday, loadTransactionWriteSession, sameTransactionPayload, type RecordedTransaction, type TransactionWriteAttempt, type TransactionWritePayload, type TransactionWriteSession } from './transactionApi'
 import { useFinanceWorkspace } from './useFinanceWorkspace'
 import hollawallLogo from './assets/hollawall-logo.png'
-import { createProjectDocumentApi, type ProjectDocumentApi, type ProjectDocumentCommand, type ProjectDocumentSession } from './projectDocumentApi'
+import { createProjectDocumentApi, type ProjectDocumentApi, type ProjectDocumentCommand, type ProjectDocumentSession, type ProjectListResult } from './projectDocumentApi'
 import { createInboxReviewApi, type InboxReviewApi } from './inboxReviewApi'
 import { canonicalDebtIdentity } from './debtRegistry'
 import { normalizeCanonicalPair } from './transactionMappings'
@@ -192,7 +192,7 @@ function canonicalProjectWallet(project: ProjectRecord) {
   return normalizeCanonicalPair(project.wallet, project.company)?.wallet ?? null
 }
 
-export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession, liveWriteStatus, onCreateLiveTransaction, onMutateLiveTransaction, onCreateLiveDebt, onRepayLiveDebt, onMutateLiveDebt, projectApi, inboxReviewApi }: { suppliedWorkspace?: Readonly<FinanceWorkspace>; liveSnapshotError?: Error | null; liveWriteSession?: TransactionWriteSession; liveWriteStatus?: string; onCreateLiveTransaction?: (input: TransactionFormInput) => Promise<RecordedTransaction>; onMutateLiveTransaction?: (row: FinanceTransaction, action: 'correction' | 'reversal', draft: TransactionMutationDraft) => Promise<{ readbackFailed: boolean }>; onCreateLiveDebt?: (input: CanonicalDebtCreateInput) => Promise<void>; onRepayLiveDebt?: (debt: FinanceDebt, amount: number, occurredOn: string, description: string) => Promise<void>; onMutateLiveDebt?: (debt: FinanceDebt, action: 'correction' | 'reversal') => Promise<void>; projectApi?: ProjectDocumentApi; inboxReviewApi?: InboxReviewApi } = {}) {
+export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession, liveWriteStatus, onCreateLiveTransaction, onMutateLiveTransaction, onCreateLiveDebt, onRepayLiveDebt, onMutateLiveDebt, projectApi, initialProjectLoad, inboxReviewApi }: { suppliedWorkspace?: Readonly<FinanceWorkspace>; liveSnapshotError?: Error | null; liveWriteSession?: TransactionWriteSession; liveWriteStatus?: string; onCreateLiveTransaction?: (input: TransactionFormInput) => Promise<RecordedTransaction>; onMutateLiveTransaction?: (row: FinanceTransaction, action: 'correction' | 'reversal', draft: TransactionMutationDraft) => Promise<{ readbackFailed: boolean }>; onCreateLiveDebt?: (input: CanonicalDebtCreateInput) => Promise<void>; onRepayLiveDebt?: (debt: FinanceDebt, amount: number, occurredOn: string, description: string) => Promise<void>; onMutateLiveDebt?: (debt: FinanceDebt, action: 'correction' | 'reversal') => Promise<void>; projectApi?: ProjectDocumentApi; initialProjectLoad?: Promise<ProjectListResult> | null; inboxReviewApi?: InboxReviewApi } = {}) {
   const finance = useFinanceWorkspace(suppliedWorkspace)
   const readOnly = finance.readOnly
   const canCreateTransactions = readOnly && liveWriteSession?.canonicalWritesEnabled === true && Boolean(onCreateLiveTransaction)
@@ -222,6 +222,11 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
   const previousMobile = useRef(mobile)
   const pendingScroll = useRef<number | null>(null)
   const activeProjectLoad = useRef<Promise<void> | null>(null)
+  const prefetchedProjectLoad = useRef<Promise<ProjectListResult> | undefined>()
+  const consumedProjectLoad = useRef<Promise<ProjectListResult> | null>(null)
+  if (initialProjectLoad && initialProjectLoad !== consumedProjectLoad.current) {
+    prefetchedProjectLoad.current ??= initialProjectLoad
+  }
   const pendingProjectSave = useRef<{ signature: string; command: ProjectDocumentCommand<ProjectRecord>; creating: boolean; savedId?: string } | null>(null)
   const projectLoadSequence = useRef(0)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
@@ -238,6 +243,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
 
   const loadProductionProjects = useCallback((force = false) => {
     if (!readOnly || !projectApi) return Promise.resolve()
+    if (initialProjectLoad === null) return Promise.resolve()
     if (activeProjectLoad.current && !force) return activeProjectLoad.current
     if (force) {
       projectLoadSequence.current += 1
@@ -246,7 +252,13 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
     const sequence = ++projectLoadSequence.current
     setProjectDataLoading(true)
     setProjectApiError('')
-    const request = projectApi.listProjects()
+    const prefetched = !force ? prefetchedProjectLoad.current : undefined
+    const source = prefetched ?? projectApi.listProjects()
+    if (prefetched) {
+      prefetchedProjectLoad.current = undefined
+      consumedProjectLoad.current = prefetched
+    }
+    const request = source
       .then((result) => {
         if (sequence !== projectLoadSequence.current) return
         const projects = result.projects.filter((project) => !project.archived_at)
@@ -271,7 +283,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
       })
     activeProjectLoad.current = request
     return request
-  }, [projectApi, readOnly])
+  }, [initialProjectLoad, projectApi, readOnly])
 
   useEffect(() => {
     void loadProductionProjects()
@@ -682,11 +694,18 @@ function LiveDashboardApp() {
   const state = useLiveSnapshot({ endpoint: '/admin/api/snapshot.php' })
   const projectApi = useMemo(() => createProjectDocumentApi(), [])
   const inboxReviewApi = useMemo(() => createInboxReviewApi(), [])
+  const [initialProjectLoad, setInitialProjectLoad] = useState<Promise<ProjectListResult> | null>(null)
   const [writeSession, setWriteSession] = useState<TransactionWriteSession>()
   const [writeStatus, setWriteStatus] = useState('Memeriksa kemampuan pencatatan transaksi…')
   const pendingAttempt = useRef<TransactionWriteAttempt | null>(null)
   const pendingMutation = useRef<{ signature: string; command: ReturnType<typeof createCanonicalTransactionMutation> } | null>(null)
   const workspace = useMemo(() => state.status === 'ready' ? snapshotFinanceWorkspace(state.data) : null, [state])
+
+  useEffect(() => {
+    const request = projectApi.listProjects()
+    void request.catch(() => undefined)
+    setInitialProjectLoad(request)
+  }, [projectApi])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -765,7 +784,7 @@ function LiveDashboardApp() {
       await pendingMutation.current.command.submit(writeSession)
       pendingMutation.current = null
       try {
-        await state.reload()
+        await state.reload({ afterActive: true })
         return { readbackFailed: false }
       } catch {
         return { readbackFailed: true }
@@ -794,7 +813,7 @@ function LiveDashboardApp() {
       description: input.description,
     })
     await attempt.submit(writeSession)
-    await state.reload()
+    await state.reload({ afterActive: true })
   }
 
   const repayLiveDebt = async (debt: FinanceDebt, amount: number, occurredOn: string, description: string) => {
@@ -807,7 +826,7 @@ function LiveDashboardApp() {
       description,
     })
     await attempt.submit(writeSession)
-    await state.reload()
+    await state.reload({ afterActive: true })
   }
 
   const mutateLiveDebt = async (debt: FinanceDebt, action: 'correction' | 'reversal') => {
@@ -824,10 +843,10 @@ function LiveDashboardApp() {
       ? createDebtCorrectionAttempt({ ...input, amount: Number(window.prompt('Nominal pengganti:', String(target.amount))) })
       : createDebtReversalAttempt(input)
     await attempt.submit(writeSession)
-    await state.reload()
+    await state.reload({ afterActive: true })
   }
 
   if (state.status === 'loading') return <main className="application-state" role="status"><span className="application-state-mark" aria-hidden="true" /><div><p className="eyebrow">RUANG FINANSIAL</p><h1>Memuat data keuangan</h1><p>Menyiapkan posisi kas, Project, dan laporan terbaru.</p></div></main>
   if (state.status === 'error') return <main className="application-state application-state-error" role="alert"><div><p className="eyebrow">DATA PRODUKSI</p><h1>Data belum tersedia</h1><p>Data demo tidak ditampilkan sebagai pengganti. Periksa koneksi, lalu coba lagi.</p><button className="primary-button" onClick={() => void state.reload()}>Coba lagi</button></div></main>
-  return workspace ? <DemoApp suppliedWorkspace={workspace} liveSnapshotError={state.error} liveWriteSession={writeSession} liveWriteStatus={writeStatus} onCreateLiveTransaction={createLiveTransaction} onMutateLiveTransaction={mutateLiveTransaction} onCreateLiveDebt={createLiveDebt} onRepayLiveDebt={repayLiveDebt} onMutateLiveDebt={mutateLiveDebt} projectApi={projectApi} inboxReviewApi={inboxReviewApi} /> : null
+  return workspace ? <DemoApp suppliedWorkspace={workspace} liveSnapshotError={state.error} liveWriteSession={writeSession} liveWriteStatus={writeStatus} onCreateLiveTransaction={createLiveTransaction} onMutateLiveTransaction={mutateLiveTransaction} onCreateLiveDebt={createLiveDebt} onRepayLiveDebt={repayLiveDebt} onMutateLiveDebt={mutateLiveDebt} projectApi={projectApi} initialProjectLoad={initialProjectLoad} inboxReviewApi={inboxReviewApi} /> : null
 }

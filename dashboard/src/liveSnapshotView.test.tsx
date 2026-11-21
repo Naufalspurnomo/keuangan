@@ -138,7 +138,7 @@ describe('LiveSnapshotBanner', () => {
     expect(screen.getByRole('region', { name: 'Status data' })).not.toHaveClass('live-snapshot--error')
   })
 
-  it('does not abort and restart a slow snapshot on each poll tick', async () => {
+  it('schedules polling only after a slow snapshot settles', async () => {
     vi.useFakeTimers()
     let resolveSnapshot!: (value: DashboardSnapshot) => void
     let observedSignal: AbortSignal | undefined
@@ -149,7 +149,7 @@ describe('LiveSnapshotBanner', () => {
     render(<LiveSnapshotBanner loader={loader} />)
     await act(async () => { await Promise.resolve() })
 
-    await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(90_000) })
 
     expect(loader).toHaveBeenCalledTimes(1)
     expect(observedSignal?.aborted).toBe(false)
@@ -160,24 +160,29 @@ describe('LiveSnapshotBanner', () => {
       await Promise.resolve()
     })
     expect(screen.getByText('Ringkasan keuangan')).toBeTruthy()
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(29_999) })
+    expect(loader).toHaveBeenCalledTimes(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    expect(loader).toHaveBeenCalledTimes(2)
   })
 
-  it('polls every five seconds only while visible and refreshes on focus or restored visibility', async () => {
+  it('polls every thirty seconds only while visible and refreshes on focus or restored visibility', async () => {
     vi.useFakeTimers()
     let visibility: DocumentVisibilityState = 'visible'
     vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
     const loader = vi.fn(async () => snapshot())
     render(<LiveSnapshotBanner loader={loader} />)
-    await act(async () => { await Promise.resolve() })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
     expect(loader).toHaveBeenCalledTimes(1)
 
-    await act(async () => { await vi.advanceTimersByTimeAsync(4_999) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(29_999) })
     expect(loader).toHaveBeenCalledTimes(1)
     await act(async () => { await vi.advanceTimersByTimeAsync(1) })
     expect(loader).toHaveBeenCalledTimes(2)
 
     visibility = 'hidden'
-    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
     expect(loader).toHaveBeenCalledTimes(2)
 
     visibility = 'visible'

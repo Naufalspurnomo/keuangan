@@ -190,6 +190,7 @@ def test_registration_injects_one_open_pool_factory_into_every_runtime_repositor
     from services import (
         canonical_dashboard_repository,
         canonical_finance,
+        finance_write_authority,
         financial_debt_repository,
         financial_schema,
         financial_transaction_repository,
@@ -237,6 +238,12 @@ def test_registration_injects_one_open_pool_factory_into_every_runtime_repositor
     monkeypatch.setattr(canonical_dashboard_repository, "CanonicalDashboardRepository", CanonicalDashboardRepository)
     monkeypatch.setattr(canonical_finance, "CanonicalFinanceService", lambda repository: type("Transactions", (), {"list_effective_transactions": lambda self: []})())
     monkeypatch.setattr(interwallet_debt_service, "InterwalletDebtService", lambda repository: type("Debts", (), {"list_debts": lambda self: []})())
+    authority_factories = []
+    monkeypatch.setattr(
+        finance_write_authority,
+        "read_finance_authority",
+        lambda _dsn, *, connection_factory=None: authority_factories.append(connection_factory) or "postgresql",
+    )
 
     app = Flask(__name__)
     dashboard_api.register_dashboard(app)
@@ -250,3 +257,5 @@ def test_registration_injects_one_open_pool_factory_into_every_runtime_repositor
         "CanonicalDashboardRepository",
     }
     assert all(factory == pool.connect for factory in observed.values())
+    assert app.extensions["canonical_finance_write_authority"]() == "postgresql"
+    assert authority_factories == [pool.connect]

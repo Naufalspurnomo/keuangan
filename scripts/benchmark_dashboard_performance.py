@@ -15,7 +15,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 SCHEMA = "hollawall.dashboard-performance/v1"
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -23,9 +23,9 @@ _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _ROUTE_NAMES = {
     "/admin/api/snapshot.php": "snapshot",
     "/admin/api/projects.php": "projects",
-    "/admin/api/documents.php": "documents",
     "/admin/api/write-session.php": "write_session",
 }
+_DOCUMENT_ACTIONS = frozenset({"get", "list", "payment_summary", "quotations", "receipt_options"})
 
 
 class BenchmarkContractError(ValueError):
@@ -242,8 +242,21 @@ def observe_release_provenance(expected_sha: str, base_url: str, backend_release
 
 
 def _route_name(url: str) -> str | None:
-    path = urlparse(url).path
+    parsed = urlparse(url)
+    path = parsed.path
+    if path == "/admin/api/documents.php":
+        action = parse_qs(parsed.query).get("action", [""])[0]
+        return f"documents.{action}" if action in _DOCUMENT_ACTIONS else "documents"
     return _ROUTE_NAMES.get(path)
+
+
+def validate_request_ledger(*, started: int, completed: int, failed: int, pending: int) -> None:
+    if pending:
+        raise BenchmarkContractError(f"request ledger has {pending} pending tracked requests")
+    if started != completed + failed:
+        raise BenchmarkContractError(
+            f"request ledger does not balance: started={started}, completed={completed}, failed={failed}"
+        )
 
 
 def _response_bytes(response: Any) -> int:
@@ -254,6 +267,20 @@ def _response_bytes(response: Any) -> int:
         return len(response.body())
     except Exception:
         return 0
+
+
+def _wait_for_tracked_requests(page: Any, pending: Mapping[Any, Any], *, timeout_ms: int = 120_000) -> None:
+    deadline = time.perf_counter() + (timeout_ms / 1000)
+    quiet_since: float | None = None
+    while time.perf_counter() < deadline:
+        page.wait_for_timeout(50)
+        if pending:
+            quiet_since = None
+            continue
+        quiet_since = quiet_since or time.perf_counter()
+        if time.perf_counter() - quiet_since >= 0.25:
+            return
+    raise BenchmarkContractError(f"tracked requests did not settle within {timeout_ms} ms")
 
 
 def run_browser_benchmark(
@@ -295,33 +322,39 @@ def run_browser_benchmark(
         authenticated = True
 
         for index in range(warmups + samples):
-            request_started: dict[Any, float] = {}
+            request_started: dict[Any, tuple[float, str, str]] = {}
             routes: dict[str, list[dict[str, Any]]] = defaultdict(list)
             failures: list[str] = []
             console_errors: list[str] = []
             mutations: list[str] = []
             request_count = 0
+            phase = "dashboard"
 
             def on_request(request: Any) -> None:
                 nonlocal request_count
-                if _route_name(request.url):
-                    request_started[request] = time.perf_counter()
+                route = _route_name(request.url)
+                if route:
+                    request_started[request] = (time.perf_counter(), route, phase)
                     request_count += 1
                 if authenticated and request.method.upper() not in _SAFE_METHODS:
                     mutations.append(f"{request.method}:{urlparse(request.url).path}")
 
             def on_response(response: Any) -> None:
-                route = _route_name(response.url)
-                started = request_started.pop(response.request, None)
-                if route and started is not None:
+                tracked = request_started.pop(response.request, None)
+                if tracked is not None:
+                    started, route, request_phase = tracked
                     routes[route].append({
                         "duration_ms": round((time.perf_counter() - started) * 1000, 3),
                         "bytes": _response_bytes(response),
+                        "phase": request_phase,
                         "status": response.status,
                     })
 
             def on_request_failed(request: Any) -> None:
-                failures.append(f"{request.method}:{urlparse(request.url).path}")
+                tracked = request_started.pop(request, None)
+                if tracked is not None:
+                    _, route, request_phase = tracked
+                    failures.append(f"{request_phase}:{route}:{request.method}")
 
             def on_console(message: Any) -> None:
                 if message.type == "error":
@@ -341,15 +374,20 @@ def run_browser_benchmark(
             domcontentloaded_ms = (time.perf_counter() - navigation_start) * 1000
             page.locator("h1", has_text="Dashboard").wait_for(state="visible", timeout=120_000)
             dashboard_ready_ms = (time.perf_counter() - navigation_start) * 1000
+            _wait_for_tracked_requests(page, request_started)
 
+            phase = "transactions"
             transactions_start = time.perf_counter()
             page.goto(f"{base_url}#projects?project={project_id}&tab=transactions", wait_until="domcontentloaded", timeout=60_000)
             page.locator(".project-transaction-detail").wait_for(state="visible", timeout=120_000)
             transactions_ready_ms = (time.perf_counter() - transactions_start) * 1000
+            _wait_for_tracked_requests(page, request_started)
 
+            phase = "documents"
             documents_start = time.perf_counter()
             page.goto(f"{base_url}#projects?project={project_id}&tab=documents", wait_until="domcontentloaded", timeout=60_000)
             page.locator(".project-document-list").wait_for(state="visible", timeout=120_000)
+            _wait_for_tracked_requests(page, request_started)
             documents_ready_ms = (time.perf_counter() - documents_start) * 1000
 
             page.remove_listener("request", on_request)
@@ -357,6 +395,13 @@ def run_browser_benchmark(
             page.remove_listener("requestfailed", on_request_failed)
             page.remove_listener("console", on_console)
             page.remove_listener("pageerror", on_page_error)
+            completed_requests = sum(len(observations) for observations in routes.values())
+            validate_request_ledger(
+                started=request_count,
+                completed=completed_requests,
+                failed=len(failures),
+                pending=len(request_started),
+            )
             if mutations:
                 raise BenchmarkContractError(f"production benchmark observed business mutations: {mutations}")
             observations.append({

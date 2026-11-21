@@ -7,12 +7,14 @@ import pytest
 
 from scripts.benchmark_dashboard_performance import (
     BenchmarkContractError,
+    _route_name,
     build_report,
     nearest_rank_percentile,
     production_request_allowed,
     _release_sha,
     _validated_release_url,
     summarize_samples,
+    validate_request_ledger,
     validate_release_provenance,
     write_evidence,
 )
@@ -94,6 +96,29 @@ def test_production_request_guard_allows_login_then_blocks_business_mutations() 
     assert not production_request_allowed("POST", base + "api/transactions.php", authenticated=True)
     assert not production_request_allowed("PATCH", base + "api/projects.php", authenticated=True)
     assert not production_request_allowed("POST", "https://other.example/action", authenticated=False)
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://hollawall.com/admin/api/documents.php?action=list&project_id=1", "documents.list"),
+        ("https://hollawall.com/admin/api/documents.php?action=payment_summary&project_id=1", "documents.payment_summary"),
+        ("https://hollawall.com/admin/api/documents.php?action=quotations&project_id=1", "documents.quotations"),
+        ("https://hollawall.com/admin/api/documents.php?action=receipt_options&project_id=1", "documents.receipt_options"),
+        ("https://hollawall.com/admin/api/documents.php?action=get&document_id=1", "documents.get"),
+        ("https://hollawall.com/admin/api/projects.php?action=list", "projects"),
+    ],
+)
+def test_route_name_classifies_document_actions(url: str, expected: str) -> None:
+    assert _route_name(url) == expected
+
+
+def test_request_ledger_rejects_pending_or_incomplete_observations() -> None:
+    validate_request_ledger(started=7, completed=7, failed=0, pending=0)
+    with pytest.raises(BenchmarkContractError, match="pending"):
+        validate_request_ledger(started=7, completed=5, failed=0, pending=2)
+    with pytest.raises(BenchmarkContractError, match="does not balance"):
+        validate_request_ledger(started=7, completed=5, failed=1, pending=0)
 
 
 def test_release_provenance_requires_all_observed_surfaces_to_match_exact_sha() -> None:
