@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from concurrent.futures import ThreadPoolExecutor
 
+import psycopg
 import pytest
 
 from services.postgres_connection_pool import PostgresConnectionPool
@@ -45,5 +46,23 @@ def test_real_pool_reuses_connections_and_cleans_failed_transactions() -> None:
 
         assert 1 <= len(set(pids)) <= 4
         assert first_pid in set(pids)
+
+        broken = pool.connect(dsn)
+        with broken.cursor() as cursor:
+            cursor.execute("SELECT pg_backend_pid()")
+            broken_pid = int(cursor.fetchone()[0])
+        with psycopg.connect(dsn, autocommit=True) as terminator:
+            with terminator.cursor() as cursor:
+                cursor.execute("SELECT pg_terminate_backend(%s)", (broken_pid,))
+                assert cursor.fetchone() == (True,)
+        with pytest.raises(psycopg.Error):
+            with broken:
+                with broken.cursor() as cursor:
+                    cursor.execute("SELECT 1")
+        replacement = pool.connect(dsn)
+        with replacement:
+            with replacement.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                assert cursor.fetchone() == (1,)
     finally:
         pool.close()

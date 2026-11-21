@@ -91,7 +91,9 @@ def test_pool_is_bounded_warmed_and_returns_raw_connections() -> None:
         "timeout": 7.5,
         "open": False,
         "close_returns": True,
-        "check": factory.check_connection,
+        "check": None,
+        "max_lifetime": 900.0,
+        "max_idle": 300.0,
     }
 
     provider.open()
