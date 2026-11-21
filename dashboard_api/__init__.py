@@ -195,7 +195,9 @@ def register_dashboard(
 
             gateway = FinanceWriteAuthorityGateway(
                 enabled=True,
-                resolver=PostgresAuthorityResolver(dsn),
+                resolver=PostgresAuthorityResolver(
+                    dsn, connection_factory=connection_factory
+                ),
                 finance_service=canonical_transaction_service,
                 debt_service=canonical_debt_service,
             )
@@ -220,13 +222,16 @@ def register_dashboard(
         assert_finance_authority_configuration(
             dsn,
             writes_enabled=writes_enabled,
+            connection_factory=connection_factory,
         )
 
     if canonical_runtime_required and dsn:
         from services.finance_write_authority import read_finance_authority
 
         app.extensions["canonical_finance_write_authority"] = (
-            lambda selected_dsn=dsn: read_finance_authority(selected_dsn)
+            lambda selected_dsn=dsn, selected_factory=connection_factory: read_finance_authority(
+                selected_dsn, connection_factory=selected_factory
+            )
         )
 
     snapshot_loader = None

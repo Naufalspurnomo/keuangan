@@ -90,7 +90,7 @@ export function adaptLiveSnapshot(snapshot: DashboardSnapshot): LiveSnapshotView
   }
 }
 
-export function useLiveSnapshot({ endpoint, loader = loadLiveSnapshot, pollIntervalMs = 5_000 }: UseLiveSnapshotOptions = {}) {
+export function useLiveSnapshot({ endpoint, loader = loadLiveSnapshot, pollIntervalMs = 30_000 }: UseLiveSnapshotOptions = {}) {
   const [state, setState] = useState<LiveSnapshotState>({ status: 'loading', data: null, error: null, refreshing: false })
   const activeController = useRef<AbortController | null>(null)
   const activeRequest = useRef<Promise<DashboardSnapshot> | null>(null)
@@ -137,15 +137,32 @@ export function useLiveSnapshot({ endpoint, loader = loadLiveSnapshot, pollInter
   }, [startRequest])
 
   useEffect(() => {
-    void reload().catch(() => undefined)
-    const poll = () => { if (document.visibilityState === 'visible') void reload().catch(() => undefined) }
-    const interval = window.setInterval(poll, pollIntervalMs)
-    const onFocus = () => { if (document.visibilityState === 'visible') void reload().catch(() => undefined) }
-    const onVisibilityChange = () => { if (document.visibilityState === 'visible') void reload().catch(() => undefined) }
+    let stopped = false
+    let timeout: number | undefined
+    const schedule = () => {
+      if (stopped) return
+      if (timeout !== undefined) window.clearTimeout(timeout)
+      timeout = window.setTimeout(() => {
+        if (document.visibilityState !== 'visible') {
+          schedule()
+          return
+        }
+        void reload().catch(() => undefined).finally(schedule)
+      }, pollIntervalMs)
+    }
+    const refresh = () => {
+      if (document.visibilityState !== 'visible') return
+      if (timeout !== undefined) window.clearTimeout(timeout)
+      void reload().catch(() => undefined).finally(schedule)
+    }
+    void reload().catch(() => undefined).finally(schedule)
+    const onFocus = refresh
+    const onVisibilityChange = refresh
     window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
-      window.clearInterval(interval)
+      stopped = true
+      if (timeout !== undefined) window.clearTimeout(timeout)
       window.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onVisibilityChange)
       activeController.current?.abort()

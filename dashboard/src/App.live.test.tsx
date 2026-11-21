@@ -6,6 +6,7 @@ import { validLiveSnapshot } from './liveSnapshot.test'
 
 const PROJECT_ALFA_ID = '00000000-0000-4000-8000-000000000101'
 const PROJECT_BETA_ID = '00000000-0000-4000-8000-000000000102'
+const CSRF_FIXTURE = 'synthetic-fixture-value'
 
 const liveSnapshot = (): import('./snapshot').DashboardSnapshot => ({
   ...validLiveSnapshot(),
@@ -121,7 +122,7 @@ function writeSessionResponse(canonicalFinanceWrites = true, writesEnabled = tru
   return new Response(JSON.stringify({
     api_version: 'dashboard.v1',
     data: {
-      csrf_token: 'csrf-token-1234567890',
+      csrf_token: CSRF_FIXTURE,
       capabilities: {
         writes_enabled: writesEnabled,
         canonical_finance_writes_enabled: canonicalFinanceWrites,
@@ -197,6 +198,37 @@ afterEach(() => {
 })
 
 describe('production live source mode', () => {
+  it('prefetches the project registry with snapshot and reuses it for the transaction route', async () => {
+    const snapshotResponse = deferred<Response>()
+    const projectsResponse = deferred<Response>()
+    const starts: string[] = []
+    window.history.replaceState(null, '', `/admin/#projects?project=123e4567-e89b-42d3-a456-426614174000&tab=transactions`)
+    const request = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      starts.push(url)
+      if (url === '/admin/api/snapshot.php') return snapshotResponse.promise
+      if (url.startsWith('/admin/api/projects.php?action=list')) return projectsResponse.promise
+      if (url === '/admin/api/write-session.php') return Promise.resolve(writeSessionResponse(false, false))
+      return Promise.resolve(liveResponse())
+    })
+    vi.stubGlobal('fetch', request)
+
+    render(<App />)
+    await waitFor(() => {
+      expect(starts).toContain('/admin/api/snapshot.php')
+      expect(starts).toContain('/admin/api/projects.php?action=list')
+    })
+
+    projectsResponse.resolve(productionProjectsResponse())
+    await act(async () => { await projectsResponse.promise; await Promise.resolve() })
+    expect(screen.getByRole('status')).toHaveTextContent('Memuat data keuangan')
+
+    snapshotResponse.resolve(liveResponse())
+    await screen.findByRole('tabpanel')
+    expect(screen.getByRole('tabpanel')).toHaveClass('project-transaction-detail')
+    expect(starts.filter((url) => url.startsWith('/admin/api/projects.php?action=list'))).toHaveLength(1)
+  })
+
   it('opens the single canonical production project form from the live project add control', async () => {
     const request = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
@@ -512,7 +544,7 @@ describe('production live source mode', () => {
     expect(mutations[0].body).toMatchObject({ expected_version: 1, amount: 300_000, reason: 'Nominal vendor terkoreksi' })
     expect(mutations[1].url).toBe(`/admin/api/transactions.php?action=reversal&transaction_id=${canonicalId}`)
     expect(mutations[1].body).toMatchObject({ expected_version: 1, reason: 'Transaksi dibatalkan vendor' })
-    expect(mutations[0].headers.get('X-CSRF-Token')).toBe('csrf-token-1234567890')
+    expect(mutations[0].headers.get('X-CSRF-Token')).toBe(CSRF_FIXTURE)
     const correctionKey = mutations[0].headers.get('Idempotency-Key')
     const reversalKey = mutations[1].headers.get('Idempotency-Key')
     expect(correctionKey).toMatch(/^\S{16,128}$/)
@@ -767,7 +799,7 @@ describe('production live source mode', () => {
     vi.stubGlobal('fetch', request)
     render(<App />)
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
-    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
     expect(snapshotRequests).toBe(2)
 
     fireEvent.click(screen.getByRole('button', { name: 'Operasional kantor' }))
@@ -787,7 +819,7 @@ describe('production live source mode', () => {
     await act(async () => { postCommitReadback.reject(new Error('snapshot offline')); await Promise.resolve(); await Promise.resolve() })
     expect(screen.getByRole('status')).toHaveTextContent('Transaksi sudah tercatat, tetapi data terbaru belum dapat dimuat')
 
-    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
     expect(snapshotRequests).toBe(4)
   })
 })
