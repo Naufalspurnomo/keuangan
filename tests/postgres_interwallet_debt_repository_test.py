@@ -323,8 +323,18 @@ def test_canonical_flag_builds_postgres_services_after_schema_verification(monke
     monkeypatch.setenv("STATE_DATABASE_URL", "postgresql://isolated-test")
     verified = []
     monkeypatch.setattr(financial_schema, "verify_financial_schema", lambda dsn: verified.append(dsn) or {"ready": True})
-    monkeypatch.setattr(financial_transaction_repository, "PostgresFinancialTransactionRepository", lambda dsn: ("transactions", dsn))
-    monkeypatch.setattr(financial_debt_repository, "PostgresInterwalletDebtRepository", lambda dsn: ("debts", dsn))
+    transaction_factories = []
+    debt_factories = []
+    monkeypatch.setattr(
+        financial_transaction_repository,
+        "PostgresFinancialTransactionRepository",
+        lambda dsn, *, connection_factory=None: transaction_factories.append(connection_factory) or ("transactions", dsn),
+    )
+    monkeypatch.setattr(
+        financial_debt_repository,
+        "PostgresInterwalletDebtRepository",
+        lambda dsn, *, connection_factory=None: debt_factories.append(connection_factory) or ("debts", dsn),
+    )
     monkeypatch.setattr(canonical_finance, "CanonicalFinanceService", lambda repository: ("transaction-service", repository))
     monkeypatch.setattr(interwallet_debt_service, "InterwalletDebtService", lambda repository: ("debt-service", repository))
 
@@ -333,6 +343,7 @@ def test_canonical_flag_builds_postgres_services_after_schema_verification(monke
 
     rules = {rule.rule for rule in app.url_map.iter_rules()}
     assert verified == ["postgresql://isolated-test"]
+    assert transaction_factories[0] is debt_factories[0]
     assert "/api/dashboard/v1/canonical-transactions" in rules
     assert "/api/dashboard/v1/debts" in rules
 

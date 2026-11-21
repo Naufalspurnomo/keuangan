@@ -10,6 +10,7 @@ from flask import Flask
 
 from config.wallets import normalize_wallet_company_pair
 from dashboard_api.repository import DashboardRepository
+from services.postgres_connection_pool import PostgresConnectionPool
 
 
 def register_dashboard(
@@ -91,18 +92,26 @@ def register_dashboard(
     app.config["SESSION_COOKIE_NAME"] = "hollawall_owner_session"
 
     dsn = str(os.getenv("STATE_DATABASE_URL") or os.getenv("DATABASE_URL") or "").strip()
+    pool = None
+    if dsn:
+        pool = app.extensions.get("postgres_connection_pool")
+        if pool is None:
+            pool = PostgresConnectionPool.from_environment(dsn)
+            app.extensions["postgres_connection_pool"] = pool
+    connection_factory = pool.connect if pool is not None else None
     selected_repository = repository
     if selected_repository is None:
         if not dsn:
             # Registration stays explicit and safe in production. Tests and local
             # tooling can inject a repository without a database.
             return
-        selected_repository = DashboardRepository(dsn)
+        selected_repository = DashboardRepository(dsn, connection_factory=connection_factory)
 
     selected_project_documents = project_document_repository
     if selected_project_documents is None and dsn:
         selected_project_documents = ProjectDocumentRepository(
             dsn,
+            connection_factory=connection_factory,
             renderer=render_project_document_artifact,
             receipt_authority_reader=GoogleSheetsTransactionAdapter.read_receipt_authority,
         )
@@ -164,10 +173,10 @@ def register_dashboard(
             from services.interwallet_debt_service import InterwalletDebtService
 
             canonical_transaction_service = canonical_transaction_service or CanonicalFinanceService(
-                PostgresFinancialTransactionRepository(dsn)
+                PostgresFinancialTransactionRepository(dsn, connection_factory=connection_factory)
             )
             canonical_debt_service = canonical_debt_service or InterwalletDebtService(
-                PostgresInterwalletDebtRepository(dsn)
+                PostgresInterwalletDebtRepository(dsn, connection_factory=connection_factory)
             )
         if writes_enabled or missing_service:
             from services.financial_schema import verify_financial_schema
@@ -229,7 +238,9 @@ def register_dashboard(
         from services.canonical_dashboard_repository import CanonicalDashboardRepository
         from services.canonical_dashboard_snapshot import build_canonical_dashboard_snapshot
 
-        dashboard_source = CanonicalDashboardRepository(dsn)
+        dashboard_source = CanonicalDashboardRepository(
+            dsn, connection_factory=connection_factory
+        )
 
         def load_canonical_snapshot():
             effective = canonical_transaction_service.list_effective_transactions()
