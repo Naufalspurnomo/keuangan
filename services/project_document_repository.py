@@ -1336,6 +1336,7 @@ class ProjectDocumentRepository:
     def get_project(self, project_id: str) -> dict[str, Any]:
         try:
             with self._connect() as connection:
+                connection.autocommit = True
                 with connection.cursor() as cursor:
                     cursor.execute("SELECT " + _SELECT_PROJECT + " FROM projects WHERE id = %s", (project_id,))  # nosec B608 -- selected columns are module constants
                     row = cursor.fetchone()

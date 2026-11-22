@@ -213,6 +213,31 @@ def test_payment_summary_uses_one_pipeline_round_trip_and_preserves_totals() -> 
 
 
 class _EmptyReadCursor(_Cursor):
+    def fetchone(self):
+        if "FROM projects WHERE id = %s" in self.query:
+            project = {
+                "id": PROJECT_ID,
+                "name": "Project read model",
+                "client_name": "Client",
+                "client_company": None,
+                "client_address": None,
+                "client_contact": None,
+                "issuer_key": "cv-holla-berkreasi",
+                "wallet": "CV HB(101)",
+                "company": "HOLLA",
+                "status": "active",
+                "start_date": date(2026, 11, 21),
+                "completion_date": None,
+                "contract_notes": None,
+                "lock_version": 1,
+                "created_by": {"role": "boss"},
+                "updated_by": {"role": "boss"},
+                "created_at": NOW,
+                "updated_at": NOW,
+            }
+            return tuple(project[column] for column in repository_module._PROJECT_COLUMNS)
+        return super().fetchone()
+
     def fetchall(self):
         return []
 
@@ -220,6 +245,15 @@ class _EmptyReadCursor(_Cursor):
 class _EmptyReadConnection(_Connection):
     def cursor(self):
         return _EmptyReadCursor(self)
+
+
+def test_get_project_uses_autocommit_read() -> None:
+    connection = _EmptyReadConnection()
+
+    project = _repository(connection).get_project(PROJECT_ID)
+
+    assert project["id"] == PROJECT_ID
+    assert connection.autocommit is True
 
 
 def test_project_and_quotation_collections_use_autocommit_reads() -> None:
