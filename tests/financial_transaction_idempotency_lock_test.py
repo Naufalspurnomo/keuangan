@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 from services.financial_transaction_repository import (
     PostgresFinancialTransactionRepository,
     _idempotency_lock_id,
@@ -35,9 +37,20 @@ class _Connection:
         self.commits = 0
         self.rollbacks = 0
         self.closed = False
+        self.pipeline_entries = 0
+        self.pipeline_active = False
 
     def cursor(self):
         return self._cursor
+
+    @contextmanager
+    def pipeline(self):
+        self.pipeline_entries += 1
+        self.pipeline_active = True
+        try:
+            yield self
+        finally:
+            self.pipeline_active = False
 
     def commit(self) -> None:
         self.commits += 1
@@ -67,6 +80,7 @@ def test_first_idempotency_use_is_serialized_before_exact_hash_lookup() -> None:
 
     assert record == {"id": "transaction-existing"}
     assert replayed is True
+    assert len(cursor.executed) == 2
     assert "pg_advisory_xact_lock" in cursor.executed[0][0]
     assert cursor.executed[0][1] == (_idempotency_lock_id("f" * 64),)
     assert "idempotency_key_hash" in cursor.executed[1][0]
@@ -74,6 +88,7 @@ def test_first_idempotency_use_is_serialized_before_exact_hash_lookup() -> None:
     assert connection.commits == 1
     assert connection.rollbacks == 0
     assert connection.closed is True
+    assert connection.pipeline_entries == 0
 
 
 def test_idempotency_lock_key_is_stable_signed_bigint_and_hash_specific() -> None:

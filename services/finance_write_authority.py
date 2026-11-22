@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import uuid
+
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any, Protocol
@@ -138,6 +139,8 @@ class PostgresAuthorityResolver:
     def __init__(self, dsn: str, *, connection_factory: Callable[..., Any] | None = None) -> None:
         self._dsn = dsn
         self._connection_factory = connection_factory
+        self._wallets: dict[str, tuple[str, str]] = {}
+        self._prime_read_registry()
 
     def _connect(self):
         if self._connection_factory is not None:
@@ -150,22 +153,32 @@ class PostgresAuthorityResolver:
     def _label(value: str) -> str:
         return value.strip().casefold()
 
-    def resolve_wallet(self, label: str) -> tuple[str, str] | None:
+    def _prime_read_registry(self) -> None:
         query = """
-            SELECT w.id::text, wbu.business_unit_id::text
+            SELECT w.id::text, wbu.business_unit_id::text,
+                   w.display_name, bu.code, bu.active
               FROM wallets w
               JOIN wallet_business_units wbu ON wbu.wallet_id = w.id
               JOIN business_units bu ON bu.id = wbu.business_unit_id
-             WHERE w.active AND bu.active
-               AND lower(trim(w.display_name)) = %s
+             WHERE w.active
              ORDER BY w.id, wbu.business_unit_id
         """
-        with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute(query, (self._label(label),))
-            rows = cursor.fetchall()
-        if len(rows) != 1:
-            return None
-        return str(rows[0][0]), str(rows[0][1])
+        with self._connect() as connection:
+            connection.autocommit = True
+            with connection.cursor() as cursor:
+                cursor.execute(query, ())
+                rows = cursor.fetchall()
+        wallets: dict[str, tuple[str, str]] = {}
+        for wallet_id, business_unit_id, display_name, _code, active in rows:
+            key = self._label(str(display_name))
+            if bool(active) and key not in wallets:
+                wallets[key] = (str(wallet_id), str(business_unit_id))
+            elif key in wallets:
+                wallets.pop(key, None)
+        self._wallets = wallets
+
+    def resolve_wallet(self, label: str) -> tuple[str, str] | None:
+        return self._wallets.get(self._label(label))
 
     def resolve_project(self, project_id: str | None, project_label: str | None) -> str | None:
         canonical_id = None
@@ -176,32 +189,40 @@ class PostgresAuthorityResolver:
                 return None
             if str(parsed) != project_id.casefold():
                 return None
-            with self._connect() as connection, connection.cursor() as cursor:
-                cursor.execute("SELECT id::text FROM projects WHERE id = %s", (str(parsed),))
-                row = cursor.fetchone()
-            if row is None:
-                return None
-            canonical_id = str(row[0])
+            canonical_id = str(parsed)
 
         mapped_id = None
         if project_label is not None:
-            with self._connect() as connection, connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT project_id::text
-                      FROM canonical_project_identity_mappings
-                     WHERE normalized_label = %s AND owner_approved AND active
-                    """,
-                    (self._label(project_label),),
-                )
-                rows = cursor.fetchall()
+            with self._connect() as connection:
+                connection.autocommit = True
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT project_id::text
+                          FROM canonical_project_identity_mappings
+                         WHERE normalized_label = %s AND owner_approved AND active
+                        """,
+                        (self._label(project_label),),
+                    )
+                    rows = cursor.fetchall()
             if len(rows) != 1:
                 return None
             mapped_id = str(rows[0][0])
 
+        resolved = canonical_id or mapped_id
         if canonical_id is not None and mapped_id is not None and canonical_id != mapped_id:
             return None
-        return canonical_id or mapped_id
+        if resolved is None:
+            return None
+        with self._connect() as connection:
+            connection.autocommit = True
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id::text FROM projects WHERE id = %s AND status = 'active'",
+                    (resolved,),
+                )
+                row = cursor.fetchone()
+        return resolved if row is not None else None
 
     def quarantine(self, command: Mapping[str, Any], reason_code: str) -> str:
         command_json = _canonical_json(command)

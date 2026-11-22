@@ -223,14 +223,31 @@ class PostgresFinancialTransactionRepository:
         "created_at",
     )
     _RECORD_SELECT_SQL = """
-        SELECT id, scope, project_id, transaction_type, flow_class, amount,
-               currency, category, description, occurred_at, source,
-               source_reference, evidence, actor, revision_of_id,
-               reversal_of_id, version, status, created_at
-        FROM financial_transactions
-        WHERE id = %s
+        SELECT ft.id, ft.scope, ft.project_id, ft.transaction_type, ft.flow_class,
+               ft.amount, ft.currency, ft.category, ft.description, ft.occurred_at,
+               ft.source, ft.source_reference, ft.evidence, ft.actor,
+               ft.revision_of_id, ft.reversal_of_id, ft.version, ft.status,
+               ft.created_at,
+               COALESCE(
+                   (
+                       SELECT jsonb_agg(
+                           jsonb_build_object(
+                               'id', fp.id,
+                               'wallet_id', fp.wallet_id,
+                               'business_unit_id', fp.business_unit_id,
+                               'account_class', fp.account_class,
+                               'signed_amount', fp.signed_amount,
+                               'currency', fp.currency
+                           ) ORDER BY fp.id
+                       )
+                       FROM financial_postings fp
+                       WHERE fp.transaction_id = ft.id
+                   ),
+                   '[]'::jsonb
+               ) AS postings
+        FROM financial_transactions ft
+        WHERE ft.id = %s
     """
-
     def __init__(
         self,
         dsn: str,
@@ -269,8 +286,10 @@ class PostgresFinancialTransactionRepository:
         connection = self._connect()
         try:
             with connection.cursor() as cursor:
-                # Serialize first use before the SELECT. A lock-key collision can
-                # only add serialization because the exact hash remains queried.
+                # Keep the advisory lock and lookup as separate statements. A
+                # single-statement CTE uses the statement snapshot taken before a
+                # contended advisory lock is released and can miss the winner's
+                # committed row, violating concurrent idempotency.
                 cursor.execute(
                     "SELECT pg_advisory_xact_lock(%s)",
                     (_idempotency_lock_id(idempotency_key_hash),),
@@ -283,8 +302,9 @@ class PostgresFinancialTransactionRepository:
                 existing = cursor.fetchone()
                 if existing is not None:
                     result = self._read_record(cursor, str(existing[0]))
-                    if str(existing[1]) != request_hash and not (
-                        legacy_request_hash is not None and str(existing[1]) == legacy_request_hash
+                    existing_hash = str(existing[1])
+                    if existing_hash != request_hash and not (
+                        legacy_request_hash is not None and existing_hash == legacy_request_hash
                         and _legacy_replay_matches(
                             result, operation=operation, command_target_id=command_target_id,
                             read_record=lambda identifier: self._read_record(cursor, identifier),
@@ -318,60 +338,67 @@ class PostgresFinancialTransactionRepository:
                             "financial transaction version changed concurrently"
                         )
 
-                cursor.execute(
-                    """
-                    INSERT INTO financial_transactions (
-                        id, idempotency_key_hash, request_hash, scope, project_id,
-                        transaction_type, flow_class, amount, currency, category,
-                        description, occurred_at, source, source_reference, evidence,
-                        actor, revision_of_id, reversal_of_id, version, status
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s
+                # Queue the immutable transaction, balanced postings, export
+                # outbox, and authoritative readback before one commit sync.
+                # This keeps the same atomic transaction while avoiding one
+                # client/server round-trip per small statement.
+                with connection.pipeline():
+                    cursor.execute(
+                        """
+                        INSERT INTO financial_transactions (
+                            id, idempotency_key_hash, request_hash, scope, project_id,
+                            transaction_type, flow_class, amount, currency, category,
+                            description, occurred_at, source, source_reference, evidence,
+                            actor, revision_of_id, reversal_of_id, version, status
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s
+                        )
+                        """,
+                        (
+                            record["id"],
+                            idempotency_key_hash,
+                            request_hash,
+                            record["scope"],
+                            record.get("project_id"),
+                            record["transaction_type"],
+                            record["flow_class"],
+                            record["amount"],
+                            record["currency"],
+                            record.get("category"),
+                            record["description"],
+                            record["occurred_at"],
+                            record["source"],
+                            record.get("source_reference"),
+                            self._json(record.get("evidence") or {}),
+                            self._json(record["actor"]),
+                            record.get("revision_of_id"),
+                            record.get("reversal_of_id"),
+                            record["version"],
+                            record["status"],
+                        ),
                     )
-                    """,
-                    (
-                        record["id"],
-                        idempotency_key_hash,
-                        request_hash,
-                        record["scope"],
-                        record.get("project_id"),
-                        record["transaction_type"],
-                        record["flow_class"],
-                        record["amount"],
-                        record["currency"],
-                        record.get("category"),
-                        record["description"],
-                        record["occurred_at"],
-                        record["source"],
-                        record.get("source_reference"),
-                        self._json(record.get("evidence") or {}),
-                        self._json(record["actor"]),
-                        record.get("revision_of_id"),
-                        record.get("reversal_of_id"),
-                        record["version"],
-                        record["status"],
-                    ),
-                )
-                self._insert_postings(cursor, record["id"], record["postings"])
-                cursor.execute(
-                    """
-                    INSERT INTO financial_export_outbox (
-                        id, aggregate_type, aggregate_id, aggregate_version,
-                        export_key, payload, payload_sha256, destination
-                    ) VALUES (%s, 'transaction', %s, %s, %s, %s::jsonb, %s, 'google_sheets')
-                    """,
-                    (
-                        outbox_payload["id"],
-                        record["id"],
-                        record["version"],
-                        outbox_payload["export_key"],
-                        self._json(outbox_payload["payload"]),
-                        outbox_payload["payload_sha256"],
-                    ),
-                )
-                result = self._read_record(cursor, str(record["id"]))
-            connection.commit()
+                    self._insert_postings(cursor, record["id"], record["postings"])
+                    cursor.execute(
+                        """
+                        INSERT INTO financial_export_outbox (
+                            id, aggregate_type, aggregate_id, aggregate_version,
+                            export_key, payload, payload_sha256, destination
+                        ) VALUES (%s, 'transaction', %s, %s, %s, %s::jsonb, %s, 'google_sheets')
+                        """,
+                        (
+                            outbox_payload["id"],
+                            record["id"],
+                            record["version"],
+                            outbox_payload["export_key"],
+                            self._json(outbox_payload["payload"]),
+                            outbox_payload["payload_sha256"],
+                        ),
+                    )
+                    readback = connection.cursor()
+                    readback.execute(self._RECORD_SELECT_SQL, (str(record["id"]),))
+                    connection.commit()
+                    result = self._decode_record_row(readback.fetchone())
             return result, False
         except Exception:
             connection.rollback()
@@ -400,40 +427,32 @@ class PostgresFinancialTransactionRepository:
                 ),
             )
 
+    @classmethod
+    def _decode_record_row(cls, row: Sequence[Any] | None) -> dict[str, Any]:
+        if row is None or len(row) != len(cls._RECORD_COLUMNS) + 1:
+            raise FinancialRepositoryNotFound("financial transaction not found")
+        record: dict[str, Any] = dict(zip(cls._RECORD_COLUMNS, row[:-1]))
+        raw_postings = row[-1] or []
+        if isinstance(raw_postings, str):
+            raw_postings = json.loads(raw_postings)
+        record["postings"] = [dict(item) for item in raw_postings]
+        authority_posting = next(
+            (
+                posting
+                for posting in record["postings"]
+                if posting.get("wallet_id") is not None
+                and posting.get("business_unit_id") is not None
+            ),
+            None,
+        )
+        if authority_posting is not None:
+            record["wallet_id"] = authority_posting["wallet_id"]
+            record["business_unit_id"] = authority_posting["business_unit_id"]
+        return record
+
     def _read_record(self, cursor: Any, transaction_id: str) -> dict[str, Any]:
         cursor.execute(self._RECORD_SELECT_SQL, (transaction_id,))
-        row = cursor.fetchone()
-        if row is None:
-            raise FinancialRepositoryNotFound("financial transaction not found")
-        record: dict[str, Any] = dict(zip(self._RECORD_COLUMNS, row))
-        cursor.execute(
-            """
-            SELECT id, wallet_id, business_unit_id, account_class, signed_amount, currency
-            FROM financial_postings WHERE transaction_id = %s ORDER BY id
-            """,
-            (transaction_id,),
-        )
-        record["postings"] = [
-            dict(zip(("id", "wallet_id", "business_unit_id", "account_class", "signed_amount", "currency"), item))
-            for item in cursor.fetchall()
-        ]
-        if record["postings"]:
-            # ``wallet_id`` and ``business_unit_id`` are persisted on postings,
-            # not on financial_transactions. Restore them for corrections and
-            # reversals, which rebuild postings from the canonical readback.
-            authority_posting = next(
-                (
-                    posting
-                    for posting in record["postings"]
-                    if posting.get("wallet_id") is not None
-                    and posting.get("business_unit_id") is not None
-                ),
-                None,
-            )
-            if authority_posting is not None:
-                record["wallet_id"] = authority_posting["wallet_id"]
-                record["business_unit_id"] = authority_posting["business_unit_id"]
-        return record
+        return self._decode_record_row(cursor.fetchone())
 
     def get(self, transaction_id: str) -> dict[str, Any]:
         connection = self._connect()

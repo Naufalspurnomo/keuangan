@@ -8,6 +8,7 @@ from services.finance_write_authority import (
     CanonicalWriteUnavailable,
     FinanceAuthorityLatchError,
     FinanceWriteAuthorityGateway,
+    PostgresAuthorityResolver,
     assert_finance_authority_configuration,
     canonical_finance_writes_enabled,
     legacy_sheets_finance_writes_fenced,
@@ -102,6 +103,72 @@ class FakeAuthorityConnection:
 
     def close(self):
         self.closed = True
+
+
+class ResolverCursor:
+    def __init__(self, connection):
+        self.connection = connection
+        self.query = ""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def execute(self, query, params):
+        self.query = " ".join(str(query).split())
+        self.connection.calls.append((self.query, params))
+
+    def fetchone(self):
+        if "FROM projects" in self.query:
+            return ("00000000-0000-4000-8000-000000000501",)
+        raise AssertionError(f"unexpected fetchone query: {self.query}")
+
+    def fetchall(self):
+        if "FROM wallets" in self.query:
+            return [(
+                "34d6db17-e205-5dfa-a3b8-90f0e0a3ec6b",
+                "d3261754-6ee5-5d37-b0e2-79614da60abb",
+                "CV HB(101)",
+                "CV_HB_101",
+                True,
+            )]
+        if "FROM canonical_project_identity_mappings" in self.query:
+            return [("00000000-0000-4000-8000-000000000501",)]
+        raise AssertionError(f"unexpected fetchall query: {self.query}")
+
+
+class ResolverConnection:
+    def __init__(self):
+        self.autocommit = False
+        self.calls = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def cursor(self):
+        return ResolverCursor(self)
+
+
+def test_authority_resolver_reads_wallet_and_project_without_transaction_finalization():
+    connection = ResolverConnection()
+    resolver = PostgresAuthorityResolver(
+        "postgresql://isolated-test",
+        connection_factory=lambda _dsn: connection,
+    )
+
+    assert resolver.resolve_wallet("CV HB(101)") == (
+        "34d6db17-e205-5dfa-a3b8-90f0e0a3ec6b",
+        "d3261754-6ee5-5d37-b0e2-79614da60abb",
+    )
+    assert resolver.resolve_project(
+        "00000000-0000-4000-8000-000000000501", None
+    ) == "00000000-0000-4000-8000-000000000501"
+    assert connection.autocommit is True
 
 
 def transaction_command(**overrides):

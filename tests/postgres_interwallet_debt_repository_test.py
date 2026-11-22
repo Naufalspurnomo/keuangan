@@ -293,6 +293,17 @@ def test_postgres_transaction_readback_restores_authority_ids_from_postings():
         for column in PostgresFinancialTransactionRepository._RECORD_COLUMNS
     )
 
+    postings = [
+        {
+            "id": "00000000-0000-4000-8000-000000000705",
+            "wallet_id": wallet_id,
+            "business_unit_id": business_unit_id,
+            "account_class": "cash",
+            "signed_amount": 1000,
+            "currency": "IDR",
+        }
+    ]
+
     class Cursor:
         def __init__(self):
             self.calls = 0
@@ -301,19 +312,10 @@ def test_postgres_transaction_readback_restores_authority_ids_from_postings():
             self.calls += 1
 
         def fetchone(self):
-            return record_row
+            return (*record_row, postings)
 
         def fetchall(self):
-            return [
-                (
-                    "00000000-0000-4000-8000-000000000705",
-                    wallet_id,
-                    business_unit_id,
-                    "cash",
-                    1000,
-                    "IDR",
-                )
-            ]
+            raise AssertionError("readback must not issue a second postings query")
 
     repository = object.__new__(PostgresFinancialTransactionRepository)
     record = repository._read_record(Cursor(), record_row[0])
