@@ -5,15 +5,11 @@
 -- the project-document schema gate after 025 recreates the trigger function.
 
 CREATE OR REPLACE FUNCTION reject_project_quotation_artifact_mutation()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-AS $$
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP = 'DELETE' AND EXISTS (
-        SELECT 1
-        FROM project_quotation_handoffs
-        WHERE id = OLD.quotation_id
-          AND project_id = hollawall_project_hard_delete_target()
+        SELECT 1 FROM project_quotation_handoffs
+        WHERE id = OLD.quotation_id AND project_id = hollawall_project_hard_delete_target()
     ) THEN
         RETURN OLD;
     END IF;
