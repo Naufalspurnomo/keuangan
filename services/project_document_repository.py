@@ -911,10 +911,31 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
     try:
         with _default_connection_factory(selected) as connection:
             with connection.cursor() as cursor:
-                for migration in migrations:
-                    cursor.execute(migration)
+                for name, migration in zip(migration_names, migrations):
+                    try:
+                        cursor.execute(migration)
+                    except Exception as migration_exc:
+                        diagnostic = getattr(migration_exc, "diag", None)
+                        diagnostic_parts = [
+                            f"{label}={value}"
+                            for label, value in (
+                                ("table", getattr(diagnostic, "table_name", None)),
+                                ("column", getattr(diagnostic, "column_name", None)),
+                                ("constraint", getattr(diagnostic, "constraint_name", None)),
+                                ("message", getattr(diagnostic, "message_primary", None)),
+                            )
+                            if value
+                        ]
+                        detail = "; ".join(diagnostic_parts)
+                        suffix = f": {detail}" if detail else ""
+                        raise ProjectDocumentUnavailable(
+                            f"Project document migration unavailable: migration={name} "
+                            f"{type(migration_exc).__name__}{suffix}"
+                        ) from migration_exc
                 cursor.execute(_SCHEMA_HEALTH_QUERY)
                 return _schema_status(cursor.fetchone())
+    except ProjectDocumentUnavailable:
+        raise
     except Exception as exc:
         raise ProjectDocumentUnavailable(
             f"Project document migration unavailable: {type(exc).__name__}"
