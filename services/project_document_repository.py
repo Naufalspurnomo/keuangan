@@ -891,7 +891,7 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
         # the legacy immutable body. Apply the idempotent compatibility repair
         # after 025 so hard-delete keeps its exact target-project gate without
         # changing the checksum of already-recorded migration 022.
-        "project_hard_delete_quotation_artifact_compatibility.sql",
+        "000_project_hard_delete_quotation_artifact_compatibility.sql",
         # Reapply the remaining hard-delete trigger functions after later
         # migrations that recreate their trigger functions.
         "022_project_hard_delete.sql",
