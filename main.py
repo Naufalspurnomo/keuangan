@@ -305,7 +305,10 @@ def migrate_project_document_schema_at_startup():
             **ensure_project_document_schema(dsn),
         }
     except ProjectDocumentUnavailable as exc:
-        secure_log("ERROR", f"Project document migration unavailable: {type(exc).__name__}")
+        secure_log(
+            "ERROR",
+            f"Project document migration unavailable: {type(exc).__name__}: {exc}",
+        )
         return {
             'configured': True,
             'writes_enabled': True,
