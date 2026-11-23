@@ -570,7 +570,7 @@ SELECT
             SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
             WHERE n.nspname = 'public'
               AND p.proname = 'reject_project_quotation_artifact_mutation'
-              AND MD5(p.prosrc) = '048b5b74c57f3ece2b9040d79c9225e6'
+              AND MD5(p.prosrc) = '02b58c39caa303e290b41b81d1546967'
         )
         AND EXISTS (
             SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -885,9 +885,11 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
         "008_project_quotation_handoffs.sql",
         "019_structured_quotations.sql",
         "020_quotation_invariants.sql",
-        "022_project_hard_delete.sql",
         "024_brand_commercial_identity.sql",
         "025_quotation_artifacts.sql",
+        # Reapply hard-delete trigger functions after quotation-artifact
+        # migration 025 recreates its immutable trigger function.
+        "022_project_hard_delete.sql",
         "026_texturin_template_identity.sql",
         "027_project_event_hard_delete_gate.sql",
         "028_quotation_deposit_percent.sql",
@@ -3163,8 +3165,7 @@ class ProjectDocumentRepository:
         self,
         project_id: str,
         *,
-        expected_version: int,
-        expected_name: str,
+        confirmation: str,
         idempotency_key: str,
         actor: Mapping[str, Any],
     ) -> dict[str, Any]:
@@ -3172,12 +3173,10 @@ class ProjectDocumentRepository:
             uuid.UUID(str(project_id))
         except (ValueError, TypeError) as exc:
             raise ValueError("project_id must be a UUID") from exc
-        if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 1:
-            raise ValueError("expected_version must be a positive integer")
-        if not isinstance(expected_name, str) or not 1 <= len(expected_name) <= 200 or expected_name != expected_name.strip():
-            raise ValueError("expected_name must be the exact project name")
+        if confirmation != "hapus":
+            raise ValueError("confirmation must be exactly 'hapus'")
         actor_json, actor_value = _actor(actor)
-        request = {"project_id": project_id, "expected_version": expected_version, "expected_name": expected_name}
+        request = {"project_id": project_id, "confirmation": confirmation}
         try:
             with self._connect() as connection:
                 with connection.cursor() as cursor:
@@ -3187,40 +3186,12 @@ class ProjectDocumentRepository:
                     if replay is not None:
                         return replay
                     cursor.execute(
-                        "SELECT name, lock_version FROM projects WHERE id = %s FOR UPDATE",
+                        "SELECT id FROM projects WHERE id = %s FOR UPDATE",
                         (project_id,),
                     )
                     current = cursor.fetchone()
                     if not current:
                         raise ProjectDocumentNotFound("project not found")
-                    if str(current[0]) != expected_name:
-                        raise ProjectDocumentConflict("project name confirmation mismatch")
-                    if int(current[1]) != expected_version:
-                        raise ProjectDocumentConflict("optimistic lock version conflict")
-
-                    # The project row lock also serializes FK-backed financial
-                    # inserts. Reversed/settled history remains history: never
-                    # enable the destructive trigger bypass for such projects.
-                    cursor.execute(
-                        """SELECT EXISTS (
-                            SELECT 1 FROM financial_transactions WHERE project_id = %s
-                            UNION ALL
-                            SELECT 1 FROM financial_ledger WHERE project_id = %s
-                            UNION ALL
-                            SELECT 1 FROM interwallet_debts WHERE project_id = %s
-                            UNION ALL
-                            SELECT 1 FROM project_documents
-                            WHERE project_id = %s AND status <> 'draft'
-                            UNION ALL
-                            SELECT 1 FROM project_transaction_evidence WHERE project_id = %s
-                        )""",
-                        (project_id, project_id, project_id, project_id, project_id),
-                    )
-                    if cursor.fetchone()[0]:
-                        raise ProjectDocumentConflict(
-                            "project with financial history cannot be deleted; archive it instead"
-                        )
-
                     cursor.execute(
                         "SELECT set_config('hollawall.project_hard_delete_target', %s, true)",
                         (project_id,),
@@ -3230,6 +3201,7 @@ class ProjectDocumentRepository:
                         "project_payment_application_events",
                         "project_payment_authority_evidence",
                         "project_quotation_idempotency_records",
+                        "project_quotation_artifacts",
                     }
                     cursor.execute(
                         "SELECT relname FROM pg_class WHERE relnamespace = 'public'::regnamespace "
@@ -3313,6 +3285,12 @@ class ProjectDocumentRepository:
                             "(SELECT id FROM project_quotation_handoffs WHERE project_id = %s)",
                             (project_id,),
                         )
+                    if "project_quotation_artifacts" in available_optional_relations:
+                        cursor.execute(
+                            "DELETE FROM project_quotation_artifacts WHERE quotation_id IN "
+                            "(SELECT id FROM project_quotation_handoffs WHERE project_id = %s)",
+                            (project_id,),
+                        )
                     cursor.execute(
                         "DELETE FROM project_quotation_events WHERE quotation_id IN "
                         "(SELECT id FROM project_quotation_handoffs WHERE project_id = %s)",
@@ -3359,8 +3337,8 @@ class ProjectDocumentRepository:
                     )
                     cursor.execute("DELETE FROM project_scopes WHERE project_id = %s", (project_id,))
                     cursor.execute(
-                        "DELETE FROM projects WHERE id = %s AND lock_version = %s",
-                        (project_id, expected_version),
+                        "DELETE FROM projects WHERE id = %s",
+                        (project_id,),
                     )
                     if cursor.rowcount != 1:
                         raise ProjectDocumentConflict("project deletion conflicted")

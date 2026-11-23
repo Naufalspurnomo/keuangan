@@ -320,23 +320,23 @@ class ProjectDocumentRouteTests(unittest.TestCase):
         self.assertEqual(data["hard_delete"], True)
         self.assertEqual(data["reads_enabled"], True)
 
-        missing_name = client.delete(
+        missing_confirmation = client.delete(
             f"/api/dashboard/v1/projects/{PROJECT_ID}",
-            headers=self.write_headers(version='"3"'),
-            json={"idempotency_key": IDEMPOTENCY_KEY, "expected_version": 3},
+            headers=self.write_headers(version="*"),
+            json={"idempotency_key": IDEMPOTENCY_KEY},
         )
-        self.assertEqual(missing_name.status_code, 422)
-        self.assertEqual(missing_name.get_json()["error"]["code"], "project_name_confirmation_required")
+        self.assertEqual(missing_confirmation.status_code, 422)
+        self.assertEqual(missing_confirmation.get_json()["error"]["code"], "project_delete_confirmation_required")
 
         deleted = client.delete(
             f"/api/dashboard/v1/projects/{PROJECT_ID}",
-            headers=self.write_headers(version='"3"'),
-            json={"idempotency_key": IDEMPOTENCY_KEY, "expected_version": 3, "expected_name": "Project Alpha"},
+            headers=self.write_headers(version="*"),
+            json={"idempotency_key": IDEMPOTENCY_KEY, "confirmation": "hapus"},
         )
         self.assertEqual(deleted.status_code, 200, deleted.get_data(as_text=True))
         self.assertEqual(self.envelope(deleted)["data"], {"project_id": PROJECT_ID, "deleted": True})
         self.assertEqual(repository.calls[-1][0], "delete_project")
-        self.assertEqual(repository.calls[-1][2]["expected_name"], "Project Alpha")
+        self.assertEqual(repository.calls[-1][2]["confirmation"], "hapus")
         self.assertEqual(client.delete(f"/api/dashboard/v1/documents/{DOCUMENT_ID}").status_code, 405)
 
     def test_capabilities_advertise_transaction_lifecycle_when_canonical_writes_are_enabled(self):
