@@ -291,8 +291,8 @@ describe('project/document API', () => {
     expect(fullUpdate.changes).not.toHaveProperty('id')
     await api.setProjectStatus(project.id, 'cancelled', 2).submit(session)
     expect(JSON.parse(String(request.mock.calls[3][1]?.body))).toEqual({ action: 'status', project_id: project.id, idempotency_key: 'idem-key-1234567890', expected_version: 2, status: 'cancelled' })
-    await api.deleteProject(project.id, 2, project.name).submit(session)
-    expect(JSON.parse(String(request.mock.calls[4][1]?.body))).toEqual({ action: 'delete', project_id: project.id, expected_name: project.name, idempotency_key: 'idem-key-1234567890', expected_version: 2 })
+    await api.deleteProject(project.id, 'hapus').submit(session)
+    expect(JSON.parse(String(request.mock.calls[4][1]?.body))).toEqual({ action: 'delete', project_id: project.id, confirmation: 'hapus', idempotency_key: 'idem-key-1234567890' })
   })
 
   it('sends document commands with proxy-allowlisted fields', async () => {

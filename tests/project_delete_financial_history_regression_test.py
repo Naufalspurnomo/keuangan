@@ -2,7 +2,7 @@ from contextlib import nullcontext
 
 import pytest
 
-from services.project_document_repository import ProjectDocumentConflict, ProjectDocumentRepository
+from services.project_document_repository import ProjectDocumentRepository
 
 PROJECT = '00000000-0000-4000-8000-000000000101'
 
@@ -15,17 +15,15 @@ class Cursor:
     def execute(self, sql, params=None):
         self.sql.append(sql)
     def fetchone(self):
-        if 'SELECT name, lock_version' in self.sql[-1]:
-            return ('Empty project', 1)
-        if 'SELECT EXISTS' in self.sql[-1]:
-            return (self.history,)
+        if 'SELECT id FROM projects' in self.sql[-1]:
+            return ('00000000-0000-4000-8000-000000000101',)
         return None
     def fetchall(self):
         return []
 
 
 @pytest.mark.parametrize('history', [True, False])
-def test_delete_preserves_financial_history_but_allows_empty_project(monkeypatch, history):
+def test_delete_removes_project_with_or_without_financial_history(monkeypatch, history):
     cursor = Cursor(history)
     class Connection:
         def cursor(self):
@@ -35,16 +33,8 @@ def test_delete_preserves_financial_history_but_allows_empty_project(monkeypatch
     monkeypatch.setattr(repository, '_claim', lambda *args: ('key', None, None))
     monkeypatch.setattr(repository, '_complete', lambda cur, key, response: response)
     def delete():
-        return repository.delete_project(PROJECT, expected_version=1, expected_name='Empty project',
+        return repository.delete_project(PROJECT, confirmation='hapus',
                                          idempotency_key='delete-regression-key', actor={'email': 'owner@example.com'})
-    if history:
-        with pytest.raises(ProjectDocumentConflict, match='financial history'):
-            delete()
-        assert not any('DELETE FROM' in sql or 'set_config' in sql for sql in cursor.sql)
-    else:
-        assert delete()['deleted'] is True
-        assert any('DELETE FROM projects' in sql for sql in cursor.sql)
-    guards = [sql for sql in cursor.sql if 'SELECT EXISTS' in sql]
-    assert len(guards) == 1
-    for table in ('financial_transactions', 'financial_ledger', 'interwallet_debts', 'project_documents'):
-        assert table in guards[0]
+    assert delete()['deleted'] is True
+    assert any('DELETE FROM projects' in sql for sql in cursor.sql)
+    assert not any('SELECT EXISTS' in sql for sql in cursor.sql)

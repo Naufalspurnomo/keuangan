@@ -1326,8 +1326,7 @@ def test_migration_027_upgrades_legacy_event_trigger_for_project_hard_delete(rep
     with pytest.raises(ProjectDocumentUnavailable, match="Project delete unavailable"):
         repository.delete_project(
             project_id,
-            expected_version=expected_version,
-            expected_name=created["project"]["name"],
+            confirmation="hapus",
             idempotency_key="hard-delete-upgrade-command-before-0001",
             actor=ACTOR,
         )
@@ -1342,8 +1341,7 @@ def test_migration_027_upgrades_legacy_event_trigger_for_project_hard_delete(rep
 
     result = repository.delete_project(
         project_id,
-        expected_version=expected_version,
-        expected_name=created["project"]["name"],
+        confirmation="hapus",
         idempotency_key="hard-delete-upgrade-command-after-0001",
         actor=ACTOR,
     )
@@ -1409,8 +1407,7 @@ def test_project_hard_delete_requires_gate_removes_descendants_and_replays(repos
 
     result = repository.delete_project(
         project_id,
-        expected_version=expected_version,
-        expected_name=created["project"]["name"],
+        confirmation="hapus",
         idempotency_key="hard-delete-project-command-0001",
         actor=ACTOR,
     )
@@ -1418,8 +1415,7 @@ def test_project_hard_delete_requires_gate_removes_descendants_and_replays(repos
     assert result["deleted"] is True
     assert repository.delete_project(
         project_id,
-        expected_version=expected_version,
-        expected_name=created["project"]["name"],
+        confirmation="hapus",
         idempotency_key="hard-delete-project-command-0001",
         actor=ACTOR,
     ) == result

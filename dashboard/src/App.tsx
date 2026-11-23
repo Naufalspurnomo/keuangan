@@ -528,14 +528,14 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
       `Hapus Project ${project.name} secara permanen? Semua transaksi, dokumen, bukti, quotation, dan audit Project ini ikut dihapus. Tindakan ini tidak dapat dibatalkan dari dashboard.`,
     )
     if (!confirmed) return
-    const typedName = window.prompt(`Ketik nama Project persis untuk konfirmasi:\n${project.name}`, '')
-    if (typedName !== project.name) {
-      setNotice('Penghapusan dibatalkan karena nama Project tidak cocok.')
+    const confirmation = window.prompt(`Ketik "hapus" untuk menghapus Project ${project.name} beserta seluruh datanya.`, '')
+    if (confirmation !== 'hapus') {
+      setNotice('Penghapusan dibatalkan. Ketik "hapus" persis untuk melanjutkan.')
       return
     }
     setProjectBusy(true)
     try {
-      await projectApi.deleteProject(project.id, project.lock_version, typedName).submit(projectSession)
+      await projectApi.deleteProject(project.id, confirmation).submit(projectSession)
       setProductionProjects((projects) => projects.filter((item) => item.id !== project.id))
       await loadProductionProjects(true)
       pushRoute('projects')

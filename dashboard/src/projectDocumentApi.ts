@@ -527,10 +527,10 @@ export function createProjectDocumentApi(options: ApiOptions = {}) {
       uuid(projectId)
       return command(projectsEndpoint, { action: 'status', project_id: projectId, status: visibleProjectStatus(status) }, expectedVersion, 'projectWrites', normalizeProject)
     },
-    deleteProject(projectId: string, expectedVersion: number, expectedName: string) {
+    deleteProject(projectId: string, confirmation: string) {
       const canonicalProjectId = uuid(projectId)
-      if (!expectedName || expectedName !== expectedName.trim()) throw new ProjectDocumentApiError('Nama Project untuk konfirmasi tidak valid.', { code: 'invalid_project_name' })
-      return command(projectsEndpoint, { action: 'delete', project_id: canonicalProjectId, expected_name: expectedName }, expectedVersion, 'projectWrites', (data) => {
+      if (confirmation !== 'hapus') throw new ProjectDocumentApiError('Ketik "hapus" untuk mengonfirmasi penghapusan Project.', { code: 'invalid_project_confirmation' })
+      return command(projectsEndpoint, { action: 'delete', project_id: canonicalProjectId, confirmation }, undefined, 'projectWrites', (data) => {
         const result = record(data)
         if (!result || result.project_id !== canonicalProjectId || result.deleted !== true) {
           throw new ProjectDocumentApiError('Konfirmasi penghapusan Project dari server tidak valid.', { code: 'invalid_project_delete' })

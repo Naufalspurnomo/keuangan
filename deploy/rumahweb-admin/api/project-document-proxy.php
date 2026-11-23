@@ -187,7 +187,7 @@ function pd_write_headers(array $body, string $action, array $config): array
     if ($ifMatch === '') {
         pd_error(428, 'if_match_required', 'If-Match header is required.');
     }
-    $create = in_array($action, ['create', 'create_invoice', 'create_receipt', 'create_quotation'], true);
+    $create = in_array($action, ['create', 'create_invoice', 'create_receipt', 'create_quotation', 'delete'], true);
     if ($create) {
         if ($ifMatch !== '*') {
             pd_error(412, 'if_match_failed', 'If-Match must be * for creation.');
@@ -266,7 +266,7 @@ function pd_post_route(string $resource, string $action, array $body, string $pr
             'create' => ['action', 'idempotency_key', 'values'],
             'update' => ['action', 'project_id', 'idempotency_key', 'expected_version', 'changes'],
             'status' => ['action', 'project_id', 'idempotency_key', 'expected_version', 'status'],
-            'delete' => ['action', 'project_id', 'idempotency_key', 'expected_version', 'expected_name'],
+            'delete' => ['action', 'project_id', 'idempotency_key', 'confirmation'],
         ];
         if (!isset($fields[$action])) {
             pd_error(400, 'invalid_action', 'Unsupported project action.');

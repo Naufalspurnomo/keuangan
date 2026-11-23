@@ -710,7 +710,7 @@ describe('production live source mode', () => {
     let deleteCommitted = false
     let deleteRequests = 0
     vi.stubGlobal('confirm', vi.fn(() => true))
-    vi.stubGlobal('prompt', vi.fn(() => 'Kontrak Panggung Utama'))
+    vi.stubGlobal('prompt', vi.fn(() => 'hapus'))
     const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url === '/admin/api/write-session.php') return writeSessionResponse(false, false)
@@ -746,7 +746,7 @@ describe('production live source mode', () => {
   it('does not report hard-delete success when reconciliation still finds an archived target', async () => {
     let deleteRequests = 0
     vi.stubGlobal('confirm', vi.fn(() => true))
-    vi.stubGlobal('prompt', vi.fn(() => 'Kontrak Panggung Utama'))
+    vi.stubGlobal('prompt', vi.fn(() => 'hapus'))
     const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url === '/admin/api/write-session.php') return writeSessionResponse(false, false)

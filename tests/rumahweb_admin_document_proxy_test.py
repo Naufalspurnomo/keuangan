@@ -373,8 +373,8 @@ class RumahwebAdminProjectDocumentProxyTests(unittest.TestCase):
                 self.assertEqual(requests.post(endpoint, headers={**write, "If-Match": '"3"'}, json=update_body, timeout=5).status_code, 200)
                 status_body = {"action": "status", "project_id": PROJECT_ID, "idempotency_key": IDEMPOTENCY_KEY, "expected_version": 3, "status": "active"}
                 self.assertEqual(requests.post(endpoint, headers={**write, "If-Match": '"3"'}, json=status_body, timeout=5).status_code, 200)
-                delete_body = {"action": "delete", "project_id": PROJECT_ID, "idempotency_key": IDEMPOTENCY_KEY, "expected_version": 3, "expected_name": "Project Alpha"}
-                self.assertEqual(requests.post(endpoint, headers={**write, "If-Match": '"3"'}, json=delete_body, timeout=5).status_code, 200)
+                delete_body = {"action": "delete", "project_id": PROJECT_ID, "idempotency_key": IDEMPOTENCY_KEY, "confirmation": "hapus"}
+                self.assertEqual(requests.post(endpoint, headers={**write, "If-Match": "*"}, json=delete_body, timeout=5).status_code, 200)
                 self.assertEqual(requests.get(endpoint, headers=cookie, params={"action": "audit", "project_id": PROJECT_ID}, timeout=5).status_code, 200)
 
             self.assertEqual(
