@@ -887,8 +887,13 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
         "020_quotation_invariants.sql",
         "024_brand_commercial_identity.sql",
         "025_quotation_artifacts.sql",
-        # Reapply hard-delete trigger functions after quotation-artifact
-        # migration 025 recreates its immutable trigger function.
+        # Migration 025 recreates the quotation-artifact trigger function with
+        # the legacy immutable body. Apply the idempotent compatibility repair
+        # after 025 so hard-delete keeps its exact target-project gate without
+        # changing the checksum of already-recorded migration 022.
+        "000_project_hard_delete_quotation_artifact_compatibility.sql",
+        # Reapply the remaining hard-delete trigger functions after later
+        # migrations that recreate their trigger functions.
         "022_project_hard_delete.sql",
         "026_texturin_template_identity.sql",
         "027_project_event_hard_delete_gate.sql",
