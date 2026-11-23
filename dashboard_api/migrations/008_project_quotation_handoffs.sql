@@ -48,6 +48,7 @@ ALTER TABLE project_quotation_handoffs
     ALTER COLUMN version DROP DEFAULT,
     ALTER COLUMN version SET NOT NULL,
     ALTER COLUMN canva_url DROP DEFAULT,
+    ALTER COLUMN canva_url SET NOT NULL,
     ALTER COLUMN amount DROP DEFAULT,
     ALTER COLUMN amount SET NOT NULL,
     ALTER COLUMN status SET DEFAULT 'draft',

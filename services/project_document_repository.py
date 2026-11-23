@@ -908,6 +908,16 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
         (migration_root / name).read_text(encoding="utf-8")
         for name in migration_names
     ]
+    # The canonical ledger verifies migration 008's original checksum, but
+    # this legacy repair path replays 008 after migration 019 has allowed
+    # structured quotations without a Canva URL. Replaying its old NOT NULL
+    # assertion would fail on those valid rows. Keep the historical file intact
+    # and omit only that assertion when using this idempotent repair path.
+    legacy_index = migration_names.index("008_project_quotation_handoffs.sql")
+    legacy_assertion = "    ALTER COLUMN canva_url SET NOT NULL,\n"
+    if migrations[legacy_index].count(legacy_assertion) != 1:
+        raise ProjectDocumentUnavailable("Project document migration 008 compatibility assertion not found")
+    migrations[legacy_index] = migrations[legacy_index].replace(legacy_assertion, "", 1)
     try:
         with _default_connection_factory(selected) as connection:
             with connection.cursor() as cursor:
