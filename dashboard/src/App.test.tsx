@@ -70,15 +70,17 @@ describe('Hollawall demo finance workspace', () => {
     expect(document.querySelector('.breadcrumbs strong')?.textContent).toBe('Operasional Kantor')
     expect(document.querySelector('.page-heading h1')?.textContent).toBe('Operasional Kantor')
     expect(document.querySelector('.page-heading > div > .eyebrow')).toBeNull()
-    expect(document.querySelector('.finance-page-stack > .command-head h2')?.textContent).toBe('Kebutuhan kantor')
-    expect(document.querySelector('.finance-page-stack > .command-head .eyebrow')).toBeNull()
+    expect(screen.getAllByRole('heading', { name: 'Operasional Kantor' })).toHaveLength(1)
+    expect(screen.queryByText('Kebutuhan kantor')).toBeNull()
+    expect(screen.queryByText(/Biaya kantor terpisah dari Project/)).toBeNull()
 
     nav('Hutang')
     expect(document.querySelector('.breadcrumbs strong')?.textContent).toBe('Hutang')
     expect(document.querySelector('.page-heading h1')?.textContent).toBe('Hutang')
     expect(document.querySelector('.page-heading > div > .eyebrow')).toBeNull()
-    expect(document.querySelector('.finance-page-stack > .command-head h2')?.textContent).toBe('Hutang antar-dompet')
-    expect(document.querySelector('.finance-page-stack > .command-head .eyebrow')).toBeNull()
+    expect(screen.getAllByRole('heading', { name: 'Hutang' })).toHaveLength(1)
+    expect(screen.queryByText('Hutang antar-dompet')).toBeNull()
+    expect(screen.queryByText(/Pergerakan internal ditampilkan terpisah/)).toBeNull()
 
     nav('Laporan')
     expect(document.querySelector('.breadcrumbs strong')?.textContent).toBe('Laporan')
@@ -168,8 +170,9 @@ describe('Hollawall demo finance workspace', () => {
     expect(screen.getByText(/Source demo-debt-1:lender/)).toBeTruthy()
 
     nav('Operasional Kantor')
-    expect(screen.getByRole('heading', { name: 'Kebutuhan kantor' })).toBeTruthy()
-    expect(screen.getByText(/Biaya kantor terpisah dari Project/)).toBeTruthy()
+    expect(screen.getAllByRole('heading', { name: 'Operasional Kantor' })).toHaveLength(1)
+    expect(screen.queryByText('Kebutuhan kantor')).toBeNull()
+    expect(screen.queryByText(/Biaya kantor terpisah dari Project/)).toBeNull()
   })
 
   it('opens Project creation from the dashboard into the writable demo workspace', () => {
