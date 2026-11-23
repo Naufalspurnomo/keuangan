@@ -32,11 +32,75 @@ function documentFor(project: ProjectRecord, template: 'hollawall' | 'hojja' | '
 afterEach(cleanup)
 
 describe('ProjectDocumentPreview brand renderers', () => {
+  it('does not calculate a second deposit on a DP invoice', () => {
+    const document = documentFor(baseProject, 'hollawall', {
+      id: 'line-dp', description: 'Uang muka', quantity: '1', unit: 'termin', unit_price: 2_500_000, discount_percent: '0', pricing_mode: 'legacy_generic',
+    })
+    document.invoice_kind = 'DP'
+    render(<ProjectDocumentPreview project={baseProject} document={document} />)
+    const page = screen.getByRole('article', { name: 'Pratinjau A5 Invoice' })
+    expect(page).toHaveTextContent('Rp2.500.000')
+    expect(page.querySelector('.live-deposit')).toBeNull()
+  })
+
+  it.each(['hollawall', 'hojja'] as const)('shows customer notes on the %s paper proof', (brand) => {
+    const document = documentFor(baseProject, brand, {
+      id: 'line-note', description: 'Pekerjaan', quantity: '1', unit: 'unit', unit_price: 100_000,
+      discount_percent: '0', pricing_mode: 'legacy_generic',
+    })
+    document.notes = 'Catatan khusus untuk pelanggan'
+    render(<ProjectDocumentPreview project={baseProject} document={document} />)
+    expect(screen.getByRole('article')).toHaveTextContent('Catatan khusus untuk pelanggan')
+  })
+
+  it('labels the amount on a Hojja DP invoice as Total DP', () => {
+    const document = documentFor(baseProject, 'hojja', {
+      id: 'line-dp-hojja', description: 'Uang muka', quantity: '1', unit: 'unit', unit_price: 100_000,
+      discount_percent: '0', pricing_mode: 'legacy_generic',
+    })
+    document.invoice_kind = 'DP'
+    render(<ProjectDocumentPreview project={baseProject} document={document} />)
+    expect(screen.getByRole('article').querySelector('.grand')).toHaveTextContent('Total DP')
+  })
+
+  it.each(['hollawall', 'hojja', 'texturin-surabaya', 'texturin-bali'] as const)(
+    'shows all line items and the project image in the %s preview', (brand) => {
+      const document = documentFor(baseProject, brand, {
+        id: 'line-1', description: 'Pekerjaan satu', quantity: '1', unit: 'unit', unit_price: 100_000,
+        discount_percent: '0', pricing_mode: 'legacy_generic',
+      })
+      document.type = 'sales_order'
+      document.project_image_url = 'data:image/png;base64,aW1hZ2U='
+      document.lines = Array.from({ length: 6 }, (_, index) => ({
+        ...document.lines[0], id: `line-${index}`, description: `Pekerjaan ${index + 1}`,
+      }))
+      render(<ProjectDocumentPreview project={baseProject} document={document} />)
+      const page = screen.getByRole('article')
+      for (let index = 1; index <= 6; index += 1) expect(page).toHaveTextContent(`Pekerjaan ${index}`)
+      expect(page.querySelector('.live-lines .live-project-image img')).toBeTruthy()
+    },
+  )
+
+  it('shows the Bali quotation deposit and customer notes', () => {
+    const document = documentFor(baseProject, 'texturin-bali', {
+      id: 'line-bali', description: 'Washpaint', quantity: '1', unit: 'unit', unit_price: 1_000_000,
+      discount_percent: '0', pricing_mode: 'legacy_generic',
+    })
+    document.type = 'sales_order'
+    document.deposit_percent = 30
+    document.notes = 'Catatan khusus pelanggan'
+    render(<ProjectDocumentPreview project={baseProject} document={document} />)
+    const page = screen.getByRole('article')
+    expect(page.querySelector('.live-deposit')).toHaveTextContent('Rp300.000')
+    expect(page).toHaveTextContent('Catatan khusus pelanggan')
+  })
+
   it('renders Hollawall on A5 with area × price/m² and 30% down payment', () => {
     const document = documentFor(baseProject, 'hollawall', {
       id: 'line-hw', description: 'Mural lobby', quantity: '', unit: 'm²', unit_price: 200_000, discount_percent: '0',
       pricing_mode: 'area_rate', width: '3', height: '2', dimension_unit: 'm', area_rounding: 'exact',
     })
+    document.type = 'sales_order'
     render(<ProjectDocumentPreview project={baseProject} document={document} title="Quotation" />)
 
     const page = screen.getByRole('article', { name: 'Pratinjau A5 Quotation' })
@@ -54,6 +118,7 @@ describe('ProjectDocumentPreview brand renderers', () => {
       id: 'line-hojja', description: 'Custom painting', quantity: '1', unit: 'artwork', unit_price: 3_100_000, discount_percent: '0',
       pricing_mode: 'fixed_artwork', display_quantity: '1', width: '2.2', height: '1.4', dimension_unit: 'm', original_price: 3_500_000,
     })
+    document.type = 'sales_order'
     render(<ProjectDocumentPreview project={project} document={document} title="Quotation" />)
 
     const page = screen.getByRole('article', { name: 'Pratinjau A4 Quotation' })
@@ -83,6 +148,7 @@ describe('ProjectDocumentPreview brand renderers', () => {
       id: 'line-texturin', description: 'Lime wash paint', quantity: '', unit: 'm²', unit_price: 250_000, discount_percent: '0',
       pricing_mode: 'ppm_area', width: '5', height: '2.695', dimension_unit: 'm', area_rounding: 'truncate',
     })
+    document.type = 'sales_order'
     render(<ProjectDocumentPreview project={project} document={document} title="Quotation" />)
 
     const page = screen.getByRole('article', { name: 'Pratinjau A4 Quotation Texturin Surabaya' })

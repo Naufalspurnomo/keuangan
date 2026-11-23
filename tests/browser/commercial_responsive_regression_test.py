@@ -45,7 +45,19 @@ class CommercialResponsiveTests(unittest.TestCase):
                 expect(page.get_by_role('heading',name='Buat invoice',exact=True)).to_be_visible()
                 page.get_by_label('Deskripsi item 1',exact=True).fill('Panel akustik penerimaan visual')
                 page.get_by_label('Luas tagihan item 1 (m²)',exact=True).fill('25')
-                page.locator('.document-line input').last.fill('100000')
+                page.get_by_label('PPM item 1', exact=True).fill('100000')
+                if width <= 1120:
+                    page.get_by_role('tab', name='Pratinjau').click()
+                preview = page.get_by_role('article', name='Pratinjau A4 Invoice Texturin Surabaya')
+                expect(preview).to_be_visible()
+                bounds = preview.evaluate('''el => {
+                    const page=el.getBoundingClientRect(), meta=el.querySelector('.live-meta-right').getBoundingClientRect(), left=el.querySelector('.live-meta-left').getBoundingClientRect();
+                    const lines=el.querySelector('.live-lines').getBoundingClientRect(), totals=el.querySelector('.live-totals').getBoundingClientRect();
+                    return {metaBottom: (meta.bottom-page.top)/page.height, leftBottom: (left.bottom-page.top)/page.height, linesBottom: lines.bottom, totalsTop: totals.top};
+                }''')
+                self.assertLess(bounds['metaBottom'], .235)
+                self.assertLess(bounds['leftBottom'], .235)
+                self.assertLessEqual(bounds['linesBottom'], bounds['totalsTop'] + 1)
                 page.screenshot(path=str(EVIDENCE / f'invoice-{width}x{height}.png'),full_page=True)
                 geometry = page.evaluate('''() => ({width:innerWidth, height:innerHeight, scroll:document.documentElement.scrollWidth, offenders:[...document.querySelectorAll('.document-workspace input,.document-workspace textarea,.document-workspace button')].filter(e=>{const r=e.getBoundingClientRect();return r.width && (r.right>innerWidth+1||r.left< -1)}).map(e=>({tag:e.tagName,label:e.getAttribute('aria-label'),right:e.getBoundingClientRect().right}))})''')
                 measurements.append(geometry)

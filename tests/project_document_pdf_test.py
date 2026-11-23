@@ -8,6 +8,7 @@ from typing import Any, cast
 import pytest
 from PIL import Image as PillowImage
 from pypdf import PdfReader
+from pypdf.generic import ContentStream
 from reportlab.pdfbase import pdfmetrics
 
 from services.project_document_pdf import (
@@ -116,7 +117,7 @@ def page_image_dimensions(page) -> set[tuple[int, int]]:
 def visible_text_runs(pdf: bytes) -> list[dict]:
     runs: list[dict] = []
 
-    def visit(value, _cm, tm, font, size):
+    def visit(value, cm, tm, font, size):
         cleaned = " ".join(value.split())
         if cleaned and size > 1:
             base_font = str((font or {}).get("/BaseFont") or "").lstrip("/")
@@ -126,12 +127,15 @@ def visible_text_runs(pdf: bytes) -> list[dict]:
                 "OpenSauceOne-Regular": "OpenSauceOne",
                 "Roboto-Regular": "Roboto",
             }.get(registered_font, registered_font)
+            x = float(cm[0] * tm[4] + cm[2] * tm[5] + cm[4])
+            y = float(cm[1] * tm[4] + cm[3] * tm[5] + cm[5])
+            advance = float(cm[0] * tm[0] + cm[2] * tm[1])
             runs.append({
                 "text": cleaned,
                 "size": float(size),
-                "x": float(tm[4]),
-                "right": float(tm[4]) + pdfmetrics.stringWidth(cleaned, registered_font, float(size)),
-                "y": float(tm[5]),
+                "x": x,
+                "right": x + advance * pdfmetrics.stringWidth(cleaned, registered_font, float(size)),
+                "y": y,
                 "font": base_font,
             })
 
@@ -141,6 +145,226 @@ def visible_text_runs(pdf: bytes) -> list[dict]:
 
 def text(pdf: bytes) -> str:
     return "\n".join(page.extract_text() or "" for page in reader(pdf).pages)
+
+
+def page_rectangles(pdf: bytes) -> list[tuple[float, ...]]:
+    document = reader(pdf)
+    content = ContentStream(document.pages[0].get_contents(), document)
+    return [tuple(float(item) for item in args) for args, operation in content.operations if operation == b"re"]
+
+
+def test_hollawall_invoice_uses_reference_title_and_closing():
+    value = snapshot()
+    pdf = render_project_document_pdf(value)
+    runs = visible_text_runs(pdf)
+    assert any(run["text"] == "Invoice" and run["size"] >= 15 for run in runs)
+    assert any("Revisions beyond the agreed scope" in run["text"] for run in runs)
+    assert xobject_count(pdf) >= 2
+
+
+@pytest.mark.parametrize("brand", ["texturin-surabaya", "texturin-bali"])
+def test_texturin_total_has_reference_wide_shaded_band(brand):
+    value = snapshot()
+    value["project"]["company"] = brand
+    value["document"]["template_key"] = brand
+    pdf = render_project_document_pdf(value)
+    page = reader(pdf).pages[0]
+    width, height = float(page.mediabox.width), float(page.mediabox.height)
+    assert any(w > width * .85 and h >= height * .02 and height * .3 < y < height * .6
+               for x, y, w, h in page_rectangles(pdf))
+
+
+def test_hojja_dp_invoice_shows_the_actual_total_in_reference_band():
+    value = snapshot()
+    value["project"]["company"] = "HOJJA"
+    value["document"]["template_key"] = "HOJJA"
+    pdf = render_project_document_pdf(value)
+    runs = visible_text_runs(pdf)
+    assert any(run["text"] == "Total DP :" for run in runs)
+    assert any(run["text"] == "Rp 2.500.000" for run in runs)
+    page = reader(pdf).pages[0]
+    width, height = float(page.mediabox.width), float(page.mediabox.height)
+    assert any(width * .30 < w < width * .5 and h >= height * .02 and height * .35 < y < height * .65
+               for x, y, w, h in page_rectangles(pdf))
+
+
+def test_hojja_project_artwork_does_not_cross_the_summary_rule():
+    value = snapshot()
+    value["project"]["company"] = "HOJJA"
+    value["document"].update({"template_key": "HOJJA", "project_image_url": project_image_data_url()})
+    pdf = render_project_document_pdf(value)
+    doc = reader(pdf)
+    page = doc.pages[0]
+    xobjects = page["/Resources"]["/XObject"].get_object()
+    current_matrix = None
+    image_bounds = None
+    for args, operation in ContentStream(page.get_contents(), doc).operations:
+        if operation == b"cm":
+            current_matrix = [float(value) for value in args]
+        elif operation == b"Do":
+            obj = xobjects[args[0]].get_object()
+            if obj.get("/Width") == 4 and obj.get("/Height") == 3:
+                image_bounds = current_matrix
+                break
+    assert image_bounds is not None
+    rule_y = float(page.mediabox.height) * (1 - .455)
+    assert not image_bounds[5] < rule_y < image_bounds[5] + image_bounds[3]
+
+
+def test_texturin_bali_bank_details_are_below_the_total_band():
+    value = snapshot()
+    value["project"]["company"] = "TEXTURIN-Bali"
+    value["document"].update({"template_key": "TEXTURIN-BALI", "payment_terms": "", "notes": ""})
+    runs = visible_text_runs(render_project_document_pdf(value))
+    total = next(run for run in runs if run["text"] == "TOTAL")
+    bank = next(run for run in runs if run["text"] == "BANK DETAILS")
+    assert total["y"] - bank["y"] > 18
+
+
+def test_texturin_bali_project_artwork_does_not_cross_the_summary_rule():
+    value = snapshot()
+    value["project"]["company"] = "TEXTURIN-Bali"
+    value["document"].update({"template_key": "TEXTURIN-BALI", "payment_terms": "", "notes": "", "project_image_url": project_image_data_url()})
+    pdf = render_project_document_pdf(value)
+    doc = reader(pdf)
+    page = doc.pages[0]
+    xobjects = page["/Resources"]["/XObject"].get_object()
+    matrix = None
+    image_bounds = None
+    for args, operation in ContentStream(page.get_contents(), doc).operations:
+        if operation == b"cm":
+            matrix = [float(value) for value in args]
+        elif operation == b"Do":
+            obj = xobjects[args[0]].get_object()
+            if obj.get("/Width") == 4 and obj.get("/Height") == 3:
+                image_bounds = matrix
+                break
+    assert image_bounds is not None
+    rule_y = float(page.mediabox.height) * (1 - .456)
+    assert not image_bounds[5] < rule_y < image_bounds[5] + image_bounds[3]
+
+
+@pytest.mark.parametrize("brand", ["hollawall", "hojja", "texturin-surabaya", "texturin-bali"])
+@pytest.mark.parametrize("line_count", [1, 2, 3])
+def test_project_image_is_present_for_every_short_document(brand, line_count):
+    value = snapshot(line_count=line_count)
+    value["project"]["company"] = brand
+    value["document"].update({"template_key": brand, "project_image_url": project_image_data_url()})
+    pdf = render_project_document_pdf(value)
+    assert (4, 3) in image_dimensions(pdf)
+
+
+def test_hollawall_multi_page_uses_the_same_reference_master_as_short_documents():
+    value = snapshot(line_count=4)
+    value["document"].update({"document_type": "sales_order", "invoice_kind": None})
+    pdf = render_project_document_pdf(value)
+    content = text(pdf)
+    assert (839, 1191) in image_dimensions(pdf)
+    assert "Quotation" in content
+    assert "Hollawall Mural Studio · Hollawall" not in content
+    assert all(line["description"] in " ".join(content.split()) for line in value["lines"])
+
+
+def test_hollawall_four_item_quotation_keeps_its_signoff_on_the_page():
+    value = snapshot(line_count=4)
+    value["document"].update({"document_type": "sales_order", "invoice_kind": None})
+    pdf = render_project_document_pdf(value)
+    assert len(reader(pdf).pages) == 1
+    assert "Best regards and thank you" in text(pdf)
+
+
+@pytest.mark.parametrize("brand", ["hojja", "texturin-surabaya", "texturin-bali"])
+def test_multi_item_documents_keep_the_reference_brand_header(brand):
+    value = snapshot(line_count=4)
+    value["project"]["company"] = brand
+    value["document"].update({"template_key": brand, "document_type": "sales_order", "invoice_kind": None})
+    pdf = render_project_document_pdf(value)
+    assert (1191, 1685) in image_dimensions(pdf)
+    assert "Quotation" in text(pdf)
+
+
+@pytest.mark.parametrize("line_count", [1, 4])
+def test_hojja_footer_uses_the_current_issuer_phone(line_count):
+    value = snapshot(line_count=line_count)
+    value["project"]["company"] = "HOJJA"
+    value["document"]["template_key"] = "HOJJA"
+    value["issuer"]["phone"] = "+62 812 7654 3210"
+    assert "+62 812 7654 3210" in text(render_project_document_pdf(value))
+
+
+def test_texturin_terms_use_the_reference_italic_font():
+    value = snapshot()
+    value["project"]["company"] = "TEXTURIN-Surabaya"
+    value["document"].update({"template_key": "TEXTURIN-SURABAYA", "document_type": "sales_order", "notes": "", "payment_terms": ""})
+    runs = visible_text_runs(render_project_document_pdf(value))
+    term = next(run for run in runs if "Pengecatan dilakukan" in run["text"])
+    assert "Italic" in term["font"]
+
+
+@pytest.mark.parametrize("brand", ["texturin-surabaya", "texturin-bali"])
+def test_texturin_multi_item_totals_keep_the_full_width_reference_band(brand):
+    value = snapshot(line_count=4)
+    value["project"]["company"] = brand
+    value["document"].update({"template_key": brand, "document_type": "sales_order", "invoice_kind": None})
+    pdf = render_project_document_pdf(value)
+    width = float(reader(pdf).pages[0].mediabox.width)
+    bands = [(w, h) for _, _, w, h in page_rectangles(pdf) if width * .80 <= w <= width * .95 and 10 < abs(h) < 35]
+    assert len(bands) >= 2  # Item header and full-width total band.
+    assert "Account Name:" in text(pdf)
+    assert "Account No.:" in text(pdf)
+
+
+def test_texturin_four_item_document_keeps_bank_and_signature_on_the_same_page():
+    value = snapshot(line_count=4)
+    value["project"]["company"] = "TEXTURIN-Surabaya"
+    value["document"].update({"template_key": "TEXTURIN-SURABAYA", "document_type": "sales_order", "invoice_kind": None})
+    pdf = render_project_document_pdf(value)
+    assert len(reader(pdf).pages) == 1
+    assert "BANK DETAILS" in text(pdf)
+    assert (283, 244) in page_image_dimensions(reader(pdf).pages[0])
+
+
+@pytest.mark.parametrize(("brand", "expected"), [
+    ("hollawall", (24, 184, 198)),
+    ("hojja", (118, 130, 118)),
+    ("texturin-surabaya", (227, 220, 212)),
+    ("texturin-bali", (227, 220, 212)),
+])
+def test_summary_colors_match_the_reference_pdf(brand, expected):
+    value = snapshot()
+    value["project"]["company"] = brand
+    value["document"]["template_key"] = brand
+    pdf = render_project_document_pdf(value)
+    doc = reader(pdf)
+    colors = [tuple(float(channel) for channel in args) for args, op in ContentStream(doc.pages[0].get_contents(), doc).operations if op == b"rg" and len(args) == 3]
+    assert any(all(abs(actual - target / 255) < .001 for actual, target in zip(color, expected)) for color in colors)
+
+
+@pytest.mark.parametrize("brand", ["hollawall", "hojja", "texturin-surabaya", "texturin-bali"])
+def test_large_total_never_overlaps_its_label(brand):
+    value = snapshot()
+    value["project"]["company"] = brand
+    value["document"]["template_key"] = brand
+    value["totals"].update({"subtotal": 999_999_999_999_999, "total": 999_999_999_999_999})
+    runs = visible_text_runs(render_project_document_pdf(value))
+    labels = [run for run in runs if run["text"] in {"TOTAL", "Total DP :"}]
+    assert labels
+    label = labels[-1]
+    amount = next(run for run in runs if run["text"] == "Rp 999.999.999.999.999" and abs(run["y"] - label["y"]) < 1)
+    assert label["right"] + 3 < amount["x"]
+
+
+def test_hollawall_quotation_deposit_is_above_the_summary_rule():
+    value = snapshot()
+    value["document"].update({"document_type": "sales_order", "invoice_kind": None})
+    pdf = render_project_document_pdf(value)
+    doc = reader(pdf)
+    page = doc.pages[0]
+    label = next(run for run in visible_text_runs(pdf) if run["text"].startswith("Down Payment"))
+    right = float(page.mediabox.width) * .93
+    rules = [float(args[1]) for args, op in ContentStream(page.get_contents(), doc).operations
+             if op == b"l" and len(args) == 2 and abs(float(args[0]) - right) < 1]
+    assert any(6 < label["y"] - y < 25 for y in rules)
 
 
 @pytest.mark.parametrize(
@@ -277,7 +501,7 @@ def test_texturin_surabaya_and_bali_have_distinct_pdf_contracts():
     assert "BANK DETAILS" in bali_text
     assert "THANK YOU" in bali_text
     assert "Pengecatan dilakukan pada bidang tembok/plafon yang siap dicat." not in bali_text
-    assert "Pembayaran melalui rekening resmi perusahaan." not in bali_text
+    assert "Pembayaran melalui rekening resmi perusahaan." in bali_text
     bali_validity_y = next(run["y"] for run in bali_runs if run["text"] == "VALID UNTIL")
     assert bali_validity_y == pytest.approx(bali_height * (1 - (.222 + .046)), abs=.1)
 
@@ -351,6 +575,122 @@ def test_texturin_two_item_pdf_matches_the_readable_signed_paper_contract():
     item_total_right = max(run["right"] for key in ("Rp 3.000.000", "Rp 8.000.000") for run in by_text[key])
     assert ppm_right < quantity_right < item_total_right
     assert item_total_right == pytest.approx(width * .928, abs=2)
+
+
+@pytest.mark.parametrize("brand", ["hollawall", "hojja", "texturin-surabaya", "texturin-bali"])
+def test_dp_invoice_does_not_calculate_a_second_deposit(brand):
+    value = snapshot()
+    value["project"]["company"] = brand
+    value["document"].update({"template_key": brand, "document_type": "invoice", "invoice_kind": "DP"})
+    value["lines"][0].update({"description": "Uang muka", "quantity": "1", "unit": "termin", "unit_price": 2_500_000})
+    runs = visible_text_runs(render_project_document_pdf(value))
+    rendered = " ".join(run["text"] for run in runs)
+    assert "Rp 2.500.000" in rendered
+    assert "Rp 750.000" not in rendered
+    assert "Rp 1.250.000" not in rendered
+
+
+@pytest.mark.parametrize("brand", ["texturin-surabaya", "texturin-bali"])
+def test_texturin_item_description_stays_in_its_column_and_project_image_is_visible(brand):
+    value = snapshot(line_count=2)
+    value["project"]["company"] = brand
+    value["document"].update({"template_key": brand, "document_type": "sales_order", "project_image_url": project_image_data_url()})
+    pdf = render_project_document_pdf(value)
+    runs = visible_text_runs(pdf)
+    description = [run for run in runs if "Produksi wall branding" in run["text"]]
+    prices = [run for run in runs if run["text"] == "Rp 1.000.000"]
+    assert len(description) == len(prices) == 2
+    assert max(run["right"] for run in description) < min(run["x"] for run in prices)
+    assert (4, 3) in image_dimensions(pdf)
+
+
+def test_hollawall_due_date_is_above_the_table_header():
+    value = snapshot()
+    runs = visible_text_runs(render_project_document_pdf(value))
+    due = next(run for run in runs if run["text"] == "DUE DATE")
+    height = float(reader(render_project_document_pdf(value)).pages[0].mediabox.height)
+    assert due["y"] > height * (1 - .267)
+
+
+def test_hojja_number_does_not_overlap_its_label():
+    value = snapshot()
+    value["project"]["company"] = "HOJJA"
+    value["document"]["template_key"] = "HOJJA"
+    runs = visible_text_runs(render_project_document_pdf(value))
+    label = next(run for run in runs if run["text"] == "Letter ID")
+    number = next(run for run in runs if run["text"] == value["document"]["official_number"])
+    assert label["right"] + 3 < number["x"]
+
+
+def test_hojja_project_image_is_visible_with_multiple_items():
+    value = snapshot(line_count=2)
+    value["project"]["company"] = "HOJJA"
+    value["document"].update({"template_key": "HOJJA", "project_image_url": project_image_data_url()})
+    assert (4, 3) in image_dimensions(render_project_document_pdf(value))
+
+
+@pytest.mark.parametrize("brand", ["hollawall", "hojja", "texturin-surabaya", "texturin-bali"])
+def test_explicit_template_overrides_other_brand_names(brand):
+    value = snapshot()
+    value["project"]["company"] = "TEXTURIN-Surabaya" if brand != "texturin-surabaya" else "HOJJA"
+    value["document"]["template_key"] = brand
+    pdf = render_project_document_pdf(value)
+    expected_width = 419.53 if brand == "hollawall" else 595.28
+    assert float(reader(pdf).pages[0].mediabox.width) == pytest.approx(expected_width, abs=.5)
+    assert brand.replace("-", " ").split()[0] in " ".join(text(pdf).lower().split())
+
+
+@pytest.mark.parametrize("brand", ["hollawall", "hojja", "texturin-bali"])
+def test_long_payment_terms_are_paginated_without_losing_the_end(brand):
+    value = snapshot()
+    value["project"]["company"] = brand
+    value["document"].update({"template_key": brand, "payment_terms": "Ketentuan pembayaran khusus. " * 300 + "AKHIR-KETENTUAN"})
+    pdf = render_project_document_pdf(value)
+    assert len(reader(pdf).pages) > 1
+    assert "AKHIR-KETENTUAN" in text(pdf)
+
+
+@pytest.mark.parametrize("brand", ["hollawall", "hojja", "texturin-surabaya", "texturin-bali"])
+def test_multi_item_quotation_keeps_deposit_amount(brand):
+    value = snapshot(line_count=4)
+    value["project"]["company"] = brand
+    value["document"].update({"template_key": brand, "document_type": "sales_order", "deposit_percent": "50"})
+    content = " ".join(text(render_project_document_pdf(value)).split())
+    assert "Rp 5.000.000" in content
+
+
+@pytest.mark.parametrize("brand", ["hollawall", "hojja", "texturin-surabaya", "texturin-bali"])
+def test_long_customer_and_project_names_stay_within_the_page(brand):
+    value = snapshot()
+    value["project"].update({
+        "company": brand,
+        "client_company": "Perusahaan Pelanggan Internasional " * 5,
+        "name": "Pekerjaan Interior Ruang Pertemuan " * 5,
+    })
+    value["document"]["template_key"] = brand
+    pdf = render_project_document_pdf(value)
+    width = float(reader(pdf).pages[0].mediabox.width)
+    runs = visible_text_runs(pdf)
+    assert all(0 <= run["x"] <= run["right"] <= width for run in runs)
+
+
+@pytest.mark.parametrize("brand", ["hollawall", "hojja", "texturin-bali"])
+def test_custom_notes_are_visible_in_the_pdf(brand):
+    value = snapshot()
+    value["project"]["company"] = brand
+    value["document"].update({"template_key": brand, "notes": "Catatan khusus untuk pelanggan."})
+    rendered = " ".join(run["text"] for run in visible_text_runs(render_project_document_pdf(value)))
+    assert "Catatan khusus untuk pelanggan." in rendered
+
+
+@pytest.mark.parametrize("brand", ["hollawall", "hojja", "texturin-surabaya", "texturin-bali"])
+def test_quotation_deposit_rounds_half_up_like_the_invoice(brand):
+    value = snapshot()
+    value["project"]["company"] = brand
+    value["document"].update({"template_key": brand, "document_type": "sales_order", "deposit_percent": "50"})
+    value["totals"].update({"subtotal": 3, "total": 3})
+    runs = visible_text_runs(render_project_document_pdf(value))
+    assert any(run["text"] == "Rp 2" for run in runs)
 
 
 def test_texturin_long_terms_use_paginated_flow_without_losing_content_or_signoff():
@@ -466,7 +806,7 @@ def test_renderer_produces_deterministic_a5_branded_pdf():
     assert "PT Cempaka Abadi" in content
     assert "Lobby Cempaka" in content
     assert "Rp 2.500.000" in content
-    assert "Halaman 1 / 1" in content
+    assert "Halaman 1 / 1" not in content
     assert "TOTAL_PAGES" not in content
 
 

@@ -172,6 +172,14 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
     try { return { value: calculatedValues(project, values), error: '' } }
     catch (reason) { return { value: null, error: messageFrom(reason) } }
   }, [project, values])
+  const paperProject = {
+    ...project,
+    name: values.project_name.trim() || project.name,
+    client_name: values.recipient_name.trim() || project.client_name,
+    client_company: values.recipient_company.trim() || project.client_company,
+    client_address: values.recipient_address.trim() || project.client_address,
+    client_contact: values.recipient_contact.trim() || project.client_contact,
+  }
 
   const field = <K extends keyof ProjectQuotationValues>(name: K, value: ProjectQuotationValues[K]) => {
     setValues((current) => ({ ...current, [name]: value }))
@@ -288,7 +296,7 @@ function QuotationEditor({ project, state, busy, onCancel, onSave }: {
         <div><dt>Pajak</dt><dd>{calculation.value ? IDR.format(calculation.value.totals.tax) : '—'}</dd></div>
       </dl>
       <p>Nilai berubah otomatis saat item, diskon, atau pajak diedit.</p>
-      {calculation.value && <div className="quotation-paper-proof"><span className="eyebrow">BUKTI KERTAS · {policy.page_size}</span><ProjectDocumentPreview project={project} document={quotationDraft(project, calculation.value.values)} title="Quotation" /></div>}
+      {calculation.value && <div className="quotation-paper-proof"><span className="eyebrow">BUKTI KERTAS · {policy.page_size}</span><ProjectDocumentPreview project={paperProject} document={quotationDraft(project, calculation.value.values)} title="Quotation" /></div>}
     </aside></div>
     <footer className="quotation-actions quotation-save-bar">
       <span>{state.mode === 'revise' ? 'Versi sebelumnya tetap tersimpan.' : 'Simpan draf sebelum mengunduh PDF.'}</span>

@@ -141,6 +141,21 @@ describe('ProjectQuotationPanel', () => {
     expect(screen.getByRole('complementary', { name: 'Ringkasan quotation' })).toHaveTextContent(/Rp\s*5\.000\.000/)
   })
 
+  it('updates the paper proof when quotation recipient and project details change', async () => {
+    render(<ProjectQuotationPanel project={project} session={session} api={api()} onApplied={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Buat quotation' }))
+    fireEvent.change(screen.getByLabelText('Deskripsi item 1'), { target: { value: 'Backdrop premium' } })
+    fireEvent.change(screen.getByLabelText('Luas tagihan item 1 (m²)'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('HARGA/M² item 1 *'), { target: { value: '5000000' } })
+    fireEvent.change(screen.getByLabelText('Perusahaan penerima'), { target: { value: 'PT Pelanggan Baru' } })
+    fireEvent.change(screen.getByLabelText('Nama Project'), { target: { value: 'Showroom Timur' } })
+    const proof = screen.getByText(/BUKTI KERTAS/).parentElement!
+    expect(proof).toHaveTextContent('PT Pelanggan Baru')
+    expect(proof).toHaveTextContent('Showroom Timur')
+    expect(proof).not.toHaveTextContent('PT Klien')
+    expect(proof).not.toHaveTextContent('Backdrop Expo')
+  })
+
   it('keeps a custom Texturin deposit percentage identical in the form and paper proof', async () => {
     const texturinProject = {
       ...project,
