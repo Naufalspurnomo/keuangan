@@ -570,7 +570,7 @@ SELECT
             SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
             WHERE n.nspname = 'public'
               AND p.proname = 'reject_project_quotation_artifact_mutation'
-              AND MD5(p.prosrc) = '048b5b74c57f3ece2b9040d79c9225e6'
+              AND MD5(p.prosrc) = '02b58c39caa303e290b41b81d1546967'
         )
         AND EXISTS (
             SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
