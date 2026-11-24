@@ -57,7 +57,7 @@ function trendFromRows(rows: Transaction[], dataThrough?: string | null): CashTr
   })
 }
 
-function FlowMetrics({ rows, internalOpen }: { rows: Transaction[]; internalOpen: number }) {
+function FlowMetrics({ rows, internalOpen }: { rows: Transaction[]; internalOpen: number | null }) {
   const inflow = rows.filter((row) => row.transaction_type === 'Pemasukan').reduce((sum, row) => sum + row.amount, 0)
   const outflow = rows.filter((row) => row.transaction_type === 'Pengeluaran').reduce((sum, row) => sum + row.amount, 0)
   const net = inflow - outflow
@@ -65,7 +65,7 @@ function FlowMetrics({ rows, internalOpen }: { rows: Transaction[]; internalOpen
     { label: 'Kas masuk eksternal', value: inflow, icon: ArrowDownLeft, tone: 'positive' },
     { label: 'Kas keluar eksternal', value: outflow, icon: ArrowUpRight, tone: 'negative' },
     { label: 'Arus bersih eksternal', value: net, icon: Landmark, tone: net >= 0 ? 'positive' : 'negative' },
-    { label: 'Transfer internal terbuka', value: internalOpen, icon: ArrowLeftRight, tone: 'neutral' },
+    ...(internalOpen === null ? [] : [{ label: 'Transfer internal terbuka', value: internalOpen, icon: ArrowLeftRight, tone: 'neutral' }]),
   ]
   return <div className="ops-metric-strip">
     {metrics.map(({ label, value, icon: Icon, tone }) => <article key={label} className={tone}>
@@ -95,18 +95,20 @@ function MovementLedger({ rows, onOpenProject, showSourceDetails = false }: { ro
 export function CashflowWorkspace({ transactions, cashTrend, internalOpen = 0, dataThrough, onOpenProject, showSourceDetails = false }: { transactions: Transaction[]; cashTrend: CashTrendPoint[]; internalOpen?: number; dataThrough?: string | null; onOpenProject: (name: string) => void; showSourceDetails?: boolean }) {
   const [period, setPeriod] = useState<PeriodKey>('90')
   const [company, setCompany] = useState('Semua unit')
+  const [projectId, setProjectId] = useState('all')
+  const projects = useMemo(() => [...new Map(transactions.filter((row) => row.project_id).map((row) => [row.project_id!, row.project || 'Project'])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [transactions])
   const years = useMemo(() => [...new Set(transactions.map((row) => row.transaction_date.slice(0, 4)))].sort((a, b) => b.localeCompare(a)), [transactions])
   const [year, setYear] = useState(years[0] ?? 'all')
   const companies = useMemo(() => [...new Set(transactions.filter((row) => !isInternal(row)).map((row) => row.company).filter(Boolean))].sort(), [transactions])
   const yearRows = useMemo(() => transactions.filter((row) => year === 'all' || row.transaction_date.startsWith(year)), [transactions, year])
   const activeDataThrough = yearRows.reduce((latest, row) => row.transaction_date > latest ? row.transaction_date : latest, '') || dataThrough
   const periodRows = useMemo(() => filterPeriod(yearRows, period, activeDataThrough), [yearRows, period, activeDataThrough])
-  const scoped = useMemo(() => periodRows.filter((row) => company === 'Semua unit' || row.company === company), [periodRows, company])
+  const scoped = useMemo(() => periodRows.filter((row) => (company === 'Semua unit' || row.company === company) && (projectId === 'all' || (projectId === 'office' ? !row.project_id && !isInternal(row) : row.project_id === projectId))), [periodRows, company, projectId])
   const operating = scoped.filter((row) => !isInternal(row))
-  const activeTrend = period === 'all' && company === 'Semua unit' && year === 'all' ? cashTrend : trendFromRows(operating, activeDataThrough)
+  const activeTrend = period === 'all' && company === 'Semua unit' && year === 'all' && projectId === 'all' ? cashTrend : trendFromRows(operating, activeDataThrough)
   const unitRows = useMemo(() => {
     const grouped = new Map<string, { incoming: number; outgoing: number; count: number }>()
-    for (const row of periodRows.filter((item) => !isInternal(item))) {
+    for (const row of scoped.filter((item) => !isInternal(item))) {
       const item = grouped.get(row.company) ?? { incoming: 0, outgoing: 0, count: 0 }
       if (row.transaction_type === 'Pemasukan') item.incoming += row.amount
       else item.outgoing += row.amount
@@ -114,7 +116,7 @@ export function CashflowWorkspace({ transactions, cashTrend, internalOpen = 0, d
       grouped.set(row.company, item)
     }
     return [...grouped].map(([name, value]) => ({ name, ...value, net: value.incoming - value.outgoing })).sort((a, b) => Math.abs(b.net) - Math.abs(a.net))
-  }, [periodRows])
+  }, [scoped])
   const inflow = operating.filter((row) => row.transaction_type === 'Pemasukan').reduce((sum, row) => sum + row.amount, 0)
   const outflow = operating.filter((row) => row.transaction_type === 'Pengeluaran').reduce((sum, row) => sum + row.amount, 0)
 
@@ -122,10 +124,11 @@ export function CashflowWorkspace({ transactions, cashTrend, internalOpen = 0, d
     <div className="ops-asof"><span>Data sampai</span><strong>{dataThrough ? day(dataThrough) : '—'}</strong></div>
     <div className="ops-filter-block">
       <div className="ops-filter-row"><label>Tahun<select aria-label="Tahun arus kas" value={year} onChange={(event) => setYear(event.target.value)}><option value="all">Semua tahun</option>{years.map((item) => <option key={item} value={item}>{item}</option>)}</select></label><nav aria-label="Periode arus kas">{PERIODS.map((item) => <button type="button" className={period === item.key ? 'active' : ''} key={item.key} onClick={() => setPeriod(item.key)}>{item.label}</button>)}</nav></div>
+      <label>Project <select aria-label="Filter Project arus kas" value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="all">Semua Project dan operasional</option><option value="office">Operasional</option>{projects.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
       <nav className="ops-unit-filters" aria-label="Perusahaan"><button type="button" className={company === 'Semua unit' ? 'active' : ''} onClick={() => setCompany('Semua unit')}>Semua perusahaan</button>{companies.map((name) => <button type="button" className={company === name ? 'active' : ''} key={name} onClick={() => setCompany(name)}>{name}</button>)}</nav>
       <p className="ops-scope">Lingkup aktif: <strong>{company}</strong> · {year === 'all' ? 'semua tahun' : year} · {rangeLabel(operating)}. Hutang internal ditampilkan sebagai posisi terbuka dan tidak masuk arus bersih.</p>
     </div>
-    <FlowMetrics rows={operating} internalOpen={internalOpen} />
+    <FlowMetrics rows={operating} internalOpen={projectId === 'all' ? internalOpen : null} />
     <div className="ops-chart-duo">
       <article className="ops-chart-panel showcase-chart"><header><div><p className="eyebrow">POLA BULANAN</p><h3>Masuk vs keluar bulanan</h3></div><span>{operating.length.toLocaleString('id-ID')} transaksi</span></header><div className="ops-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="monthly" transactions={operating} /></Suspense></div></article>
       <article className="ops-chart-panel showcase-chart"><header><div><p className="eyebrow">ARUS TERCATAT</p><h3>Tren arus kas tercatat</h3></div><span>12 bulan · lingkup aktif</span></header><div className="ops-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="cash" cashTrend={activeTrend} cashLabel="Arus kas tercatat" /></Suspense></div></article>
@@ -134,7 +137,7 @@ export function CashflowWorkspace({ transactions, cashTrend, internalOpen = 0, d
       <article className="ops-ratio-panel"><p className="eyebrow">TEKANAN KAS</p><h3>{inflow > 0 ? `${((outflow / inflow) * 100).toLocaleString('id-ID', { maximumFractionDigits: 1 })}%` : '—'}</h3><span>pengeluaran terhadap pemasukan</span><div><i style={{ width: `${Math.min(inflow > 0 ? (outflow / inflow) * 100 : 0, 100)}%` }} /></div><p>{inflow === 0 ? 'Tidak ada pemasukan pada lingkup ini.' : outflow > inflow ? 'Kas keluar melampaui kas masuk pada periode ini.' : 'Kas masuk masih menutup kas keluar pada periode ini.'}</p></article>
       <section className="ops-unit-section"><header><div><p className="eyebrow">KONTRIBUSI BERSIH</p><h3>Kontribusi bersih per perusahaan</h3></div></header><div className="ops-unit-list">{unitRows.map((row) => <button type="button" key={row.name} onClick={() => setCompany(row.name)}><span><strong>{row.name}</strong><small>{row.count} transaksi</small></span><i><b style={{ width: `${Math.max(4, Math.min(Math.abs(row.net) / Math.max(...unitRows.map((item) => Math.abs(item.net)), 1) * 100, 100))}%` }} className={row.net >= 0 ? 'positive' : 'negative'} /></i><em className={row.net >= 0 ? 'positive' : 'negative'}>{amount(row.net)}</em></button>)}</div></section>
     </div>
-    <section className="ops-ledger-section"><header><div><p className="eyebrow">MUTASI TERBARU</p><h3>Ledger transaksi</h3><p className="ops-ledger-scope">{company} · {year === 'all' ? 'semua tahun' : year} · {PERIODS.find((item) => item.key === period)?.label}</p></div><span>{scoped.length} transaksi</span></header><MovementLedger key={`${year}-${period}-${company}`} rows={scoped} onOpenProject={onOpenProject} showSourceDetails={showSourceDetails} /></section>
+    <section className="ops-ledger-section"><header><div><p className="eyebrow">MUTASI TERBARU</p><h3>Ledger transaksi</h3><p className="ops-ledger-scope">{company} · {year === 'all' ? 'semua tahun' : year} · {PERIODS.find((item) => item.key === period)?.label}</p></div><span>{scoped.length} transaksi</span></header><MovementLedger key={`${year}-${period}-${company}-${projectId}`} rows={scoped} onOpenProject={onOpenProject} showSourceDetails={showSourceDetails} /></section>
   </section>
 }
 

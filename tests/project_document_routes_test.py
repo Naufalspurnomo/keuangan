@@ -95,6 +95,14 @@ class FakeProjectDocumentRepository:
         self.calls.append(("list_documents", project_id))
         return [dict(self.document)]
 
+    def list_expense_classifications(self, project_id):
+        self.calls.append(("list_expense_classifications", project_id))
+        return []
+
+    def classify_project_expense(self, project_id, source_key, classification, **kwargs):
+        self.calls.append(("classify_project_expense", project_id, source_key, classification, kwargs))
+        return {"source_key": source_key, "classification": classification, **kwargs["expected_source"]}
+
     def get_project_payment_summary(self, project_id):
         self._raise()
         self.calls.append(("get_project_payment_summary", project_id))
@@ -283,6 +291,22 @@ class ProjectDocumentRouteTests(unittest.TestCase):
         assert payload["api_version"] == "dashboard.v1"
         assert payload["meta"]["capabilities"]["transaction_correction_reversal"] is False
         return payload
+
+    def test_expense_classification_requires_owner_and_write_gate(self):
+        app, repository = self.make_app(enabled=True)
+        client = app.test_client()
+        path = f"/api/dashboard/v1/projects/{PROJECT_ID}/expense-classifications"
+        self.assertEqual(client.get(path).status_code, 401)
+        self.login(client)
+        self.assertEqual(client.get(path).get_json()["data"]["items"], [])
+        payload = {"idempotency_key": IDEMPOTENCY_KEY, "source_key": "ledger:1", "classification": "project_cost",
+                   "expected_source": {"amount": 1000, "date": "2026-11-01", "description": "Cat", "category": None}}
+        denied = client.post(path, headers=self.write_headers(csrf="bad"), data=json.dumps(payload))
+        self.assertEqual(denied.status_code, 403)
+        saved = client.post(path, headers=self.write_headers(), data=json.dumps(payload))
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.get_json()["data"]["classification"], "project_cost")
+        self.assertEqual(repository.calls[-1][0], "classify_project_expense")
 
     def test_owner_auth_reads_work_while_independent_write_gate_is_off(self):
         app, repository = self.make_app(enabled=False)

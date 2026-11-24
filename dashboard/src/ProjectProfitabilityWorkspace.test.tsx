@@ -32,6 +32,7 @@ const evidenceApi = {
 }
 
 const api = {
+  listExpenseClassifications: vi.fn(async () => []),
   getPaymentSummary: vi.fn(async () => ({
     project_id: project.id, contract_total: 1_000_000, invoiced_total: 400_000, unbilled_total: 600_000,
     paid_total: 400_000, contract_outstanding: 600_000, overpaid_total: 0, unapplied_total: 0,
@@ -44,7 +45,7 @@ describe('ProjectProfitabilityWorkspace', () => {
     expect(financeWorkspaceCss).toContain('@media (max-width: 760px)')
     expect(financeWorkspaceCss).toMatch(/\.project-profitability\s*>\s*\*\s*\{\s*min-width:\s*0/)
     expect(financeWorkspaceCss).toMatch(/\.project-profitability-head\s*\.secondary-button\s*\{[^}]*width:\s*100%/)
-    expect(financeWorkspaceCss).toMatch(/\.project-profitability-metrics\s*\{\s*grid-template-columns:\s*1fr/)
+    expect(financeWorkspaceCss).toMatch(/\.project-profitability-metrics\s*\{\s*grid-template-columns:\s*repeat\(2/)
     expect(financeWorkspaceCss).toMatch(/\.project-profitability\s+\.workspace-table-wrap\s*\{[^}]*overflow-x:\s*auto/)
     expect(financeWorkspaceCss).toMatch(/\.project-profitability\s+\.workspace-table\s*\{[^}]*min-width:\s*680px/)
   })
@@ -59,13 +60,15 @@ describe('ProjectProfitabilityWorkspace', () => {
     expect(metrics.getByText('Pengeluaran Project tercatat').parentElement).toHaveTextContent(/300\.000/)
     expect(metrics.getByText('Gaji/upah tercatat').parentElement).toHaveTextContent(/100\.000/)
     expect(metrics.getByText('Arus kas bersih').parentElement).toHaveTextContent(/100\.000/)
-    expect(metrics.getByText('Sisa kontrak setelah kas keluar').parentElement).toHaveTextContent(/700\.000/)
-    expect(metrics.getByText('Sisa kontrak setelah kas keluar').parentElement).toHaveTextContent('70%')
-    expect(screen.getByText('Gaji')).toBeTruthy()
-    expect(screen.getByText('Bahan Alat')).toBeTruthy()
+    expect(metrics.getByText('Perkiraan laba/rugi sementara').parentElement).toHaveTextContent('—')
+    expect(screen.getByText(/2 pengeluaran perlu diperiksa/)).toBeTruthy()
+    expect(metrics.getByText('Sisa nilai kontrak').parentElement).toHaveTextContent(/600\.000/)
+    fireEvent.click(screen.getByRole('button', { name: 'Laba Rugi' }))
+    expect(within(screen.getByRole('region', { name: 'Laba rugi proyek' })).getByText('Upah tukang')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: 'Laba rugi proyek' })).getByText('Cat dan kuas')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Arus Kas' }))
     expect(screen.getByText(/Media OCR · vision/)).toBeTruthy()
     expect(screen.getByText('File privat · review manual')).toBeTruthy()
-    expect(screen.getByText(/Bukan laba akuntansi/)).toBeTruthy()
     const monthly = screen.getByRole('table', { name: 'Data tren bulanan' })
     expect(monthly).toHaveTextContent('Nov 26')
     expect(monthly).toHaveTextContent(/400\.000/)
@@ -88,6 +91,7 @@ describe('ProjectProfitabilityWorkspace', () => {
       capabilities: { projectWrites: true, documentWrites: true, transactionCorrections: false, transactionReversals: false },
     }
     render(<ProjectProfitabilityWorkspace project={project} rows={rows} api={api} evidenceApi={evidence} session={session} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Arus Kas' }))
 
     const file = new File([new Uint8Array([137, 80, 78, 71])], 'bukti.png', { type: 'image/png' })
     fireEvent.change(await screen.findByLabelText('Unggah bukti DP'), { target: { files: [file] } })
@@ -99,10 +103,46 @@ describe('ProjectProfitabilityWorkspace', () => {
   })
 
   it('does not invent contract remainder when authoritative summary is unavailable', async () => {
-    const unavailable = { getPaymentSummary: vi.fn(async () => { throw new Error('offline') }) } as unknown as ProjectDocumentApi
+    const unavailable = { getPaymentSummary: vi.fn(async () => { throw new Error('offline') }), listExpenseClassifications: vi.fn(async () => []) } as unknown as ProjectDocumentApi
     render(<ProjectProfitabilityWorkspace project={project} rows={rows} api={unavailable} evidenceApi={evidenceApi} />)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Nilai kontrak dan sisa kontrak belum dapat dimuat')
-    expect(screen.getByText('Sisa kontrak setelah kas keluar').parentElement).toHaveTextContent('—')
+    expect(screen.getByText('Perkiraan laba/rugi sementara').parentElement).toHaveTextContent('—')
+  })
+
+  it('filters cash transactions without changing the lifetime estimate', async () => {
+    render(<ProjectProfitabilityWorkspace project={project} rows={rows} api={api} evidenceApi={evidenceApi} />)
+    await waitFor(() => expect(screen.getByText('Nilai kontrak').parentElement).toHaveTextContent(/1\.000\.000/))
+    fireEvent.click(screen.getByRole('button', { name: 'Arus Kas' }))
+    fireEvent.change(screen.getByLabelText('Dari tanggal'), { target: { value: '2026-11-03' } })
+    expect(screen.queryByText(/Media OCR · vision/)).toBeNull()
+    expect(within(screen.getByRole('region', { name: 'Bukti transaksi Project' })).getByText('Cat dan kuas')).toBeTruthy()
+    expect(screen.getByText('Perkiraan laba/rugi sementara').parentElement).toHaveTextContent('—')
+  })
+
+  it('excludes reviewed non-cost payments from the project estimate and rejects stale reviews', async () => {
+    const reviewed = { ...api, listExpenseClassifications: vi.fn(async () => [
+      { source_key: 'salary', amount: 100_000, date: '2026-11-02', description: 'Upah tukang', category: 'Gaji', classification: 'project_cost' },
+      { source_key: 'material', amount: 200_000, date: '2026-11-03', description: 'Cat dan kuas', category: 'Bahan Alat', classification: 'non_cost' },
+    ]) } as unknown as ProjectDocumentApi
+    const { rerender } = render(<ProjectProfitabilityWorkspace project={project} rows={rows} api={reviewed} evidenceApi={evidenceApi} />)
+    await waitFor(() => expect(screen.getByText('Perkiraan laba/rugi sementara').parentElement).toHaveTextContent(/900\.000/))
+    rerender(<ProjectProfitabilityWorkspace project={project} rows={[rows[0], rows[1], { ...rows[2], amount: 250_000 }]} api={reviewed} evidenceApi={evidenceApi} />)
+    expect(screen.getByText('Perkiraan laba/rugi sementara').parentElement).toHaveTextContent('—')
+  })
+
+  it('lets an authorized user review an expense without changing the underlying amount', async () => {
+    const submit = vi.fn(async () => ({}))
+    const classifyExpense = vi.fn(() => ({ submit }))
+    const reviewing = { ...api, classifyExpense } as unknown as ProjectDocumentApi
+    const session = { csrfToken: 'csrf-token-that-is-long-enough', capabilities: { projectWrites: true, documentWrites: true, transactionCorrections: false, transactionReversals: false } }
+    render(<ProjectProfitabilityWorkspace project={project} rows={rows} api={reviewing} evidenceApi={evidenceApi} session={session} />)
+    await waitFor(() => expect(reviewing.listExpenseClassifications).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: 'Laba Rugi' }))
+    const salary = within(screen.getByRole('region', { name: 'Laba rugi proyek' })).getByText('Upah tukang').closest('article')!
+    await waitFor(() => expect(within(salary).getByRole('button', { name: 'Tandai Upah tukang sebagai biaya proyek' })).toBeEnabled())
+    fireEvent.click(within(salary).getByRole('button', { name: 'Tandai Upah tukang sebagai biaya proyek' }))
+    await waitFor(() => expect(submit).toHaveBeenCalledWith(session))
+    expect(classifyExpense).toHaveBeenCalledWith(project.id, 'salary', 'project_cost', { amount: 100_000, date: '2026-11-02', description: 'Upah tukang', category: 'Gaji' })
   })
 })

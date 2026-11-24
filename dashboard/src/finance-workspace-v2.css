@@ -186,16 +186,16 @@ html[data-theme='dark'] .year-command nav button.active { color: #0c2028; }
 }
 
 
-.project-profitability { display: grid; gap: 16px; }
+.project-profitability { display: grid; gap: 10px; }
 .project-profitability-head, .project-evidence-list header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .project-profitability-head h2, .project-profitability-head p { margin: 0; }
 .project-profitability-head > div { display: grid; gap: 5px; }
-.project-profitability-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.project-profitability-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .project-profitability-metrics article, .project-profitability-chart, .project-cost-breakdown, .project-evidence-list { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 14px; }
-.project-profitability-metrics article { display: grid; gap: 5px; }
+.project-profitability-metrics article { display: grid; align-content: start; gap: 4px; padding: 10px; min-width: 0; }
 .project-profitability-metrics small, .project-profitability-metrics span, .project-evidence-list header span, .project-evidence-list article span { color: var(--text-secondary); font-size: 12px; }
-.project-profitability-metrics strong { font-size: 18px; }
-.project-profitability-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(240px, .8fr); gap: 12px; }
+.project-profitability-metrics strong { font-size: 16px; overflow-wrap: anywhere; }
+.project-profitability-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .project-profitability-chart h3, .project-cost-breakdown h3 { margin: 0 0 12px; }
 .project-cost-breakdown { display: grid; align-content: start; gap: 10px; }
 .project-cost-breakdown > div, .project-evidence-list article { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
@@ -210,7 +210,7 @@ html[data-theme='dark'] .year-command nav button.active { color: #0c2028; }
   .project-profitability > * { min-width: 0; }
   .project-profitability-head, .project-evidence-list header { align-items: stretch; flex-direction: column; }
   .project-profitability-head .secondary-button { width: 100%; min-height: 44px; }
-  .project-profitability-metrics { grid-template-columns: 1fr; }
+  .project-profitability-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .project-profitability-grid { grid-template-columns: 1fr; }
   .project-profitability .workspace-table-wrap { max-width: 100%; overflow-x: auto; }
   .project-profitability .workspace-table { min-width: 680px; }
@@ -256,6 +256,8 @@ html[data-theme='dark'] .year-command nav button.active { color: #0c2028; }
 }
 
 .project-monthly-table { width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 12px; }
+.project-monthly-table-wrap { max-width: 100%; overflow-x: auto; }
+.project-monthly-table { min-width: 440px; }
 .project-monthly-table caption { text-align: left; font-weight: 700; margin-bottom: 6px; }
 .project-monthly-table th, .project-monthly-table td { padding: 7px; border-top: 1px solid var(--border); text-align: right; }
 .project-monthly-table th:first-child, .project-monthly-table td:first-child { text-align: left; }
@@ -545,6 +547,27 @@ html[data-theme='dark'] .year-command nav button.active { color: #0c2028; }
 .hojja-document > footer strong { font-size: 1.3em; }
 
 .texturin-document { --document-paper: #fff; --document-ink: #3d3b3a; padding: 5.4% 6.1% 4%; font: 400 clamp(6px, .76vw, 11px)/1.38 'Hanken Grotesk', sans-serif; }
+.project-finance-nav { display: flex; flex-wrap: wrap; gap: .5rem; }
+.project-finance-pane { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+.project-finance-pane > *, .project-profitability-grid > * { min-width: 0; }
+.project-finance-pane[hidden] { display: none; }
+.project-finance-nav button { border: 1px solid var(--line); border-radius: .4rem; background: transparent; color: inherit; padding: .5rem .8rem; cursor: pointer; }
+.project-finance-nav button[aria-pressed="true"] { background: var(--text); color: var(--surface); border-color: var(--text); }
+.project-finance-nav button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.project-finance-filters { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; }
+.project-finance-filters h3, .project-finance-filters p { flex-basis: 100%; margin: 0; }
+.project-finance-filters label { display: grid; gap: .3rem; }
+.project-finance-filters input { max-width: 100%; padding: .5rem; color: inherit; background: transparent; border: 1px solid var(--line); border-radius: .35rem; }
+.project-cost-breakdown details { padding: .5rem 0; border-bottom: 1px solid var(--line); }
+.project-cost-breakdown summary { display: flex; justify-content: space-between; gap: 1rem; cursor: pointer; }
+.project-cost-breakdown details ul { padding-left: 1.2rem; overflow-wrap: anywhere; }
+.project-cost-breakdown > .project-classification-list { display: grid; gap: 6px; border: 0; padding: 0; }
+.project-classification-list article { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.project-classification-list article > div:first-child { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.project-classification-list small { color: var(--text-secondary); }
+.project-classification-list article > div:last-child { display: flex; flex-wrap: wrap; gap: 5px; }
+.project-classification-list button[aria-pressed="true"] { border-color: var(--text); background: var(--text); color: var(--surface); }
+@media (max-width: 760px) { .project-classification-list article { align-items: stretch; flex-direction: column; } }
 .texturin-head img { width: 35%; max-height: 7.2em; object-fit: contain; object-position: left top; }
 .texturin-document > h2 { margin: 1.2% 0 2.4%; font-size: 2.2em; line-height: 1.1; }
 .texturin-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 9%; margin-bottom: 4.2%; }

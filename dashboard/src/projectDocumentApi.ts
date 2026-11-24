@@ -24,6 +24,25 @@ export interface ProjectDocumentSession {
   capabilities: ProjectDocumentCapabilities
 }
 
+export interface ExpenseClassification {
+  source_key: string
+  classification: 'project_cost' | 'non_cost'
+  amount: number
+  date: string
+  description: string
+  category: string | null
+}
+
+function normalizeExpenseClassification(value: unknown): ExpenseClassification {
+  const item = record(value)
+  if (!item || typeof item.source_key !== 'string' || !['project_cost', 'non_cost'].includes(String(item.classification))
+      || !Number.isSafeInteger(item.amount) || Number(item.amount) <= 0 || typeof item.date !== 'string' || typeof item.description !== 'string'
+      || (item.category !== null && typeof item.category !== 'string')) {
+    throw new ProjectDocumentApiError('Klasifikasi transaksi tidak valid.', { code: 'invalid_expense_classification' })
+  }
+  return { source_key: item.source_key, classification: item.classification as ExpenseClassification['classification'], amount: Number(item.amount), date: item.date, description: item.description, category: item.category as string | null }
+}
+
 export interface ProjectListResult {
   projects: ProjectRecord[]
   capabilities: ProjectDocumentCapabilities
@@ -546,6 +565,14 @@ export function createProjectDocumentApi(options: ApiOptions = {}) {
     async getPaymentSummary(projectId: string): Promise<ProjectPaymentSummary> {
       const result = await read(query(documentsEndpoint, { action: 'payment_summary', project_id: uuid(projectId) }))
       return normalizePaymentSummary(result.data)
+    },
+    async listExpenseClassifications(projectId: string): Promise<ExpenseClassification[]> {
+      const result = await read(query(documentsEndpoint, { action: 'expense_classifications', project_id: uuid(projectId) }))
+      if (!Array.isArray(result.data.items)) throw new ProjectDocumentApiError('Klasifikasi transaksi belum dapat dimuat.', { code: 'invalid_expense_classifications' })
+      return result.data.items.map(normalizeExpenseClassification)
+    },
+    classifyExpense(projectId: string, sourceKey: string, classification: ExpenseClassification['classification'], expectedSource: { amount: number; date: string; description: string; category: string | null }) {
+      return command(documentsEndpoint, { action: 'classify_expense', project_id: uuid(projectId), source_key: sourceKey, classification, expected_source: expectedSource }, undefined, 'documentWrites', normalizeExpenseClassification)
     },
     async getReceiptOptions(projectId: string): Promise<ReceiptOptions> {
       const result = await read(query(documentsEndpoint, { action: 'receipt_options', project_id: uuid(projectId) }))

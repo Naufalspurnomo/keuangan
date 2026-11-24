@@ -549,6 +549,27 @@ class RumahwebAdminProjectDocumentProxyTests(unittest.TestCase):
                 self.assertEqual(server.received[2]["path"], f"/api/dashboard/v1/evidence/{EVIDENCE_ID}/review")
                 self.assertEqual(server.received[3]["path"], f"/api/dashboard/v1/evidence/{EVIDENCE_ID}/download")
 
+    def test_expense_classification_routes_forward_exact_owner_request(self):
+        result = {"source_key": "ledger:1", "classification": "project_cost", "amount": 1000, "date": "2026-11-01", "description": "Cat", "category": None}
+        responses = [(200, "application/json", self.success({"items": [result]})),
+                     (200, "application/json", self.success(result))]
+        with self.https_upstream(responses) as (root, cert, server):
+            with self.php_server(ca_bundle=cert) as base:
+                origin = base.removesuffix("/admin/")
+                self.write_config(enabled=True, projects=root + "/projects", documents=root + "/documents", public_origin=origin)
+                session_id, csrf = self.login(base)
+                endpoint = base + "api/documents.php"
+                cookie = self.cookie(session_id)
+                listed = requests.get(endpoint, params={"action": "expense_classifications", "project_id": PROJECT_ID}, headers=cookie, timeout=10)
+                self.assertEqual(listed.status_code, 200, listed.text)
+                headers = {**cookie, "Origin": origin, "Sec-Fetch-Site": "same-origin", "X-CSRF-Token": csrf, "Idempotency-Key": IDEMPOTENCY_KEY, "If-Match": "*"}
+                saved = requests.post(endpoint, headers=headers, json={"action": "classify_expense", "project_id": PROJECT_ID,
+                    "idempotency_key": IDEMPOTENCY_KEY, "source_key": "ledger:1", "classification": "project_cost",
+                    "expected_source": {"amount": 1000, "date": "2026-11-01", "description": "Cat", "category": None}}, timeout=10)
+                self.assertEqual(saved.status_code, 200, saved.text)
+                self.assertEqual([request["path"] for request in server.received],
+                    [f"/api/dashboard/v1/projects/{PROJECT_ID}/expense-classifications"] * 2)
+
     def test_canva_quotation_proxy_routes_are_exact_and_idempotent(self):
         item = {"id": EVIDENCE_ID, "project_id": PROJECT_ID, "version": 1, "canva_url": "https://canva.com/design/test", "amount": 1_000_000, "status": "draft", "channel": "whatsapp", "negotiation_notes": None, "sent_at": None, "decided_at": None, "created_at": "2026-11-10T00:00:00Z", "updated_at": "2026-11-10T00:00:00Z", "lock_version": 1}
         responses = [

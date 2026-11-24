@@ -900,6 +900,7 @@ def ensure_project_document_schema(dsn: str | None = None) -> dict[str, bool]:
         "028_quotation_deposit_percent.sql",
         "029_texturin_payment_profiles.sql",
         "030_texturin_finance_safe_profile_backfill.sql",
+        "000_project_expense_classification.sql",
     ]
     # Migration 031 is a numbered contract migration owned by the canonical
     # ledger runner. Startup only verifies its constraint when the feature flag
@@ -2674,6 +2675,81 @@ class ProjectDocumentRepository:
         for field in ("reviewed_by", "created_by"):
             result[field] = _safe_json_object(result.get(field)) if result.get(field) else None
         return result
+
+    @staticmethod
+    def _classification_source(cursor: Any, project_id: str, source_key: str) -> dict[str, Any]:
+        match = re.fullmatch(r"postgresql:transaction:([0-9a-fA-F-]{36}):v([1-9][0-9]*)", source_key)
+        if match:
+            try:
+                transaction_id = str(uuid.UUID(match.group(1)))
+            except ValueError as exc:
+                raise ProjectDocumentConflict("invalid transaction identity") from exc
+            cursor.execute(
+                """SELECT amount, (occurred_at AT TIME ZONE 'Asia/Jakarta')::date, description, category
+                   FROM financial_transactions current_transaction
+                   WHERE id = %s AND project_id = %s AND version = %s
+                     AND transaction_type = 'outflow' AND status <> 'reversal'
+                     AND NOT EXISTS (SELECT 1 FROM financial_transactions successor
+                       WHERE successor.revision_of_id = current_transaction.id
+                          OR successor.reversal_of_id = current_transaction.id)
+                   FOR SHARE""",
+                (transaction_id, project_id, int(match.group(2))),
+            )
+        else:
+            cursor.execute(
+                """SELECT amount, transaction_date, description, category FROM financial_ledger
+                   WHERE source_key = %s AND project_id = %s AND is_valid = TRUE
+                     AND lower(transaction_type) IN ('pengeluaran', 'expense') FOR SHARE""",
+                (source_key, project_id),
+            )
+        row = cursor.fetchone()
+        if not row:
+            raise ProjectDocumentConflict("project expense transaction not found or changed")
+        return {"amount": int(row[0]), "date": str(row[1]), "description": str(row[2] or ""), "category": str(row[3]).strip() if row[3] else None}
+
+    def list_expense_classifications(self, project_id: str) -> list[dict[str, Any]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """SELECT DISTINCT ON (source_key) source_key, source_fingerprint, classification, source_snapshot
+                   FROM project_expense_classification_events WHERE project_id = %s
+                   ORDER BY source_key, id DESC""", (project_id,),
+            )
+            events = cursor.fetchall()
+            results = []
+            for source_key, fingerprint, classification, snapshot in events:
+                source = _safe_json_object(snapshot)
+                if source and canonical_json_hash(source) == str(fingerprint):
+                    results.append({"source_key": str(source_key), "classification": str(classification), **source})
+            return results
+
+    def classify_project_expense(self, project_id: str, source_key: str, classification: str,
+                                 *, expected_source: Mapping[str, Any], idempotency_key: str, actor: Mapping[str, Any]) -> dict[str, Any]:
+        if not isinstance(source_key, str) or not 1 <= len(source_key) <= 512:
+            raise ValueError("invalid transaction identity")
+        if classification not in {"project_cost", "non_cost"}:
+            raise ValueError("invalid expense classification")
+        if (not isinstance(expected_source, Mapping) or set(expected_source) != {"amount", "date", "description", "category"}
+                or type(expected_source["amount"]) is not int or expected_source["amount"] <= 0
+                or not isinstance(expected_source["date"], str)
+                or not isinstance(expected_source["description"], str)
+                or (expected_source["category"] is not None and not isinstance(expected_source["category"], str))):
+            raise ValueError("invalid expected transaction")
+        actor_json, _ = _actor(actor)
+        request = {"project_id": project_id, "source_key": source_key, "classification": classification, "expected_source": expected_source}
+        with self._connect() as connection, connection.cursor() as cursor:
+            key_hash, _, replay = self._claim(cursor, "project.expense_classification", idempotency_key, request)
+            if replay is not None:
+                return replay
+            source = self._classification_source(cursor, project_id, source_key)
+            if source != expected_source:
+                raise ProjectDocumentConflict("transaction changed; reload before classification")
+            cursor.execute(
+                """INSERT INTO project_expense_classification_events
+                   (project_id, source_key, source_fingerprint, source_snapshot, classification, actor)
+                   VALUES (%s, %s, %s, %s::jsonb, %s, %s::jsonb)""",
+                (project_id, source_key, canonical_json_hash(source), json.dumps(source), classification, actor_json),
+            )
+            return self._complete(cursor, key_hash, {"source_key": source_key, "classification": classification, **source})
 
     def list_transaction_evidence(self, project_id: str) -> list[dict[str, Any]]:
         try:

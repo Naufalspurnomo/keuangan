@@ -81,6 +81,16 @@ const document = {
 const meta = { capabilities: { reads_enabled: true, project_document_writes_enabled: true, transaction_correction_reversal: false } }
 
 describe('project/document API', () => {
+  it('reads and submits a source-bound expense review with owner write headers', async () => {
+    const result = { source_key: 'ledger:1', classification: 'project_cost', amount: 1000, date: '2026-11-01', description: 'Cat', category: null }
+    const request = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => json({ api_version: 'dashboard.v1', data: init?.method === 'POST' ? result : { items: [result] }, meta }))
+    const api = createProjectDocumentApi({ request, keyFactory: () => 'idem-key-1234567890' })
+    expect(await api.listExpenseClassifications(project.id)).toEqual([result])
+    await api.classifyExpense(project.id, 'ledger:1', 'project_cost', { amount: 1000, date: '2026-11-01', description: 'Cat', category: null }).submit(session)
+    const options = request.mock.calls[1][1]!
+    expect(options.headers).toMatchObject({ 'If-Match': '*', 'X-CSRF-Token': session.csrfToken })
+    expect(JSON.parse(String(options.body))).toMatchObject({ action: 'classify_expense', project_id: project.id, expected_source: { amount: 1000, date: '2026-11-01', description: 'Cat', category: null } })
+  })
   it('normalizes legacy project status and always creates as active', async () => {
     const legacyProject = { ...backendProject, status: 'planned' }
     const request = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => init?.method === 'POST'

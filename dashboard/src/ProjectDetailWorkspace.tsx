@@ -94,7 +94,7 @@ export default function ProjectDetailWorkspace({
   }
 
   const panel = activeTab === 'overview' ? <>
-    {overview && <section aria-label="Ikhtisar Project">{overview}</section>}
+    {overview && !profitability && <section aria-label="Ikhtisar Project">{overview}</section>}
     {profitability && <section aria-label="Profitabilitas dan arus kas">{profitability}</section>}
   </>
     : tab === 'transactions' ? transactions

@@ -169,6 +169,7 @@ export function chartTransactions(workspace: FinanceWorkspace, includeInternal =
       wallet: row.wallet,
       company: row.company ?? 'Operasional Kantor',
       project: project?.name ?? 'Operasional Kantor',
+      project_id: row.project_id,
       notes: row.notes,
       transfer_scope: 'external',
     }

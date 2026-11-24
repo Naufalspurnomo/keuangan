@@ -346,6 +346,22 @@ def create_project_document_blueprint(repository: Any) -> Blueprint:
     def get_payment_summary(project_id: UUID):
         return _response(repository.get_project_payment_summary(str(project_id)))
 
+    @blueprint.get("/projects/<uuid:project_id>/expense-classifications")
+    @owner_required
+    def list_expense_classifications(project_id: UUID):
+        return _response({"items": repository.list_expense_classifications(str(project_id))})
+
+    @blueprint.post("/projects/<uuid:project_id>/expense-classifications")
+    @owner_required
+    def classify_project_expense(project_id: UUID):
+        body, key, _, actor = _write_request(
+            allowed_fields=frozenset({"idempotency_key", "source_key", "classification", "expected_source"}), create=True
+        )
+        return _response(repository.classify_project_expense(
+            str(project_id), body.get("source_key"), body.get("classification"),
+            expected_source=_mapping(body.get("expected_source"), field="expected_source"), idempotency_key=key, actor=actor
+        ))
+
     @blueprint.get("/projects/<uuid:project_id>/receipt-options")
     @owner_required
     def get_receipt_options(project_id: UUID):

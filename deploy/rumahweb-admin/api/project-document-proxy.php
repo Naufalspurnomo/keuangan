@@ -187,7 +187,7 @@ function pd_write_headers(array $body, string $action, array $config): array
     if ($ifMatch === '') {
         pd_error(428, 'if_match_required', 'If-Match header is required.');
     }
-    $create = in_array($action, ['create', 'create_invoice', 'create_receipt', 'create_quotation', 'delete'], true);
+    $create = in_array($action, ['create', 'create_invoice', 'create_receipt', 'create_quotation', 'classify_expense', 'delete'], true);
     if ($create) {
         if ($ifMatch !== '*') {
             pd_error(412, 'if_match_failed', 'If-Match must be * for creation.');
@@ -229,6 +229,7 @@ function pd_get_route(string $resource, string $action, array $query, string $pr
         'list' => ['action', 'project_id'],
         'payment_summary' => ['action', 'project_id'],
         'receipt_options' => ['action', 'project_id'],
+        'expense_classifications' => ['action', 'project_id'],
         'quotations' => ['action', 'project_id'],
         'download_quotation' => ['action', 'quotation_id'],
         'get' => ['action', 'document_id'],
@@ -239,11 +240,12 @@ function pd_get_route(string $resource, string $action, array $query, string $pr
         pd_error(400, 'invalid_action', 'Unsupported document action.');
     }
     pd_exact_fields($query, $allowed[$action]);
-    if (in_array($action, ['list', 'payment_summary', 'receipt_options', 'quotations'], true)) {
+    if (in_array($action, ['list', 'payment_summary', 'receipt_options', 'expense_classifications', 'quotations'], true)) {
         $id = pd_uuid($query['project_id'] ?? null);
         $suffix = match ($action) {
             'payment_summary' => '/payment-summary',
             'receipt_options' => '/receipt-options',
+            'expense_classifications' => '/expense-classifications',
             'quotations' => '/quotations',
             default => '/documents',
         };
@@ -286,6 +288,7 @@ function pd_post_route(string $resource, string $action, array $body, string $pr
         'create_invoice' => ['action', 'project_id', 'idempotency_key', 'kind', 'values'],
         'create_receipt' => ['action', 'project_id', 'idempotency_key', 'invoice_id', 'allocations', 'values'],
         'create_quotation' => ['action', 'project_id', 'idempotency_key', 'values'],
+        'classify_expense' => ['action', 'project_id', 'idempotency_key', 'source_key', 'classification', 'expected_source'],
         'update_quotation' => ['action', 'quotation_id', 'idempotency_key', 'expected_version', 'changes'],
         'revise_quotation' => ['action', 'quotation_id', 'idempotency_key', 'expected_version', 'changes'],
         'deal_quotation' => ['action', 'quotation_id', 'idempotency_key', 'expected_version', 'sales_order_id', 'sales_order_version', 'dp_percent', 'remaining_installments'],
@@ -300,6 +303,12 @@ function pd_post_route(string $resource, string $action, array $body, string $pr
         pd_error(400, 'invalid_action', 'Unsupported document action.');
     }
     pd_exact_fields($body, $fields[$action]);
+    if ($action === 'classify_expense') {
+        $id = pd_uuid($body['project_id'] ?? null);
+        $payload = $body;
+        unset($payload['action'], $payload['project_id']);
+        return ['POST', $projectsBase . '/' . $id . '/expense-classifications', $payload];
+    }
     if ($action === 'create_quotation') {
         $id = pd_uuid($body['project_id'] ?? null);
         return ['POST', $projectsBase . '/' . $id . '/quotations', [
@@ -499,7 +508,7 @@ $action = is_string($body['action'] ?? null) ? $body['action'] : '';
 $allowedActions = $resource === 'projects'
     ? ['create', 'update', 'status', 'delete']
     : [
-        'create_invoice', 'create_receipt', 'create_quotation', 'update_quotation',
+        'create_invoice', 'create_receipt', 'create_quotation', 'classify_expense', 'update_quotation',
         'revise_quotation', 'deal_quotation', 'transition_quotation',
         'update', 'issue', 'void', 'revise',
     ];

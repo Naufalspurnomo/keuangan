@@ -203,6 +203,38 @@ def project(
     return result
 
 
+def test_expense_classification_review_and_project_delete(repository, dsn):
+    import psycopg
+
+    created = project(repository, key="expense-review-project-0001")
+    project_id = created["project"]["id"]
+    source = {"amount": 100000, "date": "2026-11-03", "description": "Cat", "category": None}
+    with psycopg.connect(dsn) as connection:
+        connection.execute(
+            """INSERT INTO financial_ledger
+               (source_key, source_sheet, source_block, transaction_date, amount, transaction_type,
+                project_id, description, is_valid, payload)
+               VALUES ('review:expense:1', 'test', 'pengeluaran', '2026-11-03', 100000,
+                       'Pengeluaran', %s, 'Cat', TRUE, '{}'::jsonb)""", (project_id,)
+        )
+    result = repository.classify_project_expense(project_id, "review:expense:1", "project_cost",
+        expected_source=source, idempotency_key="expense-review-command-0001", actor=ACTOR)
+    assert result["classification"] == "project_cost"
+    assert repository.classify_project_expense(project_id, "review:expense:1", "project_cost",
+        expected_source=source, idempotency_key="expense-review-command-0001", actor=ACTOR) == result
+    assert repository.list_expense_classifications(project_id) == [result]
+    with psycopg.connect(dsn) as connection:
+        with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
+            connection.execute("DELETE FROM project_expense_classification_events WHERE project_id = %s", (project_id,))
+        connection.rollback()
+    with pytest.raises(ProjectDocumentConflict):
+        repository.classify_project_expense(project_id, "review:expense:1", "non_cost",
+            expected_source={**source, "amount": 2}, idempotency_key="expense-review-command-0002", actor=ACTOR)
+    repository.delete_project(project_id, confirmation="hapus", idempotency_key="expense-review-delete-0001", actor=ACTOR)
+    with psycopg.connect(dsn) as connection:
+        assert connection.execute("SELECT count(*) FROM project_expense_classification_events WHERE project_id = %s", (project_id,)).fetchone()[0] == 0
+
+
 def test_pipeline_read_models_execute_against_real_postgresql(repository, dsn):
     created = project(repository, key="pipeline-read-model-project-0001")
     project_id = created["project"]["id"]

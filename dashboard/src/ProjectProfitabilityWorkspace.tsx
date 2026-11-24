@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
 import type { FinanceProject, FinanceTransaction } from './financeWorkspace'
-import type { ProjectDocumentApi, ProjectDocumentSession } from './projectDocumentApi'
+import type { ExpenseClassification, ProjectDocumentApi, ProjectDocumentSession } from './projectDocumentApi'
 import { createProjectEvidenceApi, type ProjectEvidenceApi, type ProjectTransactionEvidence } from './projectEvidenceApi'
 import type { ProjectPaymentSummary } from './projectDocuments'
 
@@ -40,12 +40,24 @@ export default function ProjectProfitabilityWorkspace({ project, rows, api, sess
   const [evidenceBusy, setEvidenceBusy] = useState('')
   const [error, setError] = useState('')
   const [evidenceError, setEvidenceError] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [view, setView] = useState<'summary' | 'profit' | 'cash'>('summary')
+  const [showAllRows, setShowAllRows] = useState(false)
+  const [showAllExpenses, setShowAllExpenses] = useState(false)
+  const [classifications, setClassifications] = useState<ExpenseClassification[] | null>(null)
+  const [classificationError, setClassificationError] = useState('')
+  const [classifying, setClassifying] = useState('')
   const activeController = useRef(0)
+  const classificationController = useRef(0)
+  const activeProjectId = useRef(project.id)
+  activeProjectId.current = project.id
 
   const load = useCallback(async () => {
     const request = ++activeController.current
     setLoading(true)
     setError('')
+    setSummary(null)
     try {
       const next = await api.getPaymentSummary(project.id)
       if (request === activeController.current) setSummary(next)
@@ -63,6 +75,33 @@ export default function ProjectProfitabilityWorkspace({ project, rows, api, sess
     void load()
     return () => { activeController.current += 1 }
   }, [load])
+
+  const loadClassifications = useCallback(async () => {
+    const request = ++classificationController.current
+    setClassifications(null)
+    setClassificationError('')
+    try {
+      const result = await api.listExpenseClassifications(project.id)
+      if (request === classificationController.current) setClassifications(result)
+    } catch {
+      if (request === classificationController.current) setClassificationError('Pemeriksaan jenis pengeluaran belum dapat dimuat.')
+    }
+  }, [api, project.id])
+  useEffect(() => { void loadClassifications(); return () => { classificationController.current += 1 } }, [loadClassifications])
+
+  const classify = async (row: FinanceTransaction, classification: ExpenseClassification['classification']) => {
+    if (!session) return
+    setClassifying(row.id)
+    setClassificationError('')
+    try {
+      await api.classifyExpense(project.id, row.id, classification, { amount: row.amount, date: row.date, description: row.notes, category: row.category ?? null }).submit(session)
+      if (activeProjectId.current === project.id) await loadClassifications()
+    } catch (reason) {
+      if (activeProjectId.current === project.id) setClassificationError(reason instanceof Error ? reason.message : 'Jenis pengeluaran belum dapat disimpan.')
+    } finally {
+      setClassifying('')
+    }
+  }
 
   const loadEvidence = useCallback(async () => {
     setEvidenceError('')
@@ -128,60 +167,92 @@ export default function ProjectProfitabilityWorkspace({ project, rows, api, sess
     return map
   }, [evidence])
 
+  const filteredRows = useMemo(() => rows.filter((row) => (!dateFrom || row.date >= dateFrom) && (!dateTo || row.date <= dateTo)), [rows, dateFrom, dateTo])
   const report = useMemo(() => {
     const incomeRows = rows.filter((row) => row.direction === 'income')
     const expenseRows = rows.filter((row) => row.direction === 'expense')
     const income = sum(incomeRows)
     const expense = sum(expenseRows)
     const salary = sum(expenseRows.filter((row) => SALARY.test(`${row.category || ''} ${row.notes}`)))
-    const categories = [...expenseRows.reduce((map, row) => {
-      const key = row.category || 'Belum dikategorikan'
-      map.set(key, (map.get(key) || 0) + row.amount)
-      return map
-    }, new Map<string, number>())].sort((left, right) => right[1] - left[1])
-    const monthly = [...rows.reduce((map, row) => {
+    const monthly = [...filteredRows.reduce((map, row) => {
       const key = row.date.slice(0, 7)
       const item = map.get(key) || { month: key, income: 0, expense: 0 }
       item[row.direction] += row.amount
       map.set(key, item)
       return map
     }, new Map<string, { month: string; income: number; expense: number }>())].map(([, value]) => value).sort((a, b) => a.month.localeCompare(b.month))
-    return { income, expense, salary, net: income - expense, categories, monthly }
-  }, [rows])
+    return { income, expense, salary, net: income - expense, monthly }
+  }, [rows, filteredRows])
 
   const contract = summary?.contract_total ?? null
-  const margin = contract === null ? null : contract - report.expense
+  const classificationMap = useMemo(() => new Map((classifications ?? []).map((item) => [item.source_key, item])), [classifications])
+  const classificationFor = (row: FinanceTransaction) => {
+    const item = classificationMap.get(row.id)
+    return item && item.amount === row.amount && item.date === row.date && item.description === row.notes && item.category === (row.category ?? null) ? item.classification : undefined
+  }
+  const expenses = rows.filter((row) => row.direction === 'expense')
+  const unclassifiedExpenses = expenses.filter((row) => !classificationFor(row))
+  const projectCosts = sum(expenses.filter((row) => classificationFor(row) === 'project_cost'))
+  const costCategories = [...expenses.filter((row) => classificationFor(row) === 'project_cost').reduce((map, row) => {
+    const key = row.category || 'Belum dikategorikan'
+    map.set(key, (map.get(key) || 0) + row.amount)
+    return map
+  }, new Map<string, number>())].sort((left, right) => right[1] - left[1])
+  const margin = contract === null || classifications === null || unclassifiedExpenses.length > 0 ? null : contract - projectCosts
   const marginPct = contract && margin !== null ? (margin / contract) * 100 : null
 
   return <section className="project-profitability" aria-busy={loading}>
     <header className="project-profitability-head">
-      <div><p className="eyebrow">KINERJA KAS Project</p><h2>Kas masuk dan pengeluaran tercatat</h2><p>Angka kas berasal dari transaksi Project. Nilai kontrak berasal dari Sales Order terbit.</p></div>
-      <button type="button" className="secondary-button" onClick={() => void load()} disabled={loading}><RefreshCw size={15} /> Perbarui</button>
+      <div><p className="eyebrow">KEUANGAN PROJECT</p><h2>Ringkasan keuangan</h2><p>Dompet {project.wallet} · {rows.length} transaksi tercatat</p></div>
+      <button type="button" className="secondary-button" onClick={() => { void load(); void loadClassifications() }} disabled={loading}><RefreshCw size={15} /> Perbarui ringkasan</button>
     </header>
     {error && <p role="alert" className="document-state-alert">{error}</p>}
+    {classificationError && <p role="alert" className="document-state-alert">{classificationError}</p>}
+    <nav className="project-finance-nav" aria-label="Bagian keuangan proyek">{([['summary', 'Ringkasan'], ['profit', 'Laba Rugi'], ['cash', 'Arus Kas']] as const).map(([id, label]) => <button type="button" key={id} aria-pressed={view === id} onClick={() => setView(id)}>{label}</button>)}</nav>
+    <div className="project-finance-pane" hidden={view !== 'summary'}>
     <section className="project-profitability-metrics" aria-label={`Ringkasan kas ${project.name}`}>
       <article><small>Nilai kontrak</small><strong>{contract === null ? '—' : IDR.format(contract)}</strong></article>
       <article><small>Kas masuk</small><strong className="positive">{IDR.format(report.income)}</strong></article>
+      <article><small>Sisa nilai kontrak</small><strong>{summary?.contract_outstanding == null ? '—' : IDR.format(summary.contract_outstanding)}</strong><span>Menurut alokasi pembayaran</span></article>
+      <article><small>Invoice belum lunas</small><strong>{summary == null ? '—' : IDR.format(summary.invoices.reduce((total, invoice) => total + invoice.outstanding, 0))}</strong><span>Berbeda dari sisa nilai kontrak</span></article>
       <article><small>Pengeluaran Project tercatat</small><strong className="negative">{IDR.format(report.expense)}</strong></article>
       <article><small>Gaji/upah tercatat</small><strong>{IDR.format(report.salary)}</strong></article>
       <article><small>Arus kas bersih</small><strong className={report.net >= 0 ? 'positive' : 'negative'}>{IDR.format(report.net)}</strong></article>
-      <article><small>Sisa kontrak setelah kas keluar</small><strong className={margin === null || margin >= 0 ? 'positive' : 'negative'}>{margin === null ? '—' : IDR.format(margin)}</strong>{marginPct !== null && <span>{marginPct.toLocaleString('id-ID', { maximumFractionDigits: 1 })}%</span>}</article>
+      <article><small>Perkiraan laba/rugi sementara</small><strong className={margin === null || margin >= 0 ? 'positive' : 'negative'}>{margin === null ? '—' : IDR.format(margin)}</strong>{marginPct !== null && <span>{marginPct.toLocaleString('id-ID', { maximumFractionDigits: 1 })}% dari nilai kontrak</span>}</article>
     </section>
-    <p className="payment-summary-warning">Bukan laba akuntansi: angka ini hanya mengurangi nilai kontrak dengan pengeluaran kas yang sudah tercatat. Overhead kantor, pajak, kewajiban belum dibayar, dan biaya yang belum dialokasikan tidak termasuk.</p>
+    <p className="payment-summary-warning">{classifications === null ? 'Jenis pengeluaran belum tersedia; perkiraan laba belum dapat dihitung.' : unclassifiedExpenses.length ? `${unclassifiedExpenses.length} pengeluaran perlu diperiksa jenisnya sebelum perkiraan laba dapat dihitung. Pengembalian pinjaman dan transfer tidak selalu merupakan biaya proyek.` : 'Perkiraan = nilai kontrak − biaya proyek yang telah diperiksa. Nilai kontrak belum tentu diterima penuh; biaya yang belum tercatat belum termasuk.'} Bukan laba akuntansi resmi.</p>
+    </div>
+    <div className="project-finance-pane" hidden={view !== 'profit'}>
+    <section id="project-finance-profit" className="project-cost-breakdown" aria-label="Laba rugi proyek">
+      <h3>Laba Rugi · perkiraan sementara</h3>
+      <p>{classifications === null ? 'Jenis pengeluaran belum tersedia.' : unclassifiedExpenses.length ? `Belum dapat dihitung: ${unclassifiedExpenses.length} pengeluaran senilai ${IDR.format(sum(unclassifiedExpenses))} belum diperiksa.` : `Nilai kontrak ${contract === null ? 'belum tersedia' : IDR.format(contract)} dikurangi biaya proyek yang diperiksa ${IDR.format(projectCosts)}.`}</p>
+      {expenses.length > 0 && <p>Pilih <strong>Biaya proyek</strong> untuk bahan, upah, dan biaya pekerjaan. Pilih <strong>Bukan biaya</strong> untuk pengembalian pokok pinjaman atau transfer. Jika belum yakin, biarkan untuk diperiksa nanti.</p>}
+      {expenses.length > 0 && !session?.capabilities.documentWrites && <p>Akses Anda hanya untuk melihat. Pemilik dengan akses perubahan dapat memeriksa jenis pengeluaran.</p>}
+      <div className="project-classification-list">{(showAllExpenses ? expenses : expenses.slice(0, 5)).map((row) => <article key={row.id}><div><strong>{row.notes || 'Pengeluaran'}</strong><small>{row.date} · {IDR.format(row.amount)} · {classificationFor(row) === 'project_cost' ? 'Biaya proyek' : classificationFor(row) === 'non_cost' ? 'Bukan biaya proyek' : 'Perlu diperiksa'}</small></div>{session?.capabilities.documentWrites && <div><button type="button" className="secondary-button" aria-pressed={classificationFor(row) === 'project_cost'} aria-label={`Tandai ${row.notes || 'pengeluaran'} sebagai biaya proyek`} disabled={!!classifying || classifications === null} onClick={() => void classify(row, 'project_cost')}>Biaya proyek</button><button type="button" className="secondary-button" aria-pressed={classificationFor(row) === 'non_cost'} aria-label={`Tandai ${row.notes || 'pengeluaran'} bukan biaya proyek`} disabled={!!classifying || classifications === null} onClick={() => void classify(row, 'non_cost')}>Bukan biaya</button></div>}</article>)}{expenses.length > 5 && <button type="button" className="secondary-button" onClick={() => setShowAllExpenses((current) => !current)}>{showAllExpenses ? 'Tampilkan lebih sedikit' : `Lihat semua ${expenses.length} pengeluaran`}</button>}</div>
+      {costCategories.length > 0 && <><h4>Biaya proyek yang sudah diperiksa</h4>{costCategories.map(([category, amount]) => <details key={category}><summary><span>{category}</span><strong>{IDR.format(amount)}</strong></summary><ul>{expenses.filter((row) => classificationFor(row) === 'project_cost' && (row.category || 'Belum dikategorikan') === category).map((row) => <li key={row.id}>{row.date} · {row.notes || 'Tanpa keterangan'} — {IDR.format(row.amount)}</li>)}</ul></details>)}</>}
+    </section>
+    </div>
+    <div className="project-finance-pane" hidden={view !== 'cash'}>
+    <section id="project-finance-cash" className="project-finance-filters" aria-label="Filter arus kas">
+      <h3>Arus Kas</h3><p>Ringkasan di atas mencakup seluruh transaksi tercatat. Filter berikut berlaku untuk tren dan daftar transaksi.</p>
+      <label>Dari tanggal <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
+      <label>Sampai tanggal <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
+      {dateFrom && dateTo && dateFrom > dateTo && <p role="alert">Tanggal awal harus sebelum atau sama dengan tanggal akhir.</p>}
+    </section>
     <div className="project-profitability-grid">
       <section className="project-profitability-chart" aria-label="Tren pemasukan dan biaya Project">
         <h3>Tren bulanan</h3>
         {report.monthly.length ? <>
           <ResponsiveContainer width="100%" height={260}><BarChart data={report.monthly} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}><CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" /><XAxis dataKey="month" tickFormatter={monthLabel} axisLine={false} tickLine={false} /><YAxis width={58} tickFormatter={(value) => COMPACT.format(Number(value))} axisLine={false} tickLine={false} /><Tooltip formatter={(value) => IDR.format(Number(value))} labelFormatter={(value) => monthLabel(String(value))} /><Legend /><Bar dataKey="income" name="Pemasukan" fill="var(--positive)" radius={[4, 4, 0, 0]} /><Bar dataKey="expense" name="Pengeluaran" fill="var(--negative)" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer>
-          <table className="project-monthly-table"><caption>Data tren bulanan</caption><thead><tr><th>Bulan</th><th>Pemasukan</th><th>Pengeluaran</th><th>Arus kas bersih</th></tr></thead><tbody>{report.monthly.map((item) => <tr key={item.month}><td>{monthLabel(item.month)}</td><td>{IDR.format(item.income)}</td><td>{IDR.format(item.expense)}</td><td>{IDR.format(item.income - item.expense)}</td></tr>)}</tbody></table>
+          <div className="project-monthly-table-wrap"><table className="project-monthly-table"><caption>Data tren bulanan</caption><thead><tr><th>Bulan</th><th>Pemasukan</th><th>Pengeluaran</th><th>Arus kas bersih</th></tr></thead><tbody>{report.monthly.map((item) => <tr key={item.month}><td>{monthLabel(item.month)}</td><td>{IDR.format(item.income)}</td><td>{IDR.format(item.expense)}</td><td>{IDR.format(item.income - item.expense)}</td></tr>)}</tbody></table></div>
         </> : <p>Belum ada tren transaksi.</p>}
       </section>
-      <section className="project-cost-breakdown" aria-label="Rincian biaya Project"><h3>Rincian biaya</h3>{report.categories.length ? report.categories.map(([category, amount]) => <div key={category}><span>{category}</span><strong>{IDR.format(amount)}</strong></div>) : <p>Belum ada biaya Project.</p>}</section>
     </div>
     <section className="project-evidence-list" aria-label="Bukti transaksi Project">
       <header><div><ShieldCheck size={17} /><strong>Bukti transaksi</strong></div><span>File privat · review manual</span></header>
       {evidenceError && <p role="alert" className="document-state-alert">{evidenceError}</p>}
-      {rows.map((row) => {
+      {!filteredRows.length && <p>Tidak ada transaksi untuk periode ini.</p>}
+      {(showAllRows ? filteredRows : filteredRows.slice(0, 5)).map((row) => {
         const item = evidenceBySource.get(row.id)
         return <article key={row.id}>
           <ScanLine size={16} />
@@ -198,6 +269,8 @@ export default function ProjectProfitabilityWorkspace({ project, rows, api, sess
           </div>
         </article>
       })}
+      {filteredRows.length > 5 && <button type="button" className="secondary-button" onClick={() => setShowAllRows((current) => !current)}>{showAllRows ? 'Tampilkan lebih sedikit' : `Lihat semua ${filteredRows.length} transaksi`}</button>}
     </section>
+    </div>
   </section>
 }
