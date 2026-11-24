@@ -59,7 +59,7 @@ def activate() -> None:
             "canonical finance activation requires a 40-character lowercase release SHA"
         )
 
-    target = 31 if _enabled("PROJECT_COMPLETION_CONSTRAINT_ENABLED") else 30
+    target = 32 if _enabled("PROJECT_COMPLETION_CONSTRAINT_ENABLED") else 30
     apply_financial_migrations(
         dsn,
         migrations=load_production_bootstrap_migrations(),
