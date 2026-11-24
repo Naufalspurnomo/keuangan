@@ -103,3 +103,5 @@ def test_workflow_gates_before_remote_deploy():
     assert text.index("--preflight-only") < text.index("python scripts/deploy_rumahweb_presensi_atomic.py")
     sync = text.split("- name: Synchronize private finance routing", 1)[1]
     assert "RELEASE_SHA: ${{ steps.revision.outputs.sha }}" in sync
+    assert "if: ${{ success() }}" in text.split("- name: Require compatible backend before publishing frontend", 1)[1].split("- name: Atomically deploy", 1)[0]
+    assert "if: ${{ success() }}" in sync

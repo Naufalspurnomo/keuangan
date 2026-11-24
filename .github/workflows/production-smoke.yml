@@ -61,6 +61,29 @@ jobs:
             esac
           done
 
+      - name: Check authenticated Rumahweb snapshot proxy
+        env:
+          HOLLAWALL_LIVE_API_PROXY_TOKEN: ${{ secrets.HOLLAWALL_LIVE_API_PROXY_TOKEN }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 90 \
+            --proto '=https' --tlsv1.2 \
+            -H "X-Hollawall-Proxy-Token: ${HOLLAWALL_LIVE_API_PROXY_TOKEN}" \
+            -o /tmp/snapshot-health.json \
+            -w 'snapshot_proxy_health_http=%{http_code}\\n' \
+            "$SITE_ORIGIN/admin/api/snapshot-health.php"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path('/tmp/snapshot-health.json').read_text())
+          assert payload == {
+              'ok': True,
+              'snapshot_version': 'dashboard.snapshot.v1',
+              'upstream_status': 200,
+          }, payload
+          print('authenticated_snapshot_proxy=ok')
+          PY
+
       - name: Check backend health, snapshot, and release provenance
         env:
           EXPECTED_RELEASE_SHA: ${{ github.sha }}

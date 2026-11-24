@@ -26,6 +26,7 @@ class RumahwebAdminReleaseTests(unittest.TestCase):
     def test_release_has_login_and_read_only_proxy(self) -> None:
         login = (RELEASE / "index.php").read_text(encoding="utf-8")
         proxy = (RELEASE / "api" / "snapshot.php").read_text(encoding="utf-8")
+        snapshot_health = (RELEASE / "api" / "snapshot-health.php").read_text(encoding="utf-8")
         self.assertIn("Masuk ke dashboard", login)
         self.assertIn("Akses dashboard keuangan Hollawall.", login)
         self.assertNotIn("aktivitas unit, dan proyek", login)
@@ -38,6 +39,10 @@ class RumahwebAdminReleaseTests(unittest.TestCase):
         self.assertIn("X-Hollawall-Proxy-Token", proxy)
         self.assertIn("CURLOPT_CONNECTTIMEOUT => 12", proxy)
         self.assertIn("CURLOPT_TIMEOUT => 75", proxy)
+        self.assertIn("snapshot_version", snapshot_health)
+        self.assertIn("X-Hollawall-Proxy-Token", snapshot_health)
+        self.assertIn("X-Hollawall-Actor-Assertion", snapshot_health)
+        self.assertNotIn("transactions", snapshot_health)
         self.assertIn("X-Hollawall-Actor-Assertion", proxy)
         self.assertIn("dashboard_actor_assertion_secret", proxy)
         self.assertIn("'method' => 'GET'", proxy)

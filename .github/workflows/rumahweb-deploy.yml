@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       deploy_scope:
-        description: "Deploy admin only for frontend-only revisions"
+        description: "Deploy admin only; finance routing and snapshot canary always run"
         required: false
         default: admin
         type: choice
@@ -126,7 +126,7 @@ jobs:
             --artifact-revision "$RELEASE_SHA"
 
       - name: Require compatible backend before publishing frontend
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_scope != 'admin' }}
+        if: ${{ success() }}
         env:
           RELEASE_SHA: ${{ steps.revision.outputs.sha }}
           RW_FTP_HOST: ${{ secrets.RUMAHWEB_FTP_HOST }}
@@ -170,7 +170,7 @@ jobs:
           PY
 
       - name: Synchronize private finance routing
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_scope != 'admin' }}
+        if: ${{ success() }}
         env:
           RELEASE_SHA: ${{ steps.revision.outputs.sha }}
           RW_FTP_HOST: ${{ secrets.RUMAHWEB_FTP_HOST }}
@@ -197,6 +197,29 @@ jobs:
           assert evidence['owner_email_configured'] is True, evidence
           assert evidence['secret_present'] is True, evidence
           assert evidence['secret_exposed'] is False, evidence
+          PY
+
+      - name: Verify live authenticated snapshot proxy
+        env:
+          HOLLAWALL_LIVE_API_PROXY_TOKEN: ${{ secrets.HOLLAWALL_LIVE_API_PROXY_TOKEN }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 90 \
+            --proto '=https' --tlsv1.2 \
+            -H "X-Hollawall-Proxy-Token: ${HOLLAWALL_LIVE_API_PROXY_TOKEN}" \
+            -o /tmp/snapshot-health.json \
+            -w 'snapshot_proxy_health_http=%{http_code}\\n' \
+            "https://hollawall.com/admin/api/snapshot-health.php"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path('/tmp/snapshot-health.json').read_text())
+          assert payload == {
+              'ok': True,
+              'snapshot_version': 'dashboard.snapshot.v1',
+              'upstream_status': 200,
+          }, payload
+          print('authenticated_snapshot_proxy=ok')
           PY
 
       - name: Verify public release identity
