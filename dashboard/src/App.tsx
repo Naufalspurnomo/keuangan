@@ -586,14 +586,33 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
         lifecycleBusyId={transactionLifecycleBusyId}
       /></section>
     : null
+  const productionFinanceWorkspace = productionFinance && projectApi
+    ? <ProjectProfitabilityWorkspace
+        project={productionFinance}
+        rows={productionRows}
+        api={projectApi}
+        session={projectSession}
+        initialView="summary"
+        showProfitability={false}
+      />
+    : null
   const productionProfitability = productionFinance?.status === 'completed' && projectApi
     ? <ProjectProfitabilityWorkspace
         project={productionFinance}
         rows={productionRows}
         api={projectApi}
         session={projectSession}
+        initialView="profit"
+        showProfitability
       />
     : null
+  const productionOverview = productionFinance
+    ? <>
+        <ProjectOverviewPanel project={productionFinance} workspace={finance.workspace} />
+        {productionFinanceWorkspace}
+      </>
+    : null
+
   const content = active === 'projects' && projectDataLoading && !projectApiAvailable
     ? <section className="application-state" role="status"><span className="application-state-mark" aria-hidden="true" /><div><p className="eyebrow">DATA Project</p><h2>Memuat data Project</h2><p>Mengambil registry Project terbaru dari server.</p></div></section>
     : active === 'overview'
@@ -606,7 +625,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
             onRouteChange={({ tab }) => setProjectDetailRoute({ projectId: productionProject.id, tab })}
             onBack={backToProjects}
             transactions={productionTransactions}
-            overview={productionFinance ? <ProjectOverviewPanel project={productionFinance} workspace={finance.workspace} /> : null}
+            overview={productionOverview}
             debts={productionFinance ? <ProjectDebtPanel project={productionFinance} workspace={finance.workspace} /> : null}
             profitability={productionProfitability}
             presensi={<ProjectPresensiPanel project={productionProject} />}

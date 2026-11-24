@@ -6,6 +6,7 @@ import { projectProfitAndLoss, type FinanceProject, type FinanceTransaction } fr
 import type { ExpenseClassification, ProjectDocumentApi, ProjectDocumentSession } from './projectDocumentApi'
 import { createProjectEvidenceApi, type ProjectEvidenceApi, type ProjectTransactionEvidence } from './projectEvidenceApi'
 import type { ProjectPaymentSummary } from './projectDocuments'
+import { visibleProjectStatus } from './projectStatus'
 
 const IDR = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 })
 const COMPACT = new Intl.NumberFormat('id-ID', { notation: 'compact', maximumFractionDigits: 1 })
@@ -26,12 +27,14 @@ function monthLabel(value: string) {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString('id-ID', { month: 'short', year: '2-digit', timeZone: 'UTC' })
 }
 
-export default function ProjectProfitabilityWorkspace({ project, rows, api, session, evidenceApi: suppliedEvidenceApi }: {
+export default function ProjectProfitabilityWorkspace({ project, rows, api, session, evidenceApi: suppliedEvidenceApi, initialView = 'summary', showProfitability = visibleProjectStatus(project.status) === 'completed' }: {
   project: FinanceProject
   rows: FinanceTransaction[]
   api: ProjectDocumentApi
   session?: ProjectDocumentSession
   evidenceApi?: ProjectEvidenceApi
+  initialView?: 'summary' | 'profit' | 'cash'
+  showProfitability?: boolean
 }) {
   const evidenceApi = useMemo(() => suppliedEvidenceApi ?? createProjectEvidenceApi(), [suppliedEvidenceApi])
   const [summary, setSummary] = useState<ProjectPaymentSummary | null>(null)
@@ -42,7 +45,7 @@ export default function ProjectProfitabilityWorkspace({ project, rows, api, sess
   const [evidenceError, setEvidenceError] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [view, setView] = useState<'summary' | 'profit' | 'cash'>('summary')
+  const [view, setView] = useState<'summary' | 'profit' | 'cash'>(initialView)
   const [showAllRows, setShowAllRows] = useState(false)
   const [showAllExpenses, setShowAllExpenses] = useState(false)
   const [classifications, setClassifications] = useState<ExpenseClassification[] | null>(null)
@@ -185,6 +188,9 @@ export default function ProjectProfitabilityWorkspace({ project, rows, api, sess
   const expenses = rows.filter((row) => row.direction === 'expense')
   const margin = report.finalized ? report.net : null
   const marginPct = contract && margin !== null ? (margin / contract) * 100 : null
+  const financeViews = showProfitability
+    ? ([['summary', 'Ringkasan'], ['profit', 'Laba Rugi'], ['cash', 'Arus Kas']] as const)
+    : ([['summary', 'Ringkasan'], ['cash', 'Arus Kas']] as const)
 
   return <section className="project-profitability" aria-busy={loading}>
     <header className="project-profitability-head">
@@ -193,7 +199,7 @@ export default function ProjectProfitabilityWorkspace({ project, rows, api, sess
     </header>
     {error && <p role="alert" className="document-state-alert">{error}</p>}
     {classificationError && <p role="alert" className="document-state-alert">{classificationError}</p>}
-    <nav className="project-finance-nav" aria-label="Bagian keuangan proyek">{([['summary', 'Ringkasan'], ['profit', 'Laba Rugi'], ['cash', 'Arus Kas']] as const).map(([id, label]) => <button type="button" key={id} aria-pressed={view === id} onClick={() => setView(id)}>{label}</button>)}</nav>
+    <nav className="project-finance-nav" aria-label="Bagian keuangan proyek">{financeViews.map(([id, label]) => <button type="button" key={id} aria-pressed={view === id} onClick={() => setView(id)}>{label}</button>)}</nav>
     <div className="project-finance-pane" hidden={view !== 'summary'}>
     <section className="project-profitability-metrics" aria-label={`Ringkasan kas ${project.name}`}>
       <article><small>Nilai kontrak</small><strong>{contract === null ? '—' : IDR.format(contract)}</strong></article>
