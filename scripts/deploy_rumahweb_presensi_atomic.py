@@ -66,9 +66,11 @@ def safe_remote(path: str) -> str:
     return normalized
 
 
-def prepare_specs(specs: list[ReleaseSpec], tag: str, timestamp: str) -> list[PreparedRelease]:
-    if len(specs) < 2:
-        raise ValueError("at least two release paths are required")
+def prepare_specs(
+    specs: list[ReleaseSpec], tag: str, timestamp: str, *, allow_single: bool = False
+) -> list[PreparedRelease]:
+    if not specs or (len(specs) < 2 and not allow_single):
+        raise ValueError("at least two release paths are required unless single-release mode is enabled")
     if not re.fullmatch(r"[A-Za-z0-9._-]+", tag):
         raise ValueError("tag contains unsafe characters")
     remotes = [safe_remote(spec.remote) for spec in specs]
@@ -220,9 +222,11 @@ def deploy_pair(
     specs: list[ReleaseSpec],
     tag: str,
     timestamp: str | None = None,
+    *,
+    allow_single: bool = False,
 ) -> dict[str, object]:
     timestamp = timestamp or time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    prepared = prepare_specs(specs, tag, timestamp)
+    prepared = prepare_specs(specs, tag, timestamp, allow_single=allow_single)
     result: dict[str, object] = {
         "tag": tag,
         "timestamp": timestamp,
@@ -304,6 +308,11 @@ def main() -> int:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--admin-remote", default="public_html/admin")
     parser.add_argument("--absen-remote", default="public_html/absen")
+    parser.add_argument(
+        "--admin-only",
+        action="store_true",
+        help="Deploy only /admin for frontend-only revisions; does not touch /absen.",
+    )
     parser.add_argument("--port", type=int, default=int(os.getenv("RW_FTP_PORT", "21")))
     parser.add_argument(
         "--probe-only",
@@ -319,10 +328,9 @@ def main() -> int:
     if not all((host, user, password)):
         raise RuntimeError("RW_FTP_HOST, RW_FTP_USER, and RW_FTP_PASSWORD are required")
 
-    specs = [
-        ReleaseSpec("admin", args.admin_release, args.admin_remote),
-        ReleaseSpec("absen", args.absen_release, args.absen_remote),
-    ]
+    specs = [ReleaseSpec("admin", args.admin_release, args.admin_remote)]
+    if not args.admin_only:
+        specs.append(ReleaseSpec("absen", args.absen_release, args.absen_remote))
     ftp = connect(cast(str, host), cast(str, user), cast(str, password), args.port)
     try:
         if args.probe_only:
@@ -335,7 +343,7 @@ def main() -> int:
                 "remote_mutated": False,
             }
         else:
-            result = deploy_pair(ftp, specs, args.tag)
+            result = deploy_pair(ftp, specs, args.tag, allow_single=args.admin_only)
     finally:
         try:
             ftp.quit()

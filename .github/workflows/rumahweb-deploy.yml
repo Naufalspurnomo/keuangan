@@ -11,6 +11,14 @@ on:
         description: "Exact main commit to deploy"
         required: true
         type: string
+      deploy_scope:
+        description: "Deploy admin only for frontend-only revisions"
+        required: false
+        default: admin
+        type: choice
+        options:
+          - admin
+          - pair
 
 permissions:
   contents: read
@@ -136,26 +144,32 @@ jobs:
           RW_FTP_USER: ${{ secrets.RUMAHWEB_FTP_USER }}
           RW_FTP_PASSWORD: ${{ secrets.RUMAHWEB_FTP_PASSWORD }}
           RELEASE_SHA: ${{ steps.revision.outputs.sha }}
+          DEPLOY_SCOPE: ${{ inputs.deploy_scope || 'pair' }}
         run: |
           set -euo pipefail
-          python scripts/deploy_rumahweb_presensi_atomic.py \
-            --admin-release artifacts/rumahweb-admin-release/admin \
-            --absen-release artifacts/rumahweb-presensi-release/absen \
-            --admin-remote public_html/admin \
-            --absen-remote public_html/absen \
-            --tag "${RELEASE_SHA:0:12}" \
+          deploy_args=(
+            --admin-release artifacts/rumahweb-admin-release/admin
+            --absen-release artifacts/rumahweb-presensi-release/absen
+            --admin-remote public_html/admin
+            --absen-remote public_html/absen
+            --tag "${RELEASE_SHA:0:12}"
             --evidence /tmp/rumahweb-deploy.json
+          )
+          if [ "$DEPLOY_SCOPE" = admin ]; then deploy_args+=(--admin-only); fi
+          python scripts/deploy_rumahweb_presensi_atomic.py "${deploy_args[@]}"
           python - <<'PY'
-          import json
+          import json, os
           evidence = json.load(open('/tmp/rumahweb-deploy.json'))
           assert evidence['success'] is True, evidence
-          for release in ('admin', 'absen'):
+          releases = ('admin',) if os.environ.get('DEPLOY_SCOPE') == 'admin' else ('admin', 'absen')
+          for release in releases:
               item = evidence['releases'][release]
               assert item['staged_readback']['ok'] is True, item
               assert item['final_readback']['ok'] is True, item
           PY
 
       - name: Synchronize private finance routing
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_scope != 'admin' }}
         env:
           RELEASE_SHA: ${{ steps.revision.outputs.sha }}
           RW_FTP_HOST: ${{ secrets.RUMAHWEB_FTP_HOST }}
@@ -187,9 +201,12 @@ jobs:
       - name: Verify public release identity
         env:
           RELEASE_SHA: ${{ steps.revision.outputs.sha }}
+          DEPLOY_SCOPE: ${{ inputs.deploy_scope || 'pair' }}
         run: |
           set -euo pipefail
-          for path in admin absen; do
+          paths=(admin absen)
+          if [ "$DEPLOY_SCOPE" = admin ]; then paths=(admin); fi
+          for path in "${paths[@]}"; do
             for attempt in {1..18}; do
               curl --fail --silent --show-error \
                 -H 'Cache-Control: no-cache' \
