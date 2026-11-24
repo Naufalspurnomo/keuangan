@@ -9,7 +9,7 @@ export function ProjectOverviewPanel({ project, workspace }: { project: FinanceP
   const rows = projectRows(project, workspace)
   const income = rows.filter((row) => row.direction === 'income').reduce((sum, row) => sum + row.amount, 0)
   const expense = rows.filter((row) => row.direction === 'expense').reduce((sum, row) => sum + row.amount, 0)
-  return <section className="project-context-panel">
+  return <section className="project-context-panel project-overview-panel">
     <header><p className="eyebrow">RINGKASAN Project</p><h2>Ringkasan Project</h2><p>{project.name}</p></header>
     <div className="project-profitability-metrics" aria-label={`Ringkasan ${project.name}`}>
       <article><small>Status</small><strong>{projectStatusLabel(project.status)}</strong></article>
