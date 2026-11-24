@@ -54,7 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          git fetch origin main --depth=1
+          git fetch origin main --depth=100
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
             test "$(git rev-parse origin/main)" = "$EXPECTED_SHA"
           else
