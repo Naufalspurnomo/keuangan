@@ -126,6 +126,7 @@ jobs:
             --artifact-revision "$RELEASE_SHA"
 
       - name: Require compatible backend before publishing frontend
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_scope != 'admin' }}
         env:
           RELEASE_SHA: ${{ steps.revision.outputs.sha }}
           RW_FTP_HOST: ${{ secrets.RUMAHWEB_FTP_HOST }}
