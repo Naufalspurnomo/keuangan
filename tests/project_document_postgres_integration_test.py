@@ -128,7 +128,7 @@ def dsn():
     apply_financial_migrations(
         selected,
         migrations=migrations[26:],
-        apply_through=31,
+        apply_through=32,
     )
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setenv("PROJECT_COMPLETION_CONSTRAINT_ENABLED", "1")
