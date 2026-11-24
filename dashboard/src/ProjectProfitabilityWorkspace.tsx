@@ -2,7 +2,7 @@ import { Eye, RefreshCw, ScanLine, ShieldCheck, Upload } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
-import type { FinanceProject, FinanceTransaction } from './financeWorkspace'
+import { projectProfitAndLoss, type FinanceProject, type FinanceTransaction } from './financeWorkspace'
 import type { ExpenseClassification, ProjectDocumentApi, ProjectDocumentSession } from './projectDocumentApi'
 import { createProjectEvidenceApi, type ProjectEvidenceApi, type ProjectTransactionEvidence } from './projectEvidenceApi'
 import type { ProjectPaymentSummary } from './projectDocuments'
@@ -169,11 +169,8 @@ export default function ProjectProfitabilityWorkspace({ project, rows, api, sess
 
   const filteredRows = useMemo(() => rows.filter((row) => (!dateFrom || row.date >= dateFrom) && (!dateTo || row.date <= dateTo)), [rows, dateFrom, dateTo])
   const report = useMemo(() => {
-    const incomeRows = rows.filter((row) => row.direction === 'income')
-    const expenseRows = rows.filter((row) => row.direction === 'expense')
-    const income = sum(incomeRows)
-    const expense = sum(expenseRows)
-    const salary = sum(expenseRows.filter((row) => SALARY.test(`${row.category || ''} ${row.notes}`)))
+    const pnl = projectProfitAndLoss(project, rows)
+    const salary = sum(rows.filter((row) => row.direction === 'expense' && SALARY.test(`${row.category || ''} ${row.notes}`)))
     const monthly = [...filteredRows.reduce((map, row) => {
       const key = row.date.slice(0, 7)
       const item = map.get(key) || { month: key, income: 0, expense: 0 }
@@ -181,24 +178,12 @@ export default function ProjectProfitabilityWorkspace({ project, rows, api, sess
       map.set(key, item)
       return map
     }, new Map<string, { month: string; income: number; expense: number }>())].map(([, value]) => value).sort((a, b) => a.month.localeCompare(b.month))
-    return { income, expense, salary, net: income - expense, monthly }
-  }, [rows, filteredRows])
+    return { ...pnl, salary, monthly }
+  }, [project, rows, filteredRows])
 
   const contract = summary?.contract_total ?? null
-  const classificationMap = useMemo(() => new Map((classifications ?? []).map((item) => [item.source_key, item])), [classifications])
-  const classificationFor = (row: FinanceTransaction) => {
-    const item = classificationMap.get(row.id)
-    return item && item.amount === row.amount && item.date === row.date && item.description === row.notes && item.category === (row.category ?? null) ? item.classification : undefined
-  }
   const expenses = rows.filter((row) => row.direction === 'expense')
-  const unclassifiedExpenses = expenses.filter((row) => !classificationFor(row))
-  const projectCosts = sum(expenses.filter((row) => classificationFor(row) === 'project_cost'))
-  const costCategories = [...expenses.filter((row) => classificationFor(row) === 'project_cost').reduce((map, row) => {
-    const key = row.category || 'Belum dikategorikan'
-    map.set(key, (map.get(key) || 0) + row.amount)
-    return map
-  }, new Map<string, number>())].sort((left, right) => right[1] - left[1])
-  const margin = contract === null || classifications === null || unclassifiedExpenses.length > 0 ? null : contract - projectCosts
+  const margin = report.finalized ? report.net : null
   const marginPct = contract && margin !== null ? (margin / contract) * 100 : null
 
   return <section className="project-profitability" aria-busy={loading}>
@@ -220,16 +205,21 @@ export default function ProjectProfitabilityWorkspace({ project, rows, api, sess
       <article><small>Arus kas bersih</small><strong className={report.net >= 0 ? 'positive' : 'negative'}>{IDR.format(report.net)}</strong></article>
       <article><small>Perkiraan laba/rugi sementara</small><strong className={margin === null || margin >= 0 ? 'positive' : 'negative'}>{margin === null ? '—' : IDR.format(margin)}</strong>{marginPct !== null && <span>{marginPct.toLocaleString('id-ID', { maximumFractionDigits: 1 })}% dari nilai kontrak</span>}</article>
     </section>
-    <p className="payment-summary-warning">{classifications === null ? 'Jenis pengeluaran belum tersedia; perkiraan laba belum dapat dihitung.' : unclassifiedExpenses.length ? `${unclassifiedExpenses.length} pengeluaran perlu diperiksa jenisnya sebelum perkiraan laba dapat dihitung. Pengembalian pinjaman dan transfer tidak selalu merupakan biaya proyek.` : 'Perkiraan = nilai kontrak − biaya proyek yang telah diperiksa. Nilai kontrak belum tentu diterima penuh; biaya yang belum tercatat belum termasuk.'} Bukan laba akuntansi resmi.</p>
+    <p className="payment-summary-warning">{report.finalized ? 'Laba rugi final berdasarkan seluruh pemasukan dan pengeluaran Project. Transaksi baru tetap memperbarui angka ini secara realtime.' : 'Laba rugi akan tersedia setelah Project dinyatakan selesai.'}</p>
     </div>
     <div className="project-finance-pane" hidden={view !== 'profit'}>
     <section id="project-finance-profit" className="project-cost-breakdown" aria-label="Laba rugi proyek">
-      <h3>Laba Rugi · perkiraan sementara</h3>
-      <p>{classifications === null ? 'Jenis pengeluaran belum tersedia.' : unclassifiedExpenses.length ? `Belum dapat dihitung: ${unclassifiedExpenses.length} pengeluaran senilai ${IDR.format(sum(unclassifiedExpenses))} belum diperiksa.` : `Nilai kontrak ${contract === null ? 'belum tersedia' : IDR.format(contract)} dikurangi biaya proyek yang diperiksa ${IDR.format(projectCosts)}.`}</p>
-      {expenses.length > 0 && <p>Pilih <strong>Biaya proyek</strong> untuk bahan, upah, dan biaya pekerjaan. Pilih <strong>Bukan biaya</strong> untuk pengembalian pokok pinjaman atau transfer. Jika belum yakin, biarkan untuk diperiksa nanti.</p>}
-      {expenses.length > 0 && !session?.capabilities.documentWrites && <p>Akses Anda hanya untuk melihat. Pemilik dengan akses perubahan dapat memeriksa jenis pengeluaran.</p>}
-      <div className="project-classification-list">{(showAllExpenses ? expenses : expenses.slice(0, 5)).map((row) => <article key={row.id}><div><strong>{row.notes || 'Pengeluaran'}</strong><small>{row.date} · {IDR.format(row.amount)} · {classificationFor(row) === 'project_cost' ? 'Biaya proyek' : classificationFor(row) === 'non_cost' ? 'Bukan biaya proyek' : 'Perlu diperiksa'}</small></div>{session?.capabilities.documentWrites && <div><button type="button" className="secondary-button" aria-pressed={classificationFor(row) === 'project_cost'} aria-label={`Tandai ${row.notes || 'pengeluaran'} sebagai biaya proyek`} disabled={!!classifying || classifications === null} onClick={() => void classify(row, 'project_cost')}>Biaya proyek</button><button type="button" className="secondary-button" aria-pressed={classificationFor(row) === 'non_cost'} aria-label={`Tandai ${row.notes || 'pengeluaran'} bukan biaya proyek`} disabled={!!classifying || classifications === null} onClick={() => void classify(row, 'non_cost')}>Bukan biaya</button></div>}</article>)}{expenses.length > 5 && <button type="button" className="secondary-button" onClick={() => setShowAllExpenses((current) => !current)}>{showAllExpenses ? 'Tampilkan lebih sedikit' : `Lihat semua ${expenses.length} pengeluaran`}</button>}</div>
-      {costCategories.length > 0 && <><h4>Biaya proyek yang sudah diperiksa</h4>{costCategories.map(([category, amount]) => <details key={category}><summary><span>{category}</span><strong>{IDR.format(amount)}</strong></summary><ul>{expenses.filter((row) => classificationFor(row) === 'project_cost' && (row.category || 'Belum dikategorikan') === category).map((row) => <li key={row.id}>{row.date} · {row.notes || 'Tanpa keterangan'} — {IDR.format(row.amount)}</li>)}</ul></details>)}</>}
+      <h3>{report.finalized ? 'Laba Rugi Final' : 'Laba Rugi'}</h3>
+      {!report.finalized ? <p>Laporan muncul otomatis setelah Project berstatus Selesai.</p> : <>
+        <div className="project-profitability-metrics">
+          <article><small>Total pemasukan</small><strong className="positive">{IDR.format(report.income)}</strong></article>
+          <article><small>Total pengeluaran</small><strong className="negative">{IDR.format(report.expense)}</strong></article>
+          <article><small>Laba sebelum investor</small><strong className={report.net >= 0 ? 'positive' : 'negative'}>{IDR.format(report.net)}</strong></article>
+          <article><small>Potongan investor</small><strong>{report.investorRate ? IDR.format(report.investorShare) : 'Tidak berlaku'}</strong><span>{report.investorRate ? '5% · Holla / Texturin Surabaya' : 'Perusahaan lain'}</span></article>
+          <article><small>Laba bersih</small><strong className={(report.netAfterInvestor ?? 0) >= 0 ? 'positive' : 'negative'}>{IDR.format(report.netAfterInvestor ?? report.net)}</strong></article>
+        </div>
+        <p className="payment-summary-warning">Rumus: pemasukan − seluruh pengeluaran. Transaksi baru setelah Project selesai tetap masuk realtime.</p>
+      </>}
     </section>
     </div>
     <div className="project-finance-pane" hidden={view !== 'cash'}>

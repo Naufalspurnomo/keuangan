@@ -702,6 +702,7 @@ class PostgresDashboardTransactionService:
                 "inflow" if request.direction == "Pemasukan" else "outflow"
             ),
             "amount": request.amount,
+            "admin_fee": request.admin_fee,
             "currency": "IDR",
             "category": request.category,
             "description": request.description,

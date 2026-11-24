@@ -223,7 +223,7 @@ def test_rejects_unknown_or_mismatched_wallet_company_pairs(wallet, company):
     )
 
 
-@pytest.mark.parametrize("category", ["Bahan Alat", "Gaji", "Operasi Project", "Lain-lain"])
+@pytest.mark.parametrize("category", ["Bahan Alat", "Gaji", "Operasional Project", "Lain-lain"])
 def test_accepts_project_expense_categories(category):
     assert validate(valid_payload(direction="Pengeluaran", category=category)).category == category
 

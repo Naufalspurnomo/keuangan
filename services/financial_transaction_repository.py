@@ -208,6 +208,7 @@ class PostgresFinancialTransactionRepository:
         "transaction_type",
         "flow_class",
         "amount",
+        "admin_fee",
         "currency",
         "category",
         "description",
@@ -224,7 +225,7 @@ class PostgresFinancialTransactionRepository:
     )
     _RECORD_SELECT_SQL = """
         SELECT ft.id, ft.scope, ft.project_id, ft.transaction_type, ft.flow_class,
-               ft.amount, ft.currency, ft.category, ft.description, ft.occurred_at,
+               ft.amount, ft.admin_fee, ft.currency, ft.category, ft.description, ft.occurred_at,
                ft.source, ft.source_reference, ft.evidence, ft.actor,
                ft.revision_of_id, ft.reversal_of_id, ft.version, ft.status,
                ft.created_at,
@@ -347,11 +348,11 @@ class PostgresFinancialTransactionRepository:
                         """
                         INSERT INTO financial_transactions (
                             id, idempotency_key_hash, request_hash, scope, project_id,
-                            transaction_type, flow_class, amount, currency, category,
+                            transaction_type, flow_class, amount, admin_fee, currency, category,
                             description, occurred_at, source, source_reference, evidence,
                             actor, revision_of_id, reversal_of_id, version, status
                         ) VALUES (
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                             %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s
                         )
                         """,
@@ -364,6 +365,7 @@ class PostgresFinancialTransactionRepository:
                             record["transaction_type"],
                             record["flow_class"],
                             record["amount"],
+                            record.get("admin_fee", 0),
                             record["currency"],
                             record.get("category"),
                             record["description"],
@@ -520,7 +522,7 @@ class PostgresFinancialTransactionRepository:
                 records_cursor = connection.cursor()
                 records_cursor.execute(
                     """
-                    SELECT id, scope, project_id, transaction_type, flow_class, amount,
+                    SELECT id, scope, project_id, transaction_type, flow_class, amount, admin_fee,
                            currency, category, description, occurred_at, source,
                            source_reference, evidence, actor, revision_of_id,
                            reversal_of_id, version, status, created_at

@@ -27,7 +27,7 @@ WALLET_COMPANY_PAIRS = frozenset(
     for wallet, companies in DOMPET_COMPANIES.items()
     for company in companies
 )
-PROJECT_EXPENSE_CATEGORIES = frozenset({"Operasi Project", "Bahan Alat", "Gaji", "Lain-lain"})
+PROJECT_EXPENSE_CATEGORIES = frozenset({"Operasional Project", "Bahan Alat", "Gaji", "Lain-lain"})
 PROJECT_INCOME_CATEGORIES = frozenset({"DP", "DP 1", "DP 2", "Pelunasan"})
 OFFICE_CATEGORIES = frozenset(OPERATIONAL_CATEGORIES)
 
@@ -44,7 +44,7 @@ REQUIRED_FIELDS = frozenset(
         "category",
     }
 )
-OPTIONAL_FIELDS = frozenset({"project"})
+OPTIONAL_FIELDS = frozenset({"project", "admin_fee"})
 TEXT_LIMITS = {
     "description": 200,
     "wallet": 100,
@@ -72,6 +72,7 @@ class TransactionRequest:
     company: str
     category: str
     project: str | None
+    admin_fee: int = 0
 
 
 ProjectExists = Callable[[str], bool]
@@ -179,6 +180,12 @@ def validate_transaction_request(
     if not 1 <= amount <= MAX_SAFE_INTEGER:
         _fail("amount", f"must be between 1 and {MAX_SAFE_INTEGER}")
 
+    admin_fee = payload.get("admin_fee", 0)
+    if isinstance(admin_fee, bool) or not isinstance(admin_fee, int):
+        _fail("admin_fee", "must be an exact integer; booleans and decimals are not allowed")
+    if not 0 <= admin_fee <= MAX_SAFE_INTEGER:
+        _fail("admin_fee", f"must be between 0 and {MAX_SAFE_INTEGER}")
+
     description = _validate_text(
         payload,
         "description",
@@ -222,6 +229,7 @@ def validate_transaction_request(
         scope=scope,
         direction=direction,
         amount=amount,
+        admin_fee=admin_fee,
         description=description,
         wallet=wallet,
         company=company,

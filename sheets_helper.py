@@ -1498,7 +1498,7 @@ def append_transaction(transaction: Dict, sender_name: str, source: str = "Text"
     
     Transaction dict should have:
     - tanggal: YYYY-MM-DD
-    - kategori: One of ALLOWED_CATEGORIES (Operasi Kantor, Operasi Project, Bahan Alat, Gaji, Lain-lain)
+    - kategori: One of ALLOWED_CATEGORIES (Operasi Kantor, Operasional Project, Bahan Alat, Gaji, Lain-lain)
     - keterangan: Description
     - jumlah: Amount (positive number)
     - tipe: "Pengeluaran" or "Pemasukan"

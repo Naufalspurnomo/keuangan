@@ -1,4 +1,4 @@
-import type { FinanceWorkspace } from './financeWorkspace'
+import { projectProfitAndLoss, type FinanceWorkspace } from './financeWorkspace'
 import type { ReportModel } from './financeView'
 
 export type CanonicalReportType =
@@ -62,12 +62,10 @@ export function buildCanonicalReportDataset(workspace: FinanceWorkspace, model: 
   }
   if (type === 'project-profitability') {
     const rows = workspace.projects.map((project) => {
-      const transactions = workspace.transactions.filter((row) => row.project_id === project.id)
-      const income = transactions.filter((row) => row.direction === 'income').reduce((sum, row) => sum + row.amount, 0)
-      const expense = transactions.filter((row) => row.direction === 'expense').reduce((sum, row) => sum + row.amount, 0)
-      return [project.id, project.name, project.company, project.wallet, money(income), money(expense), money(income - expense)]
+      const pnl = projectProfitAndLoss(project, workspace.transactions)
+      return [project.id, project.name, project.company, project.wallet, status(project.status), money(pnl.income), money(pnl.expense), money(pnl.net), project.status === 'completed' ? money(pnl.investorShare) : '—', project.status === 'completed' ? money(pnl.netAfterInvestor ?? 0) : '—']
     })
-    return { ...base, title: 'Profitabilitas Project', headers: ['UUID', 'Project', 'Unit', 'Dompet', 'Pemasukan', 'Pengeluaran', 'Profit'], rows, totals: [['Jumlah Project', String(rows.length)]] }
+    return { ...base, title: 'Laba Rugi Project', headers: ['UUID', 'Project', 'Unit', 'Dompet', 'Status', 'Pemasukan', 'Pengeluaran', 'Laba sebelum investor', 'Investor 5%', 'Laba bersih'], rows, totals: [['Jumlah Project', String(rows.length)]] }
   }
   if (type === 'project-lifecycle') {
     const rows = workspace.projects.map((project) => [project.id, project.name, status(project.status), project.started_on, project.completed_on ?? '—', project.company, project.wallet])

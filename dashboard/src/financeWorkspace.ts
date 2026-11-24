@@ -56,6 +56,8 @@ export interface FinanceTransaction {
   date: string
   direction: TransactionDirection
   amount: number
+  /** Biaya admin hanya breakdown tampilan; amount tetap nominal ledger. */
+  admin_fee?: number
   scope: TransactionScope
   wallet: WalletId
   company: CompanyId | null
@@ -211,6 +213,8 @@ export function updateProject(workspace: FinanceWorkspace, id: string, input: Pr
   const current = workspace.projects.find((project) => project.id === id)
   if (!current) throw new FinanceValidationError('Project tidak ditemukan.')
   const clean = validateProjectInput(input, workspace.projects, id)
+  const linkedTransactions = workspace.transactions.filter((row) => row.project_id === id)
+  if (linkedTransactions.some((row) => row.date < clean.started_on)) throw new FinanceValidationError('Tanggal mulai Project tidak boleh setelah transaksi pertamanya.')
   const nextProject = { ...current, ...clean, wallet: COMPANY_WALLET[clean.company], updated_at: nowIso() }
   const transactions = workspace.transactions.map((transaction) => transaction.project_id === id
     ? { ...transaction, wallet: nextProject.wallet, company: nextProject.company, updated_at: nowIso() }
@@ -229,6 +233,7 @@ export function validateTransactionInput(input: TransactionInput, workspace: Fin
   const date = validDate(input.date, 'Tanggal transaksi')
   if (!['income', 'expense'].includes(input.direction)) throw new FinanceValidationError('Jenis transaksi tidak valid.')
   const amount = validAmount(input.amount, 'Jumlah') as number
+  const admin_fee = validAmount(input.admin_fee ?? 0, 'Biaya Admin') as number
   if (amount === 0) throw new FinanceValidationError('Jumlah harus lebih dari nol.')
   const notes = requiredText(input.notes, 'Keterangan')
   if (input.scope === 'project') {
@@ -236,13 +241,14 @@ export function validateTransactionInput(input: TransactionInput, workspace: Fin
     if (!project) throw new FinanceValidationError('Project wajib dipilih.')
     const status = visibleProjectStatus(project.status)
     if (status === 'cancelled') throw new FinanceValidationError('Project Dibatalkan tidak dapat memiliki transaksi baru.')
-    return { ...input, date, amount, notes, wallet: project.wallet, company: project.company, project_id: project.id, office_category: null }
+    if (date < project.started_on) throw new FinanceValidationError('Tanggal transaksi tidak boleh sebelum Project dimulai.')
+    return { ...input, date, amount, admin_fee, notes, wallet: project.wallet, company: project.company, project_id: project.id, office_category: null }
   }
   if (input.scope !== 'office') throw new FinanceValidationError('Aktivitas transaksi tidak valid.')
   if (!input.wallet || !WALLETS.includes(input.wallet)) throw new FinanceValidationError('Dompet wajib dipilih.')
   if (!input.office_category || !OFFICE_CATEGORIES.includes(input.office_category)) throw new FinanceValidationError('Kategori biaya kantor wajib dipilih.')
   if (input.direction !== 'expense') throw new FinanceValidationError('Operasional Kantor hanya mencatat pengeluaran.')
-  return { ...input, date, amount, notes, wallet: input.wallet, company: null, project_id: null, office_category: input.office_category }
+  return { ...input, date, amount, admin_fee, notes, wallet: input.wallet, company: null, project_id: null, office_category: input.office_category }
 }
 
 export function createTransaction(workspace: FinanceWorkspace, input: TransactionInput): FinanceWorkspace {
@@ -352,9 +358,9 @@ export function isFinanceWorkspace(value: unknown): value is FinanceWorkspace {
   }
   const transactionIds = new Set<string>()
   for (const row of value.transactions) {
-    if (!isRecord(row) || typeof row.id !== 'string' || transactionIds.has(row.id) || !validIsoDate(row.date) || !['income', 'expense'].includes(String(row.direction)) || !validMoney(row.amount, false) || !['project', 'office'].includes(String(row.scope)) || !WALLETS.includes(row.wallet as WalletId) || typeof row.notes !== 'string' || !validTimestamp(row.created_at) || !validTimestamp(row.updated_at)) return false
+    if (!isRecord(row) || typeof row.id !== 'string' || transactionIds.has(row.id) || !validIsoDate(row.date) || !['income', 'expense'].includes(String(row.direction)) || !validMoney(row.amount, false) || !(row.admin_fee === undefined || validMoney(row.admin_fee)) || !['project', 'office'].includes(String(row.scope)) || !WALLETS.includes(row.wallet as WalletId) || typeof row.notes !== 'string' || !validTimestamp(row.created_at) || !validTimestamp(row.updated_at)) return false
     const linkedProject = typeof row.project_id === 'string' ? projectMap.get(row.project_id) : undefined
-    if (row.scope === 'project' && (!linkedProject || visibleProjectStatus(linkedProject.status as ProjectStatus) === 'cancelled' || row.company !== linkedProject.company || row.wallet !== linkedProject.wallet || row.office_category !== null)) return false
+    if (row.scope === 'project' && (!linkedProject || visibleProjectStatus(linkedProject.status as ProjectStatus) === 'cancelled' || String(row.date) < String(linkedProject.started_on) || row.company !== linkedProject.company || row.wallet !== linkedProject.wallet || row.office_category !== null)) return false
     if (row.scope === 'office' && (row.direction !== 'expense' || row.company !== null || row.project_id !== null || !OFFICE_CATEGORIES.includes(row.office_category as OfficeCategory))) return false
     transactionIds.add(row.id)
   }
@@ -378,16 +384,33 @@ export function projectYear(project: FinanceProject) {
   return Number(project.started_on.slice(0, 4))
 }
 
+export function investorRate(company: CompanyId) {
+  return company === 'Holla' || company === 'Texturin Surabaya' ? 0.05 : 0
+}
+
+export function projectProfitAndLoss(project: FinanceProject, transactions: FinanceTransaction[]) {
+  const totals = projectTotals(project, transactions)
+  const finalized = visibleProjectStatus(project.status) === 'completed'
+  const rate = finalized ? investorRate(project.company) : 0
+  const investorShare = finalized ? Math.floor(Math.max(0, totals.net) * rate) : 0
+  return { ...totals, finalized, investorRate: rate, investorShare, netAfterInvestor: finalized ? totals.net - investorShare : null }
+}
+
+export function transactionTotal(transaction: Pick<FinanceTransaction, 'amount' | 'admin_fee'>) {
+  if (!Number.isSafeInteger(transaction.amount)) throw new FinanceValidationError('Nominal transaksi tidak aman.')
+  return transaction.amount
+}
+
 export function projectTotals(project: FinanceProject, transactions: FinanceTransaction[]) {
   const rows = transactions.filter((transaction) => transaction.project_id === project.id)
-  const income = sumMoney(rows.filter((row) => row.direction === 'income').map((row) => row.amount), 'pemasukan Project')
-  const expense = sumMoney(rows.filter((row) => row.direction === 'expense').map((row) => row.amount), 'pengeluaran Project')
+  const income = sumMoney(rows.filter((row) => row.direction === 'income').map(transactionTotal), 'pemasukan Project')
+  const expense = sumMoney(rows.filter((row) => row.direction === 'expense').map(transactionTotal), 'pengeluaran Project')
   return { income, expense, net: income - expense, transactions: rows.length }
 }
 
 export function workspaceTotals(workspace: FinanceWorkspace) {
-  const income = sumMoney(workspace.transactions.filter((row) => row.direction === 'income').map((row) => row.amount), 'pemasukan')
-  const expense = sumMoney(workspace.transactions.filter((row) => row.direction === 'expense').map((row) => row.amount), 'pengeluaran')
-  const office = sumMoney(workspace.transactions.filter((row) => row.scope === 'office').map((row) => row.amount), 'Operasional Kantor')
+  const income = sumMoney(workspace.transactions.filter((row) => row.direction === 'income').map(transactionTotal), 'pemasukan')
+  const expense = sumMoney(workspace.transactions.filter((row) => row.direction === 'expense').map(transactionTotal), 'pengeluaran')
+  const office = sumMoney(workspace.transactions.filter((row) => row.scope === 'office').map(transactionTotal), 'Operasional Kantor')
   return { income, expense, net: income - expense, office }
 }

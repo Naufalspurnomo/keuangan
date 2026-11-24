@@ -19,6 +19,7 @@ export interface Transaction {
   transaction_date: string
   transaction_type: string
   amount: number
+  admin_fee?: number
   wallet: string
   company: string
   project: string | null

@@ -184,6 +184,7 @@ def build_canonical_dashboard_snapshot(
                 "transaction_date": occurred_at.astimezone(BUSINESS_TIMEZONE).date().isoformat(),
                 "transaction_type": "Pemasukan" if cash_delta > 0 else "Pengeluaran",
                 "amount": int(record["amount"]),
+                "admin_fee": int(record.get("admin_fee") or 0),
                 "wallet": wallets_by_id.get(wallet_id, ""),
                 "company": units_by_id.get(unit_id, ""),
                 "project": project.get("name") if project else None,

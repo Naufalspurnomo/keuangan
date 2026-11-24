@@ -75,7 +75,10 @@ export default function ProjectDetailWorkspace({
   const project = sourceProject.status === 'planned'
     ? { ...sourceProject, status: visibleProjectStatus(sourceProject.status) }
     : sourceProject
-  const activeTab: ProjectDetailTab = tab === 'profitability' ? 'overview' : tab
+  const tabs: Array<{ id: ProjectDetailTab; label: string }> = project.status === 'completed'
+    ? [...TABS.slice(0, 2), { id: 'profitability', label: 'Laba Rugi' }, ...TABS.slice(2)]
+    : TABS
+  const activeTab: ProjectDetailTab = tab === 'profitability' && project.status === 'completed' ? 'profitability' : tab === 'profitability' ? 'overview' : tab
   const activeTabRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     activeTabRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'center' })
@@ -89,12 +92,12 @@ export default function ProjectDetailWorkspace({
     if (next < 0) return
     event.preventDefault()
     tabs[next].focus()
-    const nextTab = TABS[next].id
+    const nextTab = tabs[next].id.replace(/^project-/, '').replace(/-tab$/, '') as ProjectDetailTab
     if (nextTab !== activeTab) onRouteChange({ tab: nextTab })
   }
 
   const panel = activeTab === 'overview' ? <>
-    {overview && !profitability && <section aria-label="Ikhtisar Project">{overview}</section>}
+    {overview && <section aria-label="Ikhtisar Project">{overview}</section>}
     {profitability && <section aria-label="Profitabilitas dan arus kas">{profitability}</section>}
   </>
     : tab === 'transactions' ? transactions
@@ -114,7 +117,7 @@ export default function ProjectDetailWorkspace({
 
       </div>
       <div className="project-lifecycle-actions">
-        {tab === 'transactions' && project.status === 'active' && onAddTransaction && <button type="button" className="primary-button" disabled={busy} onClick={() => onAddTransaction(project)} {...actionProps('projects.transaction-create')}><Plus size={16} /> Tambah transaksi</button>}
+        {tab === 'transactions' && (project.status === 'active' || project.status === 'completed') && onAddTransaction && <button type="button" className="primary-button" disabled={busy} onClick={() => onAddTransaction(project)} {...actionProps('projects.transaction-create')}><Plus size={16} /> Tambah transaksi</button>}
         {tab === 'debts' && onOpenDebt && <button type="button" className="primary-button" disabled={busy} onClick={() => onOpenDebt(project)} {...actionProps('projects.tab-debts')}><Landmark size={16} /> Buka Hutang</button>}
         {capabilities.projectWrites && onEdit && <button type="button" className="secondary-button" disabled={busy} onClick={() => onEdit(project)} {...actionProps('projects.edit')}><Pencil size={16} /> Ubah Project</button>}
       </div>
@@ -133,7 +136,7 @@ export default function ProjectDetailWorkspace({
     </section>
 
     <div className="project-detail-tabs" role="tablist" aria-label={`Data ${project.name}`}>
-      {TABS.map((item) => <button
+      {tabs.map((item) => <button
         id={`project-${item.id}-tab`}
         ref={activeTab === item.id ? activeTabRef : undefined}
         key={item.id}

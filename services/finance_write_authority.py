@@ -369,6 +369,7 @@ class FinanceWriteAuthorityGateway:
             "business_unit_id": business_unit_id,
             "transaction_type": command.get("transaction_type"),
             "amount": command.get("amount"),
+            "admin_fee": command.get("admin_fee", 0),
             "currency": command.get("currency"),
             "category": command.get("category"),
             "description": command.get("description"),

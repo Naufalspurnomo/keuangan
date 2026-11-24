@@ -156,6 +156,7 @@ def test_claim_hashes_idempotency_key_and_stores_canonical_evidence():
     assert claim.message_id == "dashboard:request-0001"
     assert claim.canonical_request == {
         "amount": 100_000,
+        "admin_fee": 0,
         "category": "Lain-lain",
         "company": "HOLLA",
         "date": "2026-10-02",

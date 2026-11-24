@@ -57,6 +57,19 @@ function trendFromRows(rows: Transaction[], dataThrough?: string | null): CashTr
   })
 }
 
+function BalanceSheet({ wallets, internalOpen }: { wallets: WalletSnapshot[]; internalOpen: number }) {
+  const cash = wallets.reduce((sum, wallet) => sum + wallet.balance, 0)
+  const equity = cash - internalOpen
+  return <section className="ops-ledger-section" aria-label="Neraca">
+    <header><div><p className="eyebrow">POSISI KEUANGAN</p><h3>Neraca</h3></div><span>Realtime</span></header>
+    <div className="ops-metric-strip">
+      <article className="positive"><span><WalletCards size={15} />Kas &amp; Bank</span><strong>{amount(cash)}</strong></article>
+      <article className="negative"><span><Landmark size={15} />Hutang Internal</span><strong>{amount(internalOpen)}</strong></article>
+      <article className={equity >= 0 ? 'positive' : 'negative'}><span><ArrowLeftRight size={15} />Modal Bersih</span><strong>{amount(equity)}</strong></article>
+    </div>
+  </section>
+}
+
 function FlowMetrics({ rows, internalOpen }: { rows: Transaction[]; internalOpen: number | null }) {
   const inflow = rows.filter((row) => row.transaction_type === 'Pemasukan').reduce((sum, row) => sum + row.amount, 0)
   const outflow = rows.filter((row) => row.transaction_type === 'Pengeluaran').reduce((sum, row) => sum + row.amount, 0)
@@ -92,7 +105,7 @@ function MovementLedger({ rows, onOpenProject, showSourceDetails = false }: { ro
   </div>{pages > 1 && <nav className="ops-pagination" aria-label="Halaman mutasi"><button type="button" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>Sebelumnya</button><span>Halaman {page + 1} dari {pages} · {rows.length} transaksi</span><button type="button" disabled={page >= pages - 1} onClick={() => setPage((value) => Math.min(pages - 1, value + 1))}>Berikutnya</button></nav>}</>
 }
 
-export function CashflowWorkspace({ transactions, cashTrend, internalOpen = 0, dataThrough, onOpenProject, showSourceDetails = false }: { transactions: Transaction[]; cashTrend: CashTrendPoint[]; internalOpen?: number; dataThrough?: string | null; onOpenProject: (name: string) => void; showSourceDetails?: boolean }) {
+export function CashflowWorkspace({ transactions, cashTrend, wallets = [], internalOpen = 0, dataThrough, onOpenProject, showSourceDetails = false }: { transactions: Transaction[]; cashTrend: CashTrendPoint[]; wallets?: WalletSnapshot[]; internalOpen?: number; dataThrough?: string | null; onOpenProject: (name: string) => void; showSourceDetails?: boolean }) {
   const [period, setPeriod] = useState<PeriodKey>('90')
   const [company, setCompany] = useState('Semua unit')
   const [projectId, setProjectId] = useState('all')
@@ -129,6 +142,7 @@ export function CashflowWorkspace({ transactions, cashTrend, internalOpen = 0, d
       <p className="ops-scope">Lingkup aktif: <strong>{company}</strong> · {year === 'all' ? 'semua tahun' : year} · {rangeLabel(operating)}. Hutang internal ditampilkan sebagai posisi terbuka dan tidak masuk arus bersih.</p>
     </div>
     <FlowMetrics rows={operating} internalOpen={projectId === 'all' ? internalOpen : null} />
+    {projectId === 'all' && <BalanceSheet wallets={wallets} internalOpen={internalOpen} />}
     <div className="ops-chart-duo">
       <article className="ops-chart-panel showcase-chart"><header><div><p className="eyebrow">POLA BULANAN</p><h3>Masuk vs keluar bulanan</h3></div><span>{operating.length.toLocaleString('id-ID')} transaksi</span></header><div className="ops-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="monthly" transactions={operating} /></Suspense></div></article>
       <article className="ops-chart-panel showcase-chart"><header><div><p className="eyebrow">ARUS TERCATAT</p><h3>Tren arus kas tercatat</h3></div><span>12 bulan · lingkup aktif</span></header><div className="ops-chart"><Suspense fallback={<div className="chart-skeleton" />}><FinancialChart kind="cash" cashTrend={activeTrend} cashLabel="Arus kas tercatat" /></Suspense></div></article>

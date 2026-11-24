@@ -168,6 +168,14 @@ def _balance(value: Any) -> int:
     return int(value or 0)
 
 
+def _admin_fee(value: Any) -> int:
+    try:
+        parsed = parse_money_token(value) if re.search(r"\d", str(value or "")) else 0
+    except (TypeError, ValueError):
+        return 0
+    return parsed if parsed >= 0 else 0
+
+
 def source_key_for_row(row: Mapping[str, Any]) -> str:
     sheet = str(row.get("sheet_name") or row.get("company_sheet") or "unknown").strip()
     block = str(row.get("source_block") or row.get("tipe") or "row").strip().casefold().replace(" ", "_")
@@ -224,7 +232,12 @@ def build_live_snapshot(
                 "office_category": (
                     str(raw.get("kategori") or raw.get("category") or "").strip() or None
                 ) if scope == "office" else None,
-                "category": str(raw.get("kategori") or raw.get("category") or "").strip() or None,
+                "category": (
+                    "Operasional Project"
+                    if str(raw.get("kategori") or raw.get("category") or "").strip() == "Operasi Project"
+                    else str(raw.get("kategori") or raw.get("category") or "").strip() or None
+                ),
+                "admin_fee": _admin_fee(raw.get("admin_fee") if "admin_fee" in raw else raw.get("biaya_admin")),
                 "recorded_by": str(raw.get("oleh") or raw.get("recorded_by") or "").strip() or None,
                 "input_source": str(raw.get("source") or raw.get("input_source") or "").strip() or None,
                 "evidence_source": (

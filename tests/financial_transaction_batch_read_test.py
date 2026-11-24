@@ -15,6 +15,7 @@ def _record(record_id: str, *, status: str, version: int, revision_of: str | Non
         "transaction_type": "expense",
         "flow_class": "external",
         "amount": 1,
+        "admin_fee": 0,
         "currency": "IDR",
         "category": "readiness",
         "description": "batch-read",

@@ -693,7 +693,7 @@ describe('production live source mode', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Buka Project Kontrak Panggung Utama' }))
     expectNoProductionChatter()
     fireEvent.click(screen.getByRole('tab', { name: 'Keuangan' }))
-    expect(await screen.findByRole('heading', { name: 'Ringkasan keuangan' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Ringkasan Project' })).toBeTruthy()
     fireEvent.click(screen.getByRole('tab', { name: 'Pinjaman' }))
     expect(await screen.findByRole('heading', { name: 'Pinjaman terkait Project' })).toBeTruthy()
     fireEvent.click(screen.getByRole('tab', { name: 'Audit' }))

@@ -9,6 +9,7 @@ export interface TransactionWritePayload {
   scope: TransactionWriteScope
   direction: TransactionWriteDirection
   amount: number
+  admin_fee?: number
   description: string
   wallet: string
   company: string
@@ -32,6 +33,7 @@ export interface CanonicalTransactionMutationInput {
   occurredAt?: string
   description?: string
   category?: string
+  adminFee?: number
 }
 
 export interface CanonicalTransactionMutationResult {
@@ -80,7 +82,7 @@ export function sameTransactionPayload(
   right: Readonly<TransactionWritePayload>,
 ) {
   const fields: ReadonlyArray<keyof TransactionWritePayload> = [
-    'date', 'scope', 'direction', 'amount', 'description', 'wallet', 'company', 'category', 'project',
+    'date', 'scope', 'direction', 'amount', 'admin_fee', 'description', 'wallet', 'company', 'category', 'project',
   ]
   return fields.every((field) => left[field] === right[field])
 }

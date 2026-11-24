@@ -110,6 +110,7 @@ export function TransactionForm({ projects, transaction, initialScope = 'project
     ? OFFICE_WRITE_CATEGORIES[0]
     : transaction?.direction === 'income' ? PROJECT_INCOME_WRITE_CATEGORIES[0] : PROJECT_EXPENSE_WRITE_CATEGORIES[0])
   const [amount, setAmount] = useState<number | null>(transaction?.amount ?? null)
+  const [adminFee, setAdminFee] = useState<number | null>(transaction?.admin_fee ?? 0)
   const [notes, setNotes] = useState(transaction?.notes ?? '')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -152,6 +153,7 @@ export function TransactionForm({ projects, transaction, initialScope = 'project
         date,
         direction,
         amount: amount ?? 0,
+        admin_fee: adminFee ?? 0,
         scope: projectScoped ? 'project' : 'office',
         wallet: liveWrite ? pair!.wallet : (projectScoped ? selected?.wallet ?? wallet : wallet),
         company: liveWrite ? pair!.company : (projectScoped ? selected?.company ?? null : null),
@@ -172,6 +174,7 @@ export function TransactionForm({ projects, transaction, initialScope = 'project
         {projectScoped ? <>{lockedProject ? <div className="wide locked-project-context" aria-label="Project terkunci"><small>Project</small><strong>{lockedProject.name}</strong></div> : <label className="wide"><span>Project *</span><select value={projectId} onChange={(event) => setProjectId(event.target.value)}>{selectable.map((project) => <option value={project.id} key={project.id}>{project.name} · {project.company}</option>)}</select></label>}{liveWrite ? <><label><span>Dompet Project</span><input aria-label="Dompet Project" readOnly value={projectWritePair?.wallet ?? ''} /></label><label><span>Unit usaha Project</span><input aria-label="Unit usaha Project" readOnly value={projectWritePair?.company ?? ''} /></label></> : <><label><span>Perusahaan</span><input readOnly value={selected?.company ?? ''} /></label><label><span>Dompet</span><input readOnly value={selected?.wallet ?? ''} /></label></>}</> : liveWrite ? <label className="wide"><span>Dompet sumber *</span><select aria-label="Dompet sumber *" value={writeWallet} onChange={(event) => setWriteWallet(event.target.value)}>{CANONICAL_WALLETS.map((item) => <option key={item}>{item}</option>)}</select><small>Biaya kantor terpisah dari Project; pilih dompet yang membayar.</small></label> : <><label><span>Dompet *</span><select value={wallet} onChange={(event) => setWallet(event.target.value as WalletId)}>{WALLETS.map((item) => <option key={item}>{item}</option>)}</select></label><label><span>Kategori *</span><select value={category} onChange={(event) => setCategory(event.target.value as OfficeCategory)}>{OFFICE_CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></label></>}
         {liveWrite && <label><span>Kategori *</span><select value={writeCategory} onChange={(event) => setWriteCategory(event.target.value)}>{availableWriteCategories.map((item) => <option key={item}>{item}</option>)}</select></label>}
         <AmountInput label="Jumlah" value={amount} onChange={setAmount} />
+        <AmountInput label="Biaya Admin" required={false} value={adminFee} onChange={setAdminFee} />
         <label className="wide"><span>Keterangan *</span><textarea rows={3} required maxLength={liveWrite ? ((locked || scope === 'project') ? 200 : 150) : undefined} value={notes} onChange={(event) => setNotes(event.target.value)} /></label></div>
       </fieldset>
       {projectCreationUnavailable && <p className="form-guidance" role="status">Belum ada Project aktif. Buat atau aktifkan Project sebelum mencatat transaksi Project.</p>}

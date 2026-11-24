@@ -93,6 +93,7 @@ export function snapshotFinanceWorkspace(snapshot: DashboardSnapshot): FinanceWo
       date: row.transaction_date.slice(0, 10),
       direction: row.transaction_type === 'Pemasukan' ? 'income' as const : 'expense' as const,
       amount: row.amount,
+      admin_fee: Number.isSafeInteger(row.admin_fee) && Number(row.admin_fee) >= 0 ? Number(row.admin_fee) : 0,
       scope: office ? 'office' as const : 'project' as const,
       wallet: row.wallet as WalletId,
       company: office ? null : uiCompany(row.company),

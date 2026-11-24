@@ -26,6 +26,7 @@ CREATE_FIELDS = frozenset(
         "business_unit_id",
         "transaction_type",
         "amount",
+        "admin_fee",
         "currency",
         "category",
         "description",
@@ -35,9 +36,9 @@ CREATE_FIELDS = frozenset(
         "evidence",
     }
 )
-CREATE_REQUIRED = CREATE_FIELDS - {"source_reference", "evidence"}
+CREATE_REQUIRED = CREATE_FIELDS - {"source_reference", "evidence", "admin_fee"}
 CORRECTION_FIELDS = frozenset(
-    {"idempotency_key", "expected_version", "amount", "description", "category", "occurred_at", "reason"}
+    {"idempotency_key", "expected_version", "amount", "admin_fee", "description", "category", "occurred_at", "reason"}
 )
 REVERSAL_FIELDS = frozenset({"idempotency_key", "expected_version", "reason"})
 SCOPES = frozenset({"project", "office", "group"})
@@ -130,6 +131,14 @@ def _amount(value: Any, field: str = "amount") -> int:
 def _version(value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         _fail("expected_version", "must be a positive integer")
+    return value
+
+
+def _nonnegative_amount(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        _fail(field, "must be an exact integer")
+    if not 0 <= value <= MAX_SAFE_INTEGER:
+        _fail(field, f"must be between 0 and {MAX_SAFE_INTEGER}")
     return value
 
 
@@ -299,6 +308,7 @@ class CanonicalFinanceService:
             "business_unit_id": _uuid(payload.get("business_unit_id"), "business_unit_id"),
             "transaction_type": transaction_type,
             "amount": _amount(payload.get("amount")),
+            "admin_fee": _nonnegative_amount(payload.get("admin_fee", 0), "admin_fee"),
             "currency": "IDR",
             "category": category,
             "description": _text(payload.get("description"), "description"),
@@ -349,6 +359,8 @@ class CanonicalFinanceService:
         )
         if "amount" in payload:
             corrected["amount"] = _amount(payload["amount"])
+        if "admin_fee" in payload:
+            corrected["admin_fee"] = _nonnegative_amount(payload["admin_fee"], "admin_fee")
         if "description" in payload:
             corrected["description"] = _text(payload["description"], "description")
         if "category" in payload:

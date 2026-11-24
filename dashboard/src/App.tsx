@@ -586,7 +586,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
         lifecycleBusyId={transactionLifecycleBusyId}
       /></section>
     : null
-  const productionProfitability = productionFinance && projectApi
+  const productionProfitability = productionFinance?.status === 'completed' && projectApi
     ? <ProjectProfitabilityWorkspace
         project={productionFinance}
         rows={productionRows}
@@ -614,7 +614,7 @@ export function DemoApp({ suppliedWorkspace, liveSnapshotError, liveWriteSession
             audit={productionFinance ? <ProjectAuditPanel project={productionFinance} workspace={finance.workspace} /> : null}
             capabilities={projectCapabilities}
             onEdit={setProjectModal}
-            onAddTransaction={productionProject.status === 'active' && canCreateTransactions ? (project) => setModal({ kind: 'transaction', projectId: project.id }) : undefined}
+            onAddTransaction={(productionProject.status === 'active' || productionProject.status === 'completed') && canCreateTransactions ? (project) => setModal({ kind: 'transaction', projectId: project.id }) : undefined}
             onOpenDebt={(project) => {
               const borrower = canonicalProjectWallet(project)
               if (!borrower) { setNotice('Dompet Project belum memiliki pemetaan kanonis. Perbarui Project sebelum mencatat hutang.'); return }
@@ -739,6 +739,7 @@ function LiveDashboardApp() {
       scope: input.scope,
       direction: input.direction === 'income' ? 'Pemasukan' : 'Pengeluaran',
       amount: input.amount,
+      admin_fee: input.admin_fee ?? 0,
       description,
       wallet: input.wallet,
       company: input.company,

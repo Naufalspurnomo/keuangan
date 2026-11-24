@@ -276,6 +276,7 @@ def test_postgres_transaction_readback_restores_authority_ids_from_postings():
             "transaction_type": "inflow",
             "flow_class": "project_income",
             "amount": 1000,
+            "admin_fee": 0,
             "currency": "IDR",
             "category": "Lain-lain",
             "description": "Readback",

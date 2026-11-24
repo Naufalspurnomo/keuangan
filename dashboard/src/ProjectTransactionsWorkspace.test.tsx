@@ -86,7 +86,7 @@ describe('ProjectTransactionsWorkspace', () => {
     render(<ProjectTransactionsWorkspace workspace={workspace} project={project} onBack={vi.fn()} onAdd={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} onComplete={vi.fn()} onReactivate={onReactivate} />)
 
     expect(within(screen.getByRole('region', { name: 'Status Project' })).getByText('Selesai')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Tambah transaksi' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Tambah transaksi' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Aktifkan kembali' }))
     expect(onReactivate).toHaveBeenCalledWith(project)
     expect(screen.queryByRole('button', { name: 'Selesaikan Project' })).toBeNull()
