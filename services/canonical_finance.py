@@ -273,7 +273,7 @@ class CanonicalFinanceService:
             transaction_id=transaction_id,
             wallet_id=record["wallet_id"],
             business_unit_id=record["business_unit_id"],
-            amount=record["amount"],
+            amount=record["amount"] + record.get("admin_fee", 0),
             transaction_type=record["transaction_type"],
             status="posted",
         )
@@ -337,8 +337,8 @@ class CanonicalFinanceService:
             raise FinanceValidationError(f"unknown field(s): {', '.join(unknown)}")
         if missing:
             raise FinanceValidationError(f"missing field(s): {', '.join(missing)}")
-        if not any(field in payload for field in ("amount", "description", "category", "occurred_at")):
-            _fail("request", "correction must change amount, description, category, or occurred_at")
+        if not any(field in payload for field in ("amount", "admin_fee", "description", "category", "occurred_at")):
+            _fail("request", "correction must change amount, admin_fee, description, category, or occurred_at")
 
         target = self._get_latest_record(transaction_id)
         expected_version = _version(payload.get("expected_version"))
@@ -371,7 +371,7 @@ class CanonicalFinanceService:
             transaction_id=corrected["id"],
             wallet_id=corrected["wallet_id"],
             business_unit_id=corrected["business_unit_id"],
-            amount=corrected["amount"],
+            amount=corrected["amount"] + corrected.get("admin_fee", 0),
             transaction_type=corrected["transaction_type"],
             status="posted",
         )
@@ -422,7 +422,7 @@ class CanonicalFinanceService:
             transaction_id=reversal["id"],
             wallet_id=reversal["wallet_id"],
             business_unit_id=reversal["business_unit_id"],
-            amount=reversal["amount"],
+            amount=reversal["amount"] + reversal.get("admin_fee", 0),
             transaction_type=reversal["transaction_type"],
             status="reversal",
         )

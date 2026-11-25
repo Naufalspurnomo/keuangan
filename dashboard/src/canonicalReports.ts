@@ -1,4 +1,4 @@
-import { projectProfitAndLoss, type FinanceWorkspace } from './financeWorkspace'
+import { projectProfitAndLoss, transactionTotal, type FinanceWorkspace } from './financeWorkspace'
 import type { ReportModel } from './financeView'
 
 export type CanonicalReportType =
@@ -44,7 +44,8 @@ function transactionRows(model: ReportModel) {
     row.project ?? '—',
     row.direction === 'income' ? 'Pemasukan' : 'Pengeluaran',
     row.notes,
-    money(row.amount),
+    money(transactionTotal(row)),
+    money(row.admin_fee ?? 0),
   ])
 }
 
@@ -87,12 +88,12 @@ export function buildCanonicalReportDataset(workspace: FinanceWorkspace, model: 
   }
   const scoped = type === 'office-operations' ? { ...model, rows: model.rows.filter((row) => row.scope === 'office') } : model
   const rows = transactionRows(scoped)
-  const income = scoped.rows.filter((row) => row.direction === 'income').reduce((sum, row) => sum + row.amount, 0)
-  const expense = scoped.rows.filter((row) => row.direction === 'expense').reduce((sum, row) => sum + row.amount, 0)
+  const income = scoped.rows.filter((row) => row.direction === 'income').reduce((sum, row) => sum + transactionTotal(row), 0)
+  const expense = scoped.rows.filter((row) => row.direction === 'expense').reduce((sum, row) => sum + transactionTotal(row), 0)
   return {
     ...base,
     title: type === 'office-operations' ? 'Operasional Kantor' : 'Arus Kas',
-    headers: ['Tanggal', 'Aktivitas', 'Dompet', 'Unit', 'Project', 'Jenis', 'Keterangan', 'Jumlah'],
+    headers: ['Tanggal', 'Aktivitas', 'Dompet', 'Unit', 'Project', 'Jenis', 'Keterangan', 'Jumlah', 'Biaya Admin'],
     rows,
     totals: [['Pemasukan', money(income)], ['Pengeluaran', money(expense)], ['Bersih', money(income - expense)], ['Jumlah record', String(rows.length)]],
   }

@@ -2,7 +2,7 @@ import { Eye, RefreshCw, ScanLine, ShieldCheck, Upload } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
-import { projectProfitAndLoss, type FinanceProject, type FinanceTransaction } from './financeWorkspace'
+import { projectProfitAndLoss, transactionTotal, type FinanceProject, type FinanceTransaction } from './financeWorkspace'
 import type { ExpenseClassification, ProjectDocumentApi, ProjectDocumentSession } from './projectDocumentApi'
 import { createProjectEvidenceApi, type ProjectEvidenceApi, type ProjectTransactionEvidence } from './projectEvidenceApi'
 import type { ProjectPaymentSummary } from './projectDocuments'
@@ -13,7 +13,7 @@ const COMPACT = new Intl.NumberFormat('id-ID', { notation: 'compact', maximumFra
 const SALARY = /\b(?:gaji|upah|honor|fee\s+(?:tukang|pekerja)|borongan|lembur|mandor|kuli|buruh|salary|wage)\b/i
 
 function sum(rows: FinanceTransaction[]) {
-  return rows.reduce((total, row) => total + row.amount, 0)
+  return rows.reduce((total, row) => total + transactionTotal(row), 0)
 }
 
 function evidenceLabel(row: FinanceTransaction) {
@@ -177,7 +177,7 @@ export default function ProjectProfitabilityWorkspace({ project, rows, api, sess
     const monthly = [...filteredRows.reduce((map, row) => {
       const key = row.date.slice(0, 7)
       const item = map.get(key) || { month: key, income: 0, expense: 0 }
-      item[row.direction] += row.amount
+      item[row.direction] += transactionTotal(row)
       map.set(key, item)
       return map
     }, new Map<string, { month: string; income: number; expense: number }>())].map(([, value]) => value).sort((a, b) => a.month.localeCompare(b.month))

@@ -95,6 +95,26 @@ def test_correction_preserves_original_and_replaces_effective_state():
     assert [item["id"] for item in view["history"]] == [original["id"], corrected["id"]]
 
 
+def test_correction_can_change_admin_fee_without_changing_amount():
+    service, _ = make_service()
+    original = service.create_transaction(payload(admin_fee=0), actor=ACTOR)["transaction"]
+
+    corrected = service.correct_transaction(
+        original["id"],
+        {
+            "idempotency_key": "txn-admin-fee-correction-01",
+            "expected_version": 1,
+            "admin_fee": 2_500,
+            "reason": "Biaya admin pada bukti transfer ditambahkan",
+        },
+        actor=ACTOR,
+    )["transaction"]
+
+    assert corrected["amount"] == original["amount"]
+    assert corrected["admin_fee"] == 2_500
+    assert corrected["postings"][0]["signed_amount"] == original["amount"] + 2_500
+
+
 def test_create_and_correction_accept_backdated_business_instants():
     service, _ = make_service()
     original = service.create_transaction(

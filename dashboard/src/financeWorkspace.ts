@@ -397,8 +397,10 @@ export function projectProfitAndLoss(project: FinanceProject, transactions: Fina
 }
 
 export function transactionTotal(transaction: Pick<FinanceTransaction, 'amount' | 'admin_fee'>) {
-  if (!Number.isSafeInteger(transaction.amount)) throw new FinanceValidationError('Nominal transaksi tidak aman.')
-  return transaction.amount
+  const amount = transaction.amount
+  const adminFee = transaction.admin_fee ?? 0
+  if (!Number.isSafeInteger(amount) || !Number.isSafeInteger(adminFee) || adminFee < 0) throw new FinanceValidationError('Nominal transaksi tidak aman.')
+  return sumMoney([amount, adminFee], 'total transaksi')
 }
 
 export function projectTotals(project: FinanceProject, transactions: FinanceTransaction[]) {

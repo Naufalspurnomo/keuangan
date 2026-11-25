@@ -249,6 +249,7 @@ describe('authenticated transaction API', () => {
       reason: 'Bukti transaksi dikonfirmasi ulang',
       ...(action === 'correction' ? {
         amount: 150_000,
+        adminFee: 2_500,
         occurredAt: '2026-10-31T17:00:00.000Z',
         description: 'Termin kedua',
         category: 'DP 1',
@@ -279,6 +280,7 @@ describe('authenticated transaction API', () => {
       reason: 'Bukti transaksi dikonfirmasi ulang',
       ...(action === 'correction' ? {
         amount: 150_000,
+        admin_fee: 2_500,
         occurred_at: '2026-10-31T17:00:00.000Z',
         description: 'Termin kedua',
         category: 'DP 1',

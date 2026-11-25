@@ -346,6 +346,7 @@ export function createCanonicalTransactionMutation(
   if (!reason) throw new TransactionWriteError('Alasan wajib diisi.', { code: 'reason_required' })
   if (input.action === 'correction'
       && input.amount === undefined
+      && input.adminFee === undefined
       && input.occurredAt === undefined
       && input.description === undefined
       && input.category === undefined) {
@@ -363,6 +364,7 @@ export function createCanonicalTransactionMutation(
     expected_version: input.expectedVersion,
     reason,
     ...(input.amount === undefined ? {} : { amount: input.amount }),
+    ...(input.adminFee === undefined ? {} : { admin_fee: input.adminFee }),
     ...(input.occurredAt === undefined ? {} : { occurred_at: input.occurredAt }),
     ...(input.description === undefined ? {} : { description: input.description }),
     ...(input.category === undefined ? {} : { category: input.category }),

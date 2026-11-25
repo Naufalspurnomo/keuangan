@@ -1,4 +1,4 @@
-import type { FinanceProject, FinanceWorkspace } from './financeWorkspace'
+import { transactionTotal, type FinanceProject, type FinanceWorkspace } from './financeWorkspace'
 import { IDR, projectStatusLabel } from './financeView'
 
 function projectRows(project: FinanceProject, workspace: Readonly<FinanceWorkspace>) {
@@ -7,8 +7,8 @@ function projectRows(project: FinanceProject, workspace: Readonly<FinanceWorkspa
 
 export function ProjectOverviewPanel({ project, workspace }: { project: FinanceProject; workspace: Readonly<FinanceWorkspace> }) {
   const rows = projectRows(project, workspace)
-  const income = rows.filter((row) => row.direction === 'income').reduce((sum, row) => sum + row.amount, 0)
-  const expense = rows.filter((row) => row.direction === 'expense').reduce((sum, row) => sum + row.amount, 0)
+  const income = rows.filter((row) => row.direction === 'income').reduce((sum, row) => sum + transactionTotal(row), 0)
+  const expense = rows.filter((row) => row.direction === 'expense').reduce((sum, row) => sum + transactionTotal(row), 0)
   return <section className="project-context-panel project-overview-panel">
     <header><p className="eyebrow">RINGKASAN Project</p><h2>Ringkasan Project</h2><p>{project.name}</p></header>
     <div className="project-profitability-metrics" aria-label={`Ringkasan ${project.name}`}>

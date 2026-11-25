@@ -8,6 +8,7 @@ import { OFFICE_WRITE_CATEGORIES, PROJECT_EXPENSE_WRITE_CATEGORIES, PROJECT_INCO
 export interface TransactionMutationDraft {
   reason: string
   amount?: number
+  adminFee?: number
   occurredAt?: string
   description?: string
   category?: string
@@ -27,6 +28,7 @@ export default function CanonicalTransactionMutationDialog({ row, action, saving
     : row.direction === 'income' ? [...PROJECT_INCOME_WRITE_CATEGORIES] : [...PROJECT_EXPENSE_WRITE_CATEGORIES]
   if (initialCategory && !categoryOptions.includes(initialCategory)) categoryOptions.unshift(initialCategory)
   const [amount, setAmount] = useState<number | null>(row.amount)
+  const [adminFee, setAdminFee] = useState<number | null>(row.admin_fee ?? 0)
   const [date, setDate] = useState(row.date)
   const [description, setDescription] = useState(row.notes)
   const [category, setCategory] = useState(initialCategory || categoryOptions[0] || '')
@@ -45,7 +47,7 @@ export default function CanonicalTransactionMutationDialog({ row, action, saving
     }
     if (amount === null || !description.trim() || !category) { setError('Nominal, keterangan, dan kategori wajib diisi.'); return }
 
-    if (amount === row.amount && date === row.date && description.trim() === row.notes && category === initialCategory) {
+    if (amount === row.amount && adminFee === (row.admin_fee ?? 0) && date === row.date && description.trim() === row.notes && category === initialCategory) {
       setError('Ubah setidaknya satu nilai sebelum menyimpan koreksi.')
       return
     }
@@ -55,6 +57,7 @@ export default function CanonicalTransactionMutationDialog({ row, action, saving
       await onSubmit({
         reason: cleanReason,
         ...(amount === row.amount ? {} : { amount }),
+        ...(adminFee === (row.admin_fee ?? 0) ? {} : { adminFee: adminFee ?? 0 }),
         ...(occurredAt ? { date, occurredAt } : {}),
         ...(description.trim() === row.notes ? {} : { description: description.trim() }),
         ...(category === initialCategory ? {} : { category }),
@@ -72,6 +75,7 @@ export default function CanonicalTransactionMutationDialog({ row, action, saving
       {action === 'correction' && <fieldset disabled={saving} className="transaction-correction-fields"><div className="form-grid">
         <label><span>Tanggal transaksi *</span><input type="date" required value={date} onChange={(event) => setDate(event.target.value)} /></label>
         <RupiahAmountInput label="Jumlah" value={amount} onChange={setAmount} disabled={saving} />
+        <RupiahAmountInput label="Biaya Admin" required={false} value={adminFee} onChange={setAdminFee} disabled={saving} />
         <label><span>Kategori *</span><select required value={category} onChange={(event) => setCategory(event.target.value)}>{categoryOptions.map((item) => <option value={item} key={item}>{item}</option>)}</select></label>
         <label className="wide"><span>Keterangan *</span><textarea required maxLength={200} rows={3} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
       </div></fieldset>}

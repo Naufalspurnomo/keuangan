@@ -3,6 +3,7 @@ import {
   WALLETS,
   projectTotals,
   sumMoney,
+  transactionTotal,
   type CompanyId,
   type FinanceProject,
   type FinanceTransaction,
@@ -46,8 +47,8 @@ export function walletBalances(workspace: FinanceWorkspace) {
   const wallets = workspace.live_wallets?.map((wallet) => wallet.name) ?? WALLETS
   return wallets.map((wallet) => {
     const rows = workspace.transactions.filter((row) => row.wallet === wallet)
-    const income = sumMoney(rows.filter((row) => row.direction === 'income').map((row) => row.amount), `pemasukan ${wallet}`)
-    const expense = sumMoney(rows.filter((row) => row.direction === 'expense').map((row) => row.amount), `pengeluaran ${wallet}`)
+    const income = sumMoney(rows.filter((row) => row.direction === 'income').map(transactionTotal), `pemasukan ${wallet}`)
+    const expense = sumMoney(rows.filter((row) => row.direction === 'expense').map(transactionTotal), `pengeluaran ${wallet}`)
     const lent = sumMoney(workspace.debts.filter((debt) => debt.lender === wallet).map((debt) => debt.amount - debt.repaid), `piutang ${wallet}`)
     const borrowed = sumMoney(workspace.debts.filter((debt) => debt.borrower === wallet).map((debt) => debt.amount - debt.repaid), `hutang ${wallet}`)
     const balance = workspace.live_wallets?.find((item) => item.name === wallet)?.balance ?? income - expense
@@ -86,6 +87,7 @@ export interface ReportRow {
   date: string
   direction: TransactionDirection
   amount: number
+  admin_fee?: number
   scope: TransactionScope
   wallet: WalletId
   company: CompanyId | null
@@ -121,15 +123,15 @@ export function buildReportModel(workspace: FinanceWorkspace, filters: ReportFil
     .map((row): ReportRow => {
       const project = row.project_id ? projects.get(row.project_id) : undefined
       return {
-        id: row.id, date: row.date, direction: row.direction, amount: row.amount, scope: row.scope,
+        id: row.id, date: row.date, direction: row.direction, amount: row.amount, admin_fee: row.admin_fee ?? 0, scope: row.scope,
         wallet: row.wallet, company: row.company, project: project?.name ?? null, status: project?.status ?? null,
         category: row.office_category, notes: row.notes,
       }
     })
-  const income = sumMoney(rows.filter((row) => row.direction === 'income').map((row) => row.amount), 'pemasukan laporan')
-  const expense = sumMoney(rows.filter((row) => row.direction === 'expense').map((row) => row.amount), 'pengeluaran laporan')
-  const projectExpense = sumMoney(rows.filter((row) => row.scope === 'project' && row.direction === 'expense').map((row) => row.amount), 'biaya Project laporan')
-  const officeExpense = sumMoney(rows.filter((row) => row.scope === 'office').map((row) => row.amount), 'biaya kantor laporan')
+  const income = sumMoney(rows.filter((row) => row.direction === 'income').map(transactionTotal), 'pemasukan laporan')
+  const expense = sumMoney(rows.filter((row) => row.direction === 'expense').map(transactionTotal), 'pengeluaran laporan')
+  const projectExpense = sumMoney(rows.filter((row) => row.scope === 'project' && row.direction === 'expense').map(transactionTotal), 'biaya Project laporan')
+  const officeExpense = sumMoney(rows.filter((row) => row.scope === 'office').map(transactionTotal), 'biaya kantor laporan')
   const scopeText = [
     filters.dateFrom || filters.dateTo ? `${filters.dateFrom ? dateLabel(filters.dateFrom) : 'Awal'} – ${filters.dateTo ? dateLabel(filters.dateTo) : 'Sekarang'}` : 'Semua tanggal',
     filters.wallet === 'all' ? 'Semua dompet' : filters.wallet,
@@ -150,8 +152,8 @@ export function monthlyCashflow(rows: FinanceTransaction[], year: number) {
   return Array.from({ length: 12 }, (_, month) => {
     const prefix = `${year}-${String(month + 1).padStart(2, '0')}`
     const monthRows = rows.filter((row) => row.date.startsWith(prefix))
-    const income = sumMoney(monthRows.filter((row) => row.direction === 'income').map((row) => row.amount), 'pemasukan bulanan')
-    const expense = sumMoney(monthRows.filter((row) => row.direction === 'expense').map((row) => row.amount), 'pengeluaran bulanan')
+    const income = sumMoney(monthRows.filter((row) => row.direction === 'income').map(transactionTotal), 'pemasukan bulanan')
+    const expense = sumMoney(monthRows.filter((row) => row.direction === 'expense').map(transactionTotal), 'pengeluaran bulanan')
     return { month, income, expense, net: income - expense }
   })
 }
@@ -243,12 +245,12 @@ export function cashTrend(workspace: FinanceWorkspace, months = 12): CashTrendPo
   const latestDate = new Date(`${latest.slice(0, 7)}-01T00:00:00Z`)
   const firstDate = new Date(Date.UTC(latestDate.getUTCFullYear(), latestDate.getUTCMonth() - (months - 1), 1))
   const firstKey = `${firstDate.getUTCFullYear()}-${String(firstDate.getUTCMonth() + 1).padStart(2, '0')}`
-  let balance = sumMoney(ordered.filter((row) => row.date.slice(0, 7) < firstKey).map((row) => row.direction === 'income' ? row.amount : -row.amount), 'saldo awal tren')
+  let balance = sumMoney(ordered.filter((row) => row.date.slice(0, 7) < firstKey).map((row) => row.direction === 'income' ? transactionTotal(row) : -transactionTotal(row)), 'saldo awal tren')
   return Array.from({ length: months }, (_, index) => {
     const date = new Date(Date.UTC(firstDate.getUTCFullYear(), firstDate.getUTCMonth() + index, 1))
     const month = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`
     const rows = ordered.filter((row) => row.date.startsWith(month))
-    const netMovement = sumMoney(rows.map((row) => row.direction === 'income' ? row.amount : -row.amount), `pergerakan ${month}`)
+    const netMovement = sumMoney(rows.map((row) => row.direction === 'income' ? transactionTotal(row) : -transactionTotal(row)), `pergerakan ${month}`)
     balance = sumMoney([balance, netMovement], `saldo ${month}`)
     return { month, balance, net_movement: netMovement }
   })
